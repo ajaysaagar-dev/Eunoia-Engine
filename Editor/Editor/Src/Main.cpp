@@ -2213,6 +2213,13 @@ int createShadersAndPipeline()
 	}
 
 	// 3. Input Layout (Position, Normal, UV, Color, Tangent)
+	static_assert(sizeof(Vertex) == 60, "Vertex struct size must be exactly 60 bytes matching input layout");
+	static_assert(offsetof(Vertex, position) == 0,  "Vertex position offset mismatch");
+	static_assert(offsetof(Vertex, normal)   == 12, "Vertex normal offset mismatch");
+	static_assert(offsetof(Vertex, uv)       == 24, "Vertex uv offset mismatch");
+	static_assert(offsetof(Vertex, color)    == 32, "Vertex color offset mismatch");
+	static_assert(offsetof(Vertex, tangent)  == 44, "Vertex tangent offset mismatch");
+
 	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
