@@ -15,6 +15,9 @@
 #include <EngineAssets/MeshImporter.h>
 #include <filesystem>
 #include <EngineScene/BehaviourRegistry.h>
+#ifdef GetClassName
+#undef GetClassName
+#endif
 
 void AddEngineLog(const std::string& category, const std::string& message, int level);
 

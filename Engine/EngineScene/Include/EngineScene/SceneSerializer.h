@@ -1,6 +1,9 @@
 #pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
+#ifdef GetClassName
+#undef GetClassName
+#endif
 #include <string>
 #include <fstream>
 #include <sstream>

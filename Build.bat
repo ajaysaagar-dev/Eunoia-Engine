@@ -96,6 +96,8 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\HiZManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
+    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
+    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTexD3D12.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetRegistry.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineScene\Src\EunoiaBehaviour.cpp" ^
@@ -198,6 +200,7 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetRegistry.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
+    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Runtime\Src\Main.cpp" ^
     !PROJECT_USER_SCRIPTS! ^

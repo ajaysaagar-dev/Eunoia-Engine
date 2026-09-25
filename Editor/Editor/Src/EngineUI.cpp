@@ -20,6 +20,7 @@
 #endif
 #include <map>
 #include <EngineAssets/TextureManager.h>
+#include <EngineAssets/DirectXTex.h>
 #include <EngineAssets/MeshImporter.h>
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/BehaviourRegistry.h>
@@ -4396,6 +4397,36 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
         ImGui::SetTooltip("Clear texture slot");
     }
 
+    if (hasTex && !textureSlotValue.empty()) {
+        CachedTexture* ct = TextureManager::Get().GetTexture(textureSlotValue);
+        if (ct && ct->valid) {
+            ImGui::TextDisabled("   ↳ %dx%d | %s | %zu Mip%s",
+                ct->width, ct->height, DirectX::GetFormatName(ct->format), ct->mipLevels, ct->mipLevels > 1 ? "s" : "");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Bake DDS##BakeSlotBtn")) {
+                std::string resolved = TextureManager::Get().ResolvePath(textureSlotValue);
+                if (!resolved.empty()) {
+                    std::filesystem::path p(resolved);
+                    std::string ddsPath = p.replace_extension(".dds").string();
+                    if (ct->scratchImage.GetImageCount() > 0) {
+                        DirectX::SaveToDDSFile(ct->scratchImage.GetImages(), ct->scratchImage.GetImageCount(), ct->scratchImage.GetMetadata(), ddsPath.c_str());
+                    } else if (!ct->data.empty()) {
+                        DirectX::Image baseImg;
+                        baseImg.width = ct->width; baseImg.height = ct->height;
+                        baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                        baseImg.rowPitch = ct->width * 4;
+                        baseImg.slicePitch = ct->width * ct->height * 4;
+                        baseImg.pixels = ct->data.data();
+                        DirectX::ScratchImage mips;
+                        DirectX::GenerateMipMaps(baseImg, DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_SRGB, 0, mips);
+                        DirectX::SaveToDDSFile(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), ddsPath.c_str());
+                    }
+                    AddLog("DirectXTex", "Exported optimized DDS texture with mipmaps: " + ddsPath, 0);
+                }
+            }
+        }
+    }
+
     ImGui::Spacing();
     ImGui::PopID();
     return changed;
@@ -5079,6 +5110,46 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             };
             if (ImGui::Combo("Material Debug Mode", &activeMaterial.materialDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) {
                 materialDirty = true;
+            }
+            ImGui::Spacing();
+        }
+
+        // ═══════════════════════════════════════════
+        // SECTION 4: DIRECTXTEX TOOLS
+        // ═══════════════════════════════════════════
+        if (ImGui::CollapsingHeader("DIRECTXTEX TOOLS", ImGuiTreeNodeFlags_None)) {
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "DirectXTex Mipmap & Texture Processing Engine");
+            ImGui::TextWrapped("DirectXTex provides linear sRGB mipmap chains, normal normalization, BC1-BC7 decoding, and DDS serialization.");
+            ImGui::Spacing();
+
+            static float normalAmp = 1.0f;
+            ImGui::SliderFloat("Normal Map Amplitude", &normalAmp, 0.1f, 10.0f, "%.2f");
+            if (!activeMaterial.baseColorTexture.empty()) {
+                if (ImGui::Button("⚡ Generate Normal Map from Base Color (DirectXTex)##GenNormBtn")) {
+                    std::string res = TextureManager::Get().ResolvePath(activeMaterial.baseColorTexture);
+                    CachedTexture* ct = TextureManager::Get().GetTexture(res);
+                    if (ct && ct->valid && !ct->data.empty()) {
+                        DirectX::Image srcImg;
+                        srcImg.width = ct->width; srcImg.height = ct->height;
+                        srcImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                        srcImg.rowPitch = ct->width * 4;
+                        srcImg.slicePitch = ct->width * ct->height * 4;
+                        srcImg.pixels = ct->data.data();
+
+                        DirectX::ScratchImage normMap;
+                        if (DirectX::ComputeNormalMap(srcImg, DirectX::CNMAP_DEFAULT, normalAmp, DXGI_FORMAT_R8G8B8A8_UNORM, normMap)) {
+                            std::filesystem::path p(res);
+                            std::string outPath = (p.parent_path() / (p.stem().string() + "_Normal.dds")).string();
+                            DirectX::ScratchImage mips;
+                            DirectX::GenerateMipMaps(*normMap.GetImage(0, 0, 0), DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_NORMAL_NORMALIZE, 0, mips);
+                            DirectX::SaveToDDSFile(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), outPath.c_str());
+                            activeMaterial.normalTexture = outPath;
+                            materialDirty = true;
+                            AddLog("DirectXTex", "Generated normal map from heightmap: " + outPath, 0);
+                        }
+                    }
+                }
             }
             ImGui::Spacing();
         }

@@ -35,6 +35,8 @@
 #include <Editor/EngineUI.h>
 #include <Editor/EditorGizmoSystem.h>
 #include <EngineAssets/TextureManager.h>
+#include <EngineAssets/DirectXTex.h>
+#include <EngineAssets/DirectXTexD3D12.h>
 #include <EngineAssets/AssetSystem.h>
 #include <EngineAssets/MeshImporter.h>
 #include <EnginePlatform/InputSystem.h>
@@ -204,6 +206,8 @@ struct DX12GpuTexture {
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle{};
 	int width = 0;
 	int height = 0;
+	UINT mipLevels = 1;
+	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
 };
 
 static std::vector<ID3D12Resource*> g_allocatedTextures;
@@ -694,76 +698,53 @@ void WaitForGpuIdle()
 	}
 }
 
-DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, const std::string& debugName = "")
+DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const std::string& debugName = "")
 {
 	DX12GpuTexture result = {};
-	if (!pixels || width <= 0 || height <= 0 || !g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return result;
+	if (scratch.GetImageCount() == 0 || !g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return result;
 
-	UINT rowPitch = (width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
-	UINT64 uploadSize = (UINT64)rowPitch * height;
+	const DirectX::TexMetadata& meta = scratch.GetMetadata();
+	if (meta.width == 0 || meta.height == 0) return result;
 
-	D3D12_RESOURCE_DESC texDesc = {};
-	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-	texDesc.Width = width;
-	texDesc.Height = height;
-	texDesc.DepthOrArraySize = 1;
-	texDesc.MipLevels = 1;
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	texDesc.SampleDesc.Count = 1;
-	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-
-	D3D12_HEAP_PROPERTIES defHeap = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
 	ID3D12Resource* tex = nullptr;
-	HRESULT hr = g_d3dDevice->CreateCommittedResource(&defHeap, D3D12_HEAP_FLAG_NONE, &texDesc,
-		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex));
-	if (FAILED(hr)) return result;
+	HRESULT hr = DirectX::CreateTexture(g_d3dDevice, meta, &tex);
+	if (FAILED(hr) || !tex) {
+		std::cerr << "[TEXTURE UPLOAD] Failed to create D3D12 texture resource: hr=0x" << std::hex << hr << std::dec << "\n";
+		return result;
+	}
 
-	if (!debugName.empty())
-	{
+	if (!debugName.empty()) {
 		std::wstring wname(debugName.begin(), debugName.end());
 		tex->SetName(wname.c_str());
+	} else {
+		tex->SetName(L"Texture_DirectXTex");
 	}
-	else
-	{
-		tex->SetName(L"Texture_Unnamed");
+
+	std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+	hr = DirectX::PrepareUpload(g_d3dDevice, scratch.GetImages(), scratch.GetImageCount(), meta, subresources);
+	if (FAILED(hr) || subresources.empty()) {
+		tex->Release();
+		return result;
 	}
+
+	UINT numSub = static_cast<UINT>(subresources.size());
+	UINT64 uploadSize = DirectX::GetRequiredIntermediateSize(g_d3dDevice, tex, 0, numSub);
 
 	D3D12_RESOURCE_DESC upDesc = CreateBufferResourceDesc(uploadSize);
 	D3D12_HEAP_PROPERTIES upHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
 	ID3D12Resource* uploadBuf = nullptr;
 	hr = g_d3dDevice->CreateCommittedResource(&upHeap, D3D12_HEAP_FLAG_NONE, &upDesc,
 		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
-	if (FAILED(hr)) {
+	if (FAILED(hr) || !uploadBuf) {
 		tex->Release();
 		return result;
 	}
-	if (uploadBuf) uploadBuf->SetName(L"Texture_Upload_Staging");
-
-	void* pData = nullptr;
-	uploadBuf->Map(0, nullptr, &pData);
-	for (int y = 0; y < height; ++y) {
-		memcpy((uint8_t*)pData + y * rowPitch, (const uint8_t*)pixels + y * width * 4, width * 4);
-	}
-	uploadBuf->Unmap(0, nullptr);
+	uploadBuf->SetName(L"Texture_Upload_Staging_Mips");
 
 	g_uploadCmdAlloc->Reset();
 	g_uploadCmdList->Reset(g_uploadCmdAlloc, nullptr);
 
-	D3D12_TEXTURE_COPY_LOCATION dst = {};
-	dst.pResource = tex;
-	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-	dst.SubresourceIndex = 0;
-
-	D3D12_TEXTURE_COPY_LOCATION src = {};
-	src.pResource = uploadBuf;
-	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-	src.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	src.PlacedFootprint.Footprint.Width = width;
-	src.PlacedFootprint.Footprint.Height = height;
-	src.PlacedFootprint.Footprint.Depth = 1;
-	src.PlacedFootprint.Footprint.RowPitch = rowPitch;
-
-	g_uploadCmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+	DirectX::UpdateSubresources(g_d3dDevice, g_uploadCmdList, tex, uploadBuf, 0, 0, numSub, subresources.data());
 
 	D3D12_RESOURCE_BARRIER b = CreateTransitionBarrier(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	g_uploadCmdList->ResourceBarrier(1, &b);
@@ -772,14 +753,12 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 	ID3D12CommandList* lists[] = { g_uploadCmdList };
 	g_commandQueue->ExecuteCommandLists(1, lists);
 
-	// Dedicated upload fence synchronization (does not interfere with frame fence)
 	g_uploadFenceValue++;
 	g_commandQueue->Signal(g_uploadFence, g_uploadFenceValue);
-	bool uploadOk = SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "UploadTexture");
+	bool uploadOk = SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "UploadTextureMips");
 
-	if (!uploadOk)
-	{
-		std::cerr << "[TEXTURE UPLOAD] Fence wait failed for texture (" << width << "x" << height << ")\n";
+	if (!uploadOk) {
+		std::cerr << "[TEXTURE UPLOAD] Fence wait failed for texture (" << meta.width << "x" << meta.height << ")\n";
 		if (uploadBuf) uploadBuf->Release();
 		if (tex) tex->Release();
 		return result;
@@ -788,10 +767,9 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 	uploadBuf->Release();
 
 	UINT descIdx = 0;
-	if (!TryAllocSrvDescriptors(1, descIdx))
-	{
+	if (!TryAllocSrvDescriptors(1, descIdx)) {
 		tex->Release();
-		return result; // Returns empty DX12GpuTexture so caller falls back safely
+		return result;
 	}
 	D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
 	D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
@@ -800,18 +778,62 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Format = meta.format;
+
+	if (meta.IsCubemap()) {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.TextureCube.MostDetailedMip = 0;
+		srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	} else {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	}
+
 	g_d3dDevice->CreateShaderResourceView(tex, &srvDesc, cpu);
 
 	result.resource = tex;
 	result.cpuHandle = cpu;
 	result.gpuHandle = gpu;
-	result.width = width;
-	result.height = height;
+	result.width = static_cast<int>(meta.width);
+	result.height = static_cast<int>(meta.height);
+	result.mipLevels = static_cast<UINT>(meta.mipLevels);
+	result.format = meta.format;
 
 	g_allocatedTextures.push_back(tex);
+	return result;
+}
+
+DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, const std::string& debugName = "", bool isNormalMap = false)
+{
+	DX12GpuTexture result = {};
+	if (!pixels || width <= 0 || height <= 0) return result;
+
+	// Wrap pixels and generate mip chain using DirectXTex
+	DirectX::Image baseImg;
+	baseImg.width = static_cast<size_t>(width);
+	baseImg.height = static_cast<size_t>(height);
+	baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	baseImg.rowPitch = static_cast<size_t>(width * 4);
+	baseImg.slicePitch = static_cast<size_t>(width * height * 4);
+	baseImg.pixels = const_cast<uint8_t*>(static_cast<const uint8_t*>(pixels));
+
+	uint32_t filterFlags = DirectX::TEX_FILTER_BOX;
+	if (isNormalMap) filterFlags |= DirectX::TEX_FILTER_NORMAL_NORMALIZE;
+	else filterFlags |= DirectX::TEX_FILTER_SRGB;
+
+	DirectX::ScratchImage mipChain;
+	if (DirectX::GenerateMipMaps(baseImg, filterFlags, 0, mipChain)) {
+		return UploadTextureToD3D12(mipChain, debugName);
+	}
+
+	// Fallback single-level image if mip generation failed
+	DirectX::ScratchImage single;
+	if (single.InitializeFromImage(baseImg)) {
+		return UploadTextureToD3D12(single, debugName);
+	}
 	return result;
 }
 
@@ -821,7 +843,7 @@ void InitFallbackTextures()
 	g_fallbackWhite = UploadTextureToD3D12(&whitePix, 1, 1, "Fallback_White");
 
 	uint8_t normalPix[4] = { 128, 128, 255, 255 };
-	g_fallbackNormal = UploadTextureToD3D12(normalPix, 1, 1, "Fallback_Normal");
+	g_fallbackNormal = UploadTextureToD3D12(normalPix, 1, 1, "Fallback_Normal", true);
 
 	uint32_t roughPix = 0xFFFFFFFF;
 	g_fallbackRoughness = UploadTextureToD3D12(&roughPix, 1, 1, "Fallback_Roughness");
@@ -867,6 +889,7 @@ DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture
 		if (!tmResolved.empty()) resolved = tmResolved;
 	}
 
+	bool isNormal = (slot == TextureUsageSlot::Normal);
 	std::string cacheKey = resolved + "@slot=" + std::to_string((int)slot);
 	auto it = g_gpuTextureMap.find(cacheKey);
 	if (it != g_gpuTextureMap.end()) {
@@ -874,12 +897,18 @@ DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture
 	}
 
 	// Single-source decoded pixels from TextureManager cache (zero duplicate disk reads)
-	CachedTexture* cached = TextureManager::Get().GetTexture(resolved);
-	if (!cached || !cached->valid || cached->data.empty() || cached->width <= 0 || cached->height <= 0) {
+	CachedTexture* cached = TextureManager::Get().GetTexture(resolved, isNormal);
+	if (!cached || !cached->valid) {
 		return fallback;
 	}
 
-	DX12GpuTexture tex = UploadTextureToD3D12(cached->data.data(), cached->width, cached->height, resolved);
+	DX12GpuTexture tex;
+	if (cached->scratchImage.GetImageCount() > 0) {
+		tex = UploadTextureToD3D12(cached->scratchImage, resolved);
+	} else if (!cached->data.empty() && cached->width > 0 && cached->height > 0) {
+		tex = UploadTextureToD3D12(cached->data.data(), cached->width, cached->height, resolved, isNormal);
+	}
+
 	if (tex.resource) {
 		g_gpuTextureMap[cacheKey] = tex;
 		return tex;
