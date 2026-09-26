@@ -3905,8 +3905,177 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
+        // =========================================================
+        // WATER BODY COMPONENT (shown when a Water Body is selected)
+        // =========================================================
+        if (obj->isWaterBody || obj->type == PrimitiveType::WaterBody) {
+            WaterBodyComponent& w = obj->water;
+
+            // Water type selector
+            if (ImGui::CollapsingHeader("💧 Water Body", ImGuiTreeNodeFlags_DefaultOpen)) {
+                const char* waterTypeNames[] = {
+                    "Ocean", "River", "Sea", "Lake", "Stream",
+                    "Waterfall", "Pond", "Pool", "Wet Surface",
+                    "Puddle", "Flood Water", "Underwater", "Swamp"
+                };
+                int wt = (int)w.type;
+                if (ImGui::Combo("Water Type", &wt, waterTypeNames, 13)) {
+                    w.type = (WaterBodyType)wt;
+                }
+                ImGui::Separator();
+
+                // Geometry
+                ImGui::TextDisabled("Geometry");
+                bool geomChanged = false;
+                geomChanged |= ImGui::DragFloat("Width##WaterW",  &w.width,  0.5f, 0.1f, 10000.0f, "%.1f m");
+                geomChanged |= ImGui::DragFloat("Length##WaterL", &w.length, 0.5f, 0.1f, 10000.0f, "%.1f m");
+                geomChanged |= ImGui::DragFloat("Elevation##WaterY", &w.elevation, 0.05f, -500.0f, 500.0f, "%.2f m");
+                geomChanged |= ImGui::SliderInt("Grid Resolution##WaterGrid", &w.gridResolution, 4, 256);
+                if (geomChanged) {
+                    // Rebuild plane mesh with new dimensions
+                    obj->mesh = GeometryBuilder::CreatePlane(w.width, w.length, w.gridResolution, w.gridResolution);
+                    obj->position.y = w.elevation;
+                }
+            }
+
+            // Surface Appearance
+            if (ImGui::CollapsingHeader("🎨 Surface Appearance", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::ColorEdit4("Deep Water Color",    &w.waterColor.r);
+                ImGui::ColorEdit4("Shallow Water Color", &w.shallowColor.r);
+                ImGui::SliderFloat("Roughness##WaterRough",  &w.roughness,  0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Metallic##WaterMetal",   &w.metallic,   0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Opacity##WaterOpac",     &w.opacity,    0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Reflection Strength",    &w.reflectionStrength, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Refraction Strength",    &w.refractionStrength, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Specular Intensity",     &w.specularIntensity,  0.0f, 2.0f, "%.2f");
+            }
+
+            // Waves & Normal Maps
+            if (ImGui::CollapsingHeader("🌊 Waves & Animation")) {
+                auto textures = ScanProjectTextures();
+                DrawTextureSlot("Normal Map 1", w.normalMap1Path, w.normalMap1AssetId, textures);
+                DrawTextureSlot("Normal Map 2", w.normalMap2Path, w.normalMap2AssetId, textures);
+                ImGui::SliderFloat("Normal Scale",  &w.normalScale, 0.0f, 5.0f,  "%.2f");
+                ImGui::SliderFloat("Wave Speed",    &w.waveSpeed,   0.0f, 5.0f,  "%.2f");
+                ImGui::SliderFloat("Wave Scale (Tiling)", &w.waveScale, 0.01f, 10.0f, "%.2f");
+                ImGui::SliderFloat("Wave Height",   &w.waveHeight,  0.0f, 5.0f,  "%.2f");
+            }
+
+            // Foam
+            if (ImGui::CollapsingHeader("💦 Foam")) {
+                ImGui::Checkbox("Enable Foam##WaterFoam", &w.enableFoam);
+                if (w.enableFoam) {
+                    auto textures = ScanProjectTextures();
+                    DrawTextureSlot("Foam Texture", w.foamTexturePath, w.foamTextureAssetId, textures);
+                    ImGui::ColorEdit4("Foam Color",    &w.foamColor.r);
+                    ImGui::SliderFloat("Foam Scale",   &w.foamScale,   0.01f, 20.0f, "%.2f");
+                    ImGui::SliderFloat("Foam Opacity", &w.foamOpacity, 0.0f,  1.0f,  "%.2f");
+                }
+            }
+
+            // Depth & Refraction
+            if (ImGui::CollapsingHeader("🔵 Depth & Refraction")) {
+                ImGui::Checkbox("Enable Depth Fade##WaterDepth", &w.enableDepth);
+                if (w.enableDepth) {
+                    ImGui::SliderFloat("Depth Fade Distance", &w.depthFadeDistance, 0.1f, 50.0f, "%.1f m");
+                }
+                ImGui::Checkbox("Enable Refraction##WaterRefr", &w.enableRefraction);
+                if (w.enableRefraction) {
+                    ImGui::SliderFloat("Distortion Strength", &w.distortionStrength, 0.0f, 2.0f, "%.2f");
+                }
+                ImGui::Checkbox("Caustics##WaterCaustics", &w.caustics);
+                if (w.caustics) {
+                    ImGui::SliderFloat("Caustics Scale", &w.causticsScale, 0.01f, 10.0f, "%.2f");
+                    ImGui::SliderFloat("Caustics Speed", &w.causticsSpeed, 0.0f,  5.0f,  "%.2f");
+                }
+            }
+
+            // Environment & Lighting
+            if (ImGui::CollapsingHeader("🌍 Environment & Lighting")) {
+                ImGui::Checkbox("Receive Environment Light", &w.receiveEnvironmentLight);
+                if (w.receiveEnvironmentLight) {
+                    ImGui::SliderFloat("Env Light Intensity", &w.environmentLightIntensity, 0.0f, 3.0f, "%.2f");
+                }
+                ImGui::Checkbox("Reflect Skybox", &w.reflectSkybox);
+                ImGui::SliderFloat("Subsurface Scattering", &w.subsurfaceScattering, 0.0f, 2.0f, "%.2f");
+                ImGui::ColorEdit3("Subsurface Color", &w.subsurfaceColor.r);
+            }
+
+            // Flow (River, Stream, Waterfall)
+            bool isFlowing = (w.type == WaterBodyType::River || w.type == WaterBodyType::Stream || w.type == WaterBodyType::Waterfall);
+            if (isFlowing && ImGui::CollapsingHeader("➡️ Flow")) {
+                ImGui::Checkbox("Enable Flow", &w.enableFlow);
+                if (w.enableFlow) {
+                    ImGui::DragFloat2("Flow Direction (XZ)", &w.flowDirection.x, 0.01f, -1.0f, 1.0f);
+                    ImGui::SliderFloat("Flow Speed",   &w.flowSpeed,   0.0f, 5.0f,  "%.2f");
+                    ImGui::SliderFloat("Flow Tiling",  &w.flowTiling,  0.01f, 10.0f, "%.2f");
+                    auto textures = ScanProjectTextures();
+                    DrawTextureSlot("Flow Map (Optional)", w.flowMapPath, w.flowMapAssetId, textures);
+                }
+            }
+
+            // Ocean / Sea wave physics
+            bool isOcean = (w.type == WaterBodyType::Ocean || w.type == WaterBodyType::Sea);
+            if (isOcean && ImGui::CollapsingHeader("🌊 Ocean Wave Physics")) {
+                ImGui::Checkbox("Enable Ocean Waves", &w.enableWaves);
+                if (w.enableWaves) {
+                    ImGui::DragFloat("Wave Amplitude",  &w.oceanWaveAmplitude,  0.1f, 0.0f, 10.0f, "%.2f");
+                    ImGui::DragFloat("Wave Period",     &w.oceanWavePeriod,     1.0f, 0.1f, 100.0f, "%.1f");
+                    ImGui::SliderFloat("Wave Direction (deg)", &w.oceanWaveDirection, 0.0f, 360.0f, "%.1f°");
+                    ImGui::SliderInt("Tessellation Level", &w.tessellationLevel, 1, 16);
+                }
+            }
+
+            // Waterfall specific
+            if (w.type == WaterBodyType::Waterfall && ImGui::CollapsingHeader("💦 Waterfall Settings")) {
+                ImGui::DragFloat("Fall Height",   &w.waterfallFallHeight,  0.5f, 0.0f, 50.0f,  "%.1f m");
+                ImGui::SliderFloat("Flow Rate",   &w.waterfallFlowRate,    0.0f, 10.0f, "%.2f");
+                ImGui::SliderFloat("Spray Amount",&w.waterfallSprayAmount, 0.0f, 2.0f,  "%.2f");
+            }
+
+            // Underwater specific
+            if (w.type == WaterBodyType::Underwater && ImGui::CollapsingHeader("🐟 Underwater Volume")) {
+                ImGui::ColorEdit3("Fog Color",         &w.underwaterFogColor.r);
+                ImGui::SliderFloat("Fog Density",      &w.underwaterFogDensity,        0.0f, 5.0f, "%.2f");
+                ImGui::DragFloat("Visibility Distance",&w.underwaterVisibilityDistance, 1.0f, 0.0f, 200.0f, "%.1f m");
+                ImGui::Checkbox("Underwater Distortion", &w.enableUnderwaterDistortion);
+                if (w.enableUnderwaterDistortion) {
+                    ImGui::SliderFloat("Distortion Strength##Uw", &w.underwaterDistortionStrength, 0.0f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("Distortion Speed##Uw",    &w.underwaterDistortionSpeed,    0.0f, 5.0f, "%.2f");
+                }
+            }
+
+            // Puddle / Wet Surface specific
+            bool isPuddle = (w.type == WaterBodyType::Puddle || w.type == WaterBodyType::WetSurface);
+            if (isPuddle && ImGui::CollapsingHeader("💧 Puddle / Wet Surface")) {
+                ImGui::SliderFloat("Wetness",    &w.wetness,    0.0f, 1.0f,  "%.2f");
+                ImGui::DragFloat("Puddle Size",  &w.puddleSize, 0.1f, 0.0f, 20.0f, "%.1f m");
+                ImGui::DragFloat("Puddle Depth", &w.puddleDepth,0.01f,0.0f,  2.0f, "%.2f m");
+                ImGui::Checkbox("Animate Ripples", &w.animatePuddle);
+                if (w.animatePuddle) {
+                    ImGui::SliderFloat("Ripple Speed", &w.rippleSpeed, 0.0f, 5.0f, "%.2f");
+                    ImGui::SliderFloat("Ripple Scale", &w.rippleScale, 0.0f, 5.0f, "%.2f");
+                }
+            }
+
+            // Swamp specific
+            if (w.type == WaterBodyType::Swamp && ImGui::CollapsingHeader("🌿 Swamp Settings")) {
+                ImGui::SliderFloat("Density (Murk)",  &w.swampDensity, 0.0f, 1.0f, "%.2f");
+                ImGui::ColorEdit3("Swamp Color",      &w.swampColor.r);
+                ImGui::SliderFloat("Algae Amount",    &w.algaeAmount,  0.0f, 1.0f, "%.2f");
+            }
+
+            // Rendering flags
+            if (ImGui::CollapsingHeader("⚙️ Rendering")) {
+                ImGui::Checkbox("Visible##WaterVis",         &obj->visible);
+                ImGui::Checkbox("Cast Shadows##WaterShadow", &obj->castShadows);
+                ImGui::Checkbox("Receive Shadows##WaterRecv",&obj->receiveShadows);
+                ImGui::SliderInt("Render Layer", &w.renderLayer, 0, 7);
+            }
+        }
+
         // Primitive Shape Settings Category (dev.md)
-        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
+        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
             char shapeHeader[128];
             snprintf(shapeHeader, sizeof(shapeHeader), "%s Parameters", GetPrimitiveTypeName(obj->type));
             if (ImGui::CollapsingHeader(shapeHeader, ImGuiTreeNodeFlags_DefaultOpen)) {

@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <EngineAssets/Geometry.h>
+#include <EngineAssets/AssetSystem.h>
 #include <EngineScene/TransformTypes.h>
 #include <EngineScene/EunoiaBehaviour.h>
 
@@ -225,7 +226,9 @@ struct WaterBodyComponent {
 
     // Normal Maps / Waves
     std::string normalMap1Path = "";
+    AssetID normalMap1AssetId;
     std::string normalMap2Path = "";
+    AssetID normalMap2AssetId;
     float normalScale = 1.0f;
     float waveSpeed = 1.0f;
     float waveScale = 1.0f;
@@ -237,6 +240,7 @@ struct WaterBodyComponent {
     float foamScale = 1.0f;
     float foamOpacity = 1.0f;
     std::string foamTexturePath = "";
+    AssetID foamTextureAssetId;
 
     // Depth & Refraction
     bool enableDepth = true;
@@ -259,6 +263,7 @@ struct WaterBodyComponent {
     glm::vec2 flowDirection = {1.0f, 0.0f};
     float flowSpeed = 1.0f;
     std::string flowMapPath = "";
+    AssetID flowMapAssetId;
     float flowTiling = 1.0f;
 
     // Physics (Ocean, Sea)
