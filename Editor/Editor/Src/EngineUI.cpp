@@ -3198,6 +3198,27 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
                 EngineLogger::Get().LogAction("DUPLICATE_ACTOR", copy->name, "Children: " + std::to_string(copy->childIds.size()));
             }
         }
+        ImGui::Separator();
+        if (ImGui::BeginMenu("Add Child")) {
+            if (ImGui::BeginMenu("💧 Water Body")) {
+                if (ImGui::MenuItem("🌊 Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      glm::vec3(0), "Ocean",       obj.id); AddLog("LogActor", "Added Ocean as child", 2); }
+                if (ImGui::MenuItem("🌊 Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        glm::vec3(0), "Sea",         obj.id); AddLog("LogActor", "Added Sea as child", 2); }
+                if (ImGui::MenuItem("🏞️ Lake"))         { scene.AddWaterBody(WaterBodyType::Lake,       glm::vec3(0), "Lake",        obj.id); AddLog("LogActor", "Added Lake as child", 2); }
+                if (ImGui::MenuItem("🏞️ River"))        { scene.AddWaterBody(WaterBodyType::River,      glm::vec3(0), "River",       obj.id); AddLog("LogActor", "Added River as child", 2); }
+                if (ImGui::MenuItem("💧 Stream"))       { scene.AddWaterBody(WaterBodyType::Stream,     glm::vec3(0), "Stream",      obj.id); AddLog("LogActor", "Added Stream as child", 2); }
+                if (ImGui::MenuItem("💦 Waterfall"))    { scene.AddWaterBody(WaterBodyType::Waterfall,  glm::vec3(0), "Waterfall",   obj.id); AddLog("LogActor", "Added Waterfall as child", 2); }
+                if (ImGui::MenuItem("🌿 Pond"))         { scene.AddWaterBody(WaterBodyType::Pond,       glm::vec3(0), "Pond",        obj.id); AddLog("LogActor", "Added Pond as child", 2); }
+                if (ImGui::MenuItem("🏊 Pool"))         { scene.AddWaterBody(WaterBodyType::Pool,       glm::vec3(0), "Pool",        obj.id); AddLog("LogActor", "Added Pool as child", 2); }
+                if (ImGui::MenuItem("🌧️ Wet Surface"))  { scene.AddWaterBody(WaterBodyType::WetSurface, glm::vec3(0), "Wet Surface", obj.id); AddLog("LogActor", "Added Wet Surface as child", 2); }
+                if (ImGui::MenuItem("💧 Puddle"))       { scene.AddWaterBody(WaterBodyType::Puddle,     glm::vec3(0), "Puddle",      obj.id); AddLog("LogActor", "Added Puddle as child", 2); }
+                if (ImGui::MenuItem("🌊 Flood Water"))  { scene.AddWaterBody(WaterBodyType::FloodWater, glm::vec3(0), "Flood Water", obj.id); AddLog("LogActor", "Added Flood Water as child", 2); }
+                if (ImGui::MenuItem("🐟 Underwater"))   { scene.AddWaterBody(WaterBodyType::Underwater, glm::vec3(0), "Underwater",  obj.id); AddLog("LogActor", "Added Underwater as child", 2); }
+                if (ImGui::MenuItem("🌿 Swamp"))        { scene.AddWaterBody(WaterBodyType::Swamp,      glm::vec3(0), "Swamp",       obj.id); AddLog("LogActor", "Added Swamp as child", 2); }
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenu();
+        }
+        ImGui::Separator();
         if (ImGui::MenuItem("Delete", "Delete")) {
             scene.RemoveObject(obj.id);
         }
@@ -3354,6 +3375,22 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 cam.name = "Camera Actor";
                 AddLog("LogActor", "Spawned Camera Actor via Outliner Context Menu", 2);
             }
+            if (ImGui::BeginMenu("💧 Water Body")) {
+                if (ImGui::MenuItem("🌊 Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      {0,0,0}, "Ocean");       AddLog("LogActor", "Spawned Ocean Water Body", 2); }
+                if (ImGui::MenuItem("🌊 Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        {0,0,0}, "Sea");         AddLog("LogActor", "Spawned Sea Water Body", 2); }
+                if (ImGui::MenuItem("🏞️ Lake"))         { scene.AddWaterBody(WaterBodyType::Lake,       {0,0,0}, "Lake");        AddLog("LogActor", "Spawned Lake Water Body", 2); }
+                if (ImGui::MenuItem("🏞️ River"))        { scene.AddWaterBody(WaterBodyType::River,      {0,0,0}, "River");       AddLog("LogActor", "Spawned River Water Body", 2); }
+                if (ImGui::MenuItem("💧 Stream"))       { scene.AddWaterBody(WaterBodyType::Stream,     {0,0,0}, "Stream");      AddLog("LogActor", "Spawned Stream Water Body", 2); }
+                if (ImGui::MenuItem("💦 Waterfall"))    { scene.AddWaterBody(WaterBodyType::Waterfall,  {0,0,0}, "Waterfall");   AddLog("LogActor", "Spawned Waterfall Water Body", 2); }
+                if (ImGui::MenuItem("🌿 Pond"))         { scene.AddWaterBody(WaterBodyType::Pond,       {0,0,0}, "Pond");        AddLog("LogActor", "Spawned Pond Water Body", 2); }
+                if (ImGui::MenuItem("🏊 Pool"))         { scene.AddWaterBody(WaterBodyType::Pool,       {0,0,0}, "Pool");        AddLog("LogActor", "Spawned Pool Water Body", 2); }
+                if (ImGui::MenuItem("🌧️ Wet Surface"))  { scene.AddWaterBody(WaterBodyType::WetSurface, {0,0,0}, "Wet Surface"); AddLog("LogActor", "Spawned Wet Surface Water Body", 2); }
+                if (ImGui::MenuItem("💧 Puddle"))       { scene.AddWaterBody(WaterBodyType::Puddle,     {0,0,0}, "Puddle");      AddLog("LogActor", "Spawned Puddle Water Body", 2); }
+                if (ImGui::MenuItem("🌊 Flood Water"))  { scene.AddWaterBody(WaterBodyType::FloodWater, {0,0,0}, "Flood Water"); AddLog("LogActor", "Spawned Flood Water Body", 2); }
+                if (ImGui::MenuItem("🐟 Underwater"))   { scene.AddWaterBody(WaterBodyType::Underwater, {0,0,0}, "Underwater");  AddLog("LogActor", "Spawned Underwater Volume", 2); }
+                if (ImGui::MenuItem("🌿 Swamp"))        { scene.AddWaterBody(WaterBodyType::Swamp,      {0,0,0}, "Swamp");       AddLog("LogActor", "Spawned Swamp Water Body", 2); }
+                ImGui::EndMenu();
+            }
             if (ImGui::MenuItem("Empty Actor")) { scene.AddEmptyActor(); AddLog("LogActor", "Spawned Empty Actor", 2); }
             ImGui::EndPopup();
         }
@@ -3401,6 +3438,22 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 GameObject& cam = scene.AddObject(PrimitiveType::Camera, {0.0f, 2.0f, -4.0f});
                 cam.name = "Camera Actor";
                 AddLog("LogActor", "Spawned Camera Actor via Outliner", 2);
+            }
+            if (ImGui::BeginMenu("💧 Water Body")) {
+                if (ImGui::MenuItem("🌊 Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      {0,0,0}, "Ocean");       AddLog("LogActor", "Spawned Ocean Water Body", 2); }
+                if (ImGui::MenuItem("🌊 Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        {0,0,0}, "Sea");         AddLog("LogActor", "Spawned Sea Water Body", 2); }
+                if (ImGui::MenuItem("🏞️ Lake"))         { scene.AddWaterBody(WaterBodyType::Lake,       {0,0,0}, "Lake");        AddLog("LogActor", "Spawned Lake Water Body", 2); }
+                if (ImGui::MenuItem("🏞️ River"))        { scene.AddWaterBody(WaterBodyType::River,      {0,0,0}, "River");       AddLog("LogActor", "Spawned River Water Body", 2); }
+                if (ImGui::MenuItem("💧 Stream"))       { scene.AddWaterBody(WaterBodyType::Stream,     {0,0,0}, "Stream");      AddLog("LogActor", "Spawned Stream Water Body", 2); }
+                if (ImGui::MenuItem("💦 Waterfall"))    { scene.AddWaterBody(WaterBodyType::Waterfall,  {0,0,0}, "Waterfall");   AddLog("LogActor", "Spawned Waterfall Water Body", 2); }
+                if (ImGui::MenuItem("🌿 Pond"))         { scene.AddWaterBody(WaterBodyType::Pond,       {0,0,0}, "Pond");        AddLog("LogActor", "Spawned Pond Water Body", 2); }
+                if (ImGui::MenuItem("🏊 Pool"))         { scene.AddWaterBody(WaterBodyType::Pool,       {0,0,0}, "Pool");        AddLog("LogActor", "Spawned Pool Water Body", 2); }
+                if (ImGui::MenuItem("🌧️ Wet Surface"))  { scene.AddWaterBody(WaterBodyType::WetSurface, {0,0,0}, "Wet Surface"); AddLog("LogActor", "Spawned Wet Surface Water Body", 2); }
+                if (ImGui::MenuItem("💧 Puddle"))       { scene.AddWaterBody(WaterBodyType::Puddle,     {0,0,0}, "Puddle");      AddLog("LogActor", "Spawned Puddle Water Body", 2); }
+                if (ImGui::MenuItem("🌊 Flood Water"))  { scene.AddWaterBody(WaterBodyType::FloodWater, {0,0,0}, "Flood Water"); AddLog("LogActor", "Spawned Flood Water Body", 2); }
+                if (ImGui::MenuItem("🐟 Underwater"))   { scene.AddWaterBody(WaterBodyType::Underwater, {0,0,0}, "Underwater");  AddLog("LogActor", "Spawned Underwater Volume", 2); }
+                if (ImGui::MenuItem("🌿 Swamp"))        { scene.AddWaterBody(WaterBodyType::Swamp,      {0,0,0}, "Swamp");       AddLog("LogActor", "Spawned Swamp Water Body", 2); }
+                ImGui::EndMenu();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Empty Actor")) { scene.AddEmptyActor(); AddLog("LogActor", "Spawned Empty Actor via Outliner", 2); }

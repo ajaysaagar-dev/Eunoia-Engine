@@ -319,7 +319,7 @@ public:
         return obj;
     }
 
-    GameObject& AddWaterBody(WaterBodyType wbType, glm::vec3 pos, const std::string& name = "") {
+    GameObject& AddWaterBody(WaterBodyType wbType, glm::vec3 pos, const std::string& name = "", int parentId = -1) {
         if (onPreChange) onPreChange("Add Water Body");
         int id = nextId++;
         std::string finalName = name.empty() ? ("Water_" + std::to_string(id)) : name;
@@ -337,6 +337,12 @@ public:
         obj.params.segmentsZ = 32;
 
         obj.mesh = GeometryBuilder::CreatePlane(10.0f, 10.0f, 32, 32);
+
+        obj.parentId = parentId;
+        if (parentId != -1) {
+            GameObject* parent = FindObject(parentId);
+            if (parent) parent->childIds.push_back(id);
+        }
 
         selectedId = id;
         return obj;
