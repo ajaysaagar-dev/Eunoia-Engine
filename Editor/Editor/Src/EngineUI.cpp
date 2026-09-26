@@ -2038,6 +2038,14 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         RenderMaterialEditor(scene);
     }
 
+    // Skybox Editor & World Skybox Settings Modal
+    if (showSkyboxEditor) {
+        RenderSkyboxEditor(scene);
+    }
+    if (showSkyboxSettingsModal) {
+        RenderWorldSkyboxSettingsModal(scene);
+    }
+
     // 7. Asset Reference Viewer (dev.md Section 33)
     if (showReferenceViewer) {
         RenderReferenceViewer(scene);
@@ -2459,6 +2467,31 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     }
                     ImGui::EndMenu();
                 }
+
+                ImGui::Separator();
+                if (ImGui::MenuItem("🌌 Skybox Settings...", nullptr, showSkyboxSettingsModal)) {
+                    showSkyboxSettingsModal = true;
+                }
+                if (ImGui::BeginMenu("🌌 Quick Skybox")) {
+                    if (ImGui::Checkbox("Enable Skybox", &scene.enableSkybox)) {
+                        AddLog("LogWorld", scene.enableSkybox ? "Enabled Skybox rendering" : "Disabled Skybox rendering", 0);
+                    }
+                    ImGui::Separator();
+                    ImGui::SliderFloat("Exposure", &scene.skyboxExposure, 0.05f, 10.0f, "%.2f");
+                    ImGui::SliderFloat("Rotation", &scene.skyboxRotation, 0.0f, 360.0f, "%.1f°");
+                    ImGui::ColorEdit3("Tint", &scene.skyboxTint.x);
+                    ImGui::SliderFloat("Ambient Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
+                    ImGui::Separator();
+                    if (!scene.skyboxAssetPath.empty()) {
+                        std::string assetLbl = "Asset: " + std::filesystem::path(scene.skyboxAssetPath).stem().string();
+                        ImGui::TextDisabled("%s", assetLbl.c_str());
+                        if (ImGui::MenuItem("Open in Skybox Editor")) {
+                            OpenSkyboxEditor(scene.skyboxAssetPath);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+
                 ImGui::EndMenu();
             }
 
@@ -5196,6 +5229,282 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
     ImGui::End();
 }
 
+bool EngineUI::LoadSkyboxFile(const std::string& path, SkyboxAsset& outSkybox) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+    outSkybox.filePath = path;
+    outSkybox.name = std::filesystem::path(path).stem().string();
+
+    std::string line;
+    while (std::getline(file, line)) {
+        if (line.empty() || line[0] == '#') continue;
+        auto colon = line.find(':');
+        if (colon == std::string::npos) continue;
+        std::string key = line.substr(0, colon);
+        std::string val = line.substr(colon + 1);
+        while (!key.empty() && isspace((unsigned char)key.back())) key.pop_back();
+        while (!key.empty() && isspace((unsigned char)key.front())) key.erase(key.begin());
+        while (!val.empty() && isspace((unsigned char)val.back())) val.pop_back();
+        while (!val.empty() && isspace((unsigned char)val.front())) val.erase(val.begin());
+
+        if (key == "assetId") outSkybox.assetId = AssetID::FromString(val);
+        else if (key == "virtualPath") outSkybox.virtualPath = val;
+        else if (key == "name") outSkybox.name = val;
+        else if (key == "hdrTexture" || key == "hdrTexturePath") outSkybox.hdrTexturePath = val;
+        else if (key == "hdrTextureAssetId") outSkybox.hdrTextureAssetId = AssetID::FromString(val);
+        else if (key == "exposure") {
+            try { outSkybox.exposure = std::stof(val); } catch (...) {}
+        }
+        else if (key == "rotation") {
+            try { outSkybox.rotation = std::stof(val); } catch (...) {}
+        }
+        else if (key == "tint") {
+            std::stringstream ss(val);
+            ss >> outSkybox.tint.r >> outSkybox.tint.g >> outSkybox.tint.b;
+        }
+        else if (key == "ambientContribution") {
+            try { outSkybox.ambientContribution = std::stof(val); } catch (...) {}
+        }
+        else if (key == "enableSkybox" || key == "enabled") {
+            outSkybox.enableSkybox = (val == "1" || val == "true" || val == "True");
+        }
+    }
+    return true;
+}
+
+bool EngineUI::SaveSkyboxFile(const std::string& path, const SkyboxAsset& skybox) {
+    std::ofstream file(path);
+    if (!file.is_open()) return false;
+    file << "# Eunoia-Editor Skybox Asset\n";
+    if (skybox.assetId.IsValid()) {
+        file << "assetId: " << skybox.assetId.ToString() << "\n";
+    }
+    if (!skybox.virtualPath.empty()) {
+        file << "virtualPath: " << skybox.virtualPath << "\n";
+    }
+    file << "name: " << skybox.name << "\n";
+    if (skybox.hdrTextureAssetId.IsValid()) {
+        file << "hdrTextureAssetId: " << skybox.hdrTextureAssetId.ToString() << "\n";
+    }
+    file << "hdrTexture: " << skybox.hdrTexturePath << "\n";
+    file << "exposure: " << skybox.exposure << "\n";
+    file << "rotation: " << skybox.rotation << "\n";
+    file << "tint: " << skybox.tint.r << " " << skybox.tint.g << " " << skybox.tint.b << "\n";
+    file << "ambientContribution: " << skybox.ambientContribution << "\n";
+    file << "enableSkybox: " << (skybox.enableSkybox ? 1 : 0) << "\n";
+    return true;
+}
+
+void EngineUI::OpenSkyboxEditor(const std::string& path) {
+    if (LoadSkyboxFile(path, activeSkybox)) {
+        showSkyboxEditor = true;
+        skyboxDirty = false;
+        AddLog("LogContent", "Opened Skybox Editor: " + activeSkybox.name, 0);
+    } else {
+        AddLog("LogContent", "Failed to load Skybox from: " + path, 3);
+    }
+}
+
+void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
+    scene.enableSkybox = skybox.enableSkybox;
+    scene.skyboxAssetPath = skybox.filePath;
+    scene.skyboxTexturePath = skybox.hdrTexturePath;
+    scene.skyboxExposure = skybox.exposure;
+    scene.skyboxRotation = skybox.rotation;
+    scene.skyboxTint = skybox.tint;
+    scene.skyboxAmbientContribution = skybox.ambientContribution;
+    AddLog("LogWorld", "Applied Skybox '" + skybox.name + "' to World Scene", 2);
+}
+
+void EngineUI::RenderSkyboxEditor(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(620, 540), ImGuiCond_FirstUseEver);
+    std::string winTitle = "🌌 Skybox Editor - " + activeSkybox.name + (skyboxDirty ? "*" : "") + "###SkyboxEditorWin";
+    if (ImGui::Begin(winTitle.c_str(), &showSkyboxEditor, ImGuiWindowFlags_NoCollapse)) {
+        // Toolbar
+        if (ImGui::Button("💾 Save Skybox") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
+            if (SaveSkyboxFile(activeSkybox.filePath, activeSkybox)) {
+                skyboxDirty = false;
+                AddLog("LogContent", "Saved Skybox Asset: " + activeSkybox.name, 2);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("🌐 Apply to World")) {
+            ApplySkyboxToScene(scene, activeSkybox);
+        }
+        ImGui::SameLine();
+        if (ImGui::Checkbox("Enable Skybox", &activeSkybox.enableSkybox)) {
+            skyboxDirty = true;
+        }
+
+        ImGui::Separator();
+
+        ImGui::BeginChild("SkyboxPropsScroll", ImVec2(0, 0), false, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        // SECTION 1: ASSET IDENTITY
+        if (ImGui::CollapsingHeader("ASSET IDENTITY", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            char nameBuf[128];
+            strncpy(nameBuf, activeSkybox.name.c_str(), sizeof(nameBuf));
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            if (ImGui::InputText("Asset Name", nameBuf, sizeof(nameBuf))) {
+                activeSkybox.name = nameBuf;
+                skyboxDirty = true;
+            }
+            ImGui::TextDisabled("Virtual Path: %s", activeSkybox.virtualPath.c_str());
+            ImGui::TextDisabled("Asset ID:     %s", activeSkybox.assetId.ToString().c_str());
+            ImGui::TextDisabled("File Path:    %s", activeSkybox.filePath.c_str());
+            ImGui::Spacing();
+        }
+
+        // SECTION 2: HDR PANORAMA TEXTURE
+        if (ImGui::CollapsingHeader("HDR PANORAMA TEXTURE", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Assign an HDR equirectangular panorama texture (.hdr, .dds, .png, .jpg, .exr) from the Content Browser.");
+            ImGui::Spacing();
+
+            auto availableTextures = ScanProjectTextures();
+            if (DrawTextureSlot("HDR Texture", activeSkybox.hdrTexturePath, activeSkybox.hdrTextureAssetId, availableTextures)) {
+                skyboxDirty = true;
+            }
+            ImGui::Spacing();
+        }
+
+        // SECTION 3: ENVIRONMENT PARAMETERS
+        if (ImGui::CollapsingHeader("ENVIRONMENT ILLUMINATION", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Exposure / Intensity", &activeSkybox.exposure, 0.05f, 10.0f, "%.2f")) {
+                skyboxDirty = true;
+            }
+            if (ImGui::SliderFloat("Rotation (Azimuth)", &activeSkybox.rotation, 0.0f, 360.0f, "%.1f°")) {
+                skyboxDirty = true;
+            }
+            if (ImGui::ColorEdit3("Color Tint", &activeSkybox.tint.x)) {
+                skyboxDirty = true;
+            }
+            if (ImGui::SliderFloat("Ambient Scene Contribution", &activeSkybox.ambientContribution, 0.0f, 2.0f, "%.2f")) {
+                skyboxDirty = true;
+            }
+            ImGui::Spacing();
+            if (ImGui::Button("Reset Defaults##SkyboxReset")) {
+                activeSkybox.exposure = 1.0f;
+                activeSkybox.rotation = 0.0f;
+                activeSkybox.tint = glm::vec3(1.0f, 1.0f, 1.0f);
+                activeSkybox.ambientContribution = 0.5f;
+                skyboxDirty = true;
+            }
+            ImGui::Spacing();
+        }
+
+        // Live preview sync to world scene
+        if (scene.skyboxAssetPath == activeSkybox.filePath || scene.skyboxAssetPath.empty()) {
+            scene.enableSkybox = activeSkybox.enableSkybox;
+            scene.skyboxTexturePath = activeSkybox.hdrTexturePath;
+            scene.skyboxExposure = activeSkybox.exposure;
+            scene.skyboxRotation = activeSkybox.rotation;
+            scene.skyboxTint = activeSkybox.tint;
+            scene.skyboxAmbientContribution = activeSkybox.ambientContribution;
+            scene.skyboxAssetPath = activeSkybox.filePath;
+        }
+
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+void EngineUI::RenderWorldSkyboxSettingsModal(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(560, 520), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("🌌 World Skybox Settings###WorldSkyboxSettingsWin", &showSkyboxSettingsModal, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "World Environment Skybox Configuration");
+        ImGui::TextWrapped("Configure the active world skybox background and ambient scene illumination for the level.");
+        ImGui::Separator();
+
+        // Enable toggle
+        ImGui::Checkbox("Enable World Skybox", &scene.enableSkybox);
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("ACTIVE SKYBOX ASSET", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            std::vector<AssetMetadata> skyboxAssets;
+            for (const auto& kv : AssetRegistry::Get().GetAllAssets()) {
+                if (kv.second.type == AssetType::Skybox) {
+                    skyboxAssets.push_back(kv.second);
+                }
+            }
+
+            std::string currentSkyboxName = "(Direct Settings / No Asset)";
+            if (!scene.skyboxAssetPath.empty()) {
+                currentSkyboxName = std::filesystem::path(scene.skyboxAssetPath).stem().string();
+            }
+
+            ImGui::SetNextItemWidth(320.0f);
+            if (ImGui::BeginCombo("Skybox Asset", currentSkyboxName.c_str())) {
+                if (ImGui::Selectable("(Direct Custom Settings)", scene.skyboxAssetPath.empty())) {
+                    scene.skyboxAssetPath = "";
+                }
+                ImGui::Separator();
+                for (const auto& sa : skyboxAssets) {
+                    bool isSel = (scene.skyboxAssetPath == sa.sourcePath || scene.skyboxAssetPath.find(sa.objectName) != std::string::npos);
+                    std::string itemText = "🌌 " + sa.objectName;
+                    if (ImGui::Selectable(itemText.c_str(), isSel)) {
+                        SkyboxAsset loaded;
+                        std::filesystem::path fullPath = sa.sourcePath;
+                        if (!fullPath.is_absolute()) {
+                            fullPath = contentRootPath / sa.sourcePath;
+                        }
+                        if (LoadSkyboxFile(fullPath.string(), loaded)) {
+                            ApplySkyboxToScene(scene, loaded);
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            if (!scene.skyboxAssetPath.empty()) {
+                ImGui::SameLine();
+                if (ImGui::Button("Edit Asset##EditSkyboxAssetBtn")) {
+                    OpenSkyboxEditor(scene.skyboxAssetPath);
+                }
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("➕ New Asset")) {
+                showNewSkyboxPopup = true;
+                snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
+            }
+            ImGui::Spacing();
+        }
+
+        if (ImGui::CollapsingHeader("TEXTURE & ILLUMINATION", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            auto availableTextures = ScanProjectTextures();
+            AssetID dummyAssetId;
+            DrawTextureSlot("HDR Texture", scene.skyboxTexturePath, dummyAssetId, availableTextures);
+            ImGui::Spacing();
+
+            ImGui::SliderFloat("Exposure / Intensity", &scene.skyboxExposure, 0.05f, 10.0f, "%.2f");
+            ImGui::SliderFloat("Rotation (Azimuth)", &scene.skyboxRotation, 0.0f, 360.0f, "%.1f°");
+            ImGui::ColorEdit3("Sky Tint", &scene.skyboxTint.x);
+            ImGui::SliderFloat("Ambient Scene Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
+            ImGui::Spacing();
+
+            if (ImGui::Button("Reset to Defaults##ResetSkyboxWorld")) {
+                scene.enableSkybox = true;
+                scene.skyboxExposure = 1.0f;
+                scene.skyboxRotation = 0.0f;
+                scene.skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
+                scene.skyboxAmbientContribution = 0.5f;
+            }
+            ImGui::Spacing();
+        }
+
+        ImGui::Spacing();
+        if (ImGui::Button("Close", ImVec2(120, 0))) {
+            showSkyboxSettingsModal = false;
+        }
+    }
+    ImGui::End();
+}
+
 bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
     if (rawName.empty()) return false;
 
@@ -5368,6 +5677,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                 }
                 ImGui::SameLine();
+                if (ImGui::Button("🌌 New Skybox")) {
+                    showNewSkyboxPopup = true;
+                    snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Create an HDR Skybox Asset (.eskybox)");
+                ImGui::SameLine();
                 if (ImGui::Button("🧩 New Behaviour")) {
                     showNewBehaviourPopup = true;
                     std::string defName = "NewBehaviour";
@@ -5458,6 +5773,52 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 SyncRegistryWithUIProgress(contentRootPath);
                                 AddLog("LogContent", "Created material asset: " + newMat.name + " (" + newMat.assetId.ToString() + ")", 2);
                                 OpenMaterialEditor(matFilePath.string());
+                            }
+                        }
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (showNewSkyboxPopup) {
+                    ImGui::OpenPopup("Create Skybox##Modal");
+                    showNewSkyboxPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Skybox##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::Text("Enter HDR skybox asset name:");
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::InputText("##SkyboxNameInput", newSkyboxNameBuf, sizeof(newSkyboxNameBuf));
+                    ImGui::Spacing();
+                    if (ImGui::Button("Create", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                        if (strlen(newSkyboxNameBuf) > 0) {
+                            std::string skyFileName = newSkyboxNameBuf;
+                            if (skyFileName.find(".eskybox") == std::string::npos) skyFileName += ".eskybox";
+                            std::string diskSub = currentVirtualDir;
+                            if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                            if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                            std::filesystem::path targetDir = contentRootPath / diskSub;
+                            std::filesystem::create_directories(targetDir, ec);
+                            std::filesystem::path skyFilePath = targetDir / skyFileName;
+
+                            SkyboxAsset newSky;
+                            newSky.name = std::filesystem::path(skyFileName).stem().string();
+                            newSky.filePath = skyFilePath.string();
+                            newSky.assetId = AssetID::CreateRandom();
+                            newSky.virtualPath = AssetPath::Combine(currentVirtualDir, newSky.name);
+                            newSky.exposure = 1.0f;
+                            newSky.rotation = 0.0f;
+                            newSky.tint = glm::vec3(1.0f, 1.0f, 1.0f);
+                            newSky.ambientContribution = 0.5f;
+                            newSky.enableSkybox = true;
+
+                            if (SaveSkyboxFile(skyFilePath.string(), newSky)) {
+                                SyncRegistryWithUIProgress(contentRootPath);
+                                AddLog("LogContent", "Created Skybox asset: " + newSky.name + " (" + newSky.assetId.ToString() + ")", 2);
+                                OpenSkyboxEditor(skyFilePath.string());
                             }
                         }
                         ImGui::CloseCurrentPopup();
@@ -5773,6 +6134,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         ImGui::TableSetColumnIndex(0);
                         ImVec4 typeCol(0.7f, 0.7f, 0.7f, 1.0f);
                         if (meta.type == AssetType::Material) typeCol = ImVec4(0.35f, 0.85f, 1.0f, 1.0f);
+                        else if (meta.type == AssetType::Skybox) typeCol = ImVec4(0.85f, 0.45f, 1.0f, 1.0f);
                         else if (meta.type == AssetType::Texture) typeCol = ImVec4(0.40f, 0.90f, 0.50f, 1.0f);
                         else if (meta.type == AssetType::Mesh) typeCol = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
                         else if (meta.type == AssetType::Level) typeCol = ImVec4(0.30f, 0.85f, 0.95f, 1.0f);
@@ -5787,6 +6149,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 if (meta.type == AssetType::Material) {
                                     std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
                                     OpenMaterialEditor(fullMat.string());
+                                } else if (meta.type == AssetType::Skybox) {
+                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
+                                    OpenSkyboxEditor(fullSky.string());
                                 } else if (meta.type == AssetType::Mesh) {
                                     std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
                                     GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
@@ -5880,6 +6245,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         if (sel) {
                                             ApplyMaterialToActorAndChildren(scene, sel, ma);
                                         }
+                                    }
+                                }
+                                ImGui::Separator();
+                            }
+
+                            if (meta.type == AssetType::Skybox) {
+                                if (ImGui::MenuItem("🌌 Open in Skybox Editor")) {
+                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
+                                    OpenSkyboxEditor(fullSky.string());
+                                }
+                                if (ImGui::MenuItem("🌐 Set as Active World Skybox")) {
+                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
+                                    SkyboxAsset sky;
+                                    if (LoadSkyboxFile(fullSky.string(), sky)) {
+                                        ApplySkyboxToScene(scene, sky);
                                     }
                                 }
                                 ImGui::Separator();

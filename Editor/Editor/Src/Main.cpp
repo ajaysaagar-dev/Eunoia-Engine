@@ -136,6 +136,20 @@ struct MaterialShaderConstants
 };
 static_assert(sizeof(MaterialShaderConstants) == 128, "MaterialShaderConstants must be 128 bytes (32 floats)");
 
+struct SkyboxShaderConstants
+{
+	glm::mat4 invViewProj;
+	glm::vec3 cameraPos;
+	float exposure;
+	glm::vec3 tint;
+	float rotation;
+	float hasHdrTex;
+	float ambientContribution;
+	float pad0;
+	float pad1;
+};
+static_assert(sizeof(SkyboxShaderConstants) == 112, "SkyboxShaderConstants must be 112 bytes (28 floats)");
+
 // Window & GLFW
 static GLFWwindow* g_window = nullptr;
 static int g_currentWidth = WIDTH;
@@ -243,6 +257,10 @@ static int g_activeShadowSpotLights = 0;
 
 static ID3D12RootSignature* g_shadowRootSignature = nullptr;
 static ID3D12PipelineState* g_shadowPipelineState = nullptr;
+
+static ID3D12RootSignature* g_skyboxRootSignature = nullptr;
+static ID3D12PipelineState* g_skyboxPipelineState = nullptr;
+static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_skyboxDescriptorTables;
 
 static ID3D12Resource* g_shadowConstantBuffer = nullptr;
 static void* g_pShadowConstantMapped = nullptr;
@@ -975,6 +993,36 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 	return baseGpu;
 }
 
+D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSkyboxTable(const std::string& texturePath)
+{
+	std::string key = texturePath.empty() ? "__default_skybox__" : texturePath;
+	auto it = g_skyboxDescriptorTables.find(key);
+	if (it != g_skyboxDescriptorTables.end()) {
+		return it->second;
+	}
+
+	DX12GpuTexture tex = (!texturePath.empty() && texturePath != "none")
+		? GetOrLoadGPUTexture(texturePath, g_fallbackWhite, TextureUsageSlot::BaseColor)
+		: g_fallbackWhite;
+
+	UINT baseIdx = 0;
+	if (!TryAllocSrvDescriptors(1, baseIdx))
+	{
+		return g_srvDescHeap ? g_srvDescHeap->GetGPUDescriptorHandleForHeapStart() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	baseCpu.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+	baseGpu.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
+	g_d3dDevice->CopyDescriptorsSimple(1, baseCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	g_skyboxDescriptorTables[key] = baseGpu;
+	return baseGpu;
+}
+
 // Pre-upload all textures and material descriptor tables needed by current scene batches
 // Runs BEFORE renderFrame() resets the frame command list, eliminating GPU command queue deadlocks
 void PreRenderUploadTextures()
@@ -984,6 +1032,11 @@ void PreRenderUploadTextures()
 		if (batch.indexCount == 0) continue;
 		GetOrCreateMaterialTable(
 			batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex);
+	}
+
+	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
+	{
+		GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
 	}
 }
 
@@ -2381,6 +2434,176 @@ int createShadersAndPipeline()
 		return EXIT_FAILURE;
 	}
 
+	// 5. Create Skybox Root Signature and Pipeline State
+	D3D12_ROOT_PARAMETER skyboxRootParams[2] = {};
+
+	// Root Parameter 0: 28 32-bit constants for Skybox (invViewProj, cameraPos, exposure, tint, rotation, hasHdrTex, ambientContribution)
+	skyboxRootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	skyboxRootParams[0].Constants.ShaderRegister = 0;
+	skyboxRootParams[0].Constants.RegisterSpace = 0;
+	skyboxRootParams[0].Constants.Num32BitValues = 28;
+	skyboxRootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// Root Parameter 1: Descriptor Table (1 SRV: t0, Texture2D HDR Skybox)
+	D3D12_DESCRIPTOR_RANGE skyboxSrvRange = {};
+	skyboxSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	skyboxSrvRange.NumDescriptors = 1;
+	skyboxSrvRange.BaseShaderRegister = 0;
+	skyboxSrvRange.RegisterSpace = 0;
+	skyboxSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	skyboxRootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	skyboxRootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+	skyboxRootParams[1].DescriptorTable.pDescriptorRanges = &skyboxSrvRange;
+	skyboxRootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// Static Sampler for Skybox: Linear Wrap
+	D3D12_STATIC_SAMPLER_DESC skyboxSampler = {};
+	skyboxSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	skyboxSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	skyboxSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.MipLODBias = 0.0f;
+	skyboxSampler.MaxAnisotropy = 1;
+	skyboxSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	skyboxSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	skyboxSampler.MinLOD = 0.0f;
+	skyboxSampler.MaxLOD = D3D12_FLOAT32_MAX;
+	skyboxSampler.ShaderRegister = 0;
+	skyboxSampler.RegisterSpace = 0;
+	skyboxSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC skyboxRootSigDesc = {};
+	skyboxRootSigDesc.NumParameters = 2;
+	skyboxRootSigDesc.pParameters = skyboxRootParams;
+	skyboxRootSigDesc.NumStaticSamplers = 1;
+	skyboxRootSigDesc.pStaticSamplers = &skyboxSampler;
+	skyboxRootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+	ID3DBlob* serializedSkyboxRootSig = nullptr;
+	hr = D3D12SerializeRootSignature(&skyboxRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serializedSkyboxRootSig, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox RootSig error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	g_d3dDevice->CreateRootSignature(0, serializedSkyboxRootSig->GetBufferPointer(), serializedSkyboxRootSig->GetBufferSize(), IID_PPV_ARGS(&g_skyboxRootSignature));
+	serializedSkyboxRootSig->Release();
+
+	const char* skyboxHlsl = R"(
+		cbuffer SkyboxConstants : register(b0)
+		{
+			float4x4 invViewProj;
+			float3 cameraPos;
+			float exposure;
+			float3 tint;
+			float rotation;
+			float hasHdrTex;
+			float ambientContribution;
+			float2 padding;
+		};
+
+		struct SkyboxVSOutput
+		{
+			float4 position : SV_Position;
+			float3 rayDir : TEXCOORD0;
+		};
+
+		SkyboxVSOutput VSSkybox(uint vertexId : SV_VertexID)
+		{
+			SkyboxVSOutput output;
+			float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+			output.position = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 1.0f, 1.0f);
+
+			float4 worldPos = mul(invViewProj, float4(output.position.xy, 1.0f, 1.0f));
+			worldPos.xyz /= max(abs(worldPos.w), 1e-6f);
+			output.rayDir = normalize(worldPos.xyz - cameraPos);
+			return output;
+		}
+
+		Texture2D g_skyboxTexture : register(t0);
+		SamplerState g_skyboxSampler : register(s0);
+
+		float4 PSSkybox(SkyboxVSOutput input) : SV_Target
+		{
+			float3 dir = normalize(input.rayDir);
+			float rad = radians(rotation);
+			float cosR = cos(rad);
+			float sinR = sin(rad);
+			float3 rotDir;
+			rotDir.x = dir.x * cosR - dir.z * sinR;
+			rotDir.y = dir.y;
+			rotDir.z = dir.x * sinR + dir.z * cosR;
+
+			float3 color;
+			if (hasHdrTex > 0.5f)
+			{
+				const float PI = 3.14159265358979323846f;
+				float u = 0.5f + atan2(rotDir.z, rotDir.x) / (2.0f * PI);
+				float v = 0.5f - asin(clamp(rotDir.y, -1.0f, 1.0f)) / PI;
+				color = g_skyboxTexture.Sample(g_skyboxSampler, float2(u, v)).rgb;
+			}
+			else
+			{
+				float t = 0.5f * (rotDir.y + 1.0f);
+				color = lerp(float3(0.08f, 0.10f, 0.14f), float3(0.25f, 0.45f, 0.75f), saturate(t));
+				float horizon = 1.0f - abs(rotDir.y);
+				color += float3(0.18f, 0.18f, 0.15f) * pow(saturate(horizon), 6.0f);
+			}
+
+			color *= tint * exposure;
+			color = color / (color + 1.0f);
+			color = pow(saturate(color), 1.0f / 2.2f);
+			return float4(color, 1.0f);
+		}
+	)";
+
+	ID3DBlob* skyboxVS = nullptr;
+	ID3DBlob* skyboxPS = nullptr;
+	hr = D3DCompile(skyboxHlsl, strlen(skyboxHlsl), nullptr, nullptr, nullptr, "VSSkybox", "vs_5_0", 0, 0, &skyboxVS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	hr = D3DCompile(skyboxHlsl, strlen(skyboxHlsl), nullptr, nullptr, nullptr, "PSSkybox", "ps_5_0", 0, 0, &skyboxPS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyboxPsoDesc = {};
+	skyboxPsoDesc.InputLayout = { nullptr, 0 };
+	skyboxPsoDesc.pRootSignature = g_skyboxRootSignature;
+	skyboxPsoDesc.VS = { skyboxVS->GetBufferPointer(), skyboxVS->GetBufferSize() };
+	skyboxPsoDesc.PS = { skyboxPS->GetBufferPointer(), skyboxPS->GetBufferSize() };
+	skyboxPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	skyboxPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	skyboxPsoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+	skyboxPsoDesc.RasterizerState.DepthClipEnable = TRUE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	skyboxPsoDesc.DepthStencilState.DepthEnable = TRUE;
+	skyboxPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // Don't write depth!
+	skyboxPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // Draw only where depth is 1.0 (empty background)
+	skyboxPsoDesc.DepthStencilState.StencilEnable = FALSE;
+	skyboxPsoDesc.SampleMask = UINT_MAX;
+	skyboxPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	skyboxPsoDesc.NumRenderTargets = 1;
+	skyboxPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	skyboxPsoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	skyboxPsoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&skyboxPsoDesc, IID_PPV_ARGS(&g_skyboxPipelineState));
+	skyboxVS->Release();
+	skyboxPS->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create skybox PSO: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
 	return EXIT_SUCCESS;
 }
 
@@ -2632,6 +2855,12 @@ void updateConstantBuffer()
 	cb.cameraPos = g_camera.GetPosition();
 	cb.ambientIntensity = g_scene.ambientIntensity;
 	cb.ambientColor = glm::vec4(g_scene.ambientColor, 1.0f);
+	if (g_scene.enableSkybox)
+	{
+		float skyAmbient = g_scene.skyboxAmbientContribution * g_scene.skyboxExposure * 0.25f;
+		cb.ambientIntensity = std::max(cb.ambientIntensity, skyAmbient);
+		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, g_scene.skyboxTint, 0.5f), 1.0f);
+	}
 	cb.lightDir = lightDir;
 	cb.shadowBias = g_scene.shadowBias;
 	cb.lightColor = g_scene.lightColor * g_scene.lightIntensity;
@@ -3142,6 +3371,46 @@ void renderFrame()
 	}
 
 	// ----------------------------------------------------
+	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
+	// ----------------------------------------------------
+	if (!g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	{
+		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
+		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+		g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+		EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+		if (aspect <= 0.01f || std::isnan(aspect)) aspect = 1.777f;
+
+		glm::mat4 view = g_camera.GetViewMatrix();
+		glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+		glm::mat4 invVP = glm::inverse(proj * view);
+
+		SkyboxShaderConstants skyConsts = {};
+		skyConsts.invViewProj = invVP;
+		skyConsts.cameraPos = g_camera.GetPosition();
+		skyConsts.exposure = g_scene.skyboxExposure;
+		skyConsts.tint = g_scene.skyboxTint;
+		skyConsts.rotation = g_scene.skyboxRotation;
+		skyConsts.ambientContribution = g_scene.skyboxAmbientContribution;
+
+		bool hasHdrTex = !g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none";
+		skyConsts.hasHdrTex = hasHdrTex ? 1.0f : 0.0f;
+
+		g_commandList->SetGraphicsRoot32BitConstants(0, 28, &skyConsts, 0);
+
+		D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+		if (skyTable.ptr != 0)
+		{
+			g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+		}
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+	}
+
+	// ----------------------------------------------------
 	// PASS 2.5: Selected Camera Picture-in-Picture (PiP) Hardware Pass
 	// ----------------------------------------------------
 	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
@@ -3223,6 +3492,37 @@ void renderFrame()
 
 			g_commandList->SetGraphicsRootDescriptorTable(2, tableHandle);
 			g_commandList->DrawIndexedInstanced(drawCount, 1, (UINT)batch.startIndex, 0, 0);
+		}
+
+		if (g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+		{
+			g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+			g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+			const GameObject* selCamObj = g_scene.FindObject(pipRect.selectedCameraId);
+			glm::mat4 pipView = selCamObj ? glm::inverse(g_scene.GetWorldMatrix(*selCamObj)) : g_camera.GetViewMatrix();
+			float pipAspect = (ph > 0.0f) ? (pw / ph) : 1.777f;
+			float pipFov = (selCamObj && selCamObj->camera.fov > 0.0f) ? glm::radians(selCamObj->camera.fov) : glm::radians(45.0f);
+			glm::mat4 pipProj = glm::perspective(pipFov, pipAspect, 0.1f, 500.0f);
+			glm::mat4 pipInvVP = glm::inverse(pipProj * pipView);
+
+			SkyboxShaderConstants pipSkyConsts = {};
+			pipSkyConsts.invViewProj = pipInvVP;
+			pipSkyConsts.cameraPos = selCamObj ? g_scene.GetWorldPosition(*selCamObj) : g_camera.GetPosition();
+			pipSkyConsts.exposure = g_scene.skyboxExposure;
+			pipSkyConsts.tint = g_scene.skyboxTint;
+			pipSkyConsts.rotation = g_scene.skyboxRotation;
+			pipSkyConsts.ambientContribution = g_scene.skyboxAmbientContribution;
+			pipSkyConsts.hasHdrTex = (!g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none") ? 1.0f : 0.0f;
+
+			g_commandList->SetGraphicsRoot32BitConstants(0, 28, &pipSkyConsts, 0);
+			D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+			if (skyTable.ptr != 0)
+			{
+				g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+			}
+			g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			g_commandList->DrawInstanced(3, 1, 0, 0);
 		}
 
 		// Restore main viewport and scissor
@@ -3329,6 +3629,9 @@ void cleanUpD3D12()
 	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
 	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
 	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
 
 	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
 	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }
@@ -3737,6 +4040,9 @@ bool RecoverD3D12Device(HWND hwnd)
 	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
 	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
 	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
 
 	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
 	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }

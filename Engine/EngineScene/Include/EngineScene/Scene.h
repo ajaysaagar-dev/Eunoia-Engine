@@ -67,6 +67,15 @@ public:
     glm::vec3 ambientColor{0.15f, 0.15f, 0.18f};
     glm::vec4 clearColor{0.07f, 0.07f, 0.08f, 1.0f};
 
+    // Skybox Environment Settings
+    bool enableSkybox = true;
+    std::string skyboxAssetPath = "";
+    std::string skyboxTexturePath = "";
+    float skyboxExposure = 1.0f;
+    float skyboxRotation = 0.0f; // degrees 0..360
+    glm::vec3 skyboxTint{1.0f, 1.0f, 1.0f};
+    float skyboxAmbientContribution = 0.5f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
@@ -835,6 +844,13 @@ public:
         ambientIntensity = 0.0f;
         playModePreObjects.clear();
         playModePreSelectedId = -1;
+        enableSkybox = true;
+        skyboxAssetPath = "";
+        skyboxTexturePath = "";
+        skyboxExposure = 1.0f;
+        skyboxRotation = 0.0f;
+        skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
+        skyboxAmbientContribution = 0.5f;
     }
 
     // Play Mode State & Runtime Lifecycle (dev.md Section 30-36)

@@ -18,6 +18,7 @@ enum class AssetType {
     Particle,
     Script,
     Behaviour,
+    Skybox,
     Data
 };
 
@@ -36,6 +37,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Particle:     return "Particle";
         case AssetType::Script:       return "Script";
         case AssetType::Behaviour:    return "Behaviour";
+        case AssetType::Skybox:       return "Skybox";
         case AssetType::Data:         return "Data";
         default:                      return "Unknown";
     }
@@ -57,6 +59,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "particle")     return AssetType::Particle;
     if (s == "script")       return AssetType::Script;
     if (s == "behaviour")    return AssetType::Behaviour;
+    if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "data")         return AssetType::Data;
     return AssetType::Unknown;
 }
@@ -71,6 +74,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "emat" || e == "mat") {
         return AssetType::Material;
+    }
+    if (e == "eskybox" || e == "ehdr" || e == "skybox") {
+        return AssetType::Skybox;
     }
     if (e == "obj" || e == "fbx" || e == "gltf" || e == "glb") {
         return AssetType::Mesh;
@@ -111,6 +117,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::Particle:     return "✨";
         case AssetType::Script:       return "📜";
         case AssetType::Behaviour:    return "🧩";
+        case AssetType::Skybox:       return "🌌";
         case AssetType::Data:         return "📊";
         default:                      return "📄";
     }

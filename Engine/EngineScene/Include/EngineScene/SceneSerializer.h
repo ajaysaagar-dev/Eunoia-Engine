@@ -58,6 +58,15 @@ public:
         file << "      \"size\": " << scene.gridSize << ",\n";
         file << "      \"divisions\": " << scene.gridDivisions << ",\n";
         file << "      \"color\": " << WriteVec3(scene.gridColor) << "\n";
+        file << "    },\n";
+        file << "    \"skybox\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enableSkybox) << ",\n";
+        file << "      \"assetPath\": " << QuoteStr(scene.skyboxAssetPath) << ",\n";
+        file << "      \"texturePath\": " << QuoteStr(scene.skyboxTexturePath) << ",\n";
+        file << "      \"exposure\": " << scene.skyboxExposure << ",\n";
+        file << "      \"rotation\": " << scene.skyboxRotation << ",\n";
+        file << "      \"tint\": " << WriteVec3(scene.skyboxTint) << ",\n";
+        file << "      \"ambientContribution\": " << scene.skyboxAmbientContribution << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -611,6 +620,23 @@ private:
             p = gBlock.find("\"size\""); if (p != std::string::npos) scene.gridSize = ParseFloatAt(gBlock, p, 16.0f);
             p = gBlock.find("\"divisions\""); if (p != std::string::npos) scene.gridDivisions = ParseIntAt(gBlock, p, 16);
             p = gBlock.find("\"color\""); if (p != std::string::npos) scene.gridColor = ParseVec3(gBlock, p);
+        }
+
+        // Skybox
+        size_t skyPos = envBlock.find("\"skybox\"");
+        if (skyPos != std::string::npos) {
+            size_t sStart = envBlock.find('{', skyPos);
+            size_t sEnd = FindMatchingBrace(envBlock, sStart);
+            std::string sBlock = envBlock.substr(sStart, sEnd - sStart + 1);
+
+            size_t p;
+            p = sBlock.find("\"enabled\""); if (p != std::string::npos) scene.enableSkybox = ParseBoolAt(sBlock, p, true);
+            p = sBlock.find("\"assetPath\""); if (p != std::string::npos) scene.skyboxAssetPath = ParseString(sBlock, "\"assetPath\"", "");
+            p = sBlock.find("\"texturePath\""); if (p != std::string::npos) scene.skyboxTexturePath = ParseString(sBlock, "\"texturePath\"", "");
+            p = sBlock.find("\"exposure\""); if (p != std::string::npos) scene.skyboxExposure = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"rotation\""); if (p != std::string::npos) scene.skyboxRotation = ParseFloatAt(sBlock, p, 0.0f);
+            p = sBlock.find("\"tint\""); if (p != std::string::npos) scene.skyboxTint = ParseVec3(sBlock, p);
+            p = sBlock.find("\"ambientContribution\""); if (p != std::string::npos) scene.skyboxAmbientContribution = ParseFloatAt(sBlock, p, 0.5f);
         }
     }
 

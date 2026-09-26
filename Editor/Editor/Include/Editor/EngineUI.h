@@ -78,6 +78,24 @@ struct MaterialAsset {
     int materialDebugMode = 0;
 };
 
+struct SkyboxAsset {
+    AssetID assetId;
+    std::string virtualPath = "";
+    std::string name = "Skybox_New";
+    std::string filePath = "";
+
+    // HDR Texture (Equirectangular panorama or cubemap)
+    std::string hdrTexturePath = "";
+    AssetID hdrTextureAssetId;
+
+    // Skybox Properties
+    float exposure = 1.0f;
+    float rotation = 0.0f; // degrees 0..360
+    glm::vec3 tint{1.0f, 1.0f, 1.0f};
+    float ambientContribution = 0.5f;
+    bool enableSkybox = true;
+};
+
 class EngineUI {
 public:
     // Window visibility flags (UE5 panels)
@@ -311,6 +329,19 @@ public:
     std::vector<TextureAssetEntry> ScanProjectTextures();
     bool DrawTextureSlot(const char* label, std::string& textureSlotValue, AssetID& textureSlotAssetId, const std::vector<TextureAssetEntry>& availableTextures);
 
+    // Skybox Asset File I/O & World Skybox Settings
+    bool showSkyboxEditor = false;
+    bool showSkyboxSettingsModal = false;
+    bool showNewSkyboxPopup = false;
+    char newSkyboxNameBuf[64] = "Skybox_New";
+    SkyboxAsset activeSkybox;
+    bool skyboxDirty = false;
+
+    static bool LoadSkyboxFile(const std::string& path, SkyboxAsset& outSkybox);
+    static bool SaveSkyboxFile(const std::string& path, const SkyboxAsset& skybox);
+    void OpenSkyboxEditor(const std::string& path);
+    void ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox);
+
     // Behaviours & Play Mode (dev.md)
     bool showAddBehaviourPopup = false;
     char behaviourSearchBuf[64] = "";
@@ -421,6 +452,8 @@ private:
     void RenderDetails(Scene& scene);
     void RenderContentBrowser(Scene& scene);
     void RenderMaterialEditor(Scene& scene);
+    void RenderSkyboxEditor(Scene& scene);
+    void RenderWorldSkyboxSettingsModal(Scene& scene);
     void RenderReferenceViewer(Scene& scene);
     void RenderCookModal();
     void RenderHelpModal();
