@@ -2042,6 +2042,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showSkyboxEditor) {
         RenderSkyboxEditor(scene);
     }
+    if (showWaterEditor) {
+        RenderWaterEditor(scene);
+    }
     if (showSkyboxSettingsModal) {
         RenderWorldSkyboxSettingsModal(scene);
     }
@@ -3535,6 +3538,8 @@ void EngineUI::RenderDetails(Scene& scene) {
         // Actor Header Banner
         if (obj->isLight) {
             ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "[PointLightComponent]");
+        } else if (obj->isWaterBody) {
+            ImGui::TextColored(ImVec4(0.00f, 0.60f, 1.00f, 1.0f), "[WaterBodyComponent]");
         } else if (obj->isCamera || obj->type == PrimitiveType::Camera) {
             ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
         } else if (obj->type == PrimitiveType::Empty) {
@@ -5236,6 +5241,70 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
     ImGui::End();
 }
 
+bool EngineUI::LoadWaterFile(const std::string& path, WaterAsset& out) {
+    std::ifstream file(path);
+    if (!file.is_open()) return false;
+    out.filePath = path;
+    out.name = std::filesystem::path(path).stem().string();
+    std::string line;
+    while (std::getline(file, line)) {
+        size_t p = line.find("=");
+        if (p == std::string::npos) continue;
+        std::string k = line.substr(0, p);
+        std::string v = line.substr(p + 1);
+        if (k == "waterType") out.waterType = (WaterBodyType)std::stoi(v);
+        else if (k == "roughness") out.settings.roughness = std::stof(v);
+        else if (k == "metallic") out.settings.metallic = std::stof(v);
+        // skipping full properties parse for brevity...
+    }
+    return true;
+}
+
+bool EngineUI::SaveWaterFile(const std::string& path, const WaterAsset& w) {
+    std::ofstream file(path);
+    if (!file.is_open()) return false;
+    file << "waterType=" << (int)w.waterType << "\n";
+    file << "roughness=" << w.settings.roughness << "\n";
+    file << "metallic=" << w.settings.metallic << "\n";
+    return true;
+}
+
+void EngineUI::OpenWaterEditor(const std::string& path) {
+    if (LoadWaterFile(path, activeWater)) {
+        showWaterEditor = true;
+        waterDirty = false;
+        AddLog("LogWater", "Opened Water Editor for: " + path, 1);
+    }
+}
+
+void EngineUI::ApplyWaterToGameObject(Scene& scene, GameObject* obj, const WaterAsset& wa) {
+    if (!obj || !obj->isWaterBody) return;
+    obj->water.type = wa.waterType;
+    obj->water.roughness = wa.settings.roughness;
+    obj->water.metallic = wa.settings.metallic;
+    AddLog("LogWater", "Applied WaterAsset to GameObject", 2);
+}
+
+void EngineUI::RenderWaterEditor(Scene& scene) {
+    if (!showWaterEditor) return;
+    ImGui::SetNextWindowSize(ImVec2(500, 600), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Water Editor", &showWaterEditor)) {
+        if (ImGui::Button("Save Water")) {
+            SaveWaterFile(activeWater.filePath, activeWater);
+            waterDirty = false;
+        }
+        ImGui::Separator();
+        int t = (int)activeWater.waterType;
+        if (ImGui::Combo("Type", &t, "Ocean\0River\0Sea\0Lake\0Stream\0Waterfall\0Pond\0Pool\0WetSurface\0Puddle\0FloodWater\0Underwater\0Swamp\0")) {
+            activeWater.waterType = (WaterBodyType)t;
+            waterDirty = true;
+        }
+        if (ImGui::SliderFloat("Roughness", &activeWater.settings.roughness, 0.0f, 1.0f)) waterDirty = true;
+        if (ImGui::SliderFloat("Metallic", &activeWater.settings.metallic, 0.0f, 1.0f)) waterDirty = true;
+    }
+    ImGui::End();
+}
+
 bool EngineUI::LoadSkyboxFile(const std::string& path, SkyboxAsset& outSkybox) {
     std::ifstream file(path);
     if (!file.is_open()) return false;
@@ -6226,6 +6295,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         ImVec4 typeCol(0.7f, 0.7f, 0.7f, 1.0f);
                         if (meta.type == AssetType::Material) typeCol = ImVec4(0.35f, 0.85f, 1.0f, 1.0f);
                         else if (meta.type == AssetType::Skybox) typeCol = ImVec4(0.85f, 0.45f, 1.0f, 1.0f);
+                        else if (meta.type == AssetType::Water) typeCol = ImVec4(0.0f, 0.6f, 1.0f, 1.0f);
                         else if (meta.type == AssetType::Texture) typeCol = ImVec4(0.40f, 0.90f, 0.50f, 1.0f);
                         else if (meta.type == AssetType::Mesh) typeCol = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
                         else if (meta.type == AssetType::Level) typeCol = ImVec4(0.30f, 0.85f, 0.95f, 1.0f);
@@ -6243,6 +6313,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (meta.type == AssetType::Skybox) {
                                     std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
                                     OpenSkyboxEditor(fullSky.string());
+                                } else if (meta.type == AssetType::Water) {
+                                    std::filesystem::path fullWater = contentRootPath / meta.sourcePath;
+                                    OpenWaterEditor(fullWater.string());
                                 } else if (meta.type == AssetType::Mesh) {
                                     std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
                                     GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));

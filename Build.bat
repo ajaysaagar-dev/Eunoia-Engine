@@ -80,6 +80,8 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "-I%PROJECT_DIR%\Engine\EngineAssets\Include" ^
     "-I%PROJECT_DIR%\Engine\EunoiaPluginCore\Include" ^
     "-I%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Include" ^
+    "-I%PROJECT_DIR%\Plugins\water\include" ^
+    "-I%PROJECT_DIR%\Plugins\skybox\include" ^
     "-I%PROJECT_DIR%\Editor\Editor\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^

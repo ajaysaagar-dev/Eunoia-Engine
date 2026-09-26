@@ -96,6 +96,9 @@ public:
     // Multiple Point Lights Support
     std::vector<PointLight> pointLights;
 
+    // Water Bodies Support
+    std::vector<WaterBodyComponent> waterBodies;
+
     // Grid
     bool showGrid = true;
     float gridSize = 16.0f;
@@ -312,6 +315,29 @@ public:
             GameObject* parent = FindObject(parentId);
             if (parent) parent->childIds.push_back(id);
         }
+        selectedId = id;
+        return obj;
+    }
+
+    GameObject& AddWaterBody(WaterBodyType wbType, glm::vec3 pos, const std::string& name = "") {
+        if (onPreChange) onPreChange("Add Water Body");
+        int id = nextId++;
+        std::string finalName = name.empty() ? ("Water_" + std::to_string(id)) : name;
+        objects.emplace_back(id, finalName, PrimitiveType::WaterBody, pos);
+        GameObject& obj = objects.back();
+
+        obj.isWaterBody = true;
+        obj.water.type = wbType;
+        obj.blendMode = 2; // Translucent
+        obj.twoSided = true;
+
+        obj.params.width = 10.0f;
+        obj.params.depth = 10.0f;
+        obj.params.segmentsX = 32;
+        obj.params.segmentsZ = 32;
+
+        obj.mesh = GeometryBuilder::CreatePlane(10.0f, 10.0f, 32, 32);
+
         selectedId = id;
         return obj;
     }
@@ -844,6 +870,7 @@ public:
     void Clear() {
         objects.clear();
         pointLights.clear();
+        waterBodies.clear();
         selectedId = -1;
         activeLevelCameraId = -1;
         nextId = 1;

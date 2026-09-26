@@ -210,6 +210,15 @@ public:
             file << "      \"camFarPlane\": " << obj.camera.farPlane << ",\n";
             file << "      \"camAspectRatio\": " << obj.camera.aspectRatio << ",\n";
 
+            // Water Component Properties
+            file << "      \"isWaterBody\": " << BoolStr(obj.isWaterBody) << ",\n";
+            file << "      \"waterType\": " << (int)obj.water.type << ",\n";
+            file << "      \"waterName\": " << QuoteStr(obj.water.name) << ",\n";
+            file << "      \"waterRoughness\": " << obj.water.roughness << ",\n";
+            file << "      \"waterMetallic\": " << obj.water.metallic << ",\n";
+            file << "      \"waterOpacity\": " << obj.water.opacity << ",\n";
+            file << "      \"waterEnableDepth\": " << BoolStr(obj.water.enableDepth) << ",\n";
+
             // Attached Behaviours (dev.md Section 14)
             file << "      \"behaviours\": [\n";
             for (size_t bi = 0; bi < obj.behaviours.size(); ++bi) {
@@ -866,6 +875,16 @@ private:
             p = actorBlock.find("\"camNearPlane\""); if (p != std::string::npos) obj.camera.nearPlane = ParseFloatAt(actorBlock, p, 0.1f);
             p = actorBlock.find("\"camFarPlane\""); if (p != std::string::npos) obj.camera.farPlane = ParseFloatAt(actorBlock, p, 1000.0f);
             p = actorBlock.find("\"camAspectRatio\""); if (p != std::string::npos) obj.camera.aspectRatio = ParseFloatAt(actorBlock, p, 16.0f / 9.0f);
+
+            // Parse Water Properties
+            p = actorBlock.find("\"isWaterBody\""); if (p != std::string::npos) obj.isWaterBody = ParseBoolAt(actorBlock, p, false);
+            if (obj.type == PrimitiveType::WaterBody) obj.isWaterBody = true;
+            p = actorBlock.find("\"waterType\""); if (p != std::string::npos) obj.water.type = (WaterBodyType)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"waterName\""); if (p != std::string::npos) obj.water.name = ParseStringAt(actorBlock, p, "WaterBody");
+            p = actorBlock.find("\"waterRoughness\""); if (p != std::string::npos) obj.water.roughness = ParseFloatAt(actorBlock, p, 0.1f);
+            p = actorBlock.find("\"waterMetallic\""); if (p != std::string::npos) obj.water.metallic = ParseFloatAt(actorBlock, p, 0.1f);
+            p = actorBlock.find("\"waterOpacity\""); if (p != std::string::npos) obj.water.opacity = ParseFloatAt(actorBlock, p, 0.8f);
+            p = actorBlock.find("\"waterEnableDepth\""); if (p != std::string::npos) obj.water.enableDepth = ParseBoolAt(actorBlock, p, true);
 
             // Parse Attached Behaviours (dev.md Section 14)
             size_t behPos = actorBlock.find("\"behaviours\"");

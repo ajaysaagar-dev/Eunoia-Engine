@@ -103,6 +103,15 @@ struct SkyboxAsset {
     float skyboxLightingDiffuse = 1.0f;
 };
 
+struct WaterAsset {
+    AssetID assetId;
+    std::string virtualPath = "";
+    std::string name = "WB_NewWater";
+    std::string filePath = "";
+    WaterBodyType waterType = WaterBodyType::Ocean;
+    WaterBodyComponent settings; // all water settings
+};
+
 class EngineUI {
 public:
     // Window visibility flags (UE5 panels)
@@ -349,6 +358,18 @@ public:
     void OpenSkyboxEditor(const std::string& path);
     void ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox);
 
+    // Water Asset File I/O & Water Settings
+    bool showWaterEditor = false;
+    bool showNewWaterPopup = false;
+    char newWaterNameBuf[64] = "WB_New";
+    WaterAsset activeWater;
+    bool waterDirty = false;
+
+    static bool LoadWaterFile(const std::string& path, WaterAsset& out);
+    static bool SaveWaterFile(const std::string& path, const WaterAsset& w);
+    void OpenWaterEditor(const std::string& path);
+    void ApplyWaterToGameObject(Scene& scene, GameObject* obj, const WaterAsset& wa);
+
     // Behaviours & Play Mode (dev.md)
     bool showAddBehaviourPopup = false;
     char behaviourSearchBuf[64] = "";
@@ -460,6 +481,7 @@ private:
     void RenderContentBrowser(Scene& scene);
     void RenderMaterialEditor(Scene& scene);
     void RenderSkyboxEditor(Scene& scene);
+    void RenderWaterEditor(Scene& scene);
     void RenderWorldSkyboxSettingsModal(Scene& scene);
     void RenderReferenceViewer(Scene& scene);
     void RenderCookModal();

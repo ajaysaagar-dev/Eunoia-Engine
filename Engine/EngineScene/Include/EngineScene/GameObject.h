@@ -148,7 +148,8 @@ enum class PrimitiveType {
     SpotLight,
     AreaLight,
     SkyLight,
-    Camera
+    Camera,
+    WaterBody
 };
 
 inline const char* GetPrimitiveTypeName(PrimitiveType type) {
@@ -177,6 +178,7 @@ inline const char* GetPrimitiveTypeName(PrimitiveType type) {
         case PrimitiveType::AreaLight:        return "Area Light";
         case PrimitiveType::SkyLight:         return "Sky Light";
         case PrimitiveType::Camera:           return "Camera";
+        case PrimitiveType::WaterBody:        return "Water Body";
         default:                              return "Object";
     }
 }
@@ -200,6 +202,109 @@ struct CameraComponent {
     float nearPlane = 0.1f;
     float farPlane = 1000.0f;
     float aspectRatio = 16.0f / 9.0f;
+};
+
+enum class WaterBodyType {
+    Ocean, River, Sea, Lake, Stream, Waterfall, Pond, Pool, WetSurface, Puddle, FloodWater, Underwater, Swamp
+};
+
+struct WaterBodyComponent {
+    // Identity
+    WaterBodyType type = WaterBodyType::Ocean;
+    std::string name = "WaterBody";
+
+    // Surface Appearance
+    glm::vec4 waterColor = {0.0f, 0.3f, 0.5f, 1.0f};
+    glm::vec4 shallowColor = {0.2f, 0.6f, 0.8f, 1.0f};
+    float roughness = 0.1f;
+    float metallic = 0.1f;
+    float opacity = 0.8f;
+    float refractionStrength = 0.5f;
+    float reflectionStrength = 0.8f;
+    float specularIntensity = 1.0f;
+
+    // Normal Maps / Waves
+    std::string normalMap1Path = "";
+    std::string normalMap2Path = "";
+    float normalScale = 1.0f;
+    float waveSpeed = 1.0f;
+    float waveScale = 1.0f;
+    float waveHeight = 1.0f;
+
+    // Foam
+    bool enableFoam = false;
+    glm::vec4 foamColor = {1.0f, 1.0f, 1.0f, 1.0f};
+    float foamScale = 1.0f;
+    float foamOpacity = 1.0f;
+    std::string foamTexturePath = "";
+
+    // Depth & Refraction
+    bool enableDepth = true;
+    float depthFadeDistance = 10.0f;
+    bool enableRefraction = true;
+    float distortionStrength = 0.1f;
+    bool caustics = false;
+    float causticsScale = 1.0f;
+    float causticsSpeed = 1.0f;
+
+    // Environment & Lighting
+    bool receiveEnvironmentLight = true;
+    float environmentLightIntensity = 1.0f;
+    bool reflectSkybox = true;
+    float subsurfaceScattering = 0.2f;
+    glm::vec3 subsurfaceColor = {0.1f, 0.4f, 0.4f};
+
+    // Flow (Rivers, Streams, Waterfalls)
+    bool enableFlow = false;
+    glm::vec2 flowDirection = {1.0f, 0.0f};
+    float flowSpeed = 1.0f;
+    std::string flowMapPath = "";
+    float flowTiling = 1.0f;
+
+    // Physics (Ocean, Sea)
+    bool enableWaves = true;
+    float oceanWaveAmplitude = 1.0f;
+    float oceanWavePeriod = 10.0f;
+    float oceanWaveDirection = 0.0f;
+    int tessellationLevel = 4;
+
+    // Specific: Waterfall
+    float waterfallFallHeight = 10.0f;
+    float waterfallFlowRate = 1.0f;
+    float waterfallSprayAmount = 0.5f;
+
+    // Specific: Underwater
+    glm::vec3 underwaterFogColor = {0.0f, 0.1f, 0.2f};
+    float underwaterFogDensity = 1.0f;
+    float underwaterVisibilityDistance = 20.0f;
+    bool enableUnderwaterDistortion = true;
+    float underwaterDistortionStrength = 1.0f;
+    float underwaterDistortionSpeed = 1.0f;
+
+    // Specific: WetSurface / Puddle
+    float wetness = 0.5f;
+    float puddleSize = 1.0f;
+    float puddleDepth = 0.1f;
+    bool animatePuddle = false;
+    float rippleSpeed = 1.0f;
+    float rippleScale = 1.0f;
+
+    // Specific: SwampWater
+    float swampDensity = 0.5f;
+    glm::vec3 swampColor = {0.1f, 0.2f, 0.1f};
+    float algaeAmount = 0.2f;
+
+    // Geometry
+    float width = 10.0f;
+    float length = 10.0f;
+    float elevation = 0.0f;
+    int gridResolution = 32;
+
+    // Rendering
+    bool castShadows = false;
+    bool receiveShadows = true;
+    bool visible = true;
+    int renderLayer = 0;
 };
 
 enum class Mobility {
@@ -475,6 +580,8 @@ struct GameObject {
     LightComponent light;
     bool isCamera = false;
     CameraComponent camera;
+    bool isWaterBody = false;
+    WaterBodyComponent water;
     PrimitiveParams params;
 
     PrimitiveMesh mesh;
@@ -556,6 +663,8 @@ struct GameObject {
         light = other.light;
         isCamera = other.isCamera;
         camera = other.camera;
+        isWaterBody = other.isWaterBody;
+        water = other.water;
         params = other.params;
         mesh = other.mesh;
         scene = other.scene;

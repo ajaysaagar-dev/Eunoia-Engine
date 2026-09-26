@@ -19,6 +19,7 @@ enum class AssetType {
     Script,
     Behaviour,
     Skybox,
+    Water,
     Data
 };
 
@@ -38,6 +39,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Script:       return "Script";
         case AssetType::Behaviour:    return "Behaviour";
         case AssetType::Skybox:       return "Skybox";
+        case AssetType::Water:        return "Water Body";
         case AssetType::Data:         return "Data";
         default:                      return "Unknown";
     }
@@ -60,6 +62,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "script")       return AssetType::Script;
     if (s == "behaviour")    return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
+    if (s == "water")        return AssetType::Water;
     if (s == "data")         return AssetType::Data;
     return AssetType::Unknown;
 }
@@ -77,6 +80,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "eskybox" || e == "ehdr" || e == "skybox") {
         return AssetType::Skybox;
+    }
+    if (e == "water") {
+        return AssetType::Water;
     }
     if (e == "obj" || e == "fbx" || e == "gltf" || e == "glb") {
         return AssetType::Mesh;

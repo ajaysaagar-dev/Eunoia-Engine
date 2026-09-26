@@ -1,0 +1,9 @@
+{
+  "name": "SkyboxSystem",
+  "version": "1.0",
+  "description": "Skybox and environment lighting plugin",
+  "author": "Eunoia Engine",
+  "category": "World",
+  "isCore": false,
+  "loadPriority": 100
+}
