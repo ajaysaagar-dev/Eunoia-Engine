@@ -66,7 +66,12 @@ public:
         file << "      \"exposure\": " << scene.skyboxExposure << ",\n";
         file << "      \"rotation\": " << scene.skyboxRotation << ",\n";
         file << "      \"tint\": " << WriteVec3(scene.skyboxTint) << ",\n";
-        file << "      \"ambientContribution\": " << scene.skyboxAmbientContribution << "\n";
+        file << "      \"ambientContribution\": " << scene.skyboxAmbientContribution << ",\n";
+        file << "      \"enableLighting\": " << BoolStr(scene.enableSkyboxLighting) << ",\n";
+        file << "      \"lightingIntensity\": " << scene.skyboxLightingIntensity << ",\n";
+        file << "      \"lightingColor\": " << WriteVec3(scene.skyboxLightingColor) << ",\n";
+        file << "      \"lightingSpecular\": " << scene.skyboxLightingSpecular << ",\n";
+        file << "      \"lightingDiffuse\": " << scene.skyboxLightingDiffuse << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -637,6 +642,11 @@ private:
             p = sBlock.find("\"rotation\""); if (p != std::string::npos) scene.skyboxRotation = ParseFloatAt(sBlock, p, 0.0f);
             p = sBlock.find("\"tint\""); if (p != std::string::npos) scene.skyboxTint = ParseVec3(sBlock, p);
             p = sBlock.find("\"ambientContribution\""); if (p != std::string::npos) scene.skyboxAmbientContribution = ParseFloatAt(sBlock, p, 0.5f);
+            p = sBlock.find("\"enableLighting\""); if (p != std::string::npos) scene.enableSkyboxLighting = ParseBoolAt(sBlock, p, false);
+            p = sBlock.find("\"lightingIntensity\""); if (p != std::string::npos) scene.skyboxLightingIntensity = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"lightingColor\""); if (p != std::string::npos) scene.skyboxLightingColor = ParseVec3(sBlock, p);
+            p = sBlock.find("\"lightingSpecular\""); if (p != std::string::npos) scene.skyboxLightingSpecular = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"lightingDiffuse\""); if (p != std::string::npos) scene.skyboxLightingDiffuse = ParseFloatAt(sBlock, p, 1.0f);
         }
     }
 

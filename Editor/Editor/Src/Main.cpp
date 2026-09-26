@@ -2506,7 +2506,7 @@ int createShadersAndPipeline()
 		struct SkyboxVSOutput
 		{
 			float4 position : SV_Position;
-			float3 rayDir : TEXCOORD0;
+			float2 clipPos : TEXCOORD0;
 		};
 
 		SkyboxVSOutput VSSkybox(uint vertexId : SV_VertexID)
@@ -2514,10 +2514,7 @@ int createShadersAndPipeline()
 			SkyboxVSOutput output;
 			float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
 			output.position = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 1.0f, 1.0f);
-
-			float4 worldPos = mul(invViewProj, float4(output.position.xy, 1.0f, 1.0f));
-			worldPos.xyz /= max(abs(worldPos.w), 1e-6f);
-			output.rayDir = normalize(worldPos.xyz - cameraPos);
+			output.clipPos = output.position.xy;
 			return output;
 		}
 
@@ -2526,7 +2523,8 @@ int createShadersAndPipeline()
 
 		float4 PSSkybox(SkyboxVSOutput input) : SV_Target
 		{
-			float3 dir = normalize(input.rayDir);
+			float4 unprojected = mul(invViewProj, float4(input.clipPos, 1.0f, 1.0f));
+			float3 dir = normalize(unprojected.xyz / max(abs(unprojected.w), 1e-6f));
 			float rad = radians(rotation);
 			float cosR = cos(rad);
 			float sinR = sin(rad);
@@ -2855,11 +2853,12 @@ void updateConstantBuffer()
 	cb.cameraPos = g_camera.GetPosition();
 	cb.ambientIntensity = g_scene.ambientIntensity;
 	cb.ambientColor = glm::vec4(g_scene.ambientColor, 1.0f);
-	if (g_scene.enableSkybox)
+	if (g_scene.enableSkybox && g_scene.enableSkyboxLighting)
 	{
-		float skyAmbient = g_scene.skyboxAmbientContribution * g_scene.skyboxExposure * 0.25f;
-		cb.ambientIntensity = std::max(cb.ambientIntensity, skyAmbient);
-		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, g_scene.skyboxTint, 0.5f), 1.0f);
+		float skyAmbient = g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse * (g_scene.skyboxExposure * 0.5f);
+		cb.ambientIntensity = g_scene.ambientIntensity + skyAmbient;
+		glm::vec3 tintLight = g_scene.skyboxLightingColor * g_scene.skyboxTint;
+		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, tintLight, 0.7f), 1.0f);
 	}
 	cb.lightDir = lightDir;
 	cb.shadowBias = g_scene.shadowBias;
@@ -3385,15 +3384,16 @@ void renderFrame()
 
 		glm::mat4 view = g_camera.GetViewMatrix();
 		glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
-		glm::mat4 invVP = glm::inverse(proj * view);
+		glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+		glm::mat4 invVP = glm::inverse(proj * skyboxView);
 
 		SkyboxShaderConstants skyConsts = {};
 		skyConsts.invViewProj = invVP;
-		skyConsts.cameraPos = g_camera.GetPosition();
+		skyConsts.cameraPos = glm::vec3(0.0f);
 		skyConsts.exposure = g_scene.skyboxExposure;
 		skyConsts.tint = g_scene.skyboxTint;
 		skyConsts.rotation = g_scene.skyboxRotation;
-		skyConsts.ambientContribution = g_scene.skyboxAmbientContribution;
+		skyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
 
 		bool hasHdrTex = !g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none";
 		skyConsts.hasHdrTex = hasHdrTex ? 1.0f : 0.0f;
@@ -3501,18 +3501,19 @@ void renderFrame()
 
 			const GameObject* selCamObj = g_scene.FindObject(pipRect.selectedCameraId);
 			glm::mat4 pipView = selCamObj ? glm::inverse(g_scene.GetWorldMatrix(*selCamObj)) : g_camera.GetViewMatrix();
+			glm::mat4 skyboxPipView = glm::mat4(glm::mat3(pipView));
 			float pipAspect = (ph > 0.0f) ? (pw / ph) : 1.777f;
 			float pipFov = (selCamObj && selCamObj->camera.fov > 0.0f) ? glm::radians(selCamObj->camera.fov) : glm::radians(45.0f);
 			glm::mat4 pipProj = glm::perspective(pipFov, pipAspect, 0.1f, 500.0f);
-			glm::mat4 pipInvVP = glm::inverse(pipProj * pipView);
+			glm::mat4 pipInvVP = glm::inverse(pipProj * skyboxPipView);
 
 			SkyboxShaderConstants pipSkyConsts = {};
 			pipSkyConsts.invViewProj = pipInvVP;
-			pipSkyConsts.cameraPos = selCamObj ? g_scene.GetWorldPosition(*selCamObj) : g_camera.GetPosition();
+			pipSkyConsts.cameraPos = glm::vec3(0.0f);
 			pipSkyConsts.exposure = g_scene.skyboxExposure;
 			pipSkyConsts.tint = g_scene.skyboxTint;
 			pipSkyConsts.rotation = g_scene.skyboxRotation;
-			pipSkyConsts.ambientContribution = g_scene.skyboxAmbientContribution;
+			pipSkyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
 			pipSkyConsts.hasHdrTex = (!g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none") ? 1.0f : 0.0f;
 
 			g_commandList->SetGraphicsRoot32BitConstants(0, 28, &pipSkyConsts, 0);

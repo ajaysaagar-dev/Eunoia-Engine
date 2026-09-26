@@ -2482,6 +2482,13 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::ColorEdit3("Tint", &scene.skyboxTint.x);
                     ImGui::SliderFloat("Ambient Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
                     ImGui::Separator();
+                    if (ImGui::Checkbox("Skybox Lighting", &scene.enableSkyboxLighting)) {
+                        AddLog("LogWorld", scene.enableSkyboxLighting ? "Enabled Skybox based scene lighting" : "Disabled Skybox based scene lighting", 0);
+                    }
+                    if (scene.enableSkyboxLighting) {
+                        ImGui::SliderFloat("Light Intensity", &scene.skyboxLightingIntensity, 0.0f, 10.0f, "%.2f");
+                    }
+                    ImGui::Separator();
                     if (!scene.skyboxAssetPath.empty()) {
                         std::string assetLbl = "Asset: " + std::filesystem::path(scene.skyboxAssetPath).stem().string();
                         ImGui::TextDisabled("%s", assetLbl.c_str());
@@ -5268,6 +5275,22 @@ bool EngineUI::LoadSkyboxFile(const std::string& path, SkyboxAsset& outSkybox) {
         else if (key == "enableSkybox" || key == "enabled") {
             outSkybox.enableSkybox = (val == "1" || val == "true" || val == "True");
         }
+        else if (key == "enableSkyboxLighting" || key == "enableLighting") {
+            outSkybox.enableSkyboxLighting = (val == "1" || val == "true" || val == "True");
+        }
+        else if (key == "skyboxLightingIntensity" || key == "lightingIntensity") {
+            try { outSkybox.skyboxLightingIntensity = std::stof(val); } catch (...) {}
+        }
+        else if (key == "skyboxLightingColor" || key == "lightingColor") {
+            std::stringstream ss(val);
+            ss >> outSkybox.skyboxLightingColor.r >> outSkybox.skyboxLightingColor.g >> outSkybox.skyboxLightingColor.b;
+        }
+        else if (key == "skyboxLightingSpecular" || key == "lightingSpecular") {
+            try { outSkybox.skyboxLightingSpecular = std::stof(val); } catch (...) {}
+        }
+        else if (key == "skyboxLightingDiffuse" || key == "lightingDiffuse") {
+            try { outSkybox.skyboxLightingDiffuse = std::stof(val); } catch (...) {}
+        }
     }
     return true;
 }
@@ -5292,6 +5315,11 @@ bool EngineUI::SaveSkyboxFile(const std::string& path, const SkyboxAsset& skybox
     file << "tint: " << skybox.tint.r << " " << skybox.tint.g << " " << skybox.tint.b << "\n";
     file << "ambientContribution: " << skybox.ambientContribution << "\n";
     file << "enableSkybox: " << (skybox.enableSkybox ? 1 : 0) << "\n";
+    file << "enableSkyboxLighting: " << (skybox.enableSkyboxLighting ? 1 : 0) << "\n";
+    file << "skyboxLightingIntensity: " << skybox.skyboxLightingIntensity << "\n";
+    file << "skyboxLightingColor: " << skybox.skyboxLightingColor.r << " " << skybox.skyboxLightingColor.g << " " << skybox.skyboxLightingColor.b << "\n";
+    file << "skyboxLightingSpecular: " << skybox.skyboxLightingSpecular << "\n";
+    file << "skyboxLightingDiffuse: " << skybox.skyboxLightingDiffuse << "\n";
     return true;
 }
 
@@ -5313,6 +5341,11 @@ void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
     scene.skyboxRotation = skybox.rotation;
     scene.skyboxTint = skybox.tint;
     scene.skyboxAmbientContribution = skybox.ambientContribution;
+    scene.enableSkyboxLighting = skybox.enableSkyboxLighting;
+    scene.skyboxLightingIntensity = skybox.skyboxLightingIntensity;
+    scene.skyboxLightingColor = skybox.skyboxLightingColor;
+    scene.skyboxLightingSpecular = skybox.skyboxLightingSpecular;
+    scene.skyboxLightingDiffuse = skybox.skyboxLightingDiffuse;
     AddLog("LogWorld", "Applied Skybox '" + skybox.name + "' to World Scene", 2);
 }
 
@@ -5395,6 +5428,33 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
+        // SECTION 4: SKYBOX BASED LIGHTING (ENVIRONMENT IBL)
+        if (ImGui::CollapsingHeader("SKYBOX BASED LIGHTING (ENVIRONMENT IBL)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Cast diffuse and specular ambient illumination into the 3D scene from the skybox.");
+            if (ImGui::Checkbox("Enable Skybox Based Lighting", &activeSkybox.enableSkyboxLighting)) {
+                skyboxDirty = true;
+            }
+            if (activeSkybox.enableSkyboxLighting) {
+                ImGui::Spacing();
+                if (ImGui::SliderFloat("Lighting Intensity", &activeSkybox.skyboxLightingIntensity, 0.0f, 10.0f, "%.2f")) {
+                    skyboxDirty = true;
+                }
+                if (ImGui::ColorEdit3("Lighting Color Tint", &activeSkybox.skyboxLightingColor.x)) {
+                    skyboxDirty = true;
+                }
+                if (ImGui::SliderFloat("Diffuse Contribution", &activeSkybox.skyboxLightingDiffuse, 0.0f, 2.0f, "%.2f")) {
+                    skyboxDirty = true;
+                }
+                if (ImGui::SliderFloat("Specular / Reflection Contribution", &activeSkybox.skyboxLightingSpecular, 0.0f, 2.0f, "%.2f")) {
+                    skyboxDirty = true;
+                }
+            } else {
+                ImGui::TextDisabled("  (Skybox based scene lighting is currently disabled by default)");
+            }
+            ImGui::Spacing();
+        }
+
         // Live preview sync to world scene
         if (scene.skyboxAssetPath == activeSkybox.filePath || scene.skyboxAssetPath.empty()) {
             scene.enableSkybox = activeSkybox.enableSkybox;
@@ -5403,6 +5463,11 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             scene.skyboxRotation = activeSkybox.rotation;
             scene.skyboxTint = activeSkybox.tint;
             scene.skyboxAmbientContribution = activeSkybox.ambientContribution;
+            scene.enableSkyboxLighting = activeSkybox.enableSkyboxLighting;
+            scene.skyboxLightingIntensity = activeSkybox.skyboxLightingIntensity;
+            scene.skyboxLightingColor = activeSkybox.skyboxLightingColor;
+            scene.skyboxLightingSpecular = activeSkybox.skyboxLightingSpecular;
+            scene.skyboxLightingDiffuse = activeSkybox.skyboxLightingDiffuse;
             scene.skyboxAssetPath = activeSkybox.filePath;
         }
 
@@ -5493,6 +5558,27 @@ void EngineUI::RenderWorldSkyboxSettingsModal(Scene& scene) {
                 scene.skyboxRotation = 0.0f;
                 scene.skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
                 scene.skyboxAmbientContribution = 0.5f;
+                scene.enableSkyboxLighting = false;
+                scene.skyboxLightingIntensity = 1.0f;
+                scene.skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
+                scene.skyboxLightingSpecular = 1.0f;
+                scene.skyboxLightingDiffuse = 1.0f;
+            }
+            ImGui::Spacing();
+        }
+
+        if (ImGui::CollapsingHeader("SKYBOX BASED LIGHTING (ENVIRONMENT IBL)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::TextWrapped("Cast diffuse and specular ambient illumination into the 3D scene from the skybox.");
+            ImGui::Checkbox("Enable Skybox Based Lighting", &scene.enableSkyboxLighting);
+            if (scene.enableSkyboxLighting) {
+                ImGui::Spacing();
+                ImGui::SliderFloat("Lighting Intensity", &scene.skyboxLightingIntensity, 0.0f, 10.0f, "%.2f");
+                ImGui::ColorEdit3("Lighting Color Tint", &scene.skyboxLightingColor.x);
+                ImGui::SliderFloat("Diffuse Contribution", &scene.skyboxLightingDiffuse, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Specular / Reflection Contribution", &scene.skyboxLightingSpecular, 0.0f, 2.0f, "%.2f");
+            } else {
+                ImGui::TextDisabled("  (Skybox based scene lighting is currently disabled by default)");
             }
             ImGui::Spacing();
         }
@@ -5814,6 +5900,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             newSky.tint = glm::vec3(1.0f, 1.0f, 1.0f);
                             newSky.ambientContribution = 0.5f;
                             newSky.enableSkybox = true;
+                            newSky.enableSkyboxLighting = false;
+                            newSky.skyboxLightingIntensity = 1.0f;
+                            newSky.skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
+                            newSky.skyboxLightingSpecular = 1.0f;
+                            newSky.skyboxLightingDiffuse = 1.0f;
 
                             if (SaveSkyboxFile(skyFilePath.string(), newSky)) {
                                 SyncRegistryWithUIProgress(contentRootPath);

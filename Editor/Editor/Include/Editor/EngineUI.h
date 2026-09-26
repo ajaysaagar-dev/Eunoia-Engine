@@ -94,6 +94,13 @@ struct SkyboxAsset {
     glm::vec3 tint{1.0f, 1.0f, 1.0f};
     float ambientContribution = 0.5f;
     bool enableSkybox = true;
+
+    // Skybox Based Lighting Settings (default disabled)
+    bool enableSkyboxLighting = false;
+    float skyboxLightingIntensity = 1.0f;
+    glm::vec3 skyboxLightingColor{1.0f, 1.0f, 1.0f};
+    float skyboxLightingSpecular = 1.0f;
+    float skyboxLightingDiffuse = 1.0f;
 };
 
 class EngineUI {

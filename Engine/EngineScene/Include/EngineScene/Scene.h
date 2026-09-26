@@ -76,6 +76,13 @@ public:
     glm::vec3 skyboxTint{1.0f, 1.0f, 1.0f};
     float skyboxAmbientContribution = 0.5f;
 
+    // Skybox Based Lighting Settings (default disabled)
+    bool enableSkyboxLighting = false;
+    float skyboxLightingIntensity = 1.0f;
+    glm::vec3 skyboxLightingColor{1.0f, 1.0f, 1.0f};
+    float skyboxLightingSpecular = 1.0f;
+    float skyboxLightingDiffuse = 1.0f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
@@ -851,6 +858,11 @@ public:
         skyboxRotation = 0.0f;
         skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
         skyboxAmbientContribution = 0.5f;
+        enableSkyboxLighting = false;
+        skyboxLightingIntensity = 1.0f;
+        skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
+        skyboxLightingSpecular = 1.0f;
+        skyboxLightingDiffuse = 1.0f;
     }
 
     // Play Mode State & Runtime Lifecycle (dev.md Section 30-36)
