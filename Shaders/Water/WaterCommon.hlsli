@@ -38,7 +38,9 @@ cbuffer WaterConstants : register(b0)
     float    flowSpeed;         // 52
     float    simEnabled;        // 53
     float    heightScale;       // 54
-    float    _padCommon;        // 55
+    float    modelRotY;         // 55
+    float3   modelPos;          // 56-58
+    float    _padCommon;        // 59
 };
 
 // ----------------------------------------------------------------------------

@@ -34,13 +34,25 @@ VSOut VSMain(VSIn input)
     if (simEnabled > 0.5)
     {
         simH = gHeightMap.SampleLevel(gLinearSampler, input.uv, 0) * heightScale;
+        if (isnan(simH) || isinf(simH)) simH = 0.0;
     }
 
     // 2. Procedural analytical waves (for fine detail and large scale water)
     float procH = EvaluateWaves(p.xz, t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
+    if (isnan(procH) || isinf(procH)) procH = 0.0;
 
     float totalH = simH + procH;
     p.y += totalH;
+
+    // Transform local p into world position using water body position & yaw
+    float cosR = cos(modelRotY);
+    float sinR = sin(modelRotY);
+    float3 rotatedP = float3(
+        p.x * cosR - p.z * sinR,
+        p.y,
+        p.x * sinR + p.z * cosR
+    );
+    float3 worldP = rotatedP + modelPos;
 
     // 3. Compute normal using finite differences of waves
     float eps = 0.15;
@@ -60,13 +72,18 @@ VSOut VSMain(VSIn input)
 
     float dx = (hR - hL) / (2.0 * eps);
     float dz = (hU - hD) / (2.0 * eps);
-    float3 N = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
+    float3 localN = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
+    float3 worldN = float3(
+        localN.x * cosR - localN.z * sinR,
+        localN.y,
+        localN.x * sinR + localN.z * cosR
+    );
 
     VSOut o;
-    o.clipPos  = mul(float4(p, 1.0), viewProj);
-    o.worldPos = p;
-    o.normal   = N;
+    o.clipPos  = mul(viewProj, float4(worldP, 1.0f));
+    o.worldPos = worldP;
+    o.normal   = worldN;
     o.uv       = input.uv;
-    o.eyeDist  = length(cameraPos - p);
+    o.eyeDist  = length(cameraPos - worldP);
     return o;
 }

@@ -45,9 +45,11 @@ struct alignas(16) WaterShaderConstantsBuffer
     float     flowSpeed;         // 52
     float     simEnabled;        // 53
     float     heightScale;       // 54
-    float     _padCommon;        // 55
+    float     modelRotY;         // 55
+    glm::vec3 modelPos;          // 56-58
+    float     _padCommon;        // 59
 };
-static_assert(sizeof(WaterShaderConstantsBuffer) == 224, "WaterShaderConstantsBuffer must be exactly 224 bytes (56 floats)");
+static_assert(sizeof(WaterShaderConstantsBuffer) == 240, "WaterShaderConstantsBuffer must be exactly 240 bytes (60 floats)");
 
 WaterSystem& WaterSystem::Get() {
     static WaterSystem s_instance;
@@ -202,6 +204,7 @@ bool WaterSystem::CreateResources() {
     m_depthSrvCpuHandle = cpuStart;
     m_depthSrvGpuHandle = gpuStart;
 
+    m_needsInitialClear = true;
     return true;
 }
 
@@ -216,6 +219,8 @@ void WaterSystem::ReleaseResources() {
         m_descriptorHeap->Release();
         m_descriptorHeap = nullptr;
     }
+    if (m_clearRootSig) { m_clearRootSig->Release(); m_clearRootSig = nullptr; }
+    if (m_clearPSO) { m_clearPSO->Release(); m_clearPSO = nullptr; }
     if (m_disturbRootSig) { m_disturbRootSig->Release(); m_disturbRootSig = nullptr; }
     if (m_disturbPSO) { m_disturbPSO->Release(); m_disturbPSO = nullptr; }
     if (m_updateRootSig) { m_updateRootSig->Release(); m_updateRootSig = nullptr; }
@@ -269,6 +274,53 @@ bool WaterSystem::CreatePipelines() {
     ID3DBlob* errorBlob = nullptr;
 
     // ------------------------------------------------------------------------
+    // 0. Clear Compute Root Signature & PSO (Clears Ping-Pong Textures to 0.0f)
+    // ------------------------------------------------------------------------
+    {
+        D3D12_DESCRIPTOR_RANGE uavRange = {};
+        uavRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_UAV;
+        uavRange.NumDescriptors = 1;
+        uavRange.BaseShaderRegister = 0; // u0
+
+        D3D12_ROOT_PARAMETER rootParam = {};
+        rootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+        rootParam.DescriptorTable.NumDescriptorRanges = 1;
+        rootParam.DescriptorTable.pDescriptorRanges = &uavRange;
+
+        D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+        rsDesc.NumParameters = 1;
+        rsDesc.pParameters = &rootParam;
+        rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+        ID3DBlob* sigBlob = nullptr;
+        hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errorBlob);
+        if (FAILED(hr)) return false;
+        hr = m_device->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&m_clearRootSig));
+        sigBlob->Release();
+        if (FAILED(hr)) return false;
+
+        const std::string clearHLSL = R"HLSL(
+RWTexture2D<float> gTarget : register(u0);
+[numthreads(8, 8, 1)]
+void CSMain(uint3 id : SV_DispatchThreadID) {
+    if (id.x >= 256 || id.y >= 256) return;
+    gTarget[id.xy] = 0.0f;
+}
+)HLSL";
+        ID3DBlob* csBlob = nullptr;
+        hr = D3DCompile(clearHLSL.c_str(), clearHLSL.length(), nullptr, nullptr, nullptr, "CSMain", "cs_5_0", 0, 0, &csBlob, nullptr);
+        if (FAILED(hr) || !csBlob) return false;
+
+        D3D12_COMPUTE_PIPELINE_STATE_DESC psoDesc = {};
+        psoDesc.pRootSignature = m_clearRootSig;
+        psoDesc.CS.pShaderBytecode = csBlob->GetBufferPointer();
+        psoDesc.CS.BytecodeLength = csBlob->GetBufferSize();
+        hr = m_device->CreateComputePipelineState(&psoDesc, IID_PPV_ARGS(&m_clearPSO));
+        csBlob->Release();
+        if (FAILED(hr)) return false;
+    }
+
+    // ------------------------------------------------------------------------
     // 1. Disturbance Root Signature & Compute PSO
     // ------------------------------------------------------------------------
     {
@@ -317,7 +369,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
     float2 uv = (float2(id.xy) + 0.5) / GridSize;
     float dist = distance(uv, Center);
     float falloff = smoothstep(0.0, 1.0, saturate(1.0 - dist / max(Radius, 0.001)));
-    gWaterHeight[id.xy] += falloff * Strength;
+    gWaterHeight[id.xy] = clamp(gWaterHeight[id.xy] + falloff * Strength, -50.0, 50.0);
 }
 )HLSL";
 
@@ -416,6 +468,7 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
                            min(coord.y, (int)GridSize.y - 1 - coord.y));
     if (distFromEdge < 4) next *= (float)distFromEdge / 4.0;
     next = clamp(next, -50.0, 50.0);
+    if (isnan(next) || isinf(next)) next = 0.0;
     gNextHeight[coord] = next;
 }
 )HLSL";
@@ -450,11 +503,11 @@ void CSMain(uint3 id : SV_DispatchThreadID) {
         srvRangeDepth.BaseShaderRegister = 1; // t1: SceneDepth
 
         D3D12_ROOT_PARAMETER rootParams[3] = {};
-        // 0: WaterConstants (56 32-bit values)
+        // 0: WaterConstants (60 32-bit values)
         rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
         rootParams[0].Constants.ShaderRegister = 0;
         rootParams[0].Constants.RegisterSpace = 0;
-        rootParams[0].Constants.Num32BitValues = 56;
+        rootParams[0].Constants.Num32BitValues = 60;
 
         // 1: t0 (HeightMap)
         rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -528,6 +581,8 @@ cbuffer WaterConstants : register(b0) {
     float    flowSpeed;
     float    simEnabled;
     float    heightScale;
+    float    modelRotY;
+    float3   modelPos;
     float    _padCommon;
 };
 float Hash21(float2 p) {
@@ -587,10 +642,22 @@ VSOut VSMain(VSIn input) {
     float simH = 0.0;
     if (simEnabled > 0.5) {
         simH = gHeightMap.SampleLevel(gLinearSampler, input.uv, 0) * heightScale;
+        if (isnan(simH) || isinf(simH)) simH = 0.0;
     }
     float procH = EvaluateWaves(p.xz, t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
+    if (isnan(procH) || isinf(procH)) procH = 0.0;
     float totalH = simH + procH;
     p.y += totalH;
+
+    float cosR = cos(modelRotY);
+    float sinR = sin(modelRotY);
+    float3 rotatedP = float3(
+        p.x * cosR - p.z * sinR,
+        p.y,
+        p.x * sinR + p.z * cosR
+    );
+    float3 worldP = rotatedP + modelPos;
+
     float eps = 0.15;
     float hL = EvaluateWaves(p.xz - float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
     float hR = EvaluateWaves(p.xz + float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
@@ -605,13 +672,19 @@ VSOut VSMain(VSIn input) {
     }
     float dx = (hR - hL) / (2.0 * eps);
     float dz = (hU - hD) / (2.0 * eps);
-    float3 N = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
+    float3 localN = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
+    float3 worldN = float3(
+        localN.x * cosR - localN.z * sinR,
+        localN.y,
+        localN.x * sinR + localN.z * cosR
+    );
+
     VSOut o;
-    o.clipPos  = mul(float4(p, 1.0), viewProj);
-    o.worldPos = p;
-    o.normal   = N;
+    o.clipPos  = mul(viewProj, float4(worldP, 1.0f));
+    o.worldPos = worldP;
+    o.normal   = worldN;
     o.uv       = input.uv;
-    o.eyeDist  = length(cameraPos - p);
+    o.eyeDist  = length(cameraPos - worldP);
     return o;
 }
 )HLSL";
@@ -717,6 +790,39 @@ float4 PSMain(VSOut input) : SV_TARGET {
 
 bool WaterSystem::Simulate(ID3D12GraphicsCommandList* cmdList, Scene& scene) {
     if (!cmdList || !m_initialized || !m_updatePSO || !m_descriptorHeap) return false;
+
+    // Clear all height textures on startup or reset to guarantee zeroed memory (dev.md Section 8)
+    if (m_needsInitialClear && m_clearRootSig && m_clearPSO) {
+        m_needsInitialClear = false;
+        ID3D12DescriptorHeap* heaps[] = { m_descriptorHeap };
+        cmdList->SetDescriptorHeaps(1, heaps);
+        cmdList->SetComputeRootSignature(m_clearRootSig);
+        cmdList->SetPipelineState(m_clearPSO);
+
+        for (int i = 0; i < 3; ++i) {
+            D3D12_RESOURCE_BARRIER b = {};
+            b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+            b.Transition.pResource = m_heightTextures[i];
+            b.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+            b.Transition.StateBefore = m_heightStates[i];
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            cmdList->ResourceBarrier(1, &b);
+            m_heightStates[i] = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+            cmdList->SetComputeRootDescriptorTable(0, m_uavGpuHandles[i]);
+            cmdList->Dispatch(SIM_RES / 8, SIM_RES / 8, 1);
+
+            D3D12_RESOURCE_BARRIER uavB = {};
+            uavB.Type = D3D12_RESOURCE_BARRIER_TYPE_UAV;
+            uavB.UAV.pResource = m_heightTextures[i];
+            cmdList->ResourceBarrier(1, &uavB);
+
+            b.Transition.StateBefore = D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+            b.Transition.StateAfter = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+            cmdList->ResourceBarrier(1, &b);
+            m_heightStates[i] = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        }
+    }
 
     // Check if any water body has simulation enabled
     bool anySimEnabled = false;
@@ -918,8 +1024,8 @@ bool WaterSystem::Render(
 
     // 3. Render Each Water Body
     // Reserve dynamic vertex/index memory region offset (in upper half of buffer)
-    static UINT s_waterVBOffset = 500000 * sizeof(Vertex);
-    static UINT s_waterIBOffset = 1500000 * sizeof(uint32_t);
+    UINT currentVBOffset = 500000 * sizeof(Vertex);
+    UINT currentIBOffset = 1500000 * sizeof(uint32_t);
 
     for (auto& obj : scene.objects) {
         if (!obj.isWaterBody && obj.type != PrimitiveType::WaterBody) continue;
@@ -927,17 +1033,8 @@ bool WaterSystem::Render(
 
         const WaterBodyComponent& w = obj.water;
 
-        // Model matrix
-        glm::mat4 T = glm::translate(glm::mat4(1.0f), scene.GetWorldPosition(obj));
-        glm::mat4 R = glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0, 1, 0));
-        R = glm::rotate(R, glm::radians(obj.rotation.x), glm::vec3(1, 0, 0));
-        R = glm::rotate(R, glm::radians(obj.rotation.z), glm::vec3(0, 0, 1));
-        glm::mat4 S = glm::scale(glm::mat4(1.0f), obj.scale);
-        glm::mat4 model = T * R * S;
-        glm::mat4 mvp = vp * model;
-
         WaterShaderConstantsBuffer cb = {};
-        cb.viewProj          = mvp;
+        cb.viewProj          = vp; // Camera proj * view
         cb.cameraPos         = camPos;
         cb.time              = m_waterTime;
         cb.waterColor        = w.waterColor;
@@ -967,36 +1064,42 @@ bool WaterSystem::Render(
         cb.flowSpeed         = w.flowSpeed;
         cb.simEnabled        = w.simulationEnabled ? 1.0f : 0.0f;
         cb.heightScale       = w.heightScale;
+        cb.modelRotY         = glm::radians(obj.rotation.y);
+        cb.modelPos          = scene.GetWorldPosition(obj);
         cb._padCommon        = 0.0f;
 
-        cmdList->SetGraphicsRoot32BitConstants(0, 56, &cb, 0);
+        cmdList->SetGraphicsRoot32BitConstants(0, 60, &cb, 0);
 
         UINT vCount = (UINT)obj.mesh.vertices.size();
         UINT iCount = (UINT)obj.mesh.indices.size();
         if (vCount > 65536 || iCount > 262144) continue;
 
-        // Copy vertices & indices to mapped memory
+        // Copy vertices & indices to mapped memory using exact sizeof(MeshVertex) (48 bytes)
         if (pVertexMapped && vertexBuffer) {
-            uint8_t* dstV = (uint8_t*)pVertexMapped + s_waterVBOffset;
-            memcpy(dstV, obj.mesh.vertices.data(), vCount * sizeof(Vertex));
+            uint8_t* dstV = (uint8_t*)pVertexMapped + currentVBOffset;
+            memcpy(dstV, obj.mesh.vertices.data(), vCount * sizeof(MeshVertex));
         }
         if (pIndexMapped && indexBuffer) {
-            uint8_t* dstI = (uint8_t*)pIndexMapped + s_waterIBOffset;
+            uint8_t* dstI = (uint8_t*)pIndexMapped + currentIBOffset;
             memcpy(dstI, obj.mesh.indices.data(), iCount * sizeof(uint32_t));
         }
 
-        D3D12_VERTEX_BUFFER_VIEW objVbv = vbv;
-        objVbv.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + s_waterVBOffset;
-        objVbv.SizeInBytes = vCount * sizeof(Vertex);
+        D3D12_VERTEX_BUFFER_VIEW objVbv = {};
+        objVbv.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + currentVBOffset;
+        objVbv.StrideInBytes = sizeof(MeshVertex); // 48 bytes (NOT 60!)
+        objVbv.SizeInBytes = vCount * sizeof(MeshVertex);
 
-        D3D12_INDEX_BUFFER_VIEW objIbv = ibv;
-        objIbv.BufferLocation = indexBuffer->GetGPUVirtualAddress() + s_waterIBOffset;
+        D3D12_INDEX_BUFFER_VIEW objIbv = {};
+        objIbv.BufferLocation = indexBuffer->GetGPUVirtualAddress() + currentIBOffset;
         objIbv.SizeInBytes = iCount * sizeof(uint32_t);
         objIbv.Format = DXGI_FORMAT_R32_UINT;
 
         cmdList->IASetVertexBuffers(0, 1, &objVbv);
         cmdList->IASetIndexBuffer(&objIbv);
         cmdList->DrawIndexedInstanced(iCount, 1, 0, 0, 0);
+
+        currentVBOffset += vCount * sizeof(MeshVertex);
+        currentIBOffset += iCount * sizeof(uint32_t);
     }
 
     // 4. Transition Scene Depth buffer back to its original state

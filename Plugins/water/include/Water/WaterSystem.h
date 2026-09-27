@@ -91,6 +91,10 @@ private:
     D3D12_CPU_DESCRIPTOR_HANDLE m_depthSrvCpuHandle = {};
 
     // Compute Pipelines
+    ID3D12RootSignature*      m_clearRootSig = nullptr;
+    ID3D12PipelineState*      m_clearPSO = nullptr;
+    bool                      m_needsInitialClear = true;
+
     ID3D12RootSignature*      m_disturbRootSig = nullptr;
     ID3D12PipelineState*      m_disturbPSO = nullptr;
 

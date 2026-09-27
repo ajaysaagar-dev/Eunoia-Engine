@@ -48,6 +48,7 @@ void CSMain(uint3 id : SV_DispatchThreadID)
 
     // Safety numerical clamp to prevent NaN / float blowups
     next = clamp(next, -50.0, 50.0);
+    if (isnan(next) || isinf(next)) next = 0.0;
 
     gNextHeight[coord] = next;
 }

@@ -26,5 +26,5 @@ void CSMain(uint3 id : SV_DispatchThreadID)
     // Smooth hermite curve for realistic radial impulse
     falloff = smoothstep(0.0, 1.0, falloff);
 
-    gWaterHeight[id.xy] += falloff * Strength;
+    gWaterHeight[id.xy] = clamp(gWaterHeight[id.xy] + falloff * Strength, -50.0, 50.0);
 }
