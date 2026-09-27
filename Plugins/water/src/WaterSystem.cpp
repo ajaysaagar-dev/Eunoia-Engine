@@ -749,20 +749,73 @@ void EvaluateGerstnerWaves(float2 worldXZ, float t, float speedMultiplier, float
     }
     normal = normalize(float3(normX, max(normY, 0.1), normZ));
 }
-float3 EvaluateDetailNormal(float2 worldXZ, float t, float3 baseNormal, float strength) {
-    static const float2 dirs[4] = { float2(0.707, 0.707), float2(-0.894, 0.447), float2(0.316, -0.949), float2(-0.600, -0.800) };
-    static const float freqs[4] = { 2.5, 4.2, 7.8, 12.0 };
-    static const float speeds[4] = { 1.8, 2.4, 3.1, 4.0 };
-    static const float amps[4] = { 0.04, 0.025, 0.015, 0.008 };
-    float dx = 0.0; float dz = 0.0;
+static const float2x2 c_octaveRot = float2x2(1.6, 1.2, -1.2, 1.6);
+float SeaOctave(float2 uv, float choppy) {
+    uv += ValueNoise(uv);
+    float2 wv = 1.0 - abs(sin(uv));
+    float2 swv = abs(cos(uv));
+    wv = lerp(wv, swv, wv);
+    return pow(1.0 - pow(wv.x * wv.y, 0.65), choppy);
+}
+float SeaHeightMap(float2 uv, float t, float choppy) {
+    float freq = 0.14; float amp = 0.55; float chp = choppy; float h = 0.0;
     for (int i = 0; i < 4; ++i) {
-        float phase = dot(dirs[i], worldXZ) * freqs[i] - t * speeds[i];
-        float c = cos(phase) * amps[i] * freqs[i];
-        dx += dirs[i].x * c;
-        dz += dirs[i].y * c;
+        float d1 = SeaOctave((uv + t) * freq, chp);
+        float d2 = SeaOctave((uv - t) * freq, chp);
+        h += (d1 + d2) * amp;
+        uv = mul(c_octaveRot, uv);
+        freq *= 1.85; amp *= 0.24; chp = lerp(chp, 1.0, 0.2);
     }
-    float s = clamp(strength, 0.0, 2.0);
-    return normalize(baseNormal + float3(-dx * s, 1.0, -dz * s) * 0.35);
+    return h;
+}
+float3 EvaluateDetailNormal(float2 worldXZ, float t, float3 baseNormal, float strength, float choppy) {
+    float eps = 0.08;
+    float hC = SeaHeightMap(worldXZ, t, choppy);
+    float hR = SeaHeightMap(worldXZ + float2(eps, 0.0), t, choppy);
+    float hU = SeaHeightMap(worldXZ + float2(0.0, eps), t, choppy);
+    float dx = (hR - hC) / eps; float dz = (hU - hC) / eps;
+    float s = clamp(strength, 0.0, 2.5) * 0.45;
+    float3 seascapeNormal = normalize(float3(-dx * s, 1.0, -dz * s));
+    return normalize(baseNormal + seascapeNormal * 0.65);
+}
+float3 EvaluateCaustics(float2 worldXZ, float t, float depth) {
+    if (depth < 0.02 || depth > 35.0) return float3(0, 0, 0);
+    float depthFade = exp(-0.12 * depth);
+    float2 uv1 = worldXZ * 0.65 + float2(t * 0.35, t * 0.20);
+    float2 uv2 = worldXZ * 1.15 - float2(t * 0.25, t * 0.40);
+    float2 rOff = float2(0.035, 0.02); float2 bOff = float2(-0.035, -0.02);
+    float cR = pow(abs(sin(uv1.x + uv2.y + rOff.x) * cos(uv1.y - uv2.x + rOff.y)), 3.8);
+    float cG = pow(abs(sin(uv1.x + uv2.y) * cos(uv1.y - uv2.x)), 3.8);
+    float cB = pow(abs(sin(uv1.x + uv2.y + bOff.x) * cos(uv1.y - uv2.x + bOff.y)), 3.8);
+    float2 uv3 = worldXZ * 2.2 + float2(-t * 0.6, t * 0.3);
+    float fine = pow(abs(sin(uv3.x) * cos(uv3.y)), 4.5) * 1.2;
+    return (float3(cR, cG, cB) * 2.8 + float3(fine, fine, fine)) * depthFade;
+}
+float3 CalculateBeerLambertAbsorption(float thickness, float3 shallowCol, float3 deepCol, float depthFadeParam) {
+    float3 beta = float3(0.24, 0.075, 0.022) * (10.0 / max(depthFadeParam, 0.1));
+    float3 transmittance = exp(-beta * thickness);
+    return lerp(deepCol, shallowCol, transmittance);
+}
+float3 EvaluateCookTorranceGGX(float3 N, float3 V, float3 L, float rgh, float F0) {
+    float3 H = normalize(V + L);
+    float NdotL = saturate(dot(N, L)); float NdotV = max(dot(N, V), 0.001);
+    float NdotH = saturate(dot(N, H)); float VdotH = saturate(dot(V, H));
+    float alpha = max(rgh * rgh, 0.002); float alpha2 = alpha * alpha;
+    float denom = (NdotH * NdotH * (alpha2 - 1.0) + 1.0);
+    float D = alpha2 / (3.14159265 * denom * denom);
+    float k = alpha * 0.5;
+    float G_V = NdotV / (NdotV * (1.0 - k) + k);
+    float G_L = NdotL / (NdotL * (1.0 - k) + k);
+    float G = G_V * G_L;
+    float F = F0 + (1.0 - F0) * pow(1.0 - VdotH, 5.0);
+    return (D * G * F) / max(4.0 * NdotV * NdotL, 0.001) * NdotL;
+}
+float3 EvaluateSubsurfaceScattering(float3 V, float3 L, float3 N, float wavePeak, float waveH) {
+    float3 sssDir = normalize(L + N * 0.35);
+    float sssDot = saturate(dot(-V, sssDir));
+    float sssPeak = saturate((wavePeak + 0.15) / max(waveH * 0.8 + 0.1, 0.1));
+    float sssIntensity = pow(sssDot, 3.5) * sssPeak;
+    return float3(0.04, 0.42, 0.38) * sssIntensity * 2.2;
 }
 float LinearizeDepth(float zBuffer, float nearP, float farP) {
     return (nearP * farP) / max(farP - zBuffer * (farP - nearP), 1e-5);
@@ -819,9 +872,9 @@ Texture2D<float> gSceneDepth : register(t1);
 SamplerState gPointSampler   : register(s1);
 struct VSOut { float4 clipPos : SV_POSITION; float3 worldPos : TEXCOORD0; float3 normal : TEXCOORD1; float2 uv : TEXCOORD2; float eyeDist : TEXCOORD3; };
 float4 PSMain(VSOut input) : SV_TARGET {
-    float3 N = EvaluateDetailNormal(input.worldPos.xz, time, normalize(input.normal), normalScale);
+    float3 N = EvaluateDetailNormal(input.worldPos.xz, time, normalize(input.normal), normalScale, choppiness);
     float3 V = normalize(cameraPos - input.worldPos);
-    float3 L = normalize(float3(0.4, 0.85, 0.35));
+    float3 L = normalize(float3(0.42, 0.82, 0.38));
     float3 H = normalize(V + L);
     float2 screenUV = input.clipPos.xy / max(screenSize, float2(1.0, 1.0));
     float rawSceneDepth = gSceneDepth.SampleLevel(gPointSampler, screenUV, 0);
@@ -829,40 +882,53 @@ float4 PSMain(VSOut input) : SV_TARGET {
     float waterLinearZ = LinearizeDepth(input.clipPos.z, nearPlane, farPlane);
     bool isSkyBackground = (rawSceneDepth >= 0.9999);
     float thickness = isSkyBackground ? 500.0 : max(sceneLinearZ - waterLinearZ, 0.0);
-    float depthFactor = saturate(thickness / max(depthFade, 0.1));
-    float4 baseColor = lerp(float4(shallowColor.rgb, 1.0), float4(waterColor.rgb, 1.0), depthFactor);
+    float3 waterBodyColor = CalculateBeerLambertAbsorption(thickness, shallowColor.rgb, waterColor.rgb, depthFade);
+    if (!isSkyBackground && refractionStr > 0.01) {
+        float3 caustics = EvaluateCaustics(input.worldPos.xz, time, thickness) * refractionStr;
+        waterBodyColor += caustics * float3(0.85, 0.95, 1.0);
+    }
+    float wavePeak = input.worldPos.y - renderOrigin.y;
+    float3 sss = EvaluateSubsurfaceScattering(V, L, N, wavePeak, waveHeight) * (1.0 - roughness * 0.5);
     float foam = 0.0;
     if (foamEnabled > 0.5) {
         if (!isSkyBackground) {
             float foamFactor = 1.0 - saturate(thickness / max(foamDistance, 0.01));
             float foamNoise  = WaterFBM(input.worldPos.xz * foamScale + time * foamSpeed);
-            foam = smoothstep(0.4, 0.8, foamFactor * foamNoise) * foamStrength;
+            foam = smoothstep(0.35, 0.78, foamFactor * foamNoise) * foamStrength;
         }
-        float wavePeak = (input.worldPos.y - renderOrigin.y);
-        if (wavePeak > waveHeight * 0.4 && waveHeight > 0.05) {
-            float crestFactor = saturate((wavePeak - waveHeight * 0.4) / max(waveHeight * 0.5, 0.01));
-            float crestNoise  = WaterFBM(input.worldPos.xz * (foamScale * 1.5) + time * (foamSpeed * 0.8));
-            foam = max(foam, smoothstep(0.5, 0.85, crestFactor * crestNoise) * 0.35 * foamStrength);
+        if (wavePeak > waveHeight * 0.35 && waveHeight > 0.04) {
+            float crestFactor = saturate((wavePeak - waveHeight * 0.35) / max(waveHeight * 0.55, 0.01));
+            float crestNoise  = WaterFBM(input.worldPos.xz * (foamScale * 1.6) + time * (foamSpeed * 0.85));
+            foam = max(foam, smoothstep(0.48, 0.82, crestFactor * crestNoise) * 0.42 * foamStrength);
         }
     }
-    float NdotV = saturate(dot(N, V));
+    float NdotV = max(dot(N, V), 0.001);
     float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
     fresnel = saturate(fresnel * fresnelStrength);
-    float NdotH = saturate(dot(N, H));
-    float spec = pow(NdotH, max(specularPower, 16.0)) * specularIntensity * 0.75;
-    float sparkle = pow(NdotH, max(sparklePower, 64.0)) * specularIntensity * 0.35;
     float3 R = reflect(-V, N);
-    float3 skyZenith = float3(0.08, 0.22, 0.42);
-    float3 skyHorizon = float3(0.35, 0.52, 0.68);
-    float3 skyReflectColor = lerp(skyHorizon, skyZenith, saturate(R.y));
-    float3 finalColor = lerp(baseColor.rgb, skyReflectColor, fresnel * reflectionStr);
-    finalColor += (spec + sparkle) * float3(1.0, 0.98, 0.92);
-    finalColor = lerp(finalColor, float3(0.92, 0.96, 0.98), foam);
+    float3 skyZenith = float3(0.06, 0.20, 0.44);
+    float3 skyMid    = float3(0.20, 0.42, 0.62);
+    float3 skyHorizon= float3(0.38, 0.56, 0.72);
+    float3 skyReflectColor = (R.y > 0.2) ? lerp(skyMid, skyZenith, (R.y - 0.2) / 0.8) : lerp(skyHorizon, skyMid, max(R.y, 0.0) / 0.2);
+    float3 ggxSpec = EvaluateCookTorranceGGX(N, V, L, max(roughness, 0.04), 0.02) * specularIntensity;
+    float3 sunColor = float3(1.0, 0.96, 0.88);
+    float3 specular = ggxSpec * sunColor * 1.5;
+    float NdotH = saturate(dot(N, H));
+    float sparkle = pow(NdotH, max(sparklePower, 128.0)) * specularIntensity * 0.4;
+    specular += sparkle * sunColor;
+    float3 finalColor = lerp(waterBodyColor + sss, skyReflectColor, fresnel * reflectionStr);
+    finalColor += specular;
+    float3 foamColor = float3(0.92, 0.97, 0.99);
+    finalColor = lerp(finalColor, foamColor, foam);
+    if (oceanExtent > 10.0) {
+        float horizonBlend = smoothstep(oceanExtent * 0.35, oceanExtent * 0.49, input.eyeDist);
+        finalColor = lerp(finalColor, skyHorizon, horizonBlend);
+    }
     finalColor = saturate(finalColor);
-    float waterAlpha = isSkyBackground ? opacity : saturate(lerp(saturate(thickness / 0.5), 1.0, fresnel) * opacity);
-    waterAlpha = max(waterAlpha, foam * 0.9);
+    float waterAlpha = isSkyBackground ? opacity : saturate(lerp(saturate(thickness / 0.45), 1.0, fresnel) * opacity);
+    waterAlpha = max(waterAlpha, foam * 0.95);
     int dbg = (int)(debugMode + 0.5);
-    if (dbg == 1) return float4(baseColor.rgb, 1.0);
+    if (dbg == 1) return float4(waterBodyColor, 1.0);
     else if (dbg == 2) return float4(N * 0.5 + 0.5, 1.0);
     else if (dbg == 3) {
         float hNorm = saturate((input.worldPos.y - renderOrigin.y + 0.5) / 1.0);
