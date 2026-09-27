@@ -150,6 +150,33 @@ struct SkyboxShaderConstants
 };
 static_assert(sizeof(SkyboxShaderConstants) == 112, "SkyboxShaderConstants must be 112 bytes (28 floats)");
 
+// Water surface shader constants (32 floats = 128 bytes)
+struct WaterShaderConstants
+{
+	glm::mat4 viewProj;          // 16 floats
+	glm::vec3 cameraPos;         // 3 floats
+	float     time;              // 1 float  — animated wave phase
+	glm::vec4 waterColor;        // 4 floats — deep water RGBA
+	glm::vec4 shallowColor;      // 4 floats — shallow water RGBA
+	float     roughness;         // 1
+	float     opacity;           // 1
+	float     reflectionStr;     // 1
+	float     refractionStr;     // 1
+	float     waveSpeed;         // 1
+	float     waveScale;         // 1
+	float     waveHeight;        // 1
+	float     normalScale;       // 1
+	float     foamEnabled;       // 1 (bool as float)
+	float     foamScale;         // 1
+	float     depthFade;         // 1
+	float     specularIntensity; // 1
+	// total: 16+3+1+4+4+1+1+1+1+1+1+1+1+1+1+1+1 = 40 floats → pad to 48
+	float pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7; // 8 pad
+};
+static_assert(sizeof(WaterShaderConstants) == 192, "WaterShaderConstants must be 192 bytes (48 floats)");
+
+
+
 // Window & GLFW
 static GLFWwindow* g_window = nullptr;
 static int g_currentWidth = WIDTH;
@@ -261,6 +288,11 @@ static ID3D12PipelineState* g_shadowPipelineState = nullptr;
 static ID3D12RootSignature* g_skyboxRootSignature = nullptr;
 static ID3D12PipelineState* g_skyboxPipelineState = nullptr;
 static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_skyboxDescriptorTables;
+
+static ID3D12RootSignature* g_waterRootSignature = nullptr;
+static ID3D12PipelineState* g_waterPipelineState = nullptr;
+static float g_waterTime = 0.0f; // accumulated editor time for wave animation
+
 
 static ID3D12Resource* g_shadowConstantBuffer = nullptr;
 static void* g_pShadowConstantMapped = nullptr;
@@ -2602,8 +2634,224 @@ int createShadersAndPipeline()
 		return EXIT_FAILURE;
 	}
 
+	// ---------------------------------------------------------------
+	// 6. Create Water Root Signature and Pipeline State
+	//    Root param 0: 48 × 32-bit constants (WaterShaderConstants)
+	// ---------------------------------------------------------------
+	{
+		D3D12_ROOT_PARAMETER waterRootParams[1] = {};
+		waterRootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+		waterRootParams[0].Constants.ShaderRegister = 0;
+		waterRootParams[0].Constants.RegisterSpace  = 0;
+		waterRootParams[0].Constants.Num32BitValues = 48; // sizeof(WaterShaderConstants)/4
+
+		D3D12_ROOT_SIGNATURE_DESC waterRootSigDesc = {};
+		waterRootSigDesc.NumParameters  = 1;
+		waterRootSigDesc.pParameters    = waterRootParams;
+		waterRootSigDesc.NumStaticSamplers = 0;
+		waterRootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+		ID3DBlob* serializedWaterRootSig = nullptr;
+		hr = D3D12SerializeRootSignature(&waterRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1,
+		                                 &serializedWaterRootSig, &errorBlob);
+		if (FAILED(hr)) { std::cerr << "Water root sig serialize failed\n"; return EXIT_FAILURE; }
+		g_d3dDevice->CreateRootSignature(0,
+			serializedWaterRootSig->GetBufferPointer(),
+			serializedWaterRootSig->GetBufferSize(),
+			IID_PPV_ARGS(&g_waterRootSignature));
+		serializedWaterRootSig->Release();
+
+		// ---- Water HLSL (VS + PS) ----
+		const char* waterShaderSrc = R"HLSL(
+// ============================================================
+// Eunoia Water Surface Shader — PBR Fresnel + Gerstner Waves
+// ============================================================
+cbuffer WaterConstants : register(b0)
+{
+    float4x4 viewProj;
+    float3   cameraPos;
+    float    time;
+    float4   waterColor;
+    float4   shallowColor;
+    float    roughness;
+    float    opacity;
+    float    reflectionStr;
+    float    refractionStr;
+    float    waveSpeed;
+    float    waveScale;
+    float    waveHeight;
+    float    normalScale;
+    float    foamEnabled;
+    float    foamScale;
+    float    depthFade;
+    float    specularIntensity;
+    float4   _pad;
+    float4   _pad2;
+}
+
+struct VSIn  { float3 pos : POSITION; float3 norm : NORMAL; float2 uv : TEXCOORD0; };
+struct VSOut { float4 clipPos : SV_POSITION; float3 worldPos : TEXCOORD0; float3 normal : TEXCOORD1; float2 uv : TEXCOORD2; float eyeDist : TEXCOORD3; };
+
+// --- Simple Gerstner wave helper ---
+float3 GerstnerWave(float3 p, float2 dir, float steepness, float wavelength, float t)
+{
+    float k  = 6.28318530718 / wavelength;
+    float c  = sqrt(9.8 / k);
+    float2 d = normalize(dir);
+    float f  = k * (dot(d, p.xz) - c * t);
+    float a  = steepness / k;
+    return float3(d.x * a * cos(f), a * sin(f), d.y * a * cos(f));
+}
+
+VSOut VSWater(VSIn i)
+{
+    float3 p = i.pos;
+    float  t = time * waveSpeed;
+
+    // 3-octave Gerstner waves
+    float3 disp = float3(0,0,0);
+    disp += GerstnerWave(p, float2(1.0, 0.8),  0.15 * waveHeight, 8.0  / waveScale, t);
+    disp += GerstnerWave(p, float2(0.3, 1.0),  0.10 * waveHeight, 5.0  / waveScale, t * 0.8);
+    disp += GerstnerWave(p, float2(-0.7, 0.5), 0.06 * waveHeight, 3.0  / waveScale, t * 1.2);
+    p += disp;
+
+    VSOut o;
+    o.clipPos  = mul(float4(p, 1.0), viewProj);
+    o.worldPos = p;
+    o.uv       = i.uv;
+    o.eyeDist  = length(cameraPos - p);
+
+    // Recompute normal from gradient
+    float eps = 0.05;
+    float3 px = i.pos + float3(eps,0,0);
+    float3 pz = i.pos + float3(0,0,eps);
+    float3 dx = GerstnerWave(px, float2(1.0,0.8), 0.15*waveHeight, 8.0/waveScale, t)
+              + GerstnerWave(px, float2(0.3,1.0), 0.10*waveHeight, 5.0/waveScale, t*0.8)
+              + GerstnerWave(px, float2(-0.7,0.5),0.06*waveHeight, 3.0/waveScale, t*1.2);
+    float3 dz = GerstnerWave(pz, float2(1.0,0.8), 0.15*waveHeight, 8.0/waveScale, t)
+              + GerstnerWave(pz, float2(0.3,1.0), 0.10*waveHeight, 5.0/waveScale, t*0.8)
+              + GerstnerWave(pz, float2(-0.7,0.5),0.06*waveHeight, 3.0/waveScale, t*1.2);
+    float3 tangX = normalize(float3(eps,0,0) + dx - disp);
+    float3 tangZ = normalize(float3(0,0,eps) + dz - disp);
+    o.normal = normalize(cross(tangZ, tangX));
+    return o;
+}
+
+float4 PSWater(VSOut i) : SV_TARGET
+{
+    float3 N = normalize(i.normal);
+
+    // --- Animated normal map (procedural) ---
+    float2 uv1 = i.uv * waveScale + float2( time * waveSpeed * 0.04,  time * waveSpeed * 0.02);
+    float2 uv2 = i.uv * waveScale + float2(-time * waveSpeed * 0.02,  time * waveSpeed * 0.05);
+    // Simple procedural normal perturbation
+    float3 bump1 = float3(sin(uv1.x * 40.0) * 0.5, 1.0, cos(uv1.y * 40.0) * 0.5);
+    float3 bump2 = float3(sin(uv2.x * 30.0) * 0.5, 1.0, cos(uv2.y * 30.0) * 0.5);
+    float3 bumpN = normalize((bump1 + bump2) * 0.5);
+    N = normalize(N + bumpN * normalScale * 0.15);
+
+    // --- View & Fresnel ---
+    float3 V   = normalize(cameraPos - i.worldPos);
+    float  NdV = saturate(dot(N, V));
+    float  fresnelBase = 0.04;
+    float  fresnel = fresnelBase + (1.0 - fresnelBase) * pow(1.0 - NdV, 5.0);
+
+    // --- Depth-based color blend ---
+    float  depth = saturate(i.eyeDist / max(depthFade * 10.0, 1.0));
+    float4 baseColor = lerp(shallowColor, waterColor, depth);
+
+    // --- Fake specular (Blinn-Phong) ---
+    float3 L   = normalize(float3(0.3, 1.0, 0.5)); // approximate directional sun
+    float3 H   = normalize(V + L);
+    float  NdH = saturate(dot(N, H));
+    float  shininess = lerp(32.0, 512.0, 1.0 - roughness);
+    float  spec = pow(NdH, shininess) * specularIntensity;
+
+    // --- Foam ---
+    float foam = 0.0;
+    if (foamEnabled > 0.5)
+    {
+        float2 fuv = i.uv * foamScale + float2(time * 0.05, time * 0.03);
+        foam = saturate(sin(fuv.x * 20.0) * sin(fuv.y * 20.0) * 0.5 + 0.3);
+        foam *= saturate(pow(1.0 - NdV, 3.0) * 2.0); // edges only
+    }
+
+    // --- Combine ---
+    float3 reflectColor = lerp(float3(0.4, 0.55, 0.7), float3(0.8, 0.9, 1.0), fresnel);
+    float3 col = lerp(baseColor.rgb, reflectColor, fresnel * reflectionStr);
+    col += spec;
+    col = lerp(col, float3(1,1,1), foam * 0.6);
+
+    float alpha = lerp(baseColor.a, 1.0, fresnel) * opacity;
+    return float4(col, alpha);
+}
+)HLSL";
+
+		ID3DBlob* waterVS = nullptr;
+		ID3DBlob* waterPS = nullptr;
+		hr = D3DCompile(waterShaderSrc, strlen(waterShaderSrc), "WaterVS", nullptr, nullptr,
+		                "VSWater", "vs_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &waterVS, &errorBlob);
+		if (FAILED(hr)) {
+			if (errorBlob) std::cerr << "Water VS error: " << (char*)errorBlob->GetBufferPointer() << "\n";
+			return EXIT_FAILURE;
+		}
+		hr = D3DCompile(waterShaderSrc, strlen(waterShaderSrc), "WaterPS", nullptr, nullptr,
+		                "PSWater", "ps_5_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &waterPS, &errorBlob);
+		if (FAILED(hr)) {
+			if (errorBlob) std::cerr << "Water PS error: " << (char*)errorBlob->GetBufferPointer() << "\n";
+			return EXIT_FAILURE;
+		}
+
+		// Input layout (matches Vertex struct: POSITION, NORMAL, TEXCOORD0)
+		D3D12_INPUT_ELEMENT_DESC waterLayout[] = {
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0,  0, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		};
+
+		// Translucent blend state
+		D3D12_BLEND_DESC waterBlend = {};
+		waterBlend.RenderTarget[0].BlendEnable           = TRUE;
+		waterBlend.RenderTarget[0].SrcBlend              = D3D12_BLEND_SRC_ALPHA;
+		waterBlend.RenderTarget[0].DestBlend             = D3D12_BLEND_INV_SRC_ALPHA;
+		waterBlend.RenderTarget[0].BlendOp               = D3D12_BLEND_OP_ADD;
+		waterBlend.RenderTarget[0].SrcBlendAlpha         = D3D12_BLEND_ONE;
+		waterBlend.RenderTarget[0].DestBlendAlpha        = D3D12_BLEND_ZERO;
+		waterBlend.RenderTarget[0].BlendOpAlpha          = D3D12_BLEND_OP_ADD;
+		waterBlend.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+		D3D12_GRAPHICS_PIPELINE_STATE_DESC waterPsoDesc = {};
+		waterPsoDesc.InputLayout           = { waterLayout, 3 };
+		waterPsoDesc.pRootSignature        = g_waterRootSignature;
+		waterPsoDesc.VS                    = { waterVS->GetBufferPointer(), waterVS->GetBufferSize() };
+		waterPsoDesc.PS                    = { waterPS->GetBufferPointer(), waterPS->GetBufferSize() };
+		waterPsoDesc.RasterizerState.FillMode          = D3D12_FILL_MODE_SOLID;
+		waterPsoDesc.RasterizerState.CullMode          = D3D12_CULL_MODE_NONE; // two-sided
+		waterPsoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+		waterPsoDesc.RasterizerState.DepthClipEnable   = TRUE;
+		waterPsoDesc.BlendState                        = waterBlend;
+		waterPsoDesc.DepthStencilState.DepthEnable     = TRUE;
+		waterPsoDesc.DepthStencilState.DepthWriteMask  = D3D12_DEPTH_WRITE_MASK_ZERO; // read-only depth
+		waterPsoDesc.DepthStencilState.DepthFunc       = D3D12_COMPARISON_FUNC_LESS;
+		waterPsoDesc.SampleMask                        = UINT_MAX;
+		waterPsoDesc.PrimitiveTopologyType             = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+		waterPsoDesc.NumRenderTargets                  = 1;
+		waterPsoDesc.RTVFormats[0]                     = DXGI_FORMAT_R8G8B8A8_UNORM;
+		waterPsoDesc.DSVFormat                         = DXGI_FORMAT_D32_FLOAT;
+		waterPsoDesc.SampleDesc.Count                  = 1;
+
+		hr = g_d3dDevice->CreateGraphicsPipelineState(&waterPsoDesc, IID_PPV_ARGS(&g_waterPipelineState));
+		waterVS->Release();
+		waterPS->Release();
+		if (FAILED(hr)) {
+			std::cerr << "Failed to create water PSO: " << hr << "\n";
+			return EXIT_FAILURE;
+		}
+	}
+
 	return EXIT_SUCCESS;
 }
+
 
 int createDynamicBuffers()
 {
@@ -3408,6 +3656,120 @@ void renderFrame()
 
 		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		g_commandList->DrawInstanced(3, 1, 0, 0);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.3: Water Bodies (translucent, depth read-only, sorted back-to-front)
+	// ----------------------------------------------------
+	if (!g_deviceLost && g_waterRootSignature && g_waterPipelineState)
+	{
+		// Advance time for wave animation (clamped to avoid float overflow)
+		g_waterTime += ImGui::GetIO().DeltaTime;
+		if (g_waterTime > 1e6f) g_waterTime = 0.0f;
+
+		EngineUI::ViewportRect vpRectW = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspectW = (vpRectW.width > 0 && vpRectW.height > 0) ? (vpRectW.width / vpRectW.height) : 1.777f;
+		if (aspectW <= 0.01f || std::isnan(aspectW)) aspectW = 1.777f;
+
+		glm::mat4 viewW = g_camera.GetViewMatrix();
+		glm::mat4 projW = g_camera.GetProjectionMatrix(aspectW);
+		glm::mat4 vpW   = projW * viewW;
+		glm::vec3 camPosW = g_camera.GetPosition();
+
+		g_commandList->SetGraphicsRootSignature(g_waterRootSignature);
+		g_commandList->SetPipelineState(g_waterPipelineState);
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		for (auto& obj : g_scene.objects)
+		{
+			if (!obj.isWaterBody && obj.type != PrimitiveType::WaterBody) continue;
+			if (!obj.visible) continue;
+			if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
+
+			const WaterBodyComponent& w = obj.water;
+
+			// Build per-object world transform
+			glm::mat4 T = glm::translate(glm::mat4(1.0f), g_scene.GetWorldPosition(obj));
+			glm::mat4 R = glm::rotate(glm::mat4(1.0f), glm::radians(obj.rotation.y), glm::vec3(0,1,0));
+			R = glm::rotate(R, glm::radians(obj.rotation.x), glm::vec3(1,0,0));
+			R = glm::rotate(R, glm::radians(obj.rotation.z), glm::vec3(0,0,1));
+			glm::mat4 S = glm::scale(glm::mat4(1.0f), obj.scale);
+			glm::mat4 world = T * R * S;
+			glm::mat4 mvp   = vpW * world;
+
+			WaterShaderConstants wc = {};
+			wc.viewProj        = mvp;
+			wc.cameraPos       = camPosW;
+			wc.time            = g_waterTime;
+			wc.waterColor      = w.waterColor;
+			wc.shallowColor    = w.shallowColor;
+			wc.roughness       = w.roughness;
+			wc.opacity         = w.opacity;
+			wc.reflectionStr   = w.reflectionStrength;
+			wc.refractionStr   = w.refractionStrength;
+			wc.waveSpeed       = w.waveSpeed;
+			wc.waveScale       = std::max(w.waveScale, 0.01f);
+			wc.waveHeight      = w.waveHeight;
+			wc.normalScale     = w.normalScale;
+			wc.foamEnabled     = w.enableFoam ? 1.0f : 0.0f;
+			wc.foamScale       = std::max(w.foamScale, 0.01f);
+			wc.depthFade       = std::max(w.depthFadeDistance, 0.1f);
+			wc.specularIntensity = w.specularIntensity;
+
+			g_commandList->SetGraphicsRoot32BitConstants(0, 48, &wc, 0);
+
+			// Upload and draw mesh vertices/indices directly into the shared dynamic buffers
+			UINT vOffset = 0;
+			UINT iOffset = 0;
+			UINT vCount  = (UINT)obj.mesh.vertices.size();
+			UINT iCount  = (UINT)obj.mesh.indices.size();
+
+			if (vCount == 0 || iCount == 0) continue;
+
+			// Use a small reserved region at end of VB/IB for water (simple copy approach)
+			// We write directly into mapped memory
+			constexpr UINT MAX_WATER_VERTS   = 65536;
+			constexpr UINT MAX_WATER_INDICES = 262144;
+			if (vCount > MAX_WATER_VERTS || iCount > MAX_WATER_INDICES) continue;
+
+			// Reserve a static offset in the shared buffers just for water objects
+			// (placed at a safe offset beyond scene geometry)
+			static bool s_waterBuffersInit = false;
+			static UINT s_waterVBOffset    = 0; // byte offset into vertex buffer
+			static UINT s_waterIBOffset    = 0; // byte offset into index buffer
+			if (!s_waterBuffersInit) {
+				// Place water data near the end of the max scene capacity
+				s_waterVBOffset  = (MAX_SCENE_VERTICES / 2) * sizeof(Vertex);
+				s_waterIBOffset  = (MAX_SCENE_INDICES  / 2) * sizeof(uint32_t);
+				s_waterBuffersInit = true;
+			}
+
+			// Write vertices
+			if (g_pVertexMapped) {
+				uint8_t* dst = (uint8_t*)g_pVertexMapped + s_waterVBOffset;
+				memcpy(dst, obj.mesh.vertices.data(), vCount * sizeof(Vertex));
+			}
+			// Write indices
+			if (g_pIndexMapped) {
+				uint8_t* dst = (uint8_t*)g_pIndexMapped + s_waterIBOffset;
+				memcpy(dst, obj.mesh.indices.data(), iCount * sizeof(uint32_t));
+			}
+
+			D3D12_VERTEX_BUFFER_VIEW waterVBV = g_vertexBufferView;
+			waterVBV.BufferLocation = g_vertexBuffer->GetGPUVirtualAddress() + s_waterVBOffset;
+			waterVBV.SizeInBytes    = vCount * sizeof(Vertex);
+
+			D3D12_INDEX_BUFFER_VIEW waterIBV = g_indexBufferView;
+			waterIBV.BufferLocation = g_indexBuffer->GetGPUVirtualAddress() + s_waterIBOffset;
+			waterIBV.SizeInBytes    = iCount * sizeof(uint32_t);
+			waterIBV.Format         = DXGI_FORMAT_R32_UINT;
+
+			g_commandList->IASetVertexBuffers(0, 1, &waterVBV);
+			g_commandList->IASetIndexBuffer(&waterIBV);
+			g_commandList->DrawIndexedInstanced(iCount, 1, 0, 0, 0);
+		}
 	}
 
 	// ----------------------------------------------------

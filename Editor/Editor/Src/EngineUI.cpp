@@ -3920,9 +3920,15 @@ void EngineUI::RenderDetails(Scene& scene) {
                 };
                 int wt = (int)w.type;
                 if (ImGui::Combo("Water Type", &wt, waterTypeNames, 13)) {
-                    w.type = (WaterBodyType)wt;
+                    // Re-apply preset for new type (§30 type switching)
+                    Scene::ApplyWaterBodyPreset(w, (WaterBodyType)wt);
+                    // Rebuild mesh with new preset dimensions
+                    obj->mesh = GeometryBuilder::CreatePlane(w.width, w.length, w.gridResolution, w.gridResolution);
+                    obj->position.y = w.elevation;
+                    AddLog("LogActor", std::string("Switched water type to: ") + waterTypeNames[wt], 2);
                 }
                 ImGui::Separator();
+
 
                 // Geometry
                 ImGui::TextDisabled("Geometry");
