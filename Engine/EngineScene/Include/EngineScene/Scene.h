@@ -322,6 +322,20 @@ public:
     // Apply type-specific default preset to a WaterBodyComponent
     static void ApplyWaterBodyPreset(WaterBodyComponent& w, WaterBodyType wbType) {
         w.type = wbType;
+        // Global baseline defaults for AquaTerrain simulation & shading
+        w.simulationEnabled = true;
+        w.simulationResolution = 256;
+        w.waveDamping = 0.985f;
+        w.disturbanceStrength = 1.0f;
+        w.heightScale = 1.0f;
+        w.depthRange = 10.0f;
+        w.foamDistance = 1.5f;
+        w.foamStrength = 1.0f;
+        w.foamSpeed = 1.0f;
+        w.fresnelStrength = 1.0f;
+        w.specularPower = 128.0f;
+        w.sparklePower = 800.0f;
+
         switch (wbType) {
 
         case WaterBodyType::Ocean:
@@ -578,6 +592,19 @@ public:
             w.environmentLightIntensity = 0.6f;
             w.subsurfaceScattering = 0.05f;
             w.subsurfaceColor = {0.05f, 0.10f, 0.03f};
+            break;
+
+        case WaterBodyType::Custom:
+            w.width = 25.0f; w.length = 25.0f; w.gridResolution = 32;
+            w.waterColor = {0.03f, 0.20f, 0.35f, 0.85f};
+            w.shallowColor = {0.10f, 0.45f, 0.60f, 0.70f};
+            w.roughness = 0.1f; w.metallic = 0.0f; w.opacity = 0.80f;
+            w.reflectionStrength = 0.9f; w.refractionStrength = 0.5f; w.specularIntensity = 1.4f;
+            w.normalScale = 1.0f; w.waveSpeed = 1.0f; w.waveScale = 1.5f; w.waveHeight = 0.5f;
+            w.enableFoam = true; w.foamColor = {1.0f, 1.0f, 1.0f, 0.75f}; w.foamScale = 3.0f; w.foamOpacity = 0.6f;
+            w.depthRange = 10.0f; w.foamDistance = 1.5f; w.foamStrength = 1.0f; w.fresnelStrength = 1.0f;
+            w.specularPower = 128.0f; w.sparklePower = 800.0f;
+            w.simulationEnabled = true; w.waveDamping = 0.985f;
             break;
 
         default: break;

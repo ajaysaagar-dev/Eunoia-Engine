@@ -206,7 +206,7 @@ struct CameraComponent {
 };
 
 enum class WaterBodyType {
-    Ocean, River, Sea, Lake, Stream, Waterfall, Pond, Pool, WetSurface, Puddle, FloodWater, Underwater, Swamp
+    Ocean, River, Sea, Lake, Stream, Waterfall, Pond, Pool, WetSurface, Puddle, FloodWater, Underwater, Swamp, Custom
 };
 
 struct WaterBodyComponent {
@@ -304,6 +304,22 @@ struct WaterBodyComponent {
     float length = 10.0f;
     float elevation = 0.0f;
     int gridResolution = 32;
+
+    // Simulation (AquaTerrain GPU heightfield simulation)
+    bool simulationEnabled = true;
+    int simulationResolution = 256;
+    float waveDamping = 0.985f;
+    float disturbanceStrength = 1.0f;
+    float heightScale = 1.0f;
+
+    // Advanced Shading & Depth
+    float depthRange = 10.0f;
+    float foamDistance = 1.5f;
+    float foamStrength = 1.0f;
+    float foamSpeed = 1.0f;
+    float fresnelStrength = 1.0f;
+    float specularPower = 128.0f;
+    float sparklePower = 800.0f;
 
     // Rendering
     bool castShadows = false;

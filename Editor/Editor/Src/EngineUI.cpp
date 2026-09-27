@@ -30,6 +30,7 @@
 #include <shlobj.h>
 #include <nlohmann/json.hpp>
 #include <MeshClusterCulling/MeshClusterCulling.h>
+#include <Water/WaterSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -3916,10 +3917,10 @@ void EngineUI::RenderDetails(Scene& scene) {
                 const char* waterTypeNames[] = {
                     "Ocean", "River", "Sea", "Lake", "Stream",
                     "Waterfall", "Pond", "Pool", "Wet Surface",
-                    "Puddle", "Flood Water", "Underwater", "Swamp"
+                    "Puddle", "Flood Water", "Underwater", "Swamp", "Custom"
                 };
                 int wt = (int)w.type;
-                if (ImGui::Combo("Water Type", &wt, waterTypeNames, 13)) {
+                if (ImGui::Combo("Water Type", &wt, waterTypeNames, 14)) {
                     // Re-apply preset for new type (§30 type switching)
                     Scene::ApplyWaterBodyPreset(w, (WaterBodyType)wt);
                     // Rebuild mesh with new preset dimensions
@@ -3928,7 +3929,6 @@ void EngineUI::RenderDetails(Scene& scene) {
                     AddLog("LogActor", std::string("Switched water type to: ") + waterTypeNames[wt], 2);
                 }
                 ImGui::Separator();
-
 
                 // Geometry
                 ImGui::TextDisabled("Geometry");
@@ -3944,6 +3944,24 @@ void EngineUI::RenderDetails(Scene& scene) {
                 }
             }
 
+            // GPU Height-Field Simulation (AquaTerrain DX12)
+            if (ImGui::CollapsingHeader("🌊 GPU Height-Field Simulation", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Enable Simulation##WaterSim", &w.simulationEnabled);
+                ImGui::TextDisabled("Simulation Grid: 256 x 256 (Compute)");
+                ImGui::SliderFloat("Wave Damping", &w.waveDamping, 0.900f, 0.999f, "%.3f");
+                ImGui::DragFloat("Height Scale", &w.heightScale, 0.05f, 0.0f, 5.0f, "%.2f");
+                ImGui::DragFloat("Disturbance Strength", &w.disturbanceStrength, 0.05f, 0.1f, 10.0f, "%.2f");
+
+                if (ImGui::Button("🌊 Add Impulse at Center", ImVec2(-1, 0))) {
+                    Eunoia::WaterSystem::Get().AddImpulseUV(0.5f, 0.5f, 0.08f, w.disturbanceStrength);
+                }
+                if (ImGui::Button("🌊 Add Random Ripple", ImVec2(-1, 0))) {
+                    float ru = 0.25f + (float)(rand() % 50) / 100.0f;
+                    float rv = 0.25f + (float)(rand() % 50) / 100.0f;
+                    Eunoia::WaterSystem::Get().AddImpulseUV(ru, rv, 0.06f, w.disturbanceStrength * 0.8f);
+                }
+            }
+
             // Surface Appearance
             if (ImGui::CollapsingHeader("🎨 Surface Appearance", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::ColorEdit4("Deep Water Color",    &w.waterColor.r);
@@ -3951,9 +3969,13 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::SliderFloat("Roughness##WaterRough",  &w.roughness,  0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Metallic##WaterMetal",   &w.metallic,   0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Opacity##WaterOpac",     &w.opacity,    0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Depth Range (Shallow-Deep)", &w.depthRange, 0.1f, 50.0f, "%.1f m");
                 ImGui::SliderFloat("Reflection Strength",    &w.reflectionStrength, 0.0f, 1.0f, "%.2f");
                 ImGui::SliderFloat("Refraction Strength",    &w.refractionStrength, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Fresnel Strength",       &w.fresnelStrength,    0.0f, 2.0f, "%.2f");
                 ImGui::SliderFloat("Specular Intensity",     &w.specularIntensity,  0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Specular Power",         &w.specularPower,      8.0f, 512.0f, "%.0f");
+                ImGui::SliderFloat("Sun Sparkle Power",      &w.sparklePower,       64.0f, 2048.0f, "%.0f");
             }
 
             // Waves & Normal Maps
@@ -3974,6 +3996,9 @@ void EngineUI::RenderDetails(Scene& scene) {
                     auto textures = ScanProjectTextures();
                     DrawTextureSlot("Foam Texture", w.foamTexturePath, w.foamTextureAssetId, textures);
                     ImGui::ColorEdit4("Foam Color",    &w.foamColor.r);
+                    ImGui::SliderFloat("Shoreline Foam Distance", &w.foamDistance, 0.1f, 10.0f, "%.1f m");
+                    ImGui::SliderFloat("Shoreline Foam Strength", &w.foamStrength, 0.0f, 3.0f, "%.2f");
+                    ImGui::SliderFloat("Foam Animation Speed",    &w.foamSpeed,    0.0f, 5.0f, "%.2f");
                     ImGui::SliderFloat("Foam Scale",   &w.foamScale,   0.01f, 20.0f, "%.2f");
                     ImGui::SliderFloat("Foam Opacity", &w.foamOpacity, 0.0f,  1.0f,  "%.2f");
                 }

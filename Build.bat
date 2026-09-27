@@ -96,6 +96,8 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\MeshClusterBuilder.cpp" ^
     "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\MeshClusterCulling.cpp" ^
     "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\HiZManager.cpp" ^
+    "%PROJECT_DIR%\Plugins\water\src\WaterSystem.cpp" ^
+    "%PROJECT_DIR%\Plugins\water\src\WaterPlugin.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^

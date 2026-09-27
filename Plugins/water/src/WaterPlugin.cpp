@@ -1,48 +1,25 @@
-#include <Water/IWaterSystem.h>
+#include <EunoiaPluginCore/IPlugin.h>
+#include <Water/WaterSystem.h>
 #include <iostream>
 
-class WaterPlugin : public IWaterSystem {
-private:
-    bool m_enabled = true;
-
+class WaterPlugin : public IPlugin {
 public:
-    WaterPlugin() {}
-    ~WaterPlugin() override {}
+    WaterPlugin() = default;
+    ~WaterPlugin() override = default;
 
-    const char* GetName() const override { return "WaterSystem"; }
-    const char* GetVersion() const override { return "1.0"; }
-    PluginCategory GetCategory() const override { return PluginCategory::World; }
-
-    bool Initialize() override {
-        std::cout << "[WaterPlugin] Initialized.\n";
-        return true;
+    void OnRegister(ServiceRegistry& /*registry*/) override {
+        // Services can be registered here
     }
 
-    void Shutdown() override {
-        std::cout << "[WaterPlugin] Shutting down.\n";
+    void OnInit() override {
+        std::cout << "[WaterPlugin] AquaTerrain Water System plugin registered.\n";
     }
 
-    void Update(float deltaTime) override {
-        // Water physics logic would go here
+    void OnUpdate(float deltaTime) override {
+        Eunoia::WaterSystem::Get().Update(deltaTime);
     }
 
-    int GetActiveWaterBodyCount() const override {
-        return 0; // Stub
-    }
-
-    void EnableWaterSystem(bool enable) override {
-        m_enabled = enable;
+    void OnShutdown() override {
+        Eunoia::WaterSystem::Get().Shutdown();
     }
 };
-
-static PluginInfo s_info = {
-    "WaterSystem",
-    "1.0",
-    "Provides realistic water bodies like oceans, lakes, and rivers",
-    "Eunoia Engine",
-    PluginCategory::World,
-    false, // isCore
-    100    // priority
-};
-
-EUNOIA_DECLARE_PLUGIN(WaterPlugin, &s_info)

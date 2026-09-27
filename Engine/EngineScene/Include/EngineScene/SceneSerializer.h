@@ -210,7 +210,6 @@ public:
             file << "      \"camFarPlane\": " << obj.camera.farPlane << ",\n";
             file << "      \"camAspectRatio\": " << obj.camera.aspectRatio << ",\n";
 
-            // Water Component Properties
             file << "      \"isWaterBody\": " << BoolStr(obj.isWaterBody) << ",\n";
             file << "      \"waterType\": " << (int)obj.water.type << ",\n";
             file << "      \"waterName\": " << QuoteStr(obj.water.name) << ",\n";
@@ -218,6 +217,24 @@ public:
             file << "      \"waterMetallic\": " << obj.water.metallic << ",\n";
             file << "      \"waterOpacity\": " << obj.water.opacity << ",\n";
             file << "      \"waterEnableDepth\": " << BoolStr(obj.water.enableDepth) << ",\n";
+            file << "      \"waterWaveSpeed\": " << obj.water.waveSpeed << ",\n";
+            file << "      \"waterWaveScale\": " << obj.water.waveScale << ",\n";
+            file << "      \"waterWaveHeight\": " << obj.water.waveHeight << ",\n";
+            file << "      \"waterNormalScale\": " << obj.water.normalScale << ",\n";
+            file << "      \"waterDepthRange\": " << obj.water.depthRange << ",\n";
+            file << "      \"waterFoamDistance\": " << obj.water.foamDistance << ",\n";
+            file << "      \"waterFoamStrength\": " << obj.water.foamStrength << ",\n";
+            file << "      \"waterFoamSpeed\": " << obj.water.foamSpeed << ",\n";
+            file << "      \"waterFresnelStrength\": " << obj.water.fresnelStrength << ",\n";
+            file << "      \"waterSpecularPower\": " << obj.water.specularPower << ",\n";
+            file << "      \"waterSparklePower\": " << obj.water.sparklePower << ",\n";
+            file << "      \"waterSimEnabled\": " << BoolStr(obj.water.simulationEnabled) << ",\n";
+            file << "      \"waterWaveDamping\": " << obj.water.waveDamping << ",\n";
+            file << "      \"waterDisturbanceStrength\": " << obj.water.disturbanceStrength << ",\n";
+            file << "      \"waterHeightScale\": " << obj.water.heightScale << ",\n";
+            file << "      \"waterColor\": [" << obj.water.waterColor.r << ", " << obj.water.waterColor.g << ", " << obj.water.waterColor.b << ", " << obj.water.waterColor.a << "],\n";
+            file << "      \"waterShallowColor\": [" << obj.water.shallowColor.r << ", " << obj.water.shallowColor.g << ", " << obj.water.shallowColor.b << ", " << obj.water.shallowColor.a << "],\n";
+
 
             // Attached Behaviours (dev.md Section 14)
             file << "      \"behaviours\": [\n";
@@ -885,6 +902,28 @@ private:
             p = actorBlock.find("\"waterMetallic\""); if (p != std::string::npos) obj.water.metallic = ParseFloatAt(actorBlock, p, 0.1f);
             p = actorBlock.find("\"waterOpacity\""); if (p != std::string::npos) obj.water.opacity = ParseFloatAt(actorBlock, p, 0.8f);
             p = actorBlock.find("\"waterEnableDepth\""); if (p != std::string::npos) obj.water.enableDepth = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterWaveSpeed\""); if (p != std::string::npos) obj.water.waveSpeed = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterWaveScale\""); if (p != std::string::npos) obj.water.waveScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterWaveHeight\""); if (p != std::string::npos) obj.water.waveHeight = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterNormalScale\""); if (p != std::string::npos) obj.water.normalScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterDepthRange\""); if (p != std::string::npos) obj.water.depthRange = ParseFloatAt(actorBlock, p, 10.0f);
+            p = actorBlock.find("\"waterFoamDistance\""); if (p != std::string::npos) obj.water.foamDistance = ParseFloatAt(actorBlock, p, 1.5f);
+            p = actorBlock.find("\"waterFoamStrength\""); if (p != std::string::npos) obj.water.foamStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterFoamSpeed\""); if (p != std::string::npos) obj.water.foamSpeed = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterFresnelStrength\""); if (p != std::string::npos) obj.water.fresnelStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterSpecularPower\""); if (p != std::string::npos) obj.water.specularPower = ParseFloatAt(actorBlock, p, 128.0f);
+            p = actorBlock.find("\"waterSparklePower\""); if (p != std::string::npos) obj.water.sparklePower = ParseFloatAt(actorBlock, p, 800.0f);
+            p = actorBlock.find("\"waterSimEnabled\""); if (p != std::string::npos) obj.water.simulationEnabled = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterWaveDamping\""); if (p != std::string::npos) obj.water.waveDamping = ParseFloatAt(actorBlock, p, 0.985f);
+            p = actorBlock.find("\"waterDisturbanceStrength\""); if (p != std::string::npos) obj.water.disturbanceStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterHeightScale\""); if (p != std::string::npos) obj.water.heightScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterColor\""); if (p != std::string::npos) {
+                obj.water.waterColor = ParseVec4(actorBlock, p);
+            }
+            p = actorBlock.find("\"waterShallowColor\""); if (p != std::string::npos) {
+                obj.water.shallowColor = ParseVec4(actorBlock, p);
+            }
+
 
             // Parse Attached Behaviours (dev.md Section 14)
             size_t behPos = actorBlock.find("\"behaviours\"");
