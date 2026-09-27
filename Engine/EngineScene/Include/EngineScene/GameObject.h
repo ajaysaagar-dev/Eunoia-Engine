@@ -321,6 +321,12 @@ struct WaterBodyComponent {
     float specularPower = 128.0f;
     float sparklePower = 800.0f;
 
+    // Ocean & Multi-Scale Waves
+    float choppiness = 0.7f;
+    float oceanExtent = 3000.0f;
+    bool isCameraCentered = true;
+    int debugMode = 0; // 0=Final, 1=Base, 2=Normals, 3=Height, 4=Foam, 5=Depth, 6=Wireframe
+
     // Rendering
     bool castShadows = false;
     bool receiveShadows = true;

@@ -3168,6 +3168,8 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
         } else {
             snprintf(label, sizeof(label), "[Camera] %s", obj.name.c_str());
         }
+    } else if (obj.isWaterBody || obj.type == PrimitiveType::WaterBody) {
+        snprintf(label, sizeof(label), "%s [Water Body]", obj.name.c_str());
     } else if (obj.type == PrimitiveType::Empty) {
         snprintf(label, sizeof(label), "[Empty] %s", obj.name.c_str());
     } else {
@@ -3944,13 +3946,39 @@ void EngineUI::RenderDetails(Scene& scene) {
                 }
             }
 
-            // GPU Height-Field Simulation (AquaTerrain DX12)
-            if (ImGui::CollapsingHeader("🌊 GPU Height-Field Simulation", ImGuiTreeNodeFlags_DefaultOpen)) {
+            // Ocean Waves (dev.md Section 29)
+            if (ImGui::CollapsingHeader("🌊 Ocean Waves", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::TextDisabled("Wave System: 8 Multi-Scale Gerstner Waves");
+                ImGui::SliderFloat("Wave Strength (Height)##WaterH", &w.waveHeight, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Wave Scale (Wavelength)##WaterScale", &w.waveScale, 0.05f, 5.0f, "%.2f");
+                ImGui::SliderFloat("Wave Speed##WaterSpd", &w.waveSpeed, 0.0f, 5.0f, "%.2f");
+                ImGui::SliderFloat("Choppiness (Steepness)##WaterChop", &w.choppiness, 0.0f, 1.5f, "%.2f");
+                ImGui::SliderFloat("Normal Detail Scale##WaterNorm", &w.normalScale, 0.0f, 2.0f, "%.2f");
+            }
+
+            // Surface Appearance (dev.md Section 29)
+            if (ImGui::CollapsingHeader("🎨 Surface", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::DragFloat("Water Level (Elevation)##WaterLvl", &w.elevation, 0.05f, -500.0f, 500.0f, "%.2f m");
+                ImGui::ColorEdit4("Deep Water Color",    &w.waterColor.r);
+                ImGui::ColorEdit4("Shallow Water Color", &w.shallowColor.r);
+                ImGui::SliderFloat("Roughness##WaterRough",  &w.roughness,  0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Specular Intensity##WaterSpec", &w.specularIntensity,  0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Specular Power##WaterSpecPow",  &w.specularPower, 8.0f, 512.0f, "%.0f");
+                ImGui::SliderFloat("Sun Sparkle Power##WaterSpkPow",&w.sparklePower, 64.0f, 2048.0f, "%.0f");
+                ImGui::SliderFloat("Fresnel Strength##WaterFres",   &w.fresnelStrength, 0.0f, 2.0f, "%.2f");
+                ImGui::SliderFloat("Opacity##WaterOpac",     &w.opacity,    0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Depth Range (Fade)##WaterDepthFade", &w.depthRange, 0.1f, 50.0f, "%.1f m");
+                ImGui::SliderFloat("Reflection Strength##WaterRefl", &w.reflectionStrength, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Refraction Strength##WaterRefr", &w.refractionStrength, 0.0f, 2.0f, "%.2f");
+            }
+
+            // GPU Height-Field Simulation (AquaTerrain DX12, dev.md Section 29)
+            if (ImGui::CollapsingHeader("🌊 Simulation (Local Ripples)", ImGuiTreeNodeFlags_DefaultOpen)) {
                 ImGui::Checkbox("Enable Simulation##WaterSim", &w.simulationEnabled);
-                ImGui::TextDisabled("Simulation Grid: 256 x 256 (Compute)");
-                ImGui::SliderFloat("Wave Damping", &w.waveDamping, 0.900f, 0.999f, "%.3f");
-                ImGui::DragFloat("Height Scale", &w.heightScale, 0.05f, 0.0f, 5.0f, "%.2f");
-                ImGui::DragFloat("Disturbance Strength", &w.disturbanceStrength, 0.05f, 0.1f, 10.0f, "%.2f");
+                ImGui::TextDisabled("Simulation Resolution: 256 x 256 (Compute)");
+                ImGui::SliderFloat("Ripple Strength (Height Scale)##WaterRipStr", &w.heightScale, 0.0f, 0.5f, "%.3f");
+                ImGui::SliderFloat("Ripple Radius / Disturbance##WaterDistStr", &w.disturbanceStrength, 0.05f, 5.0f, "%.2f");
+                ImGui::SliderFloat("Wave Damping##WaterDamp", &w.waveDamping, 0.900f, 0.999f, "%.3f");
 
                 if (ImGui::Button("🌊 Add Impulse at Center", ImVec2(-1, 0))) {
                     Eunoia::WaterSystem::Get().AddImpulseUV(0.5f, 0.5f, 0.08f, w.disturbanceStrength);
@@ -3962,74 +3990,41 @@ void EngineUI::RenderDetails(Scene& scene) {
                 }
             }
 
-            // Surface Appearance
-            if (ImGui::CollapsingHeader("🎨 Surface Appearance", ImGuiTreeNodeFlags_DefaultOpen)) {
-                ImGui::ColorEdit4("Deep Water Color",    &w.waterColor.r);
-                ImGui::ColorEdit4("Shallow Water Color", &w.shallowColor.r);
-                ImGui::SliderFloat("Roughness##WaterRough",  &w.roughness,  0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Metallic##WaterMetal",   &w.metallic,   0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Opacity##WaterOpac",     &w.opacity,    0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Depth Range (Shallow-Deep)", &w.depthRange, 0.1f, 50.0f, "%.1f m");
-                ImGui::SliderFloat("Reflection Strength",    &w.reflectionStrength, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Refraction Strength",    &w.refractionStrength, 0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Fresnel Strength",       &w.fresnelStrength,    0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Specular Intensity",     &w.specularIntensity,  0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Specular Power",         &w.specularPower,      8.0f, 512.0f, "%.0f");
-                ImGui::SliderFloat("Sun Sparkle Power",      &w.sparklePower,       64.0f, 2048.0f, "%.0f");
-            }
-
-            // Waves & Normal Maps
-            if (ImGui::CollapsingHeader("🌊 Waves & Animation")) {
-                auto textures = ScanProjectTextures();
-                DrawTextureSlot("Normal Map 1", w.normalMap1Path, w.normalMap1AssetId, textures);
-                DrawTextureSlot("Normal Map 2", w.normalMap2Path, w.normalMap2AssetId, textures);
-                ImGui::SliderFloat("Normal Scale",  &w.normalScale, 0.0f, 5.0f,  "%.2f");
-                ImGui::SliderFloat("Wave Speed",    &w.waveSpeed,   0.0f, 5.0f,  "%.2f");
-                ImGui::SliderFloat("Wave Scale (Tiling)", &w.waveScale, 0.01f, 10.0f, "%.2f");
-                ImGui::SliderFloat("Wave Height",   &w.waveHeight,  0.0f, 5.0f,  "%.2f");
-            }
-
-            // Foam
+            // Foam (dev.md Section 29)
             if (ImGui::CollapsingHeader("💦 Foam")) {
                 ImGui::Checkbox("Enable Foam##WaterFoam", &w.enableFoam);
                 if (w.enableFoam) {
-                    auto textures = ScanProjectTextures();
-                    DrawTextureSlot("Foam Texture", w.foamTexturePath, w.foamTextureAssetId, textures);
+                    ImGui::SliderFloat("Foam Strength##WaterFoamStr",  &w.foamStrength, 0.0f, 3.0f, "%.2f");
+                    ImGui::SliderFloat("Foam Distance##WaterFoamDist", &w.foamDistance, 0.1f, 10.0f, "%.1f m");
+                    ImGui::SliderFloat("Foam Scale##WaterFoamScale",   &w.foamScale,   0.01f, 10.0f, "%.2f");
+                    ImGui::SliderFloat("Foam Speed##WaterFoamSpd",     &w.foamSpeed,    0.0f, 5.0f, "%.2f");
                     ImGui::ColorEdit4("Foam Color",    &w.foamColor.r);
-                    ImGui::SliderFloat("Shoreline Foam Distance", &w.foamDistance, 0.1f, 10.0f, "%.1f m");
-                    ImGui::SliderFloat("Shoreline Foam Strength", &w.foamStrength, 0.0f, 3.0f, "%.2f");
-                    ImGui::SliderFloat("Foam Animation Speed",    &w.foamSpeed,    0.0f, 5.0f, "%.2f");
-                    ImGui::SliderFloat("Foam Scale",   &w.foamScale,   0.01f, 20.0f, "%.2f");
-                    ImGui::SliderFloat("Foam Opacity", &w.foamOpacity, 0.0f,  1.0f,  "%.2f");
+                    auto textures = ScanProjectTextures();
+                    DrawTextureSlot("Foam Texture (Optional)", w.foamTexturePath, w.foamTextureAssetId, textures);
                 }
             }
 
-            // Depth & Refraction
-            if (ImGui::CollapsingHeader("🔵 Depth & Refraction")) {
-                ImGui::Checkbox("Enable Depth Fade##WaterDepth", &w.enableDepth);
-                if (w.enableDepth) {
-                    ImGui::SliderFloat("Depth Fade Distance", &w.depthFadeDistance, 0.1f, 50.0f, "%.1f m");
-                }
-                ImGui::Checkbox("Enable Refraction##WaterRefr", &w.enableRefraction);
-                if (w.enableRefraction) {
-                    ImGui::SliderFloat("Distortion Strength", &w.distortionStrength, 0.0f, 2.0f, "%.2f");
-                }
-                ImGui::Checkbox("Caustics##WaterCaustics", &w.caustics);
-                if (w.caustics) {
-                    ImGui::SliderFloat("Caustics Scale", &w.causticsScale, 0.01f, 10.0f, "%.2f");
-                    ImGui::SliderFloat("Caustics Speed", &w.causticsSpeed, 0.0f,  5.0f,  "%.2f");
-                }
-            }
+            // Rendering & Debug (dev.md Section 29 & 35)
+            if (ImGui::CollapsingHeader("⚙️ Rendering & Debug", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Visible##WaterVis", &obj->visible);
+                ImGui::Checkbox("Camera Centered Ocean##WaterCamCent", &w.isCameraCentered);
+                ImGui::DragFloat("Ocean Extent##WaterExtent", &w.oceanExtent, 50.0f, 100.0f, 20000.0f, "%.0f m");
+                ImGui::TextDisabled("Mesh Resolution: 256 x 256 (66k Vertices)");
 
-            // Environment & Lighting
-            if (ImGui::CollapsingHeader("🌍 Environment & Lighting")) {
-                ImGui::Checkbox("Receive Environment Light", &w.receiveEnvironmentLight);
-                if (w.receiveEnvironmentLight) {
-                    ImGui::SliderFloat("Env Light Intensity", &w.environmentLightIntensity, 0.0f, 3.0f, "%.2f");
-                }
-                ImGui::Checkbox("Reflect Skybox", &w.reflectSkybox);
-                ImGui::SliderFloat("Subsurface Scattering", &w.subsurfaceScattering, 0.0f, 2.0f, "%.2f");
-                ImGui::ColorEdit3("Subsurface Color", &w.subsurfaceColor.r);
+                const char* debugModes[] = {
+                    "0: Final Shading",
+                    "1: Base Color",
+                    "2: Normals",
+                    "3: Height Field",
+                    "4: Foam Mask",
+                    "5: Depth / Thickness",
+                    "6: Wireframe / Grid Topology"
+                };
+                ImGui::Combo("Water Debug Mode##WaterDbg", &w.debugMode, debugModes, 7);
+
+                ImGui::Checkbox("Cast Shadows##WaterShadow", &obj->castShadows);
+                ImGui::Checkbox("Receive Shadows##WaterRecv",&obj->receiveShadows);
+                ImGui::SliderInt("Render Layer##WaterLyr", &w.renderLayer, 0, 7);
             }
 
             // Flow (River, Stream, Waterfall)
@@ -4042,18 +4037,6 @@ void EngineUI::RenderDetails(Scene& scene) {
                     ImGui::SliderFloat("Flow Tiling",  &w.flowTiling,  0.01f, 10.0f, "%.2f");
                     auto textures = ScanProjectTextures();
                     DrawTextureSlot("Flow Map (Optional)", w.flowMapPath, w.flowMapAssetId, textures);
-                }
-            }
-
-            // Ocean / Sea wave physics
-            bool isOcean = (w.type == WaterBodyType::Ocean || w.type == WaterBodyType::Sea);
-            if (isOcean && ImGui::CollapsingHeader("🌊 Ocean Wave Physics")) {
-                ImGui::Checkbox("Enable Ocean Waves", &w.enableWaves);
-                if (w.enableWaves) {
-                    ImGui::DragFloat("Wave Amplitude",  &w.oceanWaveAmplitude,  0.1f, 0.0f, 10.0f, "%.2f");
-                    ImGui::DragFloat("Wave Period",     &w.oceanWavePeriod,     1.0f, 0.1f, 100.0f, "%.1f");
-                    ImGui::SliderFloat("Wave Direction (deg)", &w.oceanWaveDirection, 0.0f, 360.0f, "%.1f°");
-                    ImGui::SliderInt("Tessellation Level", &w.tessellationLevel, 1, 16);
                 }
             }
 
@@ -4094,14 +4077,6 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::SliderFloat("Density (Murk)",  &w.swampDensity, 0.0f, 1.0f, "%.2f");
                 ImGui::ColorEdit3("Swamp Color",      &w.swampColor.r);
                 ImGui::SliderFloat("Algae Amount",    &w.algaeAmount,  0.0f, 1.0f, "%.2f");
-            }
-
-            // Rendering flags
-            if (ImGui::CollapsingHeader("⚙️ Rendering")) {
-                ImGui::Checkbox("Visible##WaterVis",         &obj->visible);
-                ImGui::Checkbox("Cast Shadows##WaterShadow", &obj->castShadows);
-                ImGui::Checkbox("Receive Shadows##WaterRecv",&obj->receiveShadows);
-                ImGui::SliderInt("Render Layer", &w.renderLayer, 0, 7);
             }
         }
 

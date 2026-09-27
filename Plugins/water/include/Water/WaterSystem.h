@@ -105,6 +105,13 @@ private:
     ID3D12RootSignature*      m_waterRenderRootSig = nullptr;
     ID3D12PipelineState*      m_waterRenderPSO = nullptr;
 
+    // Dedicated Ocean Grid Mesh (256x256 quads, ~66k vertices, ~393k indices)
+    ID3D12Resource*           m_oceanVB = nullptr;
+    ID3D12Resource*           m_oceanIB = nullptr;
+    D3D12_VERTEX_BUFFER_VIEW  m_oceanVbv = {};
+    D3D12_INDEX_BUFFER_VIEW   m_oceanIbv = {};
+    UINT                      m_oceanIndexCount = 0;
+
     struct ImpulseData {
         float u, v;
         float radius;

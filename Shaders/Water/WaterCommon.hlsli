@@ -38,10 +38,12 @@ cbuffer WaterConstants : register(b0)
     float    flowSpeed;         // 52
     float    simEnabled;        // 53
     float    heightScale;       // 54
-    float    modelRotY;         // 55
-    float3   modelPos;          // 56-58
-    float    _padCommon;        // 59
+    float    choppiness;        // 55
+    float3   renderOrigin;      // 56-58
+    float    debugMode;         // 59
 };
+
+#define oceanExtent (shallowColor.a)
 
 // ----------------------------------------------------------------------------
 // Procedural FBM (Fractal Brownian Motion) and Value Noise for Foam and Breakup
@@ -80,27 +82,114 @@ float WaterFBM(float2 p)
 }
 
 // ----------------------------------------------------------------------------
-// Analytical Sine Wave Evaluation (AquaTerrain Section 12)
+// Multi-Scale Gerstner Ocean Wave System (dev.md Sections 4, 5, 15, 16)
+// Continuous directional rolling waves displacing X, Y, Z with exact normals
 // ----------------------------------------------------------------------------
-float SinWave(float2 pos, float2 dir, float wavelength, float speed, float amplitude, float t)
+struct GerstnerWave
 {
-    float safeWl = max(wavelength, 0.05);
-    float k = 6.2831853 / safeWl;
-    float d = dot(normalize(dir + float2(0.0001, 0.0001)), pos);
-    return amplitude * sin(k * d + t * speed);
+    float2 direction;
+    float  wavelength;
+    float  amplitude;
+    float  speed;
+    float  steepness;
+};
+
+// 8 Multi-scale ocean waves (large swell -> rolling medium -> fine surface chop)
+static const GerstnerWave c_oceanWaves[8] = {
+    // Large swell
+    { float2(0.894, 0.447),  50.0, 0.30, 1.00, 0.60 },
+    { float2(-0.707, 0.707), 35.0, 0.22, 1.15, 0.65 },
+
+    // Medium rolling waves
+    { float2(0.316, 0.949),  20.0, 0.14, 1.35, 0.70 },
+    { float2(-0.923, -0.385), 12.0, 0.09, 1.65, 0.75 },
+    { float2(0.600, -0.800),  7.5, 0.05, 2.00, 0.80 },
+
+    // Small surface chop and ripples
+    { float2(-0.447, 0.894),  4.5, 0.030, 2.50, 0.85 },
+    { float2(0.707, 0.707),   2.4, 0.015, 3.20, 0.90 },
+    { float2(-0.800, -0.600), 1.2, 0.008, 4.00, 0.95 }
+};
+
+void EvaluateGerstnerWaves(
+    float2 worldXZ,
+    float t,
+    float speedMultiplier,
+    float scaleMultiplier,
+    float heightMultiplier,
+    float choppinessMultiplier,
+    out float3 displacement,
+    out float3 normal)
+{
+    displacement = float3(0.0, 0.0, 0.0);
+
+    float normX = 0.0;
+    float normZ = 0.0;
+    float normY = 1.0;
+
+    float sMul = clamp(scaleMultiplier, 0.02, 5.0);
+    float hMul = clamp(heightMultiplier, 0.0, 5.0);
+    float spMul = clamp(speedMultiplier, 0.0, 10.0);
+    float chMul = clamp(choppinessMultiplier, 0.0, 2.0);
+
+    [unroll]
+    for (int i = 0; i < 8; ++i)
+    {
+        GerstnerWave w = c_oceanWaves[i];
+        float wl = max(w.wavelength * sMul, 0.1);
+        float amp = w.amplitude * hMul;
+        float spd = w.speed * spMul;
+        float q = clamp(w.steepness * chMul, 0.0, 1.0);
+
+        float k = 6.2831853 / wl;
+        float omega = k * spd;
+        float phase = k * dot(w.direction, worldXZ) - omega * t;
+
+        float cosP = cos(phase);
+        float sinP = sin(phase);
+
+        float qAmp = q * amp;
+        displacement.x += qAmp * w.direction.x * cosP;
+        displacement.z += qAmp * w.direction.y * cosP;
+        displacement.y += amp * sinP;
+
+        float wa = k * amp;
+        normX -= w.direction.x * wa * cosP;
+        normZ -= w.direction.y * wa * cosP;
+        normY -= q * wa * sinP;
+    }
+
+    normal = normalize(float3(normX, max(normY, 0.1), normZ));
 }
 
-float EvaluateWaves(float2 pos, float t, float speed, float scale, float height, float2 flowDir, float flowSpd)
+// ----------------------------------------------------------------------------
+// Micro-ripple Normal Evaluation for WaterPS (dev.md Section 16)
+// ----------------------------------------------------------------------------
+float3 EvaluateDetailNormal(float2 worldXZ, float t, float3 baseNormal, float strength)
 {
-    float2 p = pos + flowDir * (t * flowSpd);
-    float safeScale = max(scale, 0.01);
-    float safeHeight = clamp(height, 0.0, 20.0);
-    float safeSpeed = clamp(speed, 0.0, 10.0);
+    static const float2 dirs[4] = {
+        float2(0.707, 0.707),
+        float2(-0.894, 0.447),
+        float2(0.316, -0.949),
+        float2(-0.600, -0.800)
+    };
+    static const float freqs[4] = { 2.5, 4.2, 7.8, 12.0 };
+    static const float speeds[4] = { 1.8, 2.4, 3.1, 4.0 };
+    static const float amps[4] = { 0.04, 0.025, 0.015, 0.008 };
 
-    float h0 = SinWave(p, float2(1.0, 0.2),  6.0 * safeScale, 1.2 * safeSpeed, 0.45 * safeHeight, t);
-    float h1 = SinWave(p, float2(-0.4, 0.9), 3.5 * safeScale, 1.6 * safeSpeed, 0.35 * safeHeight, t);
-    float h2 = SinWave(p, float2(0.7, -0.7), 2.0 * safeScale, 2.2 * safeSpeed, 0.20 * safeHeight, t);
-    return h0 + h1 + h2;
+    float dx = 0.0;
+    float dz = 0.0;
+    [unroll]
+    for (int i = 0; i < 4; ++i)
+    {
+        float phase = dot(dirs[i], worldXZ) * freqs[i] - t * speeds[i];
+        float c = cos(phase) * amps[i] * freqs[i];
+        dx += dirs[i].x * c;
+        dz += dirs[i].y * c;
+    }
+    float s = clamp(strength, 0.0, 2.0);
+    float3 rippleNorm = float3(-dx * s, 1.0, -dz * s);
+    return normalize(baseNormal + rippleNorm * 0.35);
 }
 
 // ----------------------------------------------------------------------------

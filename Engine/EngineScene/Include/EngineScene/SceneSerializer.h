@@ -234,6 +234,10 @@ public:
             file << "      \"waterHeightScale\": " << obj.water.heightScale << ",\n";
             file << "      \"waterColor\": [" << obj.water.waterColor.r << ", " << obj.water.waterColor.g << ", " << obj.water.waterColor.b << ", " << obj.water.waterColor.a << "],\n";
             file << "      \"waterShallowColor\": [" << obj.water.shallowColor.r << ", " << obj.water.shallowColor.g << ", " << obj.water.shallowColor.b << ", " << obj.water.shallowColor.a << "],\n";
+            file << "      \"waterChoppiness\": " << obj.water.choppiness << ",\n";
+            file << "      \"waterOceanExtent\": " << obj.water.oceanExtent << ",\n";
+            file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
+            file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
 
 
             // Attached Behaviours (dev.md Section 14)
@@ -923,6 +927,10 @@ private:
             p = actorBlock.find("\"waterShallowColor\""); if (p != std::string::npos) {
                 obj.water.shallowColor = ParseVec4(actorBlock, p);
             }
+            p = actorBlock.find("\"waterChoppiness\""); if (p != std::string::npos) obj.water.choppiness = ParseFloatAt(actorBlock, p, 0.7f);
+            p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
+            p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterDebugMode\""); if (p != std::string::npos) obj.water.debugMode = ParseIntAt(actorBlock, p, 0);
 
 
             // Parse Attached Behaviours (dev.md Section 14)

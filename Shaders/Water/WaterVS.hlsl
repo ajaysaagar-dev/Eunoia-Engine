@@ -1,6 +1,7 @@
 // ============================================================================
 // Eunoia Engine - WaterVS.hlsl
-// AquaTerrain DX12 Water Vertex Shader: Displaces with simulated height + analytical waves
+// Multi-Scale Directional Gerstner Ocean Wave Vertex Shader
+// Dual Layer: Continuous Analytical Gerstner Displacement + Subtle GPU Ripples
 // ============================================================================
 
 #include "WaterCommon.hlsli"
@@ -26,64 +27,64 @@ struct VSOut
 
 VSOut VSMain(VSIn input)
 {
-    float3 p = input.pos;
-    float t = time;
+    // Determine world base position:
+    // If oceanExtent > 10.0 (camera-centered ocean mesh):
+    // input.pos is in [-0.5, +0.5], so scale by oceanExtent and offset by renderOrigin (which has water elevation locked in Y)
+    float3 baseWorldP;
+    if (oceanExtent > 10.0)
+    {
+        baseWorldP = float3(
+            input.pos.x * oceanExtent + renderOrigin.x,
+            renderOrigin.y,
+            input.pos.z * oceanExtent + renderOrigin.z
+        );
+    }
+    else
+    {
+        baseWorldP = input.pos + renderOrigin;
+    }
 
-    // 1. GPU Height-field simulation displacement (AquaTerrain)
+    // 1. Procedural analytical Gerstner waves (Primary ocean layer, evaluated in world space)
+    float3 waveDisp;
+    float3 waveNorm;
+    EvaluateGerstnerWaves(baseWorldP.xz, time, waveSpeed, waveScale, waveHeight, choppiness, waveDisp, waveNorm);
+
+    // Taper displacement at outer boundary of camera-centered ocean to eliminate any hard edge
+    if (oceanExtent > 10.0)
+    {
+        float distFromCam = length(baseWorldP.xz - cameraPos.xz);
+        float taperStart = oceanExtent * 0.40;
+        float taperEnd = oceanExtent * 0.50;
+        float taper = saturate((taperEnd - distFromCam) / max(taperEnd - taperStart, 1.0));
+        waveDisp *= taper;
+    }
+
+    // 2. GPU Height-Field simulation displacement (Local interaction / ripples, subtle)
     float simH = 0.0;
+    float simDx = 0.0;
+    float simDz = 0.0;
     if (simEnabled > 0.5)
     {
         simH = gHeightMap.SampleLevel(gLinearSampler, input.uv, 0) * heightScale;
         if (isnan(simH) || isinf(simH)) simH = 0.0;
-    }
 
-    // 2. Procedural analytical waves (for fine detail and large scale water)
-    float procH = EvaluateWaves(p.xz, t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    if (isnan(procH) || isinf(procH)) procH = 0.0;
-
-    float totalH = simH + procH;
-    p.y += totalH;
-
-    // Transform local p into world position using water body position & yaw
-    float cosR = cos(modelRotY);
-    float sinR = sin(modelRotY);
-    float3 rotatedP = float3(
-        p.x * cosR - p.z * sinR,
-        p.y,
-        p.x * sinR + p.z * cosR
-    );
-    float3 worldP = rotatedP + modelPos;
-
-    // 3. Compute normal using finite differences of waves
-    float eps = 0.15;
-    float hL = EvaluateWaves(p.xz - float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hR = EvaluateWaves(p.xz + float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hD = EvaluateWaves(p.xz - float2(0.0, eps), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hU = EvaluateWaves(p.xz + float2(0.0, eps), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-
-    if (simEnabled > 0.5)
-    {
         float2 uvEps = float2(1.0 / 256.0, 1.0 / 256.0);
-        hL += gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(uvEps.x, 0.0), 0) * heightScale;
-        hR += gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(uvEps.x, 0.0), 0) * heightScale;
-        hD += gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(0.0, uvEps.y), 0) * heightScale;
-        hU += gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(0.0, uvEps.y), 0) * heightScale;
+        float hL = gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(uvEps.x, 0.0), 0) * heightScale;
+        float hR = gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(uvEps.x, 0.0), 0) * heightScale;
+        float hD = gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(0.0, uvEps.y), 0) * heightScale;
+        float hU = gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(0.0, uvEps.y), 0) * heightScale;
+        simDx = (hR - hL) * 128.0;
+        simDz = (hU - hD) * 128.0;
     }
 
-    float dx = (hR - hL) / (2.0 * eps);
-    float dz = (hU - hD) / (2.0 * eps);
-    float3 localN = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
-    float3 worldN = float3(
-        localN.x * cosR - localN.z * sinR,
-        localN.y,
-        localN.x * sinR + localN.z * cosR
-    );
+    float3 finalWorldP = baseWorldP + waveDisp + float3(0.0, simH, 0.0);
+    float3 finalNormal = normalize(waveNorm + float3(-simDx, 0.0, -simDz));
 
     VSOut o;
-    o.clipPos  = mul(viewProj, float4(worldP, 1.0f));
-    o.worldPos = worldP;
-    o.normal   = worldN;
+    o.clipPos  = mul(viewProj, float4(finalWorldP, 1.0f));
+    o.worldPos = finalWorldP;
+    o.normal   = finalNormal;
     o.uv       = input.uv;
-    o.eyeDist  = length(cameraPos - worldP);
+    o.eyeDist  = length(cameraPos - finalWorldP);
     return o;
 }

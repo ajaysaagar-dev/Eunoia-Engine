@@ -45,9 +45,9 @@ struct alignas(16) WaterShaderConstantsBuffer
     float     flowSpeed;         // 52
     float     simEnabled;        // 53
     float     heightScale;       // 54
-    float     modelRotY;         // 55
-    glm::vec3 modelPos;          // 56-58
-    float     _padCommon;        // 59
+    float     choppiness;        // 55
+    glm::vec3 renderOrigin;      // 56-58
+    float     debugMode;         // 59
 };
 static_assert(sizeof(WaterShaderConstantsBuffer) == 240, "WaterShaderConstantsBuffer must be exactly 240 bytes (60 floats)");
 
@@ -204,6 +204,94 @@ bool WaterSystem::CreateResources() {
     m_depthSrvCpuHandle = cpuStart;
     m_depthSrvGpuHandle = gpuStart;
 
+    // 3. Create dedicated camera-following Ocean Surface Grid Mesh (256x256 quads, dev.md Section 8)
+    {
+        std::vector<MeshVertex> oceanVertices;
+        std::vector<uint32_t> oceanIndices;
+        oceanVertices.reserve(257 * 257);
+        oceanIndices.reserve(256 * 256 * 6);
+
+        for (UINT z = 0; z <= 256; ++z) {
+            float fz = (float)z / 256.0f - 0.5f;
+            for (UINT x = 0; x <= 256; ++x) {
+                float fx = (float)x / 256.0f - 0.5f;
+                MeshVertex vert = {};
+                vert.pos = glm::vec3(fx, 0.0f, fz);
+                vert.normal = glm::vec3(0.0f, 1.0f, 0.0f);
+                vert.uv = glm::vec2((float)x / 256.0f, (float)z / 256.0f);
+                vert.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+                oceanVertices.push_back(vert);
+            }
+        }
+
+        for (UINT z = 0; z < 256; ++z) {
+            for (UINT x = 0; x < 256; ++x) {
+                uint32_t topLeft = z * 257 + x;
+                uint32_t topRight = topLeft + 1;
+                uint32_t bottomLeft = (z + 1) * 257 + x;
+                uint32_t bottomRight = bottomLeft + 1;
+
+                oceanIndices.push_back(topLeft);
+                oceanIndices.push_back(bottomLeft);
+                oceanIndices.push_back(topRight);
+
+                oceanIndices.push_back(topRight);
+                oceanIndices.push_back(bottomLeft);
+                oceanIndices.push_back(bottomRight);
+            }
+        }
+
+        m_oceanIndexCount = (UINT)oceanIndices.size();
+
+        UINT vbSize = (UINT)(oceanVertices.size() * sizeof(MeshVertex));
+        UINT ibSize = (UINT)(oceanIndices.size() * sizeof(uint32_t));
+
+        D3D12_HEAP_PROPERTIES uploadHeap = {};
+        uploadHeap.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+        D3D12_RESOURCE_DESC vbDesc = {};
+        vbDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+        vbDesc.Width = vbSize;
+        vbDesc.Height = 1;
+        vbDesc.DepthOrArraySize = 1;
+        vbDesc.MipLevels = 1;
+        vbDesc.SampleDesc.Count = 1;
+        vbDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+
+        HRESULT hrVB = m_device->CreateCommittedResource(
+            &uploadHeap, D3D12_HEAP_FLAG_NONE, &vbDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_oceanVB)
+        );
+        if (SUCCEEDED(hrVB)) {
+            void* pData = nullptr;
+            m_oceanVB->Map(0, nullptr, &pData);
+            memcpy(pData, oceanVertices.data(), vbSize);
+            m_oceanVB->Unmap(0, nullptr);
+
+            m_oceanVbv.BufferLocation = m_oceanVB->GetGPUVirtualAddress();
+            m_oceanVbv.StrideInBytes = sizeof(MeshVertex);
+            m_oceanVbv.SizeInBytes = vbSize;
+        }
+
+        D3D12_RESOURCE_DESC ibDesc = vbDesc;
+        ibDesc.Width = ibSize;
+
+        HRESULT hrIB = m_device->CreateCommittedResource(
+            &uploadHeap, D3D12_HEAP_FLAG_NONE, &ibDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&m_oceanIB)
+        );
+        if (SUCCEEDED(hrIB)) {
+            void* pData = nullptr;
+            m_oceanIB->Map(0, nullptr, &pData);
+            memcpy(pData, oceanIndices.data(), ibSize);
+            m_oceanIB->Unmap(0, nullptr);
+
+            m_oceanIbv.BufferLocation = m_oceanIB->GetGPUVirtualAddress();
+            m_oceanIbv.SizeInBytes = ibSize;
+            m_oceanIbv.Format = DXGI_FORMAT_R32_UINT;
+        }
+    }
+
     m_needsInitialClear = true;
     return true;
 }
@@ -219,6 +307,8 @@ void WaterSystem::ReleaseResources() {
         m_descriptorHeap->Release();
         m_descriptorHeap = nullptr;
     }
+    if (m_oceanVB) { m_oceanVB->Release(); m_oceanVB = nullptr; }
+    if (m_oceanIB) { m_oceanIB->Release(); m_oceanIB = nullptr; }
     if (m_clearRootSig) { m_clearRootSig->Release(); m_clearRootSig = nullptr; }
     if (m_clearPSO) { m_clearPSO->Release(); m_clearPSO = nullptr; }
     if (m_disturbRootSig) { m_disturbRootSig->Release(); m_disturbRootSig = nullptr; }
@@ -581,10 +671,12 @@ cbuffer WaterConstants : register(b0) {
     float    flowSpeed;
     float    simEnabled;
     float    heightScale;
-    float    modelRotY;
-    float3   modelPos;
-    float    _padCommon;
+    float    choppiness;
+    float3   renderOrigin;
+    float    debugMode;
 };
+#define oceanExtent (shallowColor.a)
+
 float Hash21(float2 p) {
     p = frac(p * float2(123.34, 456.21));
     p += dot(p, p + 45.32);
@@ -611,20 +703,66 @@ float WaterFBM(float2 p) {
     }
     return value;
 }
-float SinWave(float2 pos, float2 dir, float wavelength, float speed, float amplitude, float t) {
-    float k = 6.2831853 / max(wavelength, 0.05);
-    float d = dot(normalize(dir + float2(0.0001, 0.0001)), pos);
-    return amplitude * sin(k * d + t * speed);
+struct GerstnerWave {
+    float2 direction;
+    float  wavelength;
+    float  amplitude;
+    float  speed;
+    float  steepness;
+};
+static const GerstnerWave c_oceanWaves[8] = {
+    { float2(0.894, 0.447),  50.0, 0.30, 1.00, 0.60 },
+    { float2(-0.707, 0.707), 35.0, 0.22, 1.15, 0.65 },
+    { float2(0.316, 0.949),  20.0, 0.14, 1.35, 0.70 },
+    { float2(-0.923, -0.385), 12.0, 0.09, 1.65, 0.75 },
+    { float2(0.600, -0.800),  7.5, 0.05, 2.00, 0.80 },
+    { float2(-0.447, 0.894),  4.5, 0.030, 2.50, 0.85 },
+    { float2(0.707, 0.707),   2.4, 0.015, 3.20, 0.90 },
+    { float2(-0.800, -0.600), 1.2, 0.008, 4.00, 0.95 }
+};
+void EvaluateGerstnerWaves(float2 worldXZ, float t, float speedMultiplier, float scaleMultiplier, float heightMultiplier, float choppinessMultiplier, out float3 displacement, out float3 normal) {
+    displacement = float3(0.0, 0.0, 0.0);
+    float normX = 0.0; float normZ = 0.0; float normY = 1.0;
+    float sMul = clamp(scaleMultiplier, 0.02, 5.0);
+    float hMul = clamp(heightMultiplier, 0.0, 5.0);
+    float spMul = clamp(speedMultiplier, 0.0, 10.0);
+    float chMul = clamp(choppinessMultiplier, 0.0, 2.0);
+    for (int i = 0; i < 8; ++i) {
+        GerstnerWave w = c_oceanWaves[i];
+        float wl = max(w.wavelength * sMul, 0.1);
+        float amp = w.amplitude * hMul;
+        float spd = w.speed * spMul;
+        float q = clamp(w.steepness * chMul, 0.0, 1.0);
+        float k = 6.2831853 / wl;
+        float omega = k * spd;
+        float phase = k * dot(w.direction, worldXZ) - omega * t;
+        float cosP = cos(phase);
+        float sinP = sin(phase);
+        float qAmp = q * amp;
+        displacement.x += qAmp * w.direction.x * cosP;
+        displacement.z += qAmp * w.direction.y * cosP;
+        displacement.y += amp * sinP;
+        float wa = k * amp;
+        normX -= w.direction.x * wa * cosP;
+        normZ -= w.direction.y * wa * cosP;
+        normY -= q * wa * sinP;
+    }
+    normal = normalize(float3(normX, max(normY, 0.1), normZ));
 }
-float EvaluateWaves(float2 pos, float t, float speed, float scale, float height, float2 flowDir, float flowSpd) {
-    float2 p = pos + flowDir * (t * flowSpd);
-    float safeScale = max(scale, 0.01);
-    float safeHeight = clamp(height, 0.0, 20.0);
-    float safeSpeed = clamp(speed, 0.0, 10.0);
-    float h0 = SinWave(p, float2(1.0, 0.2),  6.0 * safeScale, 1.2 * safeSpeed, 0.45 * safeHeight, t);
-    float h1 = SinWave(p, float2(-0.4, 0.9), 3.5 * safeScale, 1.6 * safeSpeed, 0.35 * safeHeight, t);
-    float h2 = SinWave(p, float2(0.7, -0.7), 2.0 * safeScale, 2.2 * safeSpeed, 0.20 * safeHeight, t);
-    return h0 + h1 + h2;
+float3 EvaluateDetailNormal(float2 worldXZ, float t, float3 baseNormal, float strength) {
+    static const float2 dirs[4] = { float2(0.707, 0.707), float2(-0.894, 0.447), float2(0.316, -0.949), float2(-0.600, -0.800) };
+    static const float freqs[4] = { 2.5, 4.2, 7.8, 12.0 };
+    static const float speeds[4] = { 1.8, 2.4, 3.1, 4.0 };
+    static const float amps[4] = { 0.04, 0.025, 0.015, 0.008 };
+    float dx = 0.0; float dz = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        float phase = dot(dirs[i], worldXZ) * freqs[i] - t * speeds[i];
+        float c = cos(phase) * amps[i] * freqs[i];
+        dx += dirs[i].x * c;
+        dz += dirs[i].y * c;
+    }
+    float s = clamp(strength, 0.0, 2.0);
+    return normalize(baseNormal + float3(-dx * s, 1.0, -dz * s) * 0.35);
 }
 float LinearizeDepth(float zBuffer, float nearP, float farP) {
     return (nearP * farP) / max(farP - zBuffer * (farP - nearP), 1e-5);
@@ -637,54 +775,41 @@ SamplerState gLinearSampler : register(s0);
 struct VSIn { float3 pos : POSITION; float3 norm : NORMAL; float2 uv : TEXCOORD0; };
 struct VSOut { float4 clipPos : SV_POSITION; float3 worldPos : TEXCOORD0; float3 normal : TEXCOORD1; float2 uv : TEXCOORD2; float eyeDist : TEXCOORD3; };
 VSOut VSMain(VSIn input) {
-    float3 p = input.pos;
-    float t = time;
-    float simH = 0.0;
+    float3 baseWorldP;
+    if (oceanExtent > 10.0) {
+        baseWorldP = float3(input.pos.x * oceanExtent + renderOrigin.x, renderOrigin.y, input.pos.z * oceanExtent + renderOrigin.z);
+    } else {
+        baseWorldP = input.pos + renderOrigin;
+    }
+    float3 waveDisp; float3 waveNorm;
+    EvaluateGerstnerWaves(baseWorldP.xz, time, waveSpeed, waveScale, waveHeight, choppiness, waveDisp, waveNorm);
+    if (oceanExtent > 10.0) {
+        float distFromCam = length(baseWorldP.xz - cameraPos.xz);
+        float taperStart = oceanExtent * 0.40;
+        float taperEnd = oceanExtent * 0.50;
+        float taper = saturate((taperEnd - distFromCam) / max(taperEnd - taperStart, 1.0));
+        waveDisp *= taper;
+    }
+    float simH = 0.0; float simDx = 0.0; float simDz = 0.0;
     if (simEnabled > 0.5) {
         simH = gHeightMap.SampleLevel(gLinearSampler, input.uv, 0) * heightScale;
         if (isnan(simH) || isinf(simH)) simH = 0.0;
-    }
-    float procH = EvaluateWaves(p.xz, t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    if (isnan(procH) || isinf(procH)) procH = 0.0;
-    float totalH = simH + procH;
-    p.y += totalH;
-
-    float cosR = cos(modelRotY);
-    float sinR = sin(modelRotY);
-    float3 rotatedP = float3(
-        p.x * cosR - p.z * sinR,
-        p.y,
-        p.x * sinR + p.z * cosR
-    );
-    float3 worldP = rotatedP + modelPos;
-
-    float eps = 0.15;
-    float hL = EvaluateWaves(p.xz - float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hR = EvaluateWaves(p.xz + float2(eps, 0.0), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hD = EvaluateWaves(p.xz - float2(0.0, eps), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    float hU = EvaluateWaves(p.xz + float2(0.0, eps), t, waveSpeed, waveScale, waveHeight, flowDirection, flowSpeed);
-    if (simEnabled > 0.5) {
         float2 uvEps = float2(1.0 / 256.0, 1.0 / 256.0);
-        hL += gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(uvEps.x, 0.0), 0) * heightScale;
-        hR += gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(uvEps.x, 0.0), 0) * heightScale;
-        hD += gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(0.0, uvEps.y), 0) * heightScale;
-        hU += gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(0.0, uvEps.y), 0) * heightScale;
+        float hL = gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(uvEps.x, 0.0), 0) * heightScale;
+        float hR = gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(uvEps.x, 0.0), 0) * heightScale;
+        float hD = gHeightMap.SampleLevel(gLinearSampler, input.uv - float2(0.0, uvEps.y), 0) * heightScale;
+        float hU = gHeightMap.SampleLevel(gLinearSampler, input.uv + float2(0.0, uvEps.y), 0) * heightScale;
+        simDx = (hR - hL) * 128.0;
+        simDz = (hU - hD) * 128.0;
     }
-    float dx = (hR - hL) / (2.0 * eps);
-    float dz = (hU - hD) / (2.0 * eps);
-    float3 localN = normalize(float3(-dx * normalScale, 1.0, -dz * normalScale));
-    float3 worldN = float3(
-        localN.x * cosR - localN.z * sinR,
-        localN.y,
-        localN.x * sinR + localN.z * cosR
-    );
-
+    float3 finalWorldP = baseWorldP + waveDisp + float3(0.0, simH, 0.0);
+    float3 finalNormal = normalize(waveNorm + float3(-simDx, 0.0, -simDz));
     VSOut o;
-    o.clipPos  = mul(viewProj, float4(worldP, 1.0f));
-    o.worldPos = worldP;
-    o.normal   = worldN;
+    o.clipPos  = mul(viewProj, float4(finalWorldP, 1.0f));
+    o.worldPos = finalWorldP;
+    o.normal   = finalNormal;
     o.uv       = input.uv;
-    o.eyeDist  = length(cameraPos - worldP);
+    o.eyeDist  = length(cameraPos - finalWorldP);
     return o;
 }
 )HLSL";
@@ -694,7 +819,7 @@ Texture2D<float> gSceneDepth : register(t1);
 SamplerState gPointSampler   : register(s1);
 struct VSOut { float4 clipPos : SV_POSITION; float3 worldPos : TEXCOORD0; float3 normal : TEXCOORD1; float2 uv : TEXCOORD2; float eyeDist : TEXCOORD3; };
 float4 PSMain(VSOut input) : SV_TARGET {
-    float3 N = normalize(input.normal);
+    float3 N = EvaluateDetailNormal(input.worldPos.xz, time, normalize(input.normal), normalScale);
     float3 V = normalize(cameraPos - input.worldPos);
     float3 L = normalize(float3(0.4, 0.85, 0.35));
     float3 H = normalize(V + L);
@@ -702,30 +827,54 @@ float4 PSMain(VSOut input) : SV_TARGET {
     float rawSceneDepth = gSceneDepth.SampleLevel(gPointSampler, screenUV, 0);
     float sceneLinearZ = LinearizeDepth(rawSceneDepth, nearPlane, farPlane);
     float waterLinearZ = LinearizeDepth(input.clipPos.z, nearPlane, farPlane);
-    float thickness = max(sceneLinearZ - waterLinearZ, 0.0);
-    float depthFactor = saturate(thickness / max(depthFade, 0.01));
-    float4 baseColor = lerp(shallowColor, waterColor, depthFactor);
+    bool isSkyBackground = (rawSceneDepth >= 0.9999);
+    float thickness = isSkyBackground ? 500.0 : max(sceneLinearZ - waterLinearZ, 0.0);
+    float depthFactor = saturate(thickness / max(depthFade, 0.1));
+    float4 baseColor = lerp(float4(shallowColor.rgb, 1.0), float4(waterColor.rgb, 1.0), depthFactor);
     float foam = 0.0;
     if (foamEnabled > 0.5) {
-        float foamFactor = 1.0 - saturate(thickness / max(foamDistance, 0.01));
-        float foamNoise  = WaterFBM(input.worldPos.xz * foamScale + time * foamSpeed);
-        foam = smoothstep(0.3, 0.75, foamFactor * foamNoise) * foamStrength;
-        float crestFactor = saturate((1.0 - N.y) * 2.0);
-        foam = max(foam, crestFactor * foamNoise * 0.4 * foamStrength);
+        if (!isSkyBackground) {
+            float foamFactor = 1.0 - saturate(thickness / max(foamDistance, 0.01));
+            float foamNoise  = WaterFBM(input.worldPos.xz * foamScale + time * foamSpeed);
+            foam = smoothstep(0.4, 0.8, foamFactor * foamNoise) * foamStrength;
+        }
+        float wavePeak = (input.worldPos.y - renderOrigin.y);
+        if (wavePeak > waveHeight * 0.4 && waveHeight > 0.05) {
+            float crestFactor = saturate((wavePeak - waveHeight * 0.4) / max(waveHeight * 0.5, 0.01));
+            float crestNoise  = WaterFBM(input.worldPos.xz * (foamScale * 1.5) + time * (foamSpeed * 0.8));
+            foam = max(foam, smoothstep(0.5, 0.85, crestFactor * crestNoise) * 0.35 * foamStrength);
+        }
     }
     float NdotV = saturate(dot(N, V));
-    float fresnel = pow(1.0 - NdotV, 5.0) * fresnelStrength;
-    fresnel = saturate(fresnel);
+    float fresnel = 0.02 + 0.98 * pow(1.0 - NdotV, 5.0);
+    fresnel = saturate(fresnel * fresnelStrength);
     float NdotH = saturate(dot(N, H));
-    float spec = pow(NdotH, max(specularPower, 1.0)) * specularIntensity;
-    float sparkle = pow(NdotH, max(sparklePower, 10.0)) * specularIntensity * 2.5;
-    float3 skyReflectColor = lerp(float3(0.35, 0.50, 0.65), float3(0.80, 0.90, 1.0), fresnel);
+    float spec = pow(NdotH, max(specularPower, 16.0)) * specularIntensity * 0.75;
+    float sparkle = pow(NdotH, max(sparklePower, 64.0)) * specularIntensity * 0.35;
+    float3 R = reflect(-V, N);
+    float3 skyZenith = float3(0.08, 0.22, 0.42);
+    float3 skyHorizon = float3(0.35, 0.52, 0.68);
+    float3 skyReflectColor = lerp(skyHorizon, skyZenith, saturate(R.y));
     float3 finalColor = lerp(baseColor.rgb, skyReflectColor, fresnel * reflectionStr);
-    finalColor += (spec + sparkle);
-    finalColor = lerp(finalColor, float3(1.0, 1.0, 1.0), foam);
+    finalColor += (spec + sparkle) * float3(1.0, 0.98, 0.92);
+    finalColor = lerp(finalColor, float3(0.92, 0.96, 0.98), foam);
     finalColor = saturate(finalColor);
-    float waterAlpha = saturate(lerp(saturate(thickness / 0.35), 1.0, fresnel) * opacity);
+    float waterAlpha = isSkyBackground ? opacity : saturate(lerp(saturate(thickness / 0.5), 1.0, fresnel) * opacity);
     waterAlpha = max(waterAlpha, foam * 0.9);
+    int dbg = (int)(debugMode + 0.5);
+    if (dbg == 1) return float4(baseColor.rgb, 1.0);
+    else if (dbg == 2) return float4(N * 0.5 + 0.5, 1.0);
+    else if (dbg == 3) {
+        float hNorm = saturate((input.worldPos.y - renderOrigin.y + 0.5) / 1.0);
+        return float4(lerp(float3(0.0, 0.1, 0.8), float3(1.0, 0.2, 0.0), hNorm), 1.0);
+    }
+    else if (dbg == 4) return float4(foam, foam, foam, 1.0);
+    else if (dbg == 5) { float dVis = saturate(thickness / 15.0); return float4(dVis, dVis, dVis, 1.0); }
+    else if (dbg == 6) {
+        float2 grid = frac(input.uv * 256.0);
+        float edge = step(grid.x, 0.08) + step(grid.y, 0.08);
+        return float4(lerp(float3(0.02, 0.08, 0.15), float3(0.0, 1.0, 0.7), saturate(edge)), 1.0);
+    }
     return float4(finalColor, waterAlpha);
 }
 )HLSL";
@@ -982,7 +1131,7 @@ bool WaterSystem::Render(
     // Check if there are visible water bodies to render
     bool hasVisibleWater = false;
     for (auto& obj : scene.objects) {
-        if ((obj.isWaterBody || obj.type == PrimitiveType::WaterBody) && obj.visible && !obj.mesh.vertices.empty()) {
+        if ((obj.isWaterBody || obj.type == PrimitiveType::WaterBody) && obj.visible) {
             hasVisibleWater = true;
             break;
         }
@@ -1029,7 +1178,7 @@ bool WaterSystem::Render(
 
     for (auto& obj : scene.objects) {
         if (!obj.isWaterBody && obj.type != PrimitiveType::WaterBody) continue;
-        if (!obj.visible || obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
+        if (!obj.visible) continue;
 
         const WaterBodyComponent& w = obj.water;
 
@@ -1064,42 +1213,64 @@ bool WaterSystem::Render(
         cb.flowSpeed         = w.flowSpeed;
         cb.simEnabled        = w.simulationEnabled ? 1.0f : 0.0f;
         cb.heightScale       = w.heightScale;
-        cb.modelRotY         = glm::radians(obj.rotation.y);
-        cb.modelPos          = scene.GetWorldPosition(obj);
-        cb._padCommon        = 0.0f;
+
+        bool isOceanGrid = (w.isCameraCentered || w.type == WaterBodyType::Ocean || w.type == WaterBodyType::Sea);
+        glm::vec3 renderOrigin;
+        if (isOceanGrid) {
+            float extent = (w.oceanExtent > 10.0f) ? w.oceanExtent : 2000.0f;
+            float gridSpacing = extent / 256.0f;
+            // Snap camera X/Z to grid increments to avoid crawling/jitter (dev.md Section 9)
+            renderOrigin.x = std::floor(camPos.x / gridSpacing) * gridSpacing;
+            renderOrigin.y = w.elevation; // Strictly fixed at water elevation, NEVER follows camera Y (dev.md Section 10)
+            renderOrigin.z = std::floor(camPos.z / gridSpacing) * gridSpacing;
+            cb.shallowColor.a = extent; // Pass oceanExtent via shallowColor.a
+        } else {
+            renderOrigin = scene.GetWorldPosition(obj);
+            renderOrigin.y = w.elevation;
+            cb.shallowColor.a = 0.0f;
+        }
+
+        cb.choppiness        = w.choppiness;
+        cb.renderOrigin      = renderOrigin;
+        cb.debugMode         = (float)w.debugMode;
 
         cmdList->SetGraphicsRoot32BitConstants(0, 60, &cb, 0);
 
-        UINT vCount = (UINT)obj.mesh.vertices.size();
-        UINT iCount = (UINT)obj.mesh.indices.size();
-        if (vCount > 65536 || iCount > 262144) continue;
+        if (isOceanGrid && m_oceanVB && m_oceanIB) {
+            cmdList->IASetVertexBuffers(0, 1, &m_oceanVbv);
+            cmdList->IASetIndexBuffer(&m_oceanIbv);
+            cmdList->DrawIndexedInstanced(m_oceanIndexCount, 1, 0, 0, 0);
+        } else {
+            UINT vCount = (UINT)obj.mesh.vertices.size();
+            UINT iCount = (UINT)obj.mesh.indices.size();
+            if (vCount == 0 || iCount == 0 || vCount > 65536 || iCount > 262144) continue;
 
-        // Copy vertices & indices to mapped memory using exact sizeof(MeshVertex) (48 bytes)
-        if (pVertexMapped && vertexBuffer) {
-            uint8_t* dstV = (uint8_t*)pVertexMapped + currentVBOffset;
-            memcpy(dstV, obj.mesh.vertices.data(), vCount * sizeof(MeshVertex));
+            if (pVertexMapped && vertexBuffer) {
+                uint8_t* dstV = (uint8_t*)pVertexMapped + currentVBOffset;
+                memcpy(dstV, obj.mesh.vertices.data(), vCount * sizeof(MeshVertex));
+            }
+            if (pIndexMapped && indexBuffer) {
+                uint8_t* dstI = (uint8_t*)pIndexMapped + currentIBOffset;
+                memcpy(dstI, obj.mesh.indices.data(), iCount * sizeof(uint32_t));
+            }
+
+            D3D12_VERTEX_BUFFER_VIEW objVbv = {};
+            objVbv.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + currentVBOffset;
+            objVbv.StrideInBytes = sizeof(MeshVertex);
+            objVbv.SizeInBytes = vCount * sizeof(MeshVertex);
+
+            D3D12_INDEX_BUFFER_VIEW objIbv = {};
+            objIbv.BufferLocation = indexBuffer->GetGPUVirtualAddress() + currentIBOffset;
+            objIbv.SizeInBytes = iCount * sizeof(uint32_t);
+            objIbv.Format = DXGI_FORMAT_R32_UINT;
+
+            cmdList->IASetVertexBuffers(0, 1, &objVbv);
+            cmdList->IASetIndexBuffer(&objIbv);
+            cmdList->DrawIndexedInstanced(iCount, 1, 0, 0, 0);
+
+            currentVBOffset += vCount * sizeof(MeshVertex);
+            currentIBOffset += iCount * sizeof(uint32_t);
         }
-        if (pIndexMapped && indexBuffer) {
-            uint8_t* dstI = (uint8_t*)pIndexMapped + currentIBOffset;
-            memcpy(dstI, obj.mesh.indices.data(), iCount * sizeof(uint32_t));
-        }
-
-        D3D12_VERTEX_BUFFER_VIEW objVbv = {};
-        objVbv.BufferLocation = vertexBuffer->GetGPUVirtualAddress() + currentVBOffset;
-        objVbv.StrideInBytes = sizeof(MeshVertex); // 48 bytes (NOT 60!)
-        objVbv.SizeInBytes = vCount * sizeof(MeshVertex);
-
-        D3D12_INDEX_BUFFER_VIEW objIbv = {};
-        objIbv.BufferLocation = indexBuffer->GetGPUVirtualAddress() + currentIBOffset;
-        objIbv.SizeInBytes = iCount * sizeof(uint32_t);
-        objIbv.Format = DXGI_FORMAT_R32_UINT;
-
-        cmdList->IASetVertexBuffers(0, 1, &objVbv);
-        cmdList->IASetIndexBuffer(&objIbv);
-        cmdList->DrawIndexedInstanced(iCount, 1, 0, 0, 0);
-
-        currentVBOffset += vCount * sizeof(MeshVertex);
-        currentIBOffset += iCount * sizeof(uint32_t);
     }
 
     // 4. Transition Scene Depth buffer back to its original state

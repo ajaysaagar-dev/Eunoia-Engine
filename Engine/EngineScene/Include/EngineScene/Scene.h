@@ -322,61 +322,67 @@ public:
     // Apply type-specific default preset to a WaterBodyComponent
     static void ApplyWaterBodyPreset(WaterBodyComponent& w, WaterBodyType wbType) {
         w.type = wbType;
-        // Global baseline defaults for AquaTerrain simulation & shading
+        // Global baseline defaults for AquaTerrain simulation & shading (dev.md Section 30)
         w.simulationEnabled = true;
         w.simulationResolution = 256;
         w.waveDamping = 0.985f;
-        w.disturbanceStrength = 1.0f;
-        w.heightScale = 1.0f;
-        w.depthRange = 10.0f;
-        w.foamDistance = 1.5f;
-        w.foamStrength = 1.0f;
-        w.foamSpeed = 1.0f;
-        w.fresnelStrength = 1.0f;
-        w.specularPower = 128.0f;
-        w.sparklePower = 800.0f;
+        w.disturbanceStrength = 0.3f;
+        w.heightScale = 0.03f; // Subtle local ripple displacement (Section 7)
+        w.depthRange = 12.0f;
+        w.foamDistance = 0.6f;
+        w.foamStrength = 0.15f; // Conservative broken shoreline foam (Section 23)
+        w.foamSpeed = 0.5f;
+        w.fresnelStrength = 0.8f;
+        w.specularPower = 90.0f;
+        w.sparklePower = 300.0f;
+        w.choppiness = 0.7f;
+        w.oceanExtent = 3000.0f;
+        w.debugMode = 0;
+        w.isCameraCentered = (wbType == WaterBodyType::Ocean || wbType == WaterBodyType::Sea);
 
         switch (wbType) {
 
         case WaterBodyType::Ocean:
-            // Vast open sea: large scale, deep blue, high FFT waves, foam, reflective
-            w.width = 500.0f;  w.length = 500.0f;  w.gridResolution = 128;
-            w.waterColor   = {0.01f, 0.05f, 0.18f, 0.92f};
-            w.shallowColor = {0.05f, 0.20f, 0.38f, 0.80f};
-            w.roughness = 0.08f;  w.metallic = 0.0f;  w.opacity = 0.88f;
-            w.reflectionStrength = 0.95f;  w.refractionStrength = 0.6f;  w.specularIntensity = 1.8f;
-            w.normalScale = 1.2f;  w.waveSpeed = 1.4f;  w.waveScale = 2.5f;  w.waveHeight = 2.0f;
+            // Continuous Open-World Ocean (dev.md Sections 1-38)
+            w.width = 2000.0f;  w.length = 2000.0f;  w.gridResolution = 256;
+            w.waterColor   = {0.02f, 0.08f, 0.14f, 0.90f}; // Dark blue-green deep water (Section 17)
+            w.shallowColor = {0.04f, 0.20f, 0.28f, 0.80f}; // Dark teal shallow water
+            w.roughness = 0.12f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.75f;  w.refractionStrength = 0.4f;  w.specularIntensity = 0.8f;
+            w.normalScale = 0.35f;  w.waveSpeed = 1.0f;  w.waveScale = 0.20f;  w.waveHeight = 0.18f;
+            w.choppiness = 0.7f;
             w.enableFoam = true;
-            w.foamColor = {0.95f, 0.97f, 1.0f, 0.85f};  w.foamScale = 4.0f;  w.foamOpacity = 0.7f;
+            w.foamColor = {0.92f, 0.96f, 1.0f, 0.70f};  w.foamScale = 1.0f;  w.foamOpacity = 0.6f;
             w.enableDepth = true;  w.depthFadeDistance = 30.0f;
-            w.enableRefraction = true;  w.distortionStrength = 0.25f;
+            w.enableRefraction = true;  w.distortionStrength = 0.15f;
             w.caustics = false;
             w.enableWaves = true;
-            w.oceanWaveAmplitude = 2.0f;  w.oceanWavePeriod = 20.0f;
+            w.oceanWaveAmplitude = 0.2f;  w.oceanWavePeriod = 15.0f;
             w.oceanWaveDirection = 45.0f;  w.tessellationLevel = 8;
             w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
-            w.environmentLightIntensity = 1.5f;
-            w.subsurfaceScattering = 0.35f;
+            w.environmentLightIntensity = 1.2f;
+            w.subsurfaceScattering = 0.25f;
             w.subsurfaceColor = {0.02f, 0.15f, 0.25f};
             break;
 
         case WaterBodyType::Sea:
-            // Enclosed sea: large but calmer than ocean, moderate waves
-            w.width = 200.0f;  w.length = 200.0f;  w.gridResolution = 64;
-            w.waterColor   = {0.02f, 0.08f, 0.22f, 0.90f};
-            w.shallowColor = {0.08f, 0.25f, 0.42f, 0.78f};
-            w.roughness = 0.12f;  w.metallic = 0.0f;  w.opacity = 0.85f;
-            w.reflectionStrength = 0.88f;  w.refractionStrength = 0.5f;  w.specularIntensity = 1.5f;
-            w.normalScale = 1.0f;  w.waveSpeed = 1.0f;  w.waveScale = 2.0f;  w.waveHeight = 1.2f;
+            // Enclosed sea: calm rolling waves
+            w.width = 1000.0f;  w.length = 1000.0f;  w.gridResolution = 128;
+            w.waterColor   = {0.03f, 0.10f, 0.16f, 0.88f};
+            w.shallowColor = {0.06f, 0.24f, 0.30f, 0.78f};
+            w.roughness = 0.14f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.70f;  w.refractionStrength = 0.4f;  w.specularIntensity = 0.75f;
+            w.normalScale = 0.30f;  w.waveSpeed = 0.8f;  w.waveScale = 0.25f;  w.waveHeight = 0.12f;
+            w.choppiness = 0.6f;
             w.enableFoam = true;
-            w.foamColor = {0.93f, 0.96f, 1.0f, 0.75f};  w.foamScale = 3.0f;  w.foamOpacity = 0.6f;
+            w.foamColor = {0.92f, 0.95f, 0.98f, 0.65f};  w.foamScale = 1.2f;  w.foamOpacity = 0.5f;
             w.enableDepth = true;  w.depthFadeDistance = 25.0f;
-            w.enableRefraction = true;  w.distortionStrength = 0.18f;
+            w.enableRefraction = true;  w.distortionStrength = 0.12f;
             w.enableWaves = true;
-            w.oceanWaveAmplitude = 1.2f;  w.oceanWavePeriod = 15.0f;
+            w.oceanWaveAmplitude = 0.15f;  w.oceanWavePeriod = 12.0f;
             w.oceanWaveDirection = 30.0f;  w.tessellationLevel = 6;
             w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
-            w.subsurfaceScattering = 0.25f;
+            w.subsurfaceScattering = 0.20f;
             w.subsurfaceColor = {0.03f, 0.12f, 0.22f};
             break;
 
@@ -1438,7 +1444,7 @@ struct RenderBatch {
 
         // 2. All GameObjects (Rendered with Hardware GPU Shaders & Full 2K Texture Mapping)
         for (const auto& obj : objects) {
-            if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type)) continue;
+            if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
             if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
 
             glm::mat4 model = GetWorldMatrix(obj);
