@@ -319,6 +319,271 @@ public:
         return obj;
     }
 
+    // Apply type-specific default preset to a WaterBodyComponent
+    static void ApplyWaterBodyPreset(WaterBodyComponent& w, WaterBodyType wbType) {
+        w.type = wbType;
+        switch (wbType) {
+
+        case WaterBodyType::Ocean:
+            // Vast open sea: large scale, deep blue, high FFT waves, foam, reflective
+            w.width = 500.0f;  w.length = 500.0f;  w.gridResolution = 128;
+            w.waterColor   = {0.01f, 0.05f, 0.18f, 0.92f};
+            w.shallowColor = {0.05f, 0.20f, 0.38f, 0.80f};
+            w.roughness = 0.08f;  w.metallic = 0.0f;  w.opacity = 0.88f;
+            w.reflectionStrength = 0.95f;  w.refractionStrength = 0.6f;  w.specularIntensity = 1.8f;
+            w.normalScale = 1.2f;  w.waveSpeed = 1.4f;  w.waveScale = 2.5f;  w.waveHeight = 2.0f;
+            w.enableFoam = true;
+            w.foamColor = {0.95f, 0.97f, 1.0f, 0.85f};  w.foamScale = 4.0f;  w.foamOpacity = 0.7f;
+            w.enableDepth = true;  w.depthFadeDistance = 30.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.25f;
+            w.caustics = false;
+            w.enableWaves = true;
+            w.oceanWaveAmplitude = 2.0f;  w.oceanWavePeriod = 20.0f;
+            w.oceanWaveDirection = 45.0f;  w.tessellationLevel = 8;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.5f;
+            w.subsurfaceScattering = 0.35f;
+            w.subsurfaceColor = {0.02f, 0.15f, 0.25f};
+            break;
+
+        case WaterBodyType::Sea:
+            // Enclosed sea: large but calmer than ocean, moderate waves
+            w.width = 200.0f;  w.length = 200.0f;  w.gridResolution = 64;
+            w.waterColor   = {0.02f, 0.08f, 0.22f, 0.90f};
+            w.shallowColor = {0.08f, 0.25f, 0.42f, 0.78f};
+            w.roughness = 0.12f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.88f;  w.refractionStrength = 0.5f;  w.specularIntensity = 1.5f;
+            w.normalScale = 1.0f;  w.waveSpeed = 1.0f;  w.waveScale = 2.0f;  w.waveHeight = 1.2f;
+            w.enableFoam = true;
+            w.foamColor = {0.93f, 0.96f, 1.0f, 0.75f};  w.foamScale = 3.0f;  w.foamOpacity = 0.6f;
+            w.enableDepth = true;  w.depthFadeDistance = 25.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.18f;
+            w.enableWaves = true;
+            w.oceanWaveAmplitude = 1.2f;  w.oceanWavePeriod = 15.0f;
+            w.oceanWaveDirection = 30.0f;  w.tessellationLevel = 6;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.25f;
+            w.subsurfaceColor = {0.03f, 0.12f, 0.22f};
+            break;
+
+        case WaterBodyType::Lake:
+            // Calm inland lake: medium scale, clear blue-green, still surface
+            w.width = 60.0f;  w.length = 60.0f;  w.gridResolution = 48;
+            w.waterColor   = {0.04f, 0.18f, 0.28f, 0.88f};
+            w.shallowColor = {0.12f, 0.38f, 0.45f, 0.72f};
+            w.roughness = 0.04f;  w.metallic = 0.0f;  w.opacity = 0.82f;
+            w.reflectionStrength = 0.92f;  w.refractionStrength = 0.3f;  w.specularIntensity = 1.6f;
+            w.normalScale = 0.5f;  w.waveSpeed = 0.3f;  w.waveScale = 1.2f;  w.waveHeight = 0.15f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 15.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.08f;
+            w.caustics = true;  w.causticsScale = 1.5f;  w.causticsSpeed = 0.4f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.2f;
+            w.subsurfaceScattering = 0.2f;
+            w.subsurfaceColor = {0.05f, 0.18f, 0.22f};
+            break;
+
+        case WaterBodyType::River:
+            // Flowing river: medium-wide, flowing current, slight turbulence
+            w.width = 8.0f;  w.length = 80.0f;  w.gridResolution = 48;
+            w.waterColor   = {0.06f, 0.20f, 0.22f, 0.85f};
+            w.shallowColor = {0.15f, 0.40f, 0.35f, 0.70f};
+            w.roughness = 0.25f;  w.metallic = 0.0f;  w.opacity = 0.80f;
+            w.reflectionStrength = 0.6f;  w.refractionStrength = 0.4f;  w.specularIntensity = 1.1f;
+            w.normalScale = 1.5f;  w.waveSpeed = 1.8f;  w.waveScale = 1.8f;  w.waveHeight = 0.4f;
+            w.enableFoam = true;
+            w.foamColor = {0.90f, 0.93f, 0.95f, 0.65f};  w.foamScale = 2.5f;  w.foamOpacity = 0.5f;
+            w.enableDepth = true;  w.depthFadeDistance = 6.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.3f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 1.5f;  w.flowTiling = 2.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.15f;
+            w.subsurfaceColor = {0.08f, 0.20f, 0.18f};
+            break;
+
+        case WaterBodyType::Stream:
+            // Narrow fast stream: small scale, fast flow, clear, rocky
+            w.width = 2.5f;  w.length = 25.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.10f, 0.28f, 0.25f, 0.78f};
+            w.shallowColor = {0.20f, 0.50f, 0.40f, 0.60f};
+            w.roughness = 0.35f;  w.metallic = 0.0f;  w.opacity = 0.72f;
+            w.reflectionStrength = 0.5f;  w.refractionStrength = 0.5f;  w.specularIntensity = 0.9f;
+            w.normalScale = 2.0f;  w.waveSpeed = 2.5f;  w.waveScale = 2.5f;  w.waveHeight = 0.25f;
+            w.enableFoam = true;
+            w.foamColor = {1.0f, 1.0f, 1.0f, 0.8f};  w.foamScale = 3.0f;  w.foamOpacity = 0.65f;
+            w.enableDepth = true;  w.depthFadeDistance = 2.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.4f;
+            w.caustics = true;  w.causticsScale = 2.0f;  w.causticsSpeed = 1.2f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 2.5f;  w.flowTiling = 3.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.1f;
+            w.subsurfaceColor = {0.12f, 0.25f, 0.20f};
+            break;
+
+        case WaterBodyType::Waterfall:
+            // Vertical cascade: tall and narrow, heavy foam, fast flow
+            w.width = 4.0f;  w.length = 12.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.30f, 0.45f, 0.50f, 0.75f};
+            w.shallowColor = {0.55f, 0.70f, 0.72f, 0.60f};
+            w.roughness = 0.55f;  w.metallic = 0.0f;  w.opacity = 0.70f;
+            w.reflectionStrength = 0.35f;  w.refractionStrength = 0.6f;  w.specularIntensity = 0.8f;
+            w.normalScale = 2.5f;  w.waveSpeed = 3.5f;  w.waveScale = 3.0f;  w.waveHeight = 0.6f;
+            w.enableFoam = true;
+            w.foamColor = {1.0f, 1.0f, 1.0f, 0.92f};  w.foamScale = 2.0f;  w.foamOpacity = 0.85f;
+            w.enableDepth = false;
+            w.enableRefraction = true;  w.distortionStrength = 0.7f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 4.0f;  w.flowTiling = 4.0f;
+            w.enableWaves = false;
+            w.waterfallFallHeight = 12.0f;  w.waterfallFlowRate = 4.0f;  w.waterfallSprayAmount = 1.5f;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.05f;
+            break;
+
+        case WaterBodyType::Pond:
+            // Small still pond: small, dark-green tint, very calm
+            w.width = 12.0f;  w.length = 12.0f;  w.gridResolution = 24;
+            w.waterColor   = {0.03f, 0.12f, 0.10f, 0.90f};
+            w.shallowColor = {0.08f, 0.28f, 0.22f, 0.75f};
+            w.roughness = 0.06f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.88f;  w.refractionStrength = 0.2f;  w.specularIntensity = 1.4f;
+            w.normalScale = 0.3f;  w.waveSpeed = 0.2f;  w.waveScale = 0.8f;  w.waveHeight = 0.05f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 5.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.05f;
+            w.caustics = true;  w.causticsScale = 1.0f;  w.causticsSpeed = 0.3f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.12f;
+            w.subsurfaceColor = {0.04f, 0.14f, 0.12f};
+            break;
+
+        case WaterBodyType::Pool:
+            // Clean swimming pool: rectangular, bright turquoise, very clear
+            w.width = 10.0f;  w.length = 20.0f;  w.gridResolution = 24;
+            w.waterColor   = {0.05f, 0.45f, 0.55f, 0.88f};
+            w.shallowColor = {0.15f, 0.65f, 0.72f, 0.70f};
+            w.roughness = 0.03f;  w.metallic = 0.0f;  w.opacity = 0.82f;
+            w.reflectionStrength = 0.95f;  w.refractionStrength = 0.35f;  w.specularIntensity = 2.0f;
+            w.normalScale = 0.4f;  w.waveSpeed = 0.4f;  w.waveScale = 0.8f;  w.waveHeight = 0.08f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 4.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.12f;
+            w.caustics = true;  w.causticsScale = 1.2f;  w.causticsSpeed = 0.5f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.3f;
+            w.subsurfaceScattering = 0.25f;
+            w.subsurfaceColor = {0.08f, 0.40f, 0.50f};
+            break;
+
+        case WaterBodyType::WetSurface:
+            // Rain-wet ground: thin film, very reflective, dark/glossy
+            w.width = 8.0f;  w.length = 8.0f;  w.gridResolution = 16;
+            w.waterColor   = {0.05f, 0.06f, 0.08f, 0.60f};
+            w.shallowColor = {0.08f, 0.10f, 0.12f, 0.40f};
+            w.roughness = 0.02f;  w.metallic = 0.0f;  w.opacity = 0.55f;
+            w.reflectionStrength = 0.98f;  w.refractionStrength = 0.05f;  w.specularIntensity = 2.0f;
+            w.normalScale = 0.2f;  w.waveSpeed = 0.5f;  w.waveScale = 0.5f;  w.waveHeight = 0.01f;
+            w.enableFoam = false;
+            w.enableDepth = false;
+            w.enableRefraction = false;
+            w.wetness = 0.85f;
+            w.animatePuddle = true;  w.rippleSpeed = 1.0f;  w.rippleScale = 1.5f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            break;
+
+        case WaterBodyType::Puddle:
+            // Small rain puddle: tiny, shallow, rippling
+            w.width = 1.5f;  w.length = 1.5f;  w.gridResolution = 12;
+            w.waterColor   = {0.06f, 0.07f, 0.09f, 0.70f};
+            w.shallowColor = {0.10f, 0.12f, 0.15f, 0.50f};
+            w.roughness = 0.04f;  w.metallic = 0.0f;  w.opacity = 0.65f;
+            w.reflectionStrength = 0.90f;  w.refractionStrength = 0.1f;  w.specularIntensity = 1.8f;
+            w.normalScale = 0.5f;  w.waveSpeed = 1.0f;  w.waveScale = 0.8f;  w.waveHeight = 0.02f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 0.2f;
+            w.enableRefraction = true;  w.distortionStrength = 0.06f;
+            w.wetness = 1.0f;
+            w.puddleSize = 1.5f;  w.puddleDepth = 0.04f;
+            w.animatePuddle = true;  w.rippleSpeed = 2.0f;  w.rippleScale = 1.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            break;
+
+        case WaterBodyType::FloodWater:
+            // Rising flood: large, murky brown-green, opaque
+            w.width = 150.0f;  w.length = 150.0f;  w.gridResolution = 64;
+            w.waterColor   = {0.15f, 0.14f, 0.05f, 0.95f};
+            w.shallowColor = {0.22f, 0.20f, 0.08f, 0.88f};
+            w.roughness = 0.45f;  w.metallic = 0.0f;  w.opacity = 0.92f;
+            w.reflectionStrength = 0.3f;  w.refractionStrength = 0.1f;  w.specularIntensity = 0.6f;
+            w.normalScale = 1.0f;  w.waveSpeed = 0.8f;  w.waveScale = 3.0f;  w.waveHeight = 0.3f;
+            w.enableFoam = true;
+            w.foamColor = {0.70f, 0.65f, 0.50f, 0.60f};  w.foamScale = 4.0f;  w.foamOpacity = 0.45f;
+            w.enableDepth = true;  w.depthFadeDistance = 1.5f;
+            w.enableRefraction = false;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.0f;
+            break;
+
+        case WaterBodyType::Underwater:
+            // Underwater volume: large, heavy fog, distortion
+            w.width = 60.0f;  w.length = 60.0f;  w.gridResolution = 16;
+            w.waterColor   = {0.00f, 0.08f, 0.18f, 0.98f};
+            w.shallowColor = {0.02f, 0.12f, 0.22f, 0.95f};
+            w.roughness = 0.8f;  w.metallic = 0.0f;  w.opacity = 0.96f;
+            w.reflectionStrength = 0.1f;  w.refractionStrength = 0.0f;  w.specularIntensity = 0.3f;
+            w.normalScale = 0.5f;  w.waveSpeed = 0.2f;  w.waveScale = 1.0f;  w.waveHeight = 0.0f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 25.0f;
+            w.enableRefraction = false;
+            w.caustics = true;  w.causticsScale = 2.0f;  w.causticsSpeed = 0.5f;
+            w.underwaterFogColor = {0.00f, 0.08f, 0.18f};
+            w.underwaterFogDensity = 1.8f;
+            w.underwaterVisibilityDistance = 18.0f;
+            w.enableUnderwaterDistortion = true;
+            w.underwaterDistortionStrength = 0.8f;
+            w.underwaterDistortionSpeed = 1.2f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 0.4f;
+            w.subsurfaceScattering = 0.0f;
+            break;
+
+        case WaterBodyType::Swamp:
+            // Dark swamp: murky, algae-covered, dense fog
+            w.width = 40.0f;  w.length = 40.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.06f, 0.10f, 0.04f, 0.95f};
+            w.shallowColor = {0.12f, 0.18f, 0.06f, 0.88f};
+            w.roughness = 0.65f;  w.metallic = 0.0f;  w.opacity = 0.92f;
+            w.reflectionStrength = 0.15f;  w.refractionStrength = 0.05f;  w.specularIntensity = 0.4f;
+            w.normalScale = 0.8f;  w.waveSpeed = 0.15f;  w.waveScale = 1.5f;  w.waveHeight = 0.05f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 1.0f;
+            w.enableRefraction = false;
+            w.swampDensity = 0.85f;
+            w.swampColor = {0.06f, 0.12f, 0.04f};
+            w.algaeAmount = 0.65f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 0.6f;
+            w.subsurfaceScattering = 0.05f;
+            w.subsurfaceColor = {0.05f, 0.10f, 0.03f};
+            break;
+
+        default: break;
+        }
+    }
+
     GameObject& AddWaterBody(WaterBodyType wbType, glm::vec3 pos, const std::string& name = "", int parentId = -1) {
         if (onPreChange) onPreChange("Add Water Body");
         int id = nextId++;
@@ -327,16 +592,22 @@ public:
         GameObject& obj = objects.back();
 
         obj.isWaterBody = true;
-        obj.water.type = wbType;
         obj.blendMode = 2; // Translucent
         obj.twoSided = true;
 
-        obj.params.width = 10.0f;
-        obj.params.depth = 10.0f;
-        obj.params.segmentsX = 32;
-        obj.params.segmentsZ = 32;
+        // Apply type-specific preset defaults
+        ApplyWaterBodyPreset(obj.water, wbType);
 
-        obj.mesh = GeometryBuilder::CreatePlane(10.0f, 10.0f, 32, 32);
+        // Build mesh from preset geometry
+        obj.mesh = GeometryBuilder::CreatePlane(
+            obj.water.width, obj.water.length,
+            obj.water.gridResolution, obj.water.gridResolution);
+        obj.position.y = obj.water.elevation;
+
+        obj.params.width    = obj.water.width;
+        obj.params.depth    = obj.water.length;
+        obj.params.segmentsX = obj.water.gridResolution;
+        obj.params.segmentsZ = obj.water.gridResolution;
 
         obj.parentId = parentId;
         if (parentId != -1) {
@@ -347,6 +618,7 @@ public:
         selectedId = id;
         return obj;
     }
+
 
     // Create a brand-new Light + its actor
     GameObject& AddNewLight(PrimitiveType lightType = PrimitiveType::PointLight, glm::vec3 pos = {0.0f, 2.5f, 0.0f}, int parentId = -1) {
