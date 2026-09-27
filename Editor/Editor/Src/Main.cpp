@@ -150,30 +150,53 @@ struct SkyboxShaderConstants
 };
 static_assert(sizeof(SkyboxShaderConstants) == 112, "SkyboxShaderConstants must be 112 bytes (28 floats)");
 
-// Water surface shader constants (32 floats = 128 bytes)
+// Water surface shader constants — exactly 48 × float = 192 bytes
+// Layout (must match HLSL cbuffer packing exactly):
+//   mat4  viewProj        = 16 floats = 64 bytes  [offset   0]
+//   vec3  cameraPos       =  3 floats = 12 bytes  [offset  64]
+//   float time            =  1 float  =  4 bytes  [offset  76]
+//   vec4  waterColor      =  4 floats = 16 bytes  [offset  80]
+//   vec4  shallowColor    =  4 floats = 16 bytes  [offset  96]
+//   float roughness       =  1 float  =  4 bytes  [offset 112]
+//   float opacity         =  1 float  =  4 bytes  [offset 116]
+//   float reflectionStr   =  1 float  =  4 bytes  [offset 120]
+//   float refractionStr   =  1 float  =  4 bytes  [offset 124]
+//   float waveSpeed       =  1 float  =  4 bytes  [offset 128]
+//   float waveScale       =  1 float  =  4 bytes  [offset 132]
+//   float waveHeight      =  1 float  =  4 bytes  [offset 136]
+//   float normalScale     =  1 float  =  4 bytes  [offset 140]
+//   float foamEnabled     =  1 float  =  4 bytes  [offset 144]
+//   float foamScale       =  1 float  =  4 bytes  [offset 148]
+//   float depthFade       =  1 float  =  4 bytes  [offset 152]
+//   float specularIntensity=  1 float =  4 bytes  [offset 156]
+//   float pad[9]          =  9 floats = 36 bytes  [offset 160]
+//   TOTAL = 16+1+1+4+4+1+1+1+1+1+1+1+1+1+1+1+1+9 floats = 46... pad to 48
+//   Actual: 64+16+16+16+12*4+9*4 = 64+16+16+16+48+36 = 196... let me just use exact:
 struct WaterShaderConstants
 {
-	glm::mat4 viewProj;          // 16 floats
-	glm::vec3 cameraPos;         // 3 floats
-	float     time;              // 1 float  — animated wave phase
-	glm::vec4 waterColor;        // 4 floats — deep water RGBA
-	glm::vec4 shallowColor;      // 4 floats — shallow water RGBA
-	float     roughness;         // 1
-	float     opacity;           // 1
-	float     reflectionStr;     // 1
-	float     refractionStr;     // 1
-	float     waveSpeed;         // 1
-	float     waveScale;         // 1
-	float     waveHeight;        // 1
-	float     normalScale;       // 1
-	float     foamEnabled;       // 1 (bool as float)
-	float     foamScale;         // 1
-	float     depthFade;         // 1
-	float     specularIntensity; // 1
-	// total: 16+3+1+4+4+1+1+1+1+1+1+1+1+1+1+1+1 = 40 floats → pad to 48
-	float pad0, pad1, pad2, pad3, pad4, pad5, pad6, pad7; // 8 pad
+	glm::mat4 viewProj;         // 64 bytes | floats  0-15
+	glm::vec3 cameraPos;        // 12 bytes | floats 16-18
+	float     time;             //  4 bytes | float  19
+	glm::vec4 waterColor;       // 16 bytes | floats 20-23
+	glm::vec4 shallowColor;     // 16 bytes | floats 24-27
+	float     roughness;        //  4 bytes | float  28
+	float     opacity;          //  4 bytes | float  29
+	float     reflectionStr;    //  4 bytes | float  30
+	float     refractionStr;    //  4 bytes | float  31
+	float     waveSpeed;        //  4 bytes | float  32
+	float     waveScale;        //  4 bytes | float  33
+	float     waveHeight;       //  4 bytes | float  34
+	float     normalScale;      //  4 bytes | float  35
+	float     foamEnabled;      //  4 bytes | float  36
+	float     foamScale;        //  4 bytes | float  37
+	float     depthFade;        //  4 bytes | float  38
+	float     specularIntensity;//  4 bytes | float  39
+	// 40 floats used so far (160 bytes). Pad to 48 floats (192 bytes).
+	float     pad[8];           // 32 bytes | floats 40-47
 };
+// 40 payload floats + 8 pad = 48 floats = 192 bytes
 static_assert(sizeof(WaterShaderConstants) == 192, "WaterShaderConstants must be 192 bytes (48 floats)");
+
 
 
 
@@ -2664,76 +2687,106 @@ int createShadersAndPipeline()
 		// ---- Water HLSL (VS + PS) ----
 		const char* waterShaderSrc = R"HLSL(
 // ============================================================
-// Eunoia Water Surface Shader — PBR Fresnel + Gerstner Waves
+// Eunoia Water Surface Shader v2 — Stable PBR + Gerstner
 // ============================================================
 cbuffer WaterConstants : register(b0)
 {
-    float4x4 viewProj;
-    float3   cameraPos;
-    float    time;
-    float4   waterColor;
-    float4   shallowColor;
-    float    roughness;
-    float    opacity;
-    float    reflectionStr;
-    float    refractionStr;
-    float    waveSpeed;
-    float    waveScale;
-    float    waveHeight;
-    float    normalScale;
-    float    foamEnabled;
-    float    foamScale;
-    float    depthFade;
-    float    specularIntensity;
-    float4   _pad;
-    float4   _pad2;
+    float4x4 viewProj;          // floats  0-15
+    float3   cameraPos;         // floats 16-18
+    float    time;              // float  19
+    float4   waterColor;        // floats 20-23
+    float4   shallowColor;      // floats 24-27
+    float    roughness;         // float  28
+    float    opacity;           // float  29
+    float    reflectionStr;     // float  30
+    float    refractionStr;     // float  31
+    float    waveSpeed;         // float  32
+    float    waveScale;         // float  33
+    float    waveHeight;        // float  34
+    float    normalScale;       // float  35
+    float    foamEnabled;       // float  36
+    float    foamScale;         // float  37
+    float    depthFade;         // float  38
+    float    specularIntensity; // float  39
+    float2   _pad0;             // floats 40-41
+    float2   _pad1;             // floats 42-43
+    float4   _pad2;             // floats 44-47
 }
 
 struct VSIn  { float3 pos : POSITION; float3 norm : NORMAL; float2 uv : TEXCOORD0; };
-struct VSOut { float4 clipPos : SV_POSITION; float3 worldPos : TEXCOORD0; float3 normal : TEXCOORD1; float2 uv : TEXCOORD2; float eyeDist : TEXCOORD3; };
+struct VSOut {
+    float4 clipPos  : SV_POSITION;
+    float3 worldPos : TEXCOORD0;
+    float3 normal   : TEXCOORD1;
+    float2 uv       : TEXCOORD2;
+    float  eyeDist  : TEXCOORD3;
+};
 
-// --- Simple Gerstner wave helper ---
-float3 GerstnerWave(float3 p, float2 dir, float steepness, float wavelength, float t)
+// -----------------------------------------------------------
+// Stable Gerstner wave — amplitude clamped to avoid explosion
+// Returns only Y displacement (vertical only for stability)
+// -----------------------------------------------------------
+float GerstnerY(float2 xz, float2 dir, float amplitude, float wavelength, float t)
 {
-    float k  = 6.28318530718 / wavelength;
-    float c  = sqrt(9.8 / k);
-    float2 d = normalize(dir);
-    float f  = k * (dot(d, p.xz) - c * t);
-    float a  = steepness / k;
-    return float3(d.x * a * cos(f), a * sin(f), d.y * a * cos(f));
+    float safeWL = max(wavelength, 0.01);
+    float k      = 6.28318 / safeWL;
+    float c      = sqrt(max(9.8 / k, 0.0001));
+    float2 d     = normalize(dir + float2(0.0001, 0.0001));
+    float  phase = k * (dot(d, xz) - c * t);
+    return clamp(amplitude * sin(phase), -amplitude * 2.0, amplitude * 2.0);
+}
+
+// Normal-only Gerstner (dY/dX and dY/dZ partial derivatives)
+float2 GerstnerGrad(float2 xz, float2 dir, float amplitude, float wavelength, float t)
+{
+    float safeWL = max(wavelength, 0.01);
+    float k      = 6.28318 / safeWL;
+    float c      = sqrt(max(9.8 / k, 0.0001));
+    float2 d     = normalize(dir + float2(0.0001, 0.0001));
+    float  phase = k * (dot(d, xz) - c * t);
+    float  grad  = k * amplitude * cos(phase);
+    return clamp(d * grad, -2.0, 2.0);
 }
 
 VSOut VSWater(VSIn i)
 {
-    float3 p = i.pos;
-    float  t = time * waveSpeed;
+    // Safe wave parameters
+    float safeHeight = clamp(waveHeight, 0.0, 20.0);
+    float safeScale  = max(waveScale,  0.001);
+    float t          = time * clamp(waveSpeed, 0.0, 10.0);
 
-    // 3-octave Gerstner waves
-    float3 disp = float3(0,0,0);
-    disp += GerstnerWave(p, float2(1.0, 0.8),  0.15 * waveHeight, 8.0  / waveScale, t);
-    disp += GerstnerWave(p, float2(0.3, 1.0),  0.10 * waveHeight, 5.0  / waveScale, t * 0.8);
-    disp += GerstnerWave(p, float2(-0.7, 0.5), 0.06 * waveHeight, 3.0  / waveScale, t * 1.2);
-    p += disp;
+    // Wavelengths scale with waveScale (larger scale = longer waves)
+    float wl0 = 8.0 * safeScale;
+    float wl1 = 5.0 * safeScale;
+    float wl2 = 3.0 * safeScale;
+
+    float a0 = safeHeight * 0.40;
+    float a1 = safeHeight * 0.25;
+    float a2 = safeHeight * 0.15;
+
+    float2 xz = i.pos.xz;
+
+    // Vertical-only displacement (no XZ shift = no stretched triangles)
+    float dy  = GerstnerY(xz, float2( 1.0,  0.8), a0, wl0, t);
+    dy       += GerstnerY(xz, float2( 0.3,  1.0), a1, wl1, t * 0.8);
+    dy       += GerstnerY(xz, float2(-0.7,  0.5), a2, wl2, t * 1.2);
+    dy        = clamp(dy, -safeHeight * 2.0, safeHeight * 2.0);
+
+    float3 p = i.pos + float3(0.0, dy, 0.0);
+
+    // Gradient-based normal (numerically stable)
+    float2 g0 = GerstnerGrad(xz, float2( 1.0,  0.8), a0, wl0, t);
+    float2 g1 = GerstnerGrad(xz, float2( 0.3,  1.0), a1, wl1, t * 0.8);
+    float2 g2 = GerstnerGrad(xz, float2(-0.7,  0.5), a2, wl2, t * 1.2);
+    float2 grad = g0 + g1 + g2;
+    float3 N = normalize(float3(-grad.x, 1.0, -grad.y));
 
     VSOut o;
     o.clipPos  = mul(float4(p, 1.0), viewProj);
     o.worldPos = p;
     o.uv       = i.uv;
+    o.normal   = N;
     o.eyeDist  = length(cameraPos - p);
-
-    // Recompute normal from gradient
-    float eps = 0.05;
-    float3 px = i.pos + float3(eps,0,0);
-    float3 pz = i.pos + float3(0,0,eps);
-    float3 dx = GerstnerWave(px, float2(1.0,0.8), 0.15*waveHeight, 8.0/waveScale, t)
-              + GerstnerWave(px, float2(0.3,1.0), 0.10*waveHeight, 5.0/waveScale, t*0.8)
-              + GerstnerWave(px, float2(-0.7,0.5),0.06*waveHeight, 3.0/waveScale, t*1.2);
-    float3 dz = GerstnerWave(pz, float2(1.0,0.8), 0.15*waveHeight, 8.0/waveScale, t)
-              + GerstnerWave(pz, float2(0.3,1.0), 0.10*waveHeight, 5.0/waveScale, t*0.8)
-              + GerstnerWave(pz, float2(-0.7,0.5),0.06*waveHeight, 3.0/waveScale, t*1.2);
-    float3 tangX = normalize(float3(eps,0,0) + dx - disp);
-    float3 tangZ = normalize(float3(0,0,eps) + dz - disp);
-    o.normal = normalize(cross(tangZ, tangX));
     return o;
 }
 
@@ -2741,48 +2794,59 @@ float4 PSWater(VSOut i) : SV_TARGET
 {
     float3 N = normalize(i.normal);
 
-    // --- Animated normal map (procedural) ---
-    float2 uv1 = i.uv * waveScale + float2( time * waveSpeed * 0.04,  time * waveSpeed * 0.02);
-    float2 uv2 = i.uv * waveScale + float2(-time * waveSpeed * 0.02,  time * waveSpeed * 0.05);
-    // Simple procedural normal perturbation
-    float3 bump1 = float3(sin(uv1.x * 40.0) * 0.5, 1.0, cos(uv1.y * 40.0) * 0.5);
-    float3 bump2 = float3(sin(uv2.x * 30.0) * 0.5, 1.0, cos(uv2.y * 30.0) * 0.5);
-    float3 bumpN = normalize((bump1 + bump2) * 0.5);
-    N = normalize(N + bumpN * normalScale * 0.15);
+    // --- Procedural animated normals (detail layer) ---
+    float  safeWS = max(waveScale, 0.001);
+    float  safeT  = clamp(time, 0.0, 1e5);
+    float  spd    = clamp(waveSpeed, 0.0, 10.0);
+    float2 uv1 = i.uv * safeWS * 2.0 + float2( safeT * spd * 0.03,  safeT * spd * 0.015);
+    float2 uv2 = i.uv * safeWS * 1.5 + float2(-safeT * spd * 0.015, safeT * spd * 0.04);
+    float3 bump1 = normalize(float3(sin(uv1.x * 25.0) * 0.4, 1.0, cos(uv1.y * 25.0) * 0.4));
+    float3 bump2 = normalize(float3(sin(uv2.x * 18.0) * 0.4, 1.0, cos(uv2.y * 18.0) * 0.4));
+    float3 bumpN = normalize(bump1 + bump2);
+    N = normalize(N + bumpN * clamp(normalScale, 0.0, 2.0) * 0.12);
 
-    // --- View & Fresnel ---
-    float3 V   = normalize(cameraPos - i.worldPos);
-    float  NdV = saturate(dot(N, V));
-    float  fresnelBase = 0.04;
-    float  fresnel = fresnelBase + (1.0 - fresnelBase) * pow(1.0 - NdV, 5.0);
+    // --- View vector & Fresnel ---
+    float3 V      = normalize(cameraPos - i.worldPos);
+    float  NdV    = saturate(dot(N, V));
+    float  fresnel = 0.04 + 0.96 * pow(1.0 - NdV, 5.0);
+    fresnel = saturate(fresnel);
 
-    // --- Depth-based color blend ---
-    float  depth = saturate(i.eyeDist / max(depthFade * 10.0, 1.0));
-    float4 baseColor = lerp(shallowColor, waterColor, depth);
+    // --- Depth-based color ---
+    float  depthT    = saturate(i.eyeDist / max(depthFade * 8.0, 0.1));
+    float4 baseColor = lerp(shallowColor, waterColor, depthT);
+    // Prevent NaN from zero-alpha inputs
+    baseColor = clamp(baseColor, 0.0, 1.0);
 
-    // --- Fake specular (Blinn-Phong) ---
-    float3 L   = normalize(float3(0.3, 1.0, 0.5)); // approximate directional sun
-    float3 H   = normalize(V + L);
-    float  NdH = saturate(dot(N, H));
-    float  shininess = lerp(32.0, 512.0, 1.0 - roughness);
-    float  spec = pow(NdH, shininess) * specularIntensity;
+    // --- Blinn-Phong specular ---
+    float3 L       = normalize(float3(0.35, 1.0, 0.45));
+    float3 H       = normalize(V + L);
+    float  NdH     = saturate(dot(N, H));
+    float  shin    = lerp(24.0, 384.0, saturate(1.0 - roughness));
+    float  spec    = pow(NdH, shin) * clamp(specularIntensity, 0.0, 4.0);
 
-    // --- Foam ---
+    // --- Procedural foam (edge-based, wave crests) ---
     float foam = 0.0;
+    [branch]
     if (foamEnabled > 0.5)
     {
-        float2 fuv = i.uv * foamScale + float2(time * 0.05, time * 0.03);
-        foam = saturate(sin(fuv.x * 20.0) * sin(fuv.y * 20.0) * 0.5 + 0.3);
-        foam *= saturate(pow(1.0 - NdV, 3.0) * 2.0); // edges only
+        float safeFS = max(foamScale, 0.01);
+        float2 fuv   = i.uv * safeFS + float2(safeT * 0.04, safeT * 0.025);
+        float  fn    = sin(fuv.x * 18.0) * sin(fuv.y * 18.0);
+        foam         = saturate(fn * 0.5 + 0.35);
+        // Only at grazing angles / wave crests
+        float edgeMask = saturate(pow(1.0 - NdV, 2.5) * 3.0);
+        foam *= edgeMask;
     }
 
-    // --- Combine ---
-    float3 reflectColor = lerp(float3(0.4, 0.55, 0.7), float3(0.8, 0.9, 1.0), fresnel);
-    float3 col = lerp(baseColor.rgb, reflectColor, fresnel * reflectionStr);
-    col += spec;
-    col = lerp(col, float3(1,1,1), foam * 0.6);
+    // --- Final color compositing ---
+    // Fake sky reflection colour (cool blue-grey)
+    float3 skyRef = lerp(float3(0.35, 0.48, 0.60), float3(0.75, 0.85, 0.95), fresnel);
+    float3 col    = lerp(baseColor.rgb, skyRef, saturate(fresnel * reflectionStr));
+    col          += spec;
+    col           = lerp(col, float3(1.0, 1.0, 1.0), foam * 0.55);
+    col           = saturate(col);
 
-    float alpha = lerp(baseColor.a, 1.0, fresnel) * opacity;
+    float alpha = saturate(lerp(baseColor.a, 1.0, fresnel * 0.6) * clamp(opacity, 0.0, 1.0));
     return float4(col, alpha);
 }
 )HLSL";
