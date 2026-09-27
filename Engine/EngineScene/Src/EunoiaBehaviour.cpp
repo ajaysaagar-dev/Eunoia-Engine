@@ -876,6 +876,35 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
         PrintWithKey(item.printKey, msg, 2.5f);
     }
+
+    // Execute real-time dynamic Transform actions inside Update() (dev.md: Transform.Translate, Transform.Rotate)
+    Transform.Init(this);
+    for (const auto& action : m_transformActions) {
+        glm::vec3 delta(0.0f);
+        for (int i = 0; i < 3; ++i) {
+            float val = action.constantDelta[i];
+            if (!action.varNames[i].empty()) {
+                auto itF = m_floatStorage.find(action.varNames[i]);
+                if (itF != m_floatStorage.end()) {
+                    val = itF->second * action.varMultiplier[i];
+                }
+            }
+            if (action.useDeltaTime[i]) {
+                val *= dt;
+            }
+            delta[i] = val;
+        }
+
+        if (action.type == DynamicTransformAction::ActionType::TranslateRelative) {
+            Transform.Translate(delta.x, delta.y, delta.z);
+        } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
+            Transform.WorldTranslate(delta.x, delta.y, delta.z);
+        } else if (action.type == DynamicTransformAction::ActionType::RotateRelative) {
+            Transform.Rotation += delta;
+        } else if (action.type == DynamicTransformAction::ActionType::RotateWorld) {
+            Transform.Rotation.WorldSpace(Transform.Rotation.WorldSpace() + delta);
+        }
+    }
 }
 
 void DynamicScriptBehaviour::RegisterProperties() {
@@ -1183,9 +1212,60 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
     // 3. Third pass: scan Start() and Update() bodies for runtime actions
     m_startPrintMessages.clear();
     m_updatePrintMessages.clear();
+    m_transformActions.clear();
     m_hasRotation = false;
     m_hasTranslation = false;
     m_rotateAxis = glm::vec3(0.0f, 1.0f, 0.0f);
+
+    auto parseArgExpr = [&](const std::string& rawExpr, float& outConst, bool& outUseDt, std::string& outVar, float& outMul) {
+        std::string s = rawExpr;
+        size_t b = s.find_first_not_of(" \t\r\n");
+        size_t e = s.find_last_not_of(" \t\r\n");
+        if (b == std::string::npos || e == std::string::npos) return;
+        s = s.substr(b, e - b + 1);
+
+        std::string lowerS = s;
+        std::transform(lowerS.begin(), lowerS.end(), lowerS.begin(), ::tolower);
+
+        if (lowerS.find("deltatime") != std::string::npos ||
+            lowerS.find("delta_time") != std::string::npos ||
+            lowerS.find("worlddeltaseconds") != std::string::npos ||
+            lowerS.find("dt") != std::string::npos) {
+            outUseDt = true;
+        }
+
+        for (const auto& v : declaredVars) {
+            std::string vName = v.first;
+            if (s.find(vName) != std::string::npos) {
+                outVar = vName;
+                break;
+            }
+        }
+
+        outConst = 0.0f;
+        outMul = 1.0f;
+
+        size_t numStart = s.find_first_of("-+0123456789.");
+        if (numStart != std::string::npos) {
+            size_t numEnd = numStart;
+            if (s[numStart] == '-' || s[numStart] == '+') numEnd++;
+            while (numEnd < s.size() && (std::isdigit(s[numEnd]) || s[numEnd] == '.' || s[numEnd] == 'f' || s[numEnd] == 'F')) {
+                numEnd++;
+            }
+            std::string numStr = s.substr(numStart, numEnd - numStart);
+            if (!numStr.empty() && (numStr.back() == 'f' || numStr.back() == 'F')) numStr.pop_back();
+            try {
+                if (!numStr.empty() && numStr != "-" && numStr != "+") {
+                    float val = std::stof(numStr);
+                    if (outVar.empty()) {
+                        outConst = val;
+                    } else {
+                        outMul = val;
+                    }
+                }
+            } catch (...) {}
+        }
+    };
 
     bool inStartMethod = false;
     bool inUpdateMethod = false;
@@ -1223,6 +1303,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
 
         if (inUpdateMethod) {
+            // 1. Scan for Print statements
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
                 size_t openP = l.find('(', prPos);
@@ -1279,6 +1360,78 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
 
                     item.printKey = (int)m_updatePrintMessages.size() + 100;
                     m_updatePrintMessages.push_back(item);
+                }
+            }
+
+            // 2. Scan for Transform.Translate / RelativeTranslate / WorldTranslate
+            size_t transPos = l.find("Translate(");
+            if (transPos != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = (l.find("WorldTranslate(") != std::string::npos)
+                              ? DynamicTransformAction::ActionType::TranslateWorld
+                              : DynamicTransformAction::ActionType::TranslateRelative;
+
+                size_t openP = l.find('(', transPos);
+                size_t closeP = l.rfind(')');
+                if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
+                    std::string argsStr = l.substr(openP + 1, closeP - openP - 1);
+                    std::vector<std::string> args;
+                    std::string cur;
+                    int parenDepth = 0;
+                    for (char c : argsStr) {
+                        if (c == '(') parenDepth++;
+                        else if (c == ')') parenDepth--;
+                        else if (c == ',' && parenDepth == 0) {
+                            args.push_back(cur);
+                            cur.clear();
+                            continue;
+                        }
+                        cur += c;
+                    }
+                    if (!cur.empty()) args.push_back(cur);
+
+                    if (args.size() == 3) {
+                        for (int i = 0; i < 3; ++i) {
+                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
+                        }
+                        m_transformActions.push_back(action);
+                    }
+                }
+            }
+
+            // 3. Scan for Transform.Rotate / RelativeRotate / WorldRotate
+            size_t rotPos = l.find("Rotate(");
+            if (rotPos != std::string::npos && l.find("AutoRotate") == std::string::npos) {
+                DynamicTransformAction action;
+                action.type = (l.find("WorldRotate(") != std::string::npos)
+                              ? DynamicTransformAction::ActionType::RotateWorld
+                              : DynamicTransformAction::ActionType::RotateRelative;
+
+                size_t openP = l.find('(', rotPos);
+                size_t closeP = l.rfind(')');
+                if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
+                    std::string argsStr = l.substr(openP + 1, closeP - openP - 1);
+                    std::vector<std::string> args;
+                    std::string cur;
+                    int parenDepth = 0;
+                    for (char c : argsStr) {
+                        if (c == '(') parenDepth++;
+                        else if (c == ')') parenDepth--;
+                        else if (c == ',' && parenDepth == 0) {
+                            args.push_back(cur);
+                            cur.clear();
+                            continue;
+                        }
+                        cur += c;
+                    }
+                    if (!cur.empty()) args.push_back(cur);
+
+                    if (args.size() == 3) {
+                        for (int i = 0; i < 3; ++i) {
+                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
+                        }
+                        m_transformActions.push_back(action);
+                    }
                 }
             }
 

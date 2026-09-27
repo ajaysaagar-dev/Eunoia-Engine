@@ -225,6 +225,7 @@ public:
         clone->m_hasInput = m_hasInput;
         clone->m_startPrintMessages = m_startPrintMessages;
         clone->m_updatePrintMessages = m_updatePrintMessages;
+        clone->m_transformActions = m_transformActions;
         clone->RegisterProperties();
         clone->CopyPropertiesFrom(*this);
         clone->Transform.Init(clone.get());
@@ -270,6 +271,21 @@ public:
         int printKey = -1;
     };
     std::vector<DynamicUpdatePrint> m_updatePrintMessages;
+
+    struct DynamicTransformAction {
+        enum class ActionType {
+            TranslateRelative,
+            TranslateWorld,
+            RotateRelative,
+            RotateWorld
+        };
+        ActionType type = ActionType::TranslateRelative;
+        glm::vec3 constantDelta{0.0f};
+        bool useDeltaTime[3] = {false, false, false};
+        std::string varNames[3];
+        float varMultiplier[3] = {1.0f, 1.0f, 1.0f};
+    };
+    std::vector<DynamicTransformAction> m_transformActions;
 
     std::string m_sourceCppPath;
     std::filesystem::file_time_type m_sourceTimestamp{};

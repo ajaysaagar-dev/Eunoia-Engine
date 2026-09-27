@@ -1220,8 +1220,18 @@ public:
                 auto regIt = allRegistry.find(b->GetClassName());
                 if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
                     if (regIt->second.isNative) {
-                        // Native compiled behaviour: retain native instance
-                        b->RefreshPropertiesFromSource();
+                        // Native compiled behaviour
+                        if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
+                            auto nativeB = regIt->second.factory();
+                            nativeB->SetScene(this);
+                            nativeB->SetOwner(&obj);
+                            nativeB->SetEnabled(b->IsEnabled());
+                            nativeB->CopyPropertiesFrom(*b);
+                            nativeB->ResolveReferences(*this);
+                            b = std::move(nativeB);
+                        } else {
+                            b->RefreshPropertiesFromSource();
+                        }
                     } else if (b->GetSourceCppPath().empty() || b->GetProperties().empty()) {
                         auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
                         dynB->SetScene(this);

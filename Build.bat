@@ -60,9 +60,16 @@ set "PROJECT_USER_SCRIPTS="
 if exist "%PROJECTS_ROOT%" (
     for /d %%p in ("%PROJECTS_ROOT%\*") do (
         if exist "%%p\Content" (
-            for /r "%%p\Content" %%s in (*.cpp) do (
-                set "PROJECT_USER_SCRIPTS=!PROJECT_USER_SCRIPTS! "%%s""
+            pushd "%%p\Content"
+            for /r %%s in (*.cpp) do (
+                set "s_path=%%s"
+                echo "!s_path!" | findstr /i "\.assetmeta \.meta" >nul 2>&1
+                if !ERRORLEVEL! neq 0 (
+                    set "PROJECT_USER_SCRIPTS=!PROJECT_USER_SCRIPTS! "%%s""
+                    echo [INFO] Found project behaviour script: %%~nxs
+                )
             )
+            popd
         )
     )
 )
