@@ -4146,11 +4146,12 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 {
 	if (g_scene.isPlayMode)
 	{
+		ImGuiIO& io = ImGui::GetIO();
 		if (button == GLFW_MOUSE_BUTTON_LEFT)
 		{
 			s_isLeftMouseDown = (action == GLFW_PRESS);
 			// User Request: when click on the game play mode screen than again lock automatically
-			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked())
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
 			{
 				CursorState.Locked();
 			}
@@ -4159,7 +4160,7 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 		else if (button == GLFW_MOUSE_BUTTON_RIGHT)
 		{
 			s_isRightMouseDown = (action == GLFW_PRESS);
-			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked())
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
 			{
 				CursorState.Locked();
 			}
@@ -4913,8 +4914,8 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Game Mode ESC & Exit listener
-		if (isGameOnlyMode)
+		// Game Mode ESC & Exit listener (for both standalone game and in-editor Play Mode)
+		if (isGameOnlyMode || g_scene.isPlayMode)
 		{
 			static bool s_escWasPressed = false;
 			bool escNow = InputSystem::Get().IsKeyDown(Key::Escape) || (glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
@@ -4929,15 +4930,22 @@ int main(int argc, char** argv)
 			}
 			s_escWasPressed = escNow;
 
-			// Delete key closes the game mode window
+			// Delete key closes the standalone game mode window or exits in-editor play mode
 			if (InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS)
 			{
 				CursorState.UnLocked();
-				glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+				if (isGameOnlyMode)
+				{
+					glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+				}
+				else if (g_scene.isPlayMode)
+				{
+					g_engineUI.ExitPlayMode(g_scene, &g_camera);
+				}
 			}
 
 			// User Request: when click on the game play mode screen than again lock automatically
-			if (!InputSystem::Get().IsCursorLocked())
+			if (!InputSystem::Get().IsCursorLocked() && !ImGui::GetIO().WantCaptureMouse)
 			{
 				if (glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS ||
 				    glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)

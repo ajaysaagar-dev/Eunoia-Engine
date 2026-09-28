@@ -250,7 +250,7 @@ public:
     };
 
     ViewportRect GetViewportRect(float windowWidth, float windowHeight) const {
-        if (isImmersiveMode || isGameOnlyWindow) {
+        if (isImmersiveMode || isGameOnlyWindow || isPlayModeActive) {
             return { 0.0f, 0.0f, windowWidth, windowHeight };
         }
         float topH = topBarHeight;
@@ -427,6 +427,7 @@ public:
     void ApplyWaterToGameObject(Scene& scene, GameObject* obj, const WaterAsset& wa);
 
     // Behaviours & Play Mode (dev.md)
+    bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;
     char behaviourSearchBuf[64] = "";
     bool showNewBehaviourPopup = false;

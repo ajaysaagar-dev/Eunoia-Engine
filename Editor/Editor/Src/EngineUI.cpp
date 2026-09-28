@@ -2131,23 +2131,24 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     // Play Mode Presentation & Stop-on-Delete (User Request: ESC does not exit game mode)
     if (scene.isPlayMode) {
+        isPlayModeActive = true;
         if (ImGui::IsKeyPressed(ImGuiKey_Delete) ||
             InputSystem::Get().IsKeyPressed(Key::Delete)) {
-            ExitPlayMode(scene);
+            ExitPlayMode(scene, &camera);
             return;
         }
 
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
         ImGui::SetNextWindowPos(ImVec2(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.75f);
+        ImGui::SetNextWindowBgAlpha(0.80f);
         ImGuiWindowFlags playFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
         if (ImGui::Begin("##PlayModeBanner", nullptr, playFlags)) {
-            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ GAME VIEW (PLAY MODE)");
+            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ GAME PLAY MODE (FULL SCREEN)");
             ImGui::SameLine();
-            ImGui::TextDisabled("| Press [DELETE] or click Stop to exit");
+            ImGui::TextDisabled("| Press [DELETE] or click Stop to exit | Press [ESC] to unlock cursor");
             ImGui::SameLine();
             if (ImGui::Button("⏹ Stop")) {
-                ExitPlayMode(scene);
+                ExitPlayMode(scene, &camera);
                 ImGui::End();
                 return;
             }
@@ -2823,8 +2824,9 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("📦 Cook Project Assets")) {
                     OpenCookModal();
                 }
-                if (ImGui::MenuItem("🖥️ Launch Game in Separate Window")) {
-                    LaunchGameSeparateWindow(scene);
+                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Delete")) {
+                    if (scene.isPlayMode) ExitPlayMode(scene, currentCamera);
+                    else EnterPlayMode(scene, currentCamera);
                 }
                 if (ImGui::MenuItem("📂 Open Project Build Folder")) {
                     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
@@ -2910,25 +2912,27 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
 
             ImGui::TextDisabled("|");
 
-            // External Window Game Mode Controls (User Request: Only external window supported)
-            bool isExternalGameRunning = IsExternalGameRunning();
+            // Play Mode Controls (In-Editor Full Screen Fit)
+            bool isPlayActive = scene.isPlayMode;
 
-            ImGui::PushStyleColor(ImGuiCol_Button, isExternalGameRunning ? ImVec4(0.18f, 0.75f, 0.32f, 1.0f) : ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
-            if (ImGui::Button(isExternalGameRunning ? "▶ Playing in Window" : "▶ Play")) {
-                if (!isExternalGameRunning) {
-                    LaunchGameSeparateWindow(scene);
+            ImGui::PushStyleColor(ImGuiCol_Button, isPlayActive ? ImVec4(0.18f, 0.75f, 0.32f, 1.0f) : ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
+            if (ImGui::Button(isPlayActive ? "▶ Playing (Full Screen)" : "▶ Play")) {
+                if (!isPlayActive) {
+                    EnterPlayMode(scene, currentCamera);
+                } else {
+                    ExitPlayMode(scene, currentCamera);
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Launch Game Mode in a separate external window");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isPlayActive ? "Stop Play Mode [Delete]" : "Enter Game Play Mode in editor (Full Screen Fit)");
             ImGui::PopStyleColor();
 
-            if (isExternalGameRunning) {
+            if (isPlayActive) {
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button("⏹ Stop Game")) {
-                    StopExternalGame();
+                if (ImGui::Button("⏹ Stop")) {
+                    ExitPlayMode(scene, currentCamera);
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close external game window");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Delete]");
                 ImGui::PopStyleColor();
             }
 
@@ -8743,12 +8747,66 @@ void EngineUI::StopExternalGame() {
 }
 
 void EngineUI::EnterPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
-    // Only external window game mode is supported (User Request: dont same window game mode)
-    LaunchGameSeparateWindow(scene, cameraPtr);
+    if (scene.isPlayMode) return;
+
+    OrbitCamera* activeCam = cameraPtr ? cameraPtr : currentCamera;
+    if (activeCam) {
+        savedCameraYaw = activeCam->yaw;
+        savedCameraPitch = activeCam->pitch;
+        savedCameraTarget = activeCam->target;
+        savedCameraDistance = activeCam->distance;
+        savedCameraFov = activeCam->fov;
+        hasSavedPlayModeCamera = true;
+    }
+
+    // If an Active Level Camera actor exists, align viewport camera to it for gameplay
+    int activeCamId = scene.activeLevelCameraId;
+    GameObject* camObj = (activeCamId != -1) ? scene.FindObject(activeCamId) : nullptr;
+    if (!camObj) {
+        for (auto& obj : scene.objects) {
+            if (obj.isCamera || obj.type == PrimitiveType::Camera) {
+                camObj = &obj;
+                break;
+            }
+        }
+    }
+    if (camObj && activeCam) {
+        glm::vec3 worldPos = scene.GetWorldPosition(*camObj);
+        activeCam->yaw = camObj->rotation.y;
+        activeCam->pitch = std::clamp(camObj->rotation.x, -89.0f, 89.0f);
+        activeCam->fov = camObj->camera.fov;
+        activeCam->nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+        activeCam->farPlane = std::max(1.0f, camObj->camera.farPlane);
+        activeCam->distance = 0.001f;
+        activeCam->target = worldPos + activeCam->GetForward() * 0.001f;
+    }
+
+    isPlayModeActive = true;
+    scene.StartPlayMode();
+    CursorState.Locked();
+    AddLog("LogPlayLevel", "Entered Play Mode in Editor (Full Screen Fit)", 2);
 }
 
 void EngineUI::ExitPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
-    StopExternalGame();
+    if (!scene.isPlayMode) return;
+
+    scene.StopPlayMode();
+    isPlayModeActive = false;
+    CursorState.UnLocked();
+    InputSystem::Get().SetCursorLocked(false);
+
+    OrbitCamera* activeCam = cameraPtr ? cameraPtr : currentCamera;
+    if (activeCam && hasSavedPlayModeCamera) {
+        activeCam->yaw = savedCameraYaw;
+        activeCam->pitch = savedCameraPitch;
+        activeCam->target = savedCameraTarget;
+        activeCam->distance = savedCameraDistance;
+        activeCam->fov = savedCameraFov;
+        hasSavedPlayModeCamera = false;
+    }
+
+    s_justExitedPlayMode = true;
+    AddLog("LogPlayLevel", "Exited Play Mode, restored editor state", 0);
 }
 
 void EngineUI::LaunchGameSeparateWindow(Scene& scene, OrbitCamera* cameraPtr) {
@@ -9850,23 +9908,23 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
         }
 
         if (!obj->behaviours.empty()) {
-            bool isGameRunning = IsExternalGameRunning();
-            if (!isGameRunning) {
+            bool isPlayActive = scene.isPlayMode;
+            if (!isPlayActive) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.70f, 0.32f, 1.0f));
-                if (ImGui::Button("▶ Run Game in Separate Window", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
-                    LaunchGameSeparateWindow(scene);
+                if (ImGui::Button("▶ Play Mode (Full Screen Fit)", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                    EnterPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor(2);
-                ImGui::TextDisabled("ℹ Runs behaviour scripts in a dedicated game window.");
+                ImGui::TextDisabled("ℹ Runs behaviour scripts in full screen play mode.");
                 ImGui::Spacing();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button("⏹ Stop External Game", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
-                    StopExternalGame();
+                if (ImGui::Button("⏹ Stop Play Mode", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                    ExitPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor();
-                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ Simulation Active in External Window");
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ Simulation Active");
                 ImGui::Spacing();
             }
         }
