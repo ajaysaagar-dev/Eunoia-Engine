@@ -296,6 +296,9 @@ public:
         bool useDeltaTime[3] = {false, false, false};
         std::string varNames[3];
         float varMultiplier[3] = {1.0f, 1.0f, 1.0f};
+        std::string scaleVarNames[3];
+        bool activeAxis[3] = {false, false, false};
+        std::string targetRefName;
         std::vector<DynamicKeyCondition> requiredKeys;
     };
     std::vector<DynamicTransformAction> m_transformActions;

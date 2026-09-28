@@ -148,16 +148,6 @@ public:
         }
         
         glfwGetCursorPos(window, &m_mouseX, &m_mouseY);
-
-        if (m_cursorLocked && m_window) {
-            if (m_mouseY > 89.0) {
-                m_mouseY = 89.0;
-                glfwSetCursorPos(m_window, m_mouseX, 89.0);
-            } else if (m_mouseY < -89.0) {
-                m_mouseY = -89.0;
-                glfwSetCursorPos(m_window, m_mouseX, -89.0);
-            }
-        }
         
         if (m_isFirstMouse) {
             m_mouseXPrev = m_mouseX;
@@ -291,6 +281,7 @@ public:
         m_mouseYPrev = y;
         m_mouseDeltaX = 0.0;
         m_mouseDeltaY = 0.0;
+        m_isFirstMouse = false;
         if (m_window) {
             glfwSetCursorPos(m_window, x, y);
         }

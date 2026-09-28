@@ -61,7 +61,7 @@ static struct CursorSyncInitializer {
                 auto* beh = reinterpret_cast<EunoiaBehaviour*>(CursorStateController::s_activeBehaviour);
                 if (beh && beh->GetOwner()) {
                     glm::vec3 rot = beh->GetOwner()->rotation;
-                    InputSystem::Get().SetCursorPos((double)rot.y, (double)rot.x);
+                    InputSystem::Get().SetCursorPos(-(double)rot.y, (double)rot.x);
                 }
             }
         };
@@ -337,10 +337,6 @@ void GameObjectTransform::AxisProxy::SetValue(const glm::vec3& v) {
 
 void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ) {
     if (target == TargetType::RelativeRotation || target == TargetType::WorldRotation) {
-        if (inX == 0.0f && inY == 0.0f && inZ == 0.0f) {
-            SetValue(glm::vec3(0.0f));
-            return;
-        }
         glm::vec3 current = GetValue();
         bool isCamera = false;
         if (parent && parent->gameObject) {
@@ -348,12 +344,7 @@ void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ)
         }
         if (inX != 0.0f) current.x = inX;
         if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) {
-            current.z = inZ;
-            if (isCamera && inX == 0.0f) {
-                current.x = inZ;
-            }
-        }
+        if (inZ != 0.0f) current.z = inZ;
         if (isCamera) {
             current.x = std::clamp(current.x, -89.0f, 89.0f);
         }
@@ -515,10 +506,6 @@ void BehaviourTransform::AxisProxy::SetValue(const glm::vec3& v) {
 
 void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) {
     if (target == TargetType::RelativeRotation || target == TargetType::WorldRotation) {
-        if (inX == 0.0f && inY == 0.0f && inZ == 0.0f) {
-            SetValue(glm::vec3(0.0f));
-            return;
-        }
         glm::vec3 current = GetValue();
         bool isCamera = false;
         if (parent && parent->m_behaviour && parent->m_behaviour->GetOwner()) {
@@ -527,12 +514,7 @@ void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) 
         }
         if (inX != 0.0f) current.x = inX;
         if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) {
-            current.z = inZ;
-            if (isCamera && inX == 0.0f) {
-                current.x = inZ;
-            }
-        }
+        if (inZ != 0.0f) current.z = inZ;
         if (isCamera) {
             current.x = std::clamp(current.x, -89.0f, 89.0f);
         }
@@ -985,20 +967,44 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                     }
                 }
             }
+            if (!action.scaleVarNames[i].empty()) {
+                auto itScale = m_floatStorage.find(action.scaleVarNames[i]);
+                if (itScale != m_floatStorage.end()) {
+                    val *= itScale->second;
+                }
+            }
             if (action.useDeltaTime[i]) {
                 val *= dt;
             }
             delta[i] = val;
         }
 
+        GameObject* targetObj = m_owner;
+        if (!action.targetRefName.empty()) {
+            auto itRef = m_refStorage.find(action.targetRefName);
+            if (itRef != m_refStorage.end() && itRef->second) {
+                targetObj = reinterpret_cast<GameObject*>(itRef->second);
+            } else {
+                targetObj = nullptr;
+            }
+        }
+        if (!targetObj) continue;
+
         if (action.type == DynamicTransformAction::ActionType::TranslateRelative) {
             Transform.Translate(delta.x, delta.y, delta.z);
         } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
             Transform.WorldTranslate(delta.x, delta.y, delta.z);
-        } else if (action.type == DynamicTransformAction::ActionType::RotateRelative) {
-            Transform.RelativeRotation(delta.x, delta.y, delta.z);
-        } else if (action.type == DynamicTransformAction::ActionType::RotateWorld) {
-            Transform.WorldRotation(delta.x, delta.y, delta.z);
+        } else if (action.type == DynamicTransformAction::ActionType::RotateRelative ||
+                   action.type == DynamicTransformAction::ActionType::RotateWorld) {
+            glm::vec3 cur = targetObj->rotation;
+            if (action.activeAxis[0]) cur.x = delta.x;
+            if (action.activeAxis[1]) cur.y = delta.y;
+            if (action.activeAxis[2]) cur.z = delta.z;
+            bool isCamera = (targetObj->isCamera || targetObj->type == PrimitiveType::Camera);
+            if (isCamera) {
+                cur.x = std::clamp(cur.x, -89.0f, 89.0f);
+            }
+            targetObj->rotation = cur;
         } else if (action.type == DynamicTransformAction::ActionType::LockCursor) {
             CursorState.Locked();
         } else if (action.type == DynamicTransformAction::ActionType::UnlockCursor) {
@@ -1317,12 +1323,40 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
     m_hasTranslation = false;
     m_rotateAxis = glm::vec3(0.0f, 1.0f, 0.0f);
 
-    auto parseArgExpr = [&](const std::string& rawExpr, float& outConst, bool& outUseDt, std::string& outVar, float& outMul) {
+    struct LocalVarExpr {
+        float constantVal = 0.0f;
+        bool useDt = false;
+        std::string varName;
+        float varMultiplier = 1.0f;
+        std::string scaleVarName;
+        bool isActive = false;
+    };
+    std::unordered_map<std::string, LocalVarExpr> localVars;
+
+    auto parseArgExpr = [&](const std::string& rawExpr, float& outConst, bool& outUseDt, std::string& outVar, float& outMul, std::string& outScaleVar, bool& outActive) {
+        outConst = 0.0f;
+        outUseDt = false;
+        outVar.clear();
+        outMul = 1.0f;
+        outScaleVar.clear();
+        outActive = false;
+
         std::string s = rawExpr;
         size_t b = s.find_first_not_of(" \t\r\n");
         size_t e = s.find_last_not_of(" \t\r\n");
         if (b == std::string::npos || e == std::string::npos) return;
         s = s.substr(b, e - b + 1);
+
+        auto itLoc = localVars.find(s);
+        if (itLoc != localVars.end()) {
+            outConst = itLoc->second.constantVal;
+            outUseDt = itLoc->second.useDt;
+            outVar = itLoc->second.varName;
+            outMul = itLoc->second.varMultiplier;
+            outScaleVar = itLoc->second.scaleVarName;
+            outActive = itLoc->second.isActive;
+            return;
+        }
 
         std::string lowerS = s;
         std::transform(lowerS.begin(), lowerS.end(), lowerS.begin(), ::tolower);
@@ -1337,25 +1371,30 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         bool isMouseNegated = false;
         if (lowerS.find("getmousex") != std::string::npos) {
             outVar = "$__MouseX";
+            outActive = true;
             if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos) {
                 isMouseNegated = true;
             }
         } else if (lowerS.find("getmousey") != std::string::npos) {
             outVar = "$__MouseY";
+            outActive = true;
             if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos) {
                 isMouseNegated = true;
             }
-        } else {
-            for (const auto& v : declaredVars) {
-                std::string vName = v.first;
-                if (s.find(vName) != std::string::npos) {
+        }
+
+        for (const auto& v : declaredVars) {
+            std::string vName = v.first;
+            if (s.find(vName) != std::string::npos) {
+                if (outVar.empty()) {
                     outVar = vName;
-                    break;
+                    outActive = true;
+                } else if (outVar != vName && outScaleVar.empty()) {
+                    outScaleVar = vName;
                 }
             }
         }
 
-        outConst = 0.0f;
         outMul = isMouseNegated ? -1.0f : 1.0f;
 
         size_t numStart = s.find_first_of("-+0123456789.");
@@ -1372,11 +1411,16 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                     float val = std::stof(numStr);
                     if (outVar.empty()) {
                         outConst = val;
+                        if (std::abs(val) > 1e-6f) outActive = true;
                     } else {
-                        outMul = val;
+                        outMul = val * (isMouseNegated ? -1.0f : 1.0f);
                     }
                 }
             } catch (...) {}
+        }
+
+        if (!outVar.empty() || std::abs(outConst) > 1e-6f || outUseDt) {
+            outActive = true;
         }
     };
 
@@ -1510,6 +1554,27 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                 }
             }
 
+            // Check for local variable declaration / assignment inside Update()
+            size_t eqPos = l.find('=');
+            if (eqPos != std::string::npos && l.find("==") == std::string::npos &&
+                l.find("!=") == std::string::npos && l.find("<=") == std::string::npos &&
+                l.find(">=") == std::string::npos && l.find("if ") == std::string::npos &&
+                l.find("if(") == std::string::npos) {
+                std::string left = l.substr(0, eqPos);
+                std::string right = l.substr(eqPos + 1);
+                size_t semi = right.find(';');
+                if (semi != std::string::npos) right = right.substr(0, semi);
+
+                size_t lb = left.find_last_not_of(" \t\r\n");
+                if (lb != std::string::npos) {
+                    size_t la = left.find_last_of(" \t\r\n*", lb);
+                    std::string varName = (la == std::string::npos) ? left.substr(0, lb + 1) : left.substr(la + 1, lb - la);
+                    LocalVarExpr expr;
+                    parseArgExpr(right, expr.constantVal, expr.useDt, expr.varName, expr.varMultiplier, expr.scaleVarName, expr.isActive);
+                    localVars[varName] = expr;
+                }
+            }
+
             // Check if this line introduces an if (...) with key checks
             size_t ifPos = l.find("if (");
             if (ifPos == std::string::npos) ifPos = l.find("if(");
@@ -1624,7 +1689,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
 
                     if (args.size() == 3) {
                         for (int i = 0; i < 3; ++i) {
-                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
+                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i], action.scaleVarNames[i], action.activeAxis[i]);
                         }
                         if (!activeKeyConditions.empty()) {
                             action.requiredKeys = activeKeyConditions;
@@ -1647,6 +1712,16 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                               ? DynamicTransformAction::ActionType::RotateWorld
                               : DynamicTransformAction::ActionType::RotateRelative;
 
+                size_t arrowPos = l.find("->Transform.");
+                if (arrowPos != std::string::npos) {
+                    std::string ref = l.substr(0, arrowPos);
+                    size_t rb = ref.find_last_not_of(" \t\r\n;{}()");
+                    if (rb != std::string::npos) {
+                        size_t ra = ref.find_last_of(" \t\r\n;{}()", rb);
+                        action.targetRefName = (ra == std::string::npos) ? ref.substr(0, rb + 1) : ref.substr(ra + 1, rb - ra);
+                    }
+                }
+
                 size_t openP = l.find('(', rotPos);
                 size_t closeP = l.rfind(')');
                 if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
@@ -1668,13 +1743,16 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
 
                     if (args.size() == 3) {
                         for (int i = 0; i < 3; ++i) {
-                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
+                            parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i], action.scaleVarNames[i], action.activeAxis[i]);
                         }
                         // If mouse Y is in Z slot and X (pitch) is unassigned, map mouse Y to pitch (X)
                         if (action.varNames[0].empty() && action.varNames[2] == "$__MouseY") {
                             action.varNames[0] = "$__MouseY";
                             action.varMultiplier[0] = action.varMultiplier[2];
                             action.useDeltaTime[0] = action.useDeltaTime[2];
+                            action.scaleVarNames[0] = action.scaleVarNames[2];
+                            action.activeAxis[0] = action.activeAxis[2];
+                            action.activeAxis[2] = false;
                         }
                         if (!activeKeyConditions.empty()) {
                             action.requiredKeys = activeKeyConditions;
