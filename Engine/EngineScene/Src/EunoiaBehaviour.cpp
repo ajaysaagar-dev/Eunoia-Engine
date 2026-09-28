@@ -318,6 +318,18 @@ void GameObjectTransform::AxisProxy::SetValue(const glm::vec3& v) {
 }
 
 void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ) {
+    if (target == TargetType::RelativeRotation || target == TargetType::WorldRotation) {
+        if (inX == 0.0f && inY == 0.0f && inZ == 0.0f) {
+            SetValue(glm::vec3(0.0f));
+            return;
+        }
+        glm::vec3 current = GetValue();
+        if (inX != 0.0f) current.x = inX;
+        if (inY != 0.0f) current.y = inY;
+        if (inZ != 0.0f) current.z = inZ;
+        SetValue(current);
+        return;
+    }
     SetValue(glm::vec3(inX, inY, inZ));
 }
 
@@ -472,6 +484,18 @@ void BehaviourTransform::AxisProxy::SetValue(const glm::vec3& v) {
 }
 
 void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) {
+    if (target == TargetType::RelativeRotation || target == TargetType::WorldRotation) {
+        if (inX == 0.0f && inY == 0.0f && inZ == 0.0f) {
+            SetValue(glm::vec3(0.0f));
+            return;
+        }
+        glm::vec3 current = GetValue();
+        if (inX != 0.0f) current.x = inX;
+        if (inY != 0.0f) current.y = inY;
+        if (inZ != 0.0f) current.z = inZ;
+        SetValue(current);
+        return;
+    }
     SetValue(glm::vec3(inX, inY, inZ));
 }
 
@@ -879,12 +903,16 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
     // Execute real-time dynamic Transform actions inside Update() (dev.md: Transform.Translate, Transform.Rotate)
     Transform.Init(this);
+    auto& input = InputSystem::Get();
     for (const auto& action : m_transformActions) {
         if (!action.requiredKeys.empty()) {
-            auto& input = InputSystem::Get();
             bool conditionMet = false;
             for (const auto& cond : action.requiredKeys) {
-                if (cond.key != -1) {
+                if (cond.key == -2) {
+                    if (input.GetMouseX() != 0.0) { conditionMet = true; break; }
+                } else if (cond.key == -3) {
+                    if (input.GetMouseY() != 0.0) { conditionMet = true; break; }
+                } else if (cond.key != -1) {
                     bool keyState = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
                     if (cond.isNegated) keyState = !keyState;
                     if (keyState) {
@@ -900,9 +928,15 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         for (int i = 0; i < 3; ++i) {
             float val = action.constantDelta[i];
             if (!action.varNames[i].empty()) {
-                auto itF = m_floatStorage.find(action.varNames[i]);
-                if (itF != m_floatStorage.end()) {
-                    val = itF->second * action.varMultiplier[i];
+                if (action.varNames[i] == "$__MouseX") {
+                    val = (float)input.GetMouseX() * action.varMultiplier[i];
+                } else if (action.varNames[i] == "$__MouseY") {
+                    val = (float)input.GetMouseY() * action.varMultiplier[i];
+                } else {
+                    auto itF = m_floatStorage.find(action.varNames[i]);
+                    if (itF != m_floatStorage.end()) {
+                        val = itF->second * action.varMultiplier[i];
+                    }
                 }
             }
             if (action.useDeltaTime[i]) {
@@ -916,9 +950,9 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
             Transform.WorldTranslate(delta.x, delta.y, delta.z);
         } else if (action.type == DynamicTransformAction::ActionType::RotateRelative) {
-            Transform.Rotation += delta;
+            Transform.RelativeRotation(delta.x, delta.y, delta.z);
         } else if (action.type == DynamicTransformAction::ActionType::RotateWorld) {
-            Transform.Rotation.WorldSpace(Transform.Rotation.WorldSpace() + delta);
+            Transform.WorldRotation(delta.x, delta.y, delta.z);
         }
     }
 }
@@ -1250,11 +1284,17 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             outUseDt = true;
         }
 
-        for (const auto& v : declaredVars) {
-            std::string vName = v.first;
-            if (s.find(vName) != std::string::npos) {
-                outVar = vName;
-                break;
+        if (lowerS.find("getmousex") != std::string::npos) {
+            outVar = "$__MouseX";
+        } else if (lowerS.find("getmousey") != std::string::npos) {
+            outVar = "$__MouseY";
+        } else {
+            for (const auto& v : declaredVars) {
+                std::string vName = v.first;
+                if (s.find(vName) != std::string::npos) {
+                    outVar = vName;
+                    break;
+                }
             }
         }
 
@@ -1299,6 +1339,17 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             {"escape", Key::Escape}, {"enter", Key::Enter}, {"tab", Key::Tab},
             {"delete", Key::Delete}, {"backspace", Key::Backspace}
         };
+
+        if (str.find("GetMouseX(") != std::string::npos || str.find("GetMouseX()") != std::string::npos) {
+            DynamicScriptBehaviour::DynamicKeyCondition cond;
+            cond.key = -2;
+            conds.push_back(cond);
+        }
+        if (str.find("GetMouseY(") != std::string::npos || str.find("GetMouseY()") != std::string::npos) {
+            DynamicScriptBehaviour::DynamicKeyCondition cond;
+            cond.key = -3;
+            conds.push_back(cond);
+        }
 
         size_t searchPos = 0;
         while (searchPos < str.size()) {
@@ -1408,7 +1459,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             }
 
             bool hasTranslate = (l.find("Translate(") != std::string::npos);
-            bool hasRotate = (l.find("Rotate(") != std::string::npos && l.find("AutoRotate") == std::string::npos);
+            bool hasRotate = (l.find("Rotate(") != std::string::npos || l.find("Rotation(") != std::string::npos) && l.find("AutoRotate") == std::string::npos;
 
             if (!lineConditions.empty()) {
                 if (hasTranslate || hasRotate) {
@@ -1527,11 +1578,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                 }
             }
 
-            // 3. Scan for Transform.Rotate / RelativeRotate / WorldRotate
+            // 3. Scan for Transform.Rotate / RelativeRotate / WorldRotate / RelativeRotation / WorldRotation
             size_t rotPos = l.find("Rotate(");
+            if (rotPos == std::string::npos) rotPos = l.find("Rotation(");
             if (rotPos != std::string::npos && l.find("AutoRotate") == std::string::npos) {
                 DynamicTransformAction action;
-                action.type = (l.find("WorldRotate(") != std::string::npos)
+                action.type = (l.find("WorldRotate(") != std::string::npos || l.find("WorldRotation(") != std::string::npos)
                               ? DynamicTransformAction::ActionType::RotateWorld
                               : DynamicTransformAction::ActionType::RotateRelative;
 

@@ -248,9 +248,17 @@ public:
         if (scale.z > 1e-6f) rotM[2] = glm::vec3(m[2]) / scale.z;
 
         const float RAD2DEG = 180.0f / 3.14159265358979323846f;
-        rotation.x = RAD2DEG * std::atan2(rotM[2][1], rotM[2][2]);
-        rotation.y = RAD2DEG * std::atan2(-rotM[2][0], std::sqrt(rotM[2][1] * rotM[2][1] + rotM[2][2] * rotM[2][2]));
-        rotation.z = RAD2DEG * std::atan2(rotM[1][0], rotM[0][0]);
+        float sinY = glm::clamp(rotM[2][0], -1.0f, 1.0f);
+        float cosY = std::sqrt(std::max(0.0f, 1.0f - sinY * sinY));
+        if (cosY > 1e-4f) {
+            rotation.x = RAD2DEG * std::atan2(-rotM[2][1], rotM[2][2]);
+            rotation.y = RAD2DEG * std::atan2(sinY, cosY);
+            rotation.z = RAD2DEG * std::atan2(-rotM[1][0], rotM[0][0]);
+        } else {
+            rotation.x = RAD2DEG * std::atan2(rotM[1][2], rotM[1][1]);
+            rotation.y = (sinY > 0.0f) ? 90.0f : -90.0f;
+            rotation.z = 0.0f;
+        }
 
         if (std::isnan(translation.x) || std::isinf(translation.x)) translation.x = 0.0f;
         if (std::isnan(translation.y) || std::isinf(translation.y)) translation.y = 0.0f;

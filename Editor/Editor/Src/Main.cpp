@@ -2747,8 +2747,17 @@ static void SyncLevelCameraToViewportCamera()
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
 		{
 			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-			glm::vec3 worldPos, worldRot, worldScale;
-			Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
 
 			g_camera.yaw = worldRot.y;
 			g_camera.pitch = worldRot.x;
@@ -3044,8 +3053,17 @@ void updateConstantBuffer()
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
 		{
 			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-			glm::vec3 worldPos, worldRot, worldScale;
-			Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
 
 			OrbitCamera pipCam;
 			pipCam.yaw = worldRot.y;
@@ -4565,19 +4583,28 @@ int main(int argc, char** argv)
 			}
 		}
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera)) {
-				glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-				glm::vec3 worldPos, worldRot, worldScale;
-				Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
-				g_camera.yaw = worldRot.y;
-				g_camera.pitch = worldRot.x;
-				g_camera.fov = camObj->camera.fov;
-				g_camera.isOrthographic = camObj->camera.isOrthographic;
-				g_camera.orthoSize = camObj->camera.orthoSize;
-				g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
-				g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
-				g_camera.distance = 0.001f;
-				g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
 			}
+			g_camera.yaw = worldRot.y;
+			g_camera.pitch = worldRot.x;
+			g_camera.fov = camObj->camera.fov;
+			g_camera.isOrthographic = camObj->camera.isOrthographic;
+			g_camera.orthoSize = camObj->camera.orthoSize;
+			g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+			g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
+			g_camera.distance = 0.001f;
+			g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+		}
 		g_scene.showGrid = false;
 		g_engineUI.showGizmo = false;
 		g_scene.StartPlayMode();
