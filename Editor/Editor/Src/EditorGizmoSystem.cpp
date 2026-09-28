@@ -213,18 +213,18 @@ void EditorGizmoSystem::DrawPointLight(const GameObject& obj, const glm::mat4& w
     // Position marker (3-axis star/crosshair)
     float marker = 0.35f;
     glm::vec3 markerCol(1.0f, 0.88f, 0.35f);
-    DrawLine(pos - glm::vec3(marker, 0, 0), pos + glm::vec3(marker, 0, 0), markerCol, 1.25f);
-    DrawLine(pos - glm::vec3(0, marker, 0), pos + glm::vec3(0, marker, 0), markerCol, 1.25f);
-    DrawLine(pos - glm::vec3(0, 0, marker), pos + glm::vec3(0, 0, marker), markerCol, 1.25f);
+    DrawLine(pos - glm::vec3(marker, 0, 0), pos + glm::vec3(marker, 0, 0), markerCol, 0.125f);
+    DrawLine(pos - glm::vec3(0, marker, 0), pos + glm::vec3(0, marker, 0), markerCol, 0.125f);
+    DrawLine(pos - glm::vec3(0, 0, marker), pos + glm::vec3(0, 0, marker), markerCol, 0.125f);
 
     // Spherical influence range visualization
     if (showLightRanges && obj.light.range > 0.01f) {
         glm::vec3 sphereColor = glm::mix(glm::vec3(1.0f, 0.82f, 0.22f), obj.light.color, 0.35f);
-        DrawSphere(pos, obj.light.range, sphereColor, 48, 1.25f);
+        DrawSphere(pos, obj.light.range, sphereColor, 48, 0.125f);
 
         // Optional 50% attenuation reference circle
         if (obj.light.attenuation > 0.0f) {
-            DrawCircle(pos, glm::vec3(0.0f, 1.0f, 0.0f), obj.light.range * 0.5f, sphereColor * 0.6f, 36, 0.8f);
+            DrawCircle(pos, glm::vec3(0.0f, 1.0f, 0.0f), obj.light.range * 0.5f, sphereColor * 0.6f, 36, 0.08f);
         }
     }
 }
@@ -240,19 +240,19 @@ void EditorGizmoSystem::DrawSpotLight(const GameObject& obj, const glm::mat4& wo
 
     // Outer cone
     float outerAngle = std::clamp(obj.light.outerConeAngle, 0.5f, 89.0f);
-    DrawCone(apex, fwd, obj.light.range, outerAngle, coneColor, 36, 1.25f);
+    DrawCone(apex, fwd, obj.light.range, outerAngle, coneColor, 36, 0.125f);
 
     // Inner cone
     float innerAngle = std::clamp(obj.light.innerConeAngle, 0.1f, outerAngle - 0.2f);
     if (innerAngle > 0.5f) {
         glm::vec3 innerColor(1.0f, 0.95f, 0.55f);
-        DrawCone(apex, fwd, obj.light.range, innerAngle, innerColor, 24, 0.95f);
+        DrawCone(apex, fwd, obj.light.range, innerAngle, innerColor, 24, 0.095f);
     }
 
     // Forward direction arrow
     if (showLightDirections) {
         float arrowLen = std::min(obj.light.range, 3.0f);
-        DrawArrow(apex, apex + fwd * arrowLen, glm::vec3(1.0f, 0.9f, 0.3f), 0.35f, 1.3f);
+        DrawArrow(apex, apex + fwd * arrowLen, glm::vec3(1.0f, 0.9f, 0.3f), 0.35f, 0.13f);
     }
 }
 
@@ -266,10 +266,10 @@ void EditorGizmoSystem::DrawDirectionalLight(const GameObject& obj, const glm::m
     glm::vec3 sunColor(1.0f, 0.92f, 0.25f);
 
     // Position marker: circular sun ring and rays
-    DrawCircle(pos, fwd, 0.45f, sunColor, 24, 1.25f);
+    DrawCircle(pos, fwd, 0.45f, sunColor, 24, 0.125f);
 
     // Center forward direction arrow
-    DrawArrow(pos, pos + fwd * 4.2f, sunColor, 0.45f, 1.5f);
+    DrawArrow(pos, pos + fwd * 4.2f, sunColor, 0.45f, 0.15f);
 
     // Parallel direction rays/arrows communicating infinite directional illumination
     if (showLightDirections) {
@@ -287,7 +287,7 @@ void EditorGizmoSystem::DrawDirectionalLight(const GameObject& obj, const glm::m
         };
         for (int i = 0; i < 4; ++i) {
             glm::vec3 p = pos + offsets1[i];
-            DrawArrow(p, p + fwd * 3.4f, sunColor * 0.85f, 0.35f, 1.1f);
+            DrawArrow(p, p + fwd * 3.4f, sunColor * 0.85f, 0.35f, 0.11f);
         }
 
         // 4 diagonal parallel arrows at larger radius
@@ -301,7 +301,7 @@ void EditorGizmoSystem::DrawDirectionalLight(const GameObject& obj, const glm::m
         };
         for (int i = 0; i < 4; ++i) {
             glm::vec3 p = pos + offsets2[i];
-            DrawArrow(p, p + fwd * 2.8f, sunColor * 0.65f, 0.30f, 0.9f);
+            DrawArrow(p, p + fwd * 2.8f, sunColor * 0.65f, 0.30f, 0.09f);
         }
     }
 }
@@ -320,20 +320,20 @@ void EditorGizmoSystem::DrawAreaLight(const GameObject& obj, const glm::mat4& wo
 
     // Light emitter surface
     if (obj.light.areaShape == 0) { // Rectangle
-        DrawRectangle(pos, uAxis, vAxis, obj.light.width * 0.5f, obj.light.height * 0.5f, areaColor, 1.25f);
+        DrawRectangle(pos, uAxis, vAxis, obj.light.width * 0.5f, obj.light.height * 0.5f, areaColor, 0.125f);
     } else { // Disk / Circle
-        DrawCircle(pos, fwd, obj.light.radius, areaColor, 36, 1.25f);
+        DrawCircle(pos, fwd, obj.light.radius, areaColor, 36, 0.125f);
     }
 
     // Forward direction arrow
     if (showLightDirections) {
-        DrawArrow(pos, pos + fwd * 2.0f, areaColor, 0.35f, 1.3f);
+        DrawArrow(pos, pos + fwd * 2.0f, areaColor, 0.35f, 0.13f);
     }
 
     // Range boundary box if finite range configured
     if (showLightRanges && obj.light.range > 0.01f) {
         glm::vec3 extents(obj.light.width, obj.light.height, obj.light.range * 2.0f);
-        DrawBox(pos + fwd * (obj.light.range * 0.5f), extents, worldMat, areaColor * 0.45f, 0.8f);
+        DrawBox(pos + fwd * (obj.light.range * 0.5f), extents, worldMat, areaColor * 0.45f, 0.08f);
     }
 }
 
@@ -345,7 +345,7 @@ void EditorGizmoSystem::DrawCameraFrustum(const GameObject& obj, const glm::mat4
     glm::vec3 up = glm::normalize(glm::vec3(worldMat * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f)));
 
     glm::vec3 frustumColor = isActiveCamera ? glm::vec3(0.1f, 1.0f, 0.35f) : glm::vec3(0.25f, 0.85f, 1.0f);
-    float thickness = isActiveCamera ? 1.5f : 1.15f;
+    float thickness = isActiveCamera ? 0.15f : 0.115f;
 
     float aspect = obj.camera.aspectRatio > 0.01f ? obj.camera.aspectRatio : (16.0f / 9.0f);
     float fov = std::clamp(obj.camera.fov, 10.0f, 150.0f);

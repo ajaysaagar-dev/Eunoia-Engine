@@ -1637,7 +1637,7 @@ struct RenderBatch {
                 if (len < 1e-4f) return;
                 glm::vec3 side = glm::normalize(glm::cross(dir, glm::vec3(0, 1, 0)));
                 if (glm::length(side) < 1e-3f) side = glm::vec3(1, 0, 0);
-                float halfW = 0.035f;
+                float halfW = 0.0035f;
                 outVertices.push_back({ p0 - side * halfW, glm::vec3(0, 1, 0), glm::vec2(0, 0), frustumColor });
                 outVertices.push_back({ p0 + side * halfW, glm::vec3(0, 1, 0), glm::vec2(1, 0), frustumColor });
                 outVertices.push_back({ p1 + side * halfW, glm::vec3(0, 1, 0), glm::vec2(1, 1), frustumColor });
@@ -1889,7 +1889,7 @@ struct RenderBatch {
         for (const auto& e : edges) {
             glm::vec3 wA = glm::vec3(model * glm::vec4(e.first, 1.0f));
             glm::vec3 wB = glm::vec3(model * glm::vec4(e.second, 1.0f));
-            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 1.25f, outlineColor);
+            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 0.125f, outlineColor);
         }
     }
 
