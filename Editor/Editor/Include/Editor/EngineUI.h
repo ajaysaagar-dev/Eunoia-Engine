@@ -112,6 +112,56 @@ struct WaterAsset {
     WaterBodyComponent settings; // all water settings
 };
 
+struct PendingModelMaterial {
+    std::string materialName = "M_Material";
+    glm::vec3 baseColor{0.8f, 0.8f, 0.8f};
+    float metallic = 0.0f;
+    float roughness = 0.5f;
+    glm::vec3 emissiveColor{0.0f, 0.0f, 0.0f};
+    float emissiveIntensity = 0.0f;
+    int blendMode = 0; // 0=Opaque, 1=Masked, 2=Translucent
+    float opacity = 1.0f;
+
+    std::string baseColorTexture = "";
+    std::string normalTexture = "";
+    std::string roughnessTexture = "";
+    std::string metallicTexture = "";
+    std::string aoTexture = "";
+    std::string emissionTexture = "";
+    std::string opacityTexture = "";
+
+    bool createMaterial = true;
+    std::vector<int> submeshIndices;
+};
+
+struct ModelImportState {
+    std::string sourceFilePath = "";
+    std::string modelName = "";
+    std::string targetFolder = "";
+    bool spawnInLevel = true;
+    ImportedModel previewModel;
+    std::vector<PendingModelMaterial> materials;
+
+    // Bounds & Geometry statistics
+    glm::vec3 boundsMin{0.0f};
+    glm::vec3 boundsMax{0.0f};
+    glm::vec3 boundsCenter{0.0f};
+    float boundsExtent = 1.0f;
+    uint32_t totalVertices = 0;
+    uint32_t totalTriangles = 0;
+    uint32_t meshCount = 0;
+
+    // Interactive 3D preview viewport
+    float previewYaw = 35.0f;
+    float previewPitch = 20.0f;
+    float previewZoom = 1.0f;
+    glm::vec2 previewPan{0.0f, 0.0f};
+    bool autoRotate = true;
+    float autoRotateSpeed = 25.0f;
+    int viewMode = 0; // 0=Shaded, 1=Shaded+Wireframe, 2=Wireframe Only
+    bool showGrid = true;
+};
+
 class EngineUI {
 public:
     // Window visibility flags (UE5 panels)
@@ -408,6 +458,20 @@ public:
     void CheckForScriptChanges();
     void TriggerCompileScripts(Scene* scene = nullptr);
     void RenderScriptCompileModal(Scene& scene);
+
+    // 3D Model Real-Time Detection & Import Wizard
+    bool showModelImportModal = false;
+    float modelWatchTimer = 0.0f;
+    std::unordered_set<std::string> knownModelFiles;
+    std::vector<std::string> pendingModelImportQueue;
+    ModelImportState currentModelImport;
+
+    void CheckForModelChanges();
+    void QueueModelImport(const std::string& filePath);
+    bool OpenModelImportView(const std::string& filePath);
+    void RenderModelImportModal(Scene& scene, OrbitCamera& camera);
+    void ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQueue = true);
+    void AdvanceModelImportQueue();
 
     uint64_t lightIconGpuHandle = 0;
     uint64_t directionalLightIconGpuHandle = 0;

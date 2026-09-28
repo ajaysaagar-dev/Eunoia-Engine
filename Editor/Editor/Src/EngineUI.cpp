@@ -4,6 +4,7 @@
 #include "imgui.h"
 #include "ImGuizmo.h"
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -379,6 +380,18 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
         currentContentPath = contentRootPath;
         TextureManager::Get().SetProjectRoot(contentRootPath);
         AssetManager::Get().Initialize(contentRootPath);
+        knownModelFiles.clear();
+        pendingModelImportQueue.clear();
+        showModelImportModal = false;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+            if (!entry.is_directory(ec)) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
+                    knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+                }
+            }
+        }
         if (!isGameMode) {
             LoadEditorConfig();
         }
@@ -1402,6 +1415,20 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         AssetRegistry::Get().ScanDirectory(contentRootPath);
     }
 
+    // Scan and register existing 3D models so they don't trigger import popups on open
+    knownModelFiles.clear();
+    pendingModelImportQueue.clear();
+    showModelImportModal = false;
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (!entry.is_directory(ec)) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
+                knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+            }
+        }
+    }
+
     // Scan and register all behaviour scripts in Content before loading the scene
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
         if (!entry.is_directory(ec) && entry.path().extension() == ".cpp") {
@@ -1610,10 +1637,8 @@ void EngineUI::ImportMeshWithSavePrompt(Scene& level) {
     // Sync Asset Registry so Content Browser immediately has the new asset
     SyncRegistryWithUIProgress(contentRootPath);
 
-    // Spawn mesh in level
-    GameObject& newObj = level.AddImportedMesh(destPath.string(), {0.0f, 0.5f, 0.0f});
-    level.selectedId = newObj.id;
-    AddLog("LogMesh", "Imported and saved 3D Mesh to project: " + destPath.string() + ", spawned in Level", 2);
+    // Queue model for rich 3D inspection and material/texture auto-assignment
+    QueueModelImport(destPath.string());
 }
 
 void EngineUI::HandleFileDrop(const char** paths, int count) {
@@ -1654,6 +1679,9 @@ void EngineUI::HandleFileDrop(const char** paths, int count) {
             }
             importedCount++;
             AddLog("LogContent", "Imported from system: " + srcPath.filename().string() + " into " + currentVirtualDir, 2);
+            if (isModel) {
+                QueueModelImport(destPath.string());
+            }
         }
     }
 
@@ -1863,6 +1891,16 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (scriptWatchTimer >= 0.5f) {
         scriptWatchTimer = 0.0f;
         CheckForScriptChanges();
+    }
+
+    // Periodic check for 3D model files added in real-time
+    modelWatchTimer += (frameTimeMs * 0.001f);
+    if (modelWatchTimer >= 0.5f) {
+        modelWatchTimer = 0.0f;
+        CheckForModelChanges();
+    }
+    if (!showModelImportModal && !pendingModelImportQueue.empty()) {
+        OpenModelImportView(pendingModelImportQueue.front());
     }
 
     // Unreal Keyboard Shortcuts (when not typing and not currently in free fly mode)
@@ -2084,6 +2122,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     // 10. Behaviour Script Change & Compilation Prompt (User Request: ask as compile or later)
     RenderScriptCompileModal(scene);
+
+    // 11. 3D Model Real-Time Detection & Import View ("One by One" wizard)
+    if (showModelImportModal) {
+        RenderModelImportModal(scene, camera);
+    }
 
     // Undo History Window (52 steps capacity)
     if (showUndoHistory) {
@@ -7926,6 +7969,715 @@ void EngineUI::RenderScriptCompileModal(Scene& scene) {
 
         ImGui::EndPopup();
     }
+}
+
+// ============================================================================
+// 3D Model Real-Time Detection & Import Wizard ("One by One")
+// ============================================================================
+
+void EngineUI::CheckForModelChanges() {
+    std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
+    std::filesystem::path contentDir = projectBase / "Content";
+    std::error_code ec;
+    if (!std::filesystem::exists(contentDir, ec)) return;
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentDir, std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (!entry.is_directory(ec)) {
+            std::string ext = entry.path().extension().string();
+            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+            if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
+                std::string fullPath = std::filesystem::absolute(entry.path()).string();
+                if (knownModelFiles.find(fullPath) == knownModelFiles.end()) {
+                    knownModelFiles.insert(fullPath);
+                    QueueModelImport(fullPath);
+                }
+            }
+        }
+    }
+}
+
+void EngineUI::QueueModelImport(const std::string& filePath) {
+    if (filePath.empty()) return;
+    std::string absPath = std::filesystem::absolute(filePath).string();
+    knownModelFiles.insert(absPath);
+    for (const auto& queued : pendingModelImportQueue) {
+        if (queued == absPath) return;
+    }
+    pendingModelImportQueue.push_back(absPath);
+    AddLog("LogImport", "Queued 3D model for import inspection: " + std::filesystem::path(filePath).filename().string(), 0);
+
+    if (!showModelImportModal) {
+        OpenModelImportView(pendingModelImportQueue.front());
+    }
+}
+
+void EngineUI::AdvanceModelImportQueue() {
+    if (!pendingModelImportQueue.empty()) {
+        pendingModelImportQueue.erase(pendingModelImportQueue.begin());
+    }
+    if (!pendingModelImportQueue.empty()) {
+        OpenModelImportView(pendingModelImportQueue.front());
+    } else {
+        showModelImportModal = false;
+    }
+}
+
+bool EngineUI::OpenModelImportView(const std::string& filePath) {
+    std::error_code ec;
+    if (!std::filesystem::exists(filePath, ec)) {
+        AddLog("LogImport", "Failed to open model import view: File does not exist: " + filePath, 3);
+        AdvanceModelImportQueue();
+        return false;
+    }
+
+    currentModelImport = ModelImportState();
+    currentModelImport.sourceFilePath = filePath;
+    std::filesystem::path p(filePath);
+    currentModelImport.modelName = p.stem().string();
+
+    std::filesystem::path defaultMatDir = contentRootPath / "Materials";
+    std::filesystem::create_directories(defaultMatDir, ec);
+    currentModelImport.targetFolder = defaultMatDir.string();
+
+    // Load model for geometry and material extraction
+    currentModelImport.previewModel = MeshImporter::Load(filePath);
+    if (!currentModelImport.previewModel.valid || currentModelImport.previewModel.meshes.empty()) {
+        AddLog("LogImport", "Warning: Could not parse 3D mesh geometry for '" + filePath + "': " + currentModelImport.previewModel.errorMsg, 1);
+    }
+
+    // Calculate bounds & statistics
+    glm::vec3 minB(1e9f);
+    glm::vec3 maxB(-1e9f);
+    uint32_t totalV = 0;
+    uint32_t totalT = 0;
+
+    for (const auto& mesh : currentModelImport.previewModel.meshes) {
+        for (const auto& v : mesh.vertices) {
+            if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z)) {
+                minB = glm::min(minB, v.pos);
+                maxB = glm::max(maxB, v.pos);
+            }
+        }
+        totalV += (uint32_t)mesh.vertices.size();
+        totalT += (uint32_t)(mesh.indices.size() / 3);
+    }
+
+    currentModelImport.totalVertices = totalV;
+    currentModelImport.totalTriangles = totalT;
+    currentModelImport.meshCount = (uint32_t)currentModelImport.previewModel.meshes.size();
+
+    if (totalV > 0 && maxB.x >= minB.x) {
+        currentModelImport.boundsMin = minB;
+        currentModelImport.boundsMax = maxB;
+        currentModelImport.boundsCenter = (minB + maxB) * 0.5f;
+        currentModelImport.boundsExtent = glm::max(glm::length(maxB - minB), 0.001f);
+    } else {
+        currentModelImport.boundsMin = glm::vec3(-0.5f);
+        currentModelImport.boundsMax = glm::vec3(0.5f);
+        currentModelImport.boundsCenter = glm::vec3(0.0f);
+        currentModelImport.boundsExtent = 1.0f;
+    }
+
+    // Extract materials & textures from the imported model
+    std::unordered_map<std::string, size_t> matMap;
+    int subIdx = 0;
+    for (const auto& mesh : currentModelImport.previewModel.meshes) {
+        std::string rawMatName = mesh.material.name;
+        if (rawMatName.empty()) rawMatName = "Material_" + std::to_string(subIdx);
+
+        auto it = matMap.find(rawMatName);
+        if (it != matMap.end()) {
+            currentModelImport.materials[it->second].submeshIndices.push_back(subIdx);
+        } else {
+            PendingModelMaterial pmm;
+            std::string cleanMatName = rawMatName;
+            for (char& c : cleanMatName) {
+                if (c == ' ' || c == '.' || c == ':' || c == '/' || c == '\\') c = '_';
+            }
+            if (cleanMatName.rfind("M_", 0) != 0) {
+                pmm.materialName = "M_" + currentModelImport.modelName + "_" + cleanMatName;
+            } else {
+                pmm.materialName = cleanMatName;
+            }
+
+            pmm.baseColor = mesh.material.baseColor;
+            pmm.metallic = mesh.material.metallic;
+            pmm.roughness = mesh.material.roughness;
+            pmm.emissiveColor = mesh.material.emissiveColor;
+            pmm.emissiveIntensity = mesh.material.emissiveIntensity;
+            pmm.blendMode = mesh.material.blendMode;
+            pmm.opacity = mesh.material.opacity;
+            pmm.baseColorTexture = mesh.material.baseColorTexture;
+            pmm.normalTexture = mesh.material.normalTexture;
+            pmm.roughnessTexture = mesh.material.roughnessTexture;
+            pmm.metallicTexture = mesh.material.metallicTexture;
+            pmm.aoTexture = mesh.material.aoTexture;
+            pmm.emissionTexture = mesh.material.emissionTexture;
+            pmm.opacityTexture = mesh.material.opacityTexture;
+            pmm.submeshIndices.push_back(subIdx);
+            pmm.createMaterial = true;
+
+            matMap[rawMatName] = currentModelImport.materials.size();
+            currentModelImport.materials.push_back(pmm);
+        }
+        subIdx++;
+    }
+
+    // Default material fallback
+    if (currentModelImport.materials.empty()) {
+        PendingModelMaterial pmm;
+        pmm.materialName = "M_" + currentModelImport.modelName + "_Default";
+        pmm.baseColor = glm::vec3(0.8f, 0.8f, 0.8f);
+        pmm.metallic = 0.0f;
+        pmm.roughness = 0.5f;
+        pmm.createMaterial = true;
+        for (int i = 0; i < (int)currentModelImport.previewModel.meshes.size(); ++i) {
+            pmm.submeshIndices.push_back(i);
+        }
+        currentModelImport.materials.push_back(pmm);
+    }
+
+    showModelImportModal = true;
+    return true;
+}
+
+void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQueue) {
+    std::error_code ec;
+    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (contentRootPath / "Materials").string() : currentModelImport.targetFolder);
+    std::filesystem::create_directories(matDir, ec);
+
+    int matsCreated = 0;
+
+    // 1. Create .emat files and register in AssetRegistry
+    for (const auto& pm : currentModelImport.materials) {
+        if (!pm.createMaterial) continue;
+
+        MaterialAsset ma;
+        ma.assetId = AssetID::CreateRandom();
+        ma.name = pm.materialName;
+        std::filesystem::path matFilePath = matDir / (pm.materialName + ".emat");
+        ma.filePath = matFilePath.string();
+        ma.virtualPath = "/Game/Materials/" + pm.materialName;
+        ma.baseColor = pm.baseColor;
+        ma.metallic = pm.metallic;
+        ma.roughness = pm.roughness;
+        ma.baseColorTexture = pm.baseColorTexture;
+        ma.normalTexture = pm.normalTexture;
+        ma.roughnessTexture = pm.roughnessTexture;
+        ma.metallicTexture = pm.metallicTexture;
+        ma.aoTexture = pm.aoTexture;
+        ma.emissionTexture = pm.emissionTexture;
+        ma.emissiveColor = pm.emissiveColor;
+        ma.emissiveIntensity = pm.emissiveIntensity;
+        ma.blendMode = pm.blendMode;
+        ma.opacity = pm.opacity;
+        ma.opacityTexture = pm.opacityTexture;
+
+        if (SaveMaterialFile(ma.filePath, ma)) {
+            matsCreated++;
+            AssetMetadata meta;
+            meta.id = ma.assetId;
+            meta.objectName = ma.name;
+            meta.type = AssetType::Material;
+            meta.sourcePath = ma.filePath;
+            meta.virtualPath = ma.virtualPath;
+            AssetRegistry::Get().RegisterAsset(meta);
+        }
+    }
+
+    // 2. Register 3D Model in AssetRegistry
+    if (std::filesystem::exists(currentModelImport.sourceFilePath, ec)) {
+        AssetMetadata meta;
+        meta.id = AssetID::CreateRandom();
+        meta.objectName = currentModelImport.modelName;
+        meta.type = AssetType::Mesh;
+        meta.sourcePath = currentModelImport.sourceFilePath;
+        meta.virtualPath = "/Game/Models/" + currentModelImport.modelName;
+        AssetRegistry::Get().RegisterAsset(meta);
+    }
+
+    // 3. Helper to apply created materials to a GameObject
+    auto applyMatToObj = [&](GameObject* obj, int submeshIdx) {
+        if (!obj) return;
+        const PendingModelMaterial* matchedPm = nullptr;
+        for (const auto& pm : currentModelImport.materials) {
+            for (int sIdx : pm.submeshIndices) {
+                if (sIdx == submeshIdx) {
+                    matchedPm = &pm;
+                    break;
+                }
+            }
+            if (matchedPm) break;
+        }
+        if (!matchedPm && !currentModelImport.materials.empty()) {
+            matchedPm = &currentModelImport.materials[0];
+        }
+        if (matchedPm) {
+            obj->materialName = matchedPm->materialName;
+            obj->color = matchedPm->baseColor;
+            obj->metallic = matchedPm->metallic;
+            obj->roughness = matchedPm->roughness;
+            obj->baseColorTexture = matchedPm->baseColorTexture;
+            obj->normalTexture = matchedPm->normalTexture;
+            obj->roughnessTexture = matchedPm->roughnessTexture;
+            obj->metallicTexture = matchedPm->metallicTexture;
+            obj->aoTexture = matchedPm->aoTexture;
+            obj->emissionTexture = matchedPm->emissionTexture;
+            obj->emissiveColor = matchedPm->emissiveColor;
+            obj->emissiveIntensity = matchedPm->emissiveIntensity;
+            obj->blendMode = matchedPm->blendMode;
+            obj->opacity = matchedPm->opacity;
+            obj->opacityTexture = matchedPm->opacityTexture;
+        }
+    };
+
+    // 4. If spawn requested, add imported mesh to scene and apply materials
+    if (spawnInLevel) {
+        GameObject& spawned = scene.AddImportedMesh(currentModelImport.sourceFilePath, {0.0f, 0.5f, 0.0f});
+        scene.selectedId = spawned.id;
+
+        if (!spawned.childIds.empty()) {
+            for (int childId : spawned.childIds) {
+                GameObject* child = scene.FindObject(childId);
+                if (child) {
+                    applyMatToObj(child, child->submeshIndex);
+                }
+            }
+        } else {
+            applyMatToObj(&spawned, 0);
+        }
+    }
+
+    // Also update any existing actors in the scene that reference this model file
+    for (auto& obj : scene.objects) {
+        if (obj.meshFilePath == currentModelImport.sourceFilePath) {
+            applyMatToObj(&obj, obj.submeshIndex);
+        }
+    }
+
+    SyncRegistryWithUIProgress(contentRootPath);
+    AddLog("LogImport", "Imported 3D Model: " + currentModelImport.modelName + " (" + std::to_string(matsCreated) + " material(s) created & applied)", 2);
+
+    if (advanceQueue) {
+        AdvanceModelImportQueue();
+    }
+}
+
+void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
+    if (!showModelImportModal) return;
+
+    ImGui::SetNextWindowSize(ImVec2(1060, 680), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    std::string title = "📦 3D Model Import Wizard — " + currentModelImport.modelName;
+    if (pendingModelImportQueue.size() > 1) {
+        title += " (1 of " + std::to_string(pendingModelImportQueue.size()) + " queued)";
+    }
+    title += "###ModelImportWizardModal";
+
+    bool open = true;
+    if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse)) {
+        float bottomBarHeight = 48.0f;
+        float contentHeight = ImGui::GetContentRegionAvail().y - bottomBarHeight;
+        float leftPaneWidth = 510.0f;
+        float rightPaneWidth = ImGui::GetContentRegionAvail().x - leftPaneWidth - 12.0f;
+
+        // ====================================================================
+        // LEFT PANE: 3D MODEL INTERACTIVE PREVIEW
+        // ====================================================================
+        ImGui::BeginChild("ModelPreviewPane", ImVec2(leftPaneWidth, contentHeight), true);
+
+        ImGui::TextColored(ImVec4(0.2f, 0.85f, 1.0f, 1.0f), "3D MODEL INTERACTIVE PREVIEW");
+        ImGui::Spacing();
+
+        // Toolbar controls
+        const char* viewModes[] = { "Shaded (Lit)", "Shaded + Wire", "Wireframe Only" };
+        ImGui::SetNextItemWidth(140.0f);
+        ImGui::Combo("##ViewMode", &currentModelImport.viewMode, viewModes, IM_ARRAYSIZE(viewModes));
+        ImGui::SameLine();
+        ImGui::Checkbox("Turntable", &currentModelImport.autoRotate);
+        ImGui::SameLine();
+        ImGui::Checkbox("Grid", &currentModelImport.showGrid);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset View")) {
+            currentModelImport.previewYaw = 35.0f;
+            currentModelImport.previewPitch = 20.0f;
+            currentModelImport.previewZoom = 1.0f;
+            currentModelImport.previewPan = glm::vec2(0.0f);
+        }
+
+        // Viewport canvas
+        ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+        ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+        if (canvasSize.y > contentHeight - 110.0f) canvasSize.y = contentHeight - 110.0f;
+        if (canvasSize.y < 220.0f) canvasSize.y = 220.0f;
+
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        ImGui::InvisibleButton("##ModelCanvasBtn", canvasSize);
+        bool isHovered = ImGui::IsItemHovered();
+        bool isActive = ImGui::IsItemActive();
+
+        if (isActive && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+            currentModelImport.previewYaw += delta.x * 0.5f;
+            currentModelImport.previewPitch = glm::clamp(currentModelImport.previewPitch + delta.y * 0.5f, -85.0f, 85.0f);
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+        }
+        if (isActive && ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+            ImVec2 delta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+            currentModelImport.previewPan.x += delta.x * 0.003f * currentModelImport.previewZoom;
+            currentModelImport.previewPan.y -= delta.y * 0.003f * currentModelImport.previewZoom;
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
+        }
+        if (isHovered) {
+            float wheel = ImGui::GetIO().MouseWheel;
+            if (wheel != 0.0f) {
+                currentModelImport.previewZoom = glm::clamp(currentModelImport.previewZoom * (1.0f - wheel * 0.12f), 0.1f, 15.0f);
+            }
+        }
+        if (currentModelImport.autoRotate && !isActive) {
+            currentModelImport.previewYaw += currentModelImport.autoRotateSpeed * ImGui::GetIO().DeltaTime;
+            if (currentModelImport.previewYaw > 360.0f) currentModelImport.previewYaw -= 360.0f;
+        }
+
+        // Canvas background
+        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(16, 18, 22, 255), 6.0f);
+        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 52, 65, 255), 6.0f);
+
+        drawList->PushClipRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), true);
+
+        float aspect = canvasSize.x / (canvasSize.y > 0.0f ? canvasSize.y : 1.0f);
+        glm::mat4 projMat = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 100.0f);
+
+        float camDist = 2.8f * currentModelImport.previewZoom;
+        glm::mat4 viewMat = glm::translate(glm::mat4(1.0f), glm::vec3(currentModelImport.previewPan.x, -currentModelImport.previewPan.y, -camDist));
+        viewMat = glm::rotate(viewMat, glm::radians(currentModelImport.previewPitch), glm::vec3(1.0f, 0.0f, 0.0f));
+        viewMat = glm::rotate(viewMat, glm::radians(currentModelImport.previewYaw), glm::vec3(0.0f, 1.0f, 0.0f));
+
+        float scaleFactor = 1.8f / glm::max(currentModelImport.boundsExtent, 0.001f);
+        glm::mat4 modelMat = glm::scale(glm::mat4(1.0f), glm::vec3(scaleFactor));
+        modelMat = glm::translate(modelMat, -currentModelImport.boundsCenter);
+
+        glm::mat4 mvp = projMat * viewMat * modelMat;
+        glm::mat3 normMat = glm::mat3(viewMat * modelMat);
+
+        // Ground grid
+        if (currentModelImport.showGrid) {
+            float groundY = (currentModelImport.boundsMin.y - currentModelImport.boundsCenter.y) * scaleFactor;
+            float gridSize = 1.4f;
+            float step = 0.28f;
+            glm::mat4 gridMVP = projMat * viewMat;
+
+            auto projectPoint = [&](float gx, float gy, float gz, ImVec2& outScreen, bool& outVisible) {
+                glm::vec4 clip = gridMVP * glm::vec4(gx, gy, gz, 1.0f);
+                if (clip.w <= 0.05f) { outVisible = false; return; }
+                float invW = 1.0f / clip.w;
+                outScreen.x = canvasPos.x + (clip.x * invW * 0.5f + 0.5f) * canvasSize.x;
+                outScreen.y = canvasPos.y + (0.5f - clip.y * invW * 0.5f) * canvasSize.y;
+                outVisible = true;
+            };
+
+            for (float g = -gridSize; g <= gridSize + 0.001f; g += step) {
+                ImVec2 p0, p1, p2, p3;
+                bool v0, v1, v2, v3;
+                projectPoint(g, groundY, -gridSize, p0, v0);
+                projectPoint(g, groundY, gridSize, p1, v1);
+                if (v0 && v1) {
+                    ImU32 lineCol = (std::abs(g) < 0.01f) ? IM_COL32(80, 140, 200, 160) : IM_COL32(40, 48, 62, 120);
+                    drawList->AddLine(p0, p1, lineCol, (std::abs(g) < 0.01f) ? 1.5f : 1.0f);
+                }
+                projectPoint(-gridSize, groundY, g, p2, v2);
+                projectPoint(gridSize, groundY, g, p3, v3);
+                if (v2 && v3) {
+                    ImU32 lineCol = (std::abs(g) < 0.01f) ? IM_COL32(200, 80, 80, 160) : IM_COL32(40, 48, 62, 120);
+                    drawList->AddLine(p2, p3, lineCol, (std::abs(g) < 0.01f) ? 1.5f : 1.0f);
+                }
+            }
+        }
+
+        // Draw model triangles
+        glm::vec3 lightDir = glm::normalize(glm::vec3(0.5f, 0.8f, 1.0f));
+        uint32_t totalTris = currentModelImport.totalTriangles;
+        uint32_t maxTris = 4500;
+        uint32_t triStride = 1;
+        if (totalTris > maxTris) {
+            triStride = (totalTris / maxTris) + 1;
+        }
+
+        int subIdx = 0;
+        for (const auto& mesh : currentModelImport.previewModel.meshes) {
+            if (!mesh.valid || mesh.vertices.empty() || mesh.indices.empty()) {
+                subIdx++;
+                continue;
+            }
+
+            glm::vec3 baseCol(0.8f, 0.8f, 0.8f);
+            float roughness = 0.5f;
+            for (const auto& pm : currentModelImport.materials) {
+                for (int s : pm.submeshIndices) {
+                    if (s == subIdx) {
+                        baseCol = pm.baseColor;
+                        roughness = pm.roughness;
+                        break;
+                    }
+                }
+            }
+
+            const auto& verts = mesh.vertices;
+            const auto& indices = mesh.indices;
+            size_t numTris = indices.size() / 3;
+
+            for (size_t t = 0; t < numTris; t += triStride) {
+                uint32_t i0 = indices[t * 3 + 0];
+                uint32_t i1 = indices[t * 3 + 1];
+                uint32_t i2 = indices[t * 3 + 2];
+                if (i0 >= verts.size() || i1 >= verts.size() || i2 >= verts.size()) continue;
+
+                const auto& v0 = verts[i0];
+                const auto& v1 = verts[i1];
+                const auto& v2 = verts[i2];
+
+                glm::vec4 c0 = mvp * glm::vec4(v0.pos, 1.0f);
+                glm::vec4 c1 = mvp * glm::vec4(v1.pos, 1.0f);
+                glm::vec4 c2 = mvp * glm::vec4(v2.pos, 1.0f);
+
+                if (c0.w <= 0.05f || c1.w <= 0.05f || c2.w <= 0.05f) continue;
+
+                ImVec2 s0(canvasPos.x + (c0.x / c0.w * 0.5f + 0.5f) * canvasSize.x,
+                          canvasPos.y + (0.5f - c0.y / c0.w * 0.5f) * canvasSize.y);
+                ImVec2 s1(canvasPos.x + (c1.x / c1.w * 0.5f + 0.5f) * canvasSize.x,
+                          canvasPos.y + (0.5f - c1.y / c1.w * 0.5f) * canvasSize.y);
+                ImVec2 s2(canvasPos.x + (c2.x / c2.w * 0.5f + 0.5f) * canvasSize.x,
+                          canvasPos.y + (0.5f - c2.y / c2.w * 0.5f) * canvasSize.y);
+
+                float det = (s1.x - s0.x) * (s2.y - s0.y) - (s1.y - s0.y) * (s2.x - s0.x);
+                if (det <= 0.0f) continue;
+
+                if (currentModelImport.viewMode != 2) {
+                    glm::vec3 nAvg = (v0.normal + v1.normal + v2.normal) * 0.3333f;
+                    if (glm::length(nAvg) < 0.001f) {
+                        nAvg = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                    } else {
+                        nAvg = glm::normalize(nAvg);
+                    }
+                    glm::vec3 nView = glm::normalize(normMat * nAvg);
+                    float NdotL = glm::clamp(glm::dot(nView, lightDir), 0.0f, 1.0f);
+                    float diff = 0.30f + 0.70f * NdotL;
+
+                    glm::vec3 viewDir(0.0f, 0.0f, 1.0f);
+                    glm::vec3 h = glm::normalize(lightDir + viewDir);
+                    float NdotH = glm::clamp(glm::dot(nView, h), 0.0f, 1.0f);
+                    float spec = powf(NdotH, 16.0f) * (1.0f - roughness) * 0.35f;
+
+                    glm::vec3 finalRgb = glm::clamp(baseCol * diff + glm::vec3(spec), 0.0f, 1.0f);
+                    ImU32 triCol = IM_COL32((int)(finalRgb.r * 255.0f), (int)(finalRgb.g * 255.0f), (int)(finalRgb.b * 255.0f), 255);
+                    drawList->AddTriangleFilled(s0, s1, s2, triCol);
+
+                    if (currentModelImport.viewMode == 1) {
+                        drawList->AddTriangle(s0, s1, s2, IM_COL32(30, 30, 35, 90), 1.0f);
+                    }
+                } else {
+                    drawList->AddTriangle(s0, s1, s2, IM_COL32(75, 185, 255, 200), 1.0f);
+                }
+            }
+            subIdx++;
+        }
+
+        drawList->PopClipRect();
+
+        // Info & stats badges
+        ImGui::Spacing();
+        std::filesystem::path p(currentModelImport.sourceFilePath);
+        std::string ext = p.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::toupper);
+        glm::vec3 d = currentModelImport.boundsMax - currentModelImport.boundsMin;
+
+        ImGui::TextColored(ImVec4(0.2f, 0.85f, 0.4f, 1.0f), "[%s]", ext.c_str());
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Tris: %u | Verts: %u | Submeshes: %u",
+            currentModelImport.totalTriangles, currentModelImport.totalVertices, currentModelImport.meshCount);
+        ImGui::TextDisabled("Dimensions: %.2fm x %.2fm x %.2fm", d.x, d.y, d.z);
+        ImGui::TextDisabled("Controls: [L-Drag] Orbit | [R-Drag] Pan | [Wheel] Zoom");
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // ====================================================================
+        // RIGHT PANE: DETECTED MATERIALS & TEXTURES
+        // ====================================================================
+        ImGui::BeginChild("ModelMaterialsPane", ImVec2(rightPaneWidth, contentHeight), true);
+
+        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.6f, 1.0f), "DETECTED MATERIALS & TEXTURES (%zu)", currentModelImport.materials.size());
+        ImGui::TextDisabled("PBR materials will be created (.emat) and assigned to model submeshes.");
+        ImGui::Separator();
+
+        std::vector<TextureAssetEntry> projectTextures = ScanProjectTextures();
+
+        for (size_t mIdx = 0; mIdx < currentModelImport.materials.size(); ++mIdx) {
+            PendingModelMaterial& pm = currentModelImport.materials[mIdx];
+            ImGui::PushID((int)mIdx);
+
+            std::string headerTitle = pm.materialName + " (" + std::to_string(pm.submeshIndices.size()) + " submesh" + (pm.submeshIndices.size() > 1 ? "es" : "") + ")";
+            if (ImGui::CollapsingHeader(headerTitle.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("Generate Material Asset (.emat)", &pm.createMaterial);
+
+                char nameBuf[128];
+                strncpy_s(nameBuf, pm.materialName.c_str(), sizeof(nameBuf) - 1);
+                ImGui::SetNextItemWidth(260.0f);
+                if (ImGui::InputText("Material Name", nameBuf, sizeof(nameBuf))) {
+                    pm.materialName = nameBuf;
+                }
+
+                ImGui::ColorEdit3("Base Color", &pm.baseColor.r);
+                ImGui::SliderFloat("Metallic", &pm.metallic, 0.0f, 1.0f, "%.2f");
+                ImGui::SliderFloat("Roughness", &pm.roughness, 0.0f, 1.0f, "%.2f");
+                ImGui::ColorEdit3("Emissive Color", &pm.emissiveColor.r);
+                ImGui::SliderFloat("Emissive Power", &pm.emissiveIntensity, 0.0f, 20.0f, "%.1f");
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.8f, 0.85f, 0.95f, 1.0f), "Assigned Textures:");
+
+                auto drawTextureRow = [&](const char* slotLabel, std::string& texSlot) {
+                    ImGui::PushID(slotLabel);
+                    ImGui::Columns(3, nullptr, false);
+                    ImGui::SetColumnWidth(0, 100.0f);
+                    ImGui::SetColumnWidth(1, 230.0f);
+
+                    ImGui::TextUnformatted(slotLabel);
+                    ImGui::NextColumn();
+
+                    if (!texSlot.empty()) {
+                        std::string fname = std::filesystem::path(texSlot).filename().string();
+                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "[Found]");
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted(fname.c_str());
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s", texSlot.c_str());
+                        }
+                    } else {
+                        ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "[None]");
+                    }
+                    ImGui::NextColumn();
+
+                    if (ImGui::SmallButton("...")) {
+                        ImGui::OpenPopup("PickTexturePopup");
+                    }
+                    if (!texSlot.empty()) {
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("X")) {
+                            texSlot.clear();
+                        }
+                    }
+
+                    if (ImGui::BeginPopup("PickTexturePopup")) {
+                        ImGui::Text("Select Texture:");
+                        ImGui::Separator();
+                        if (ImGui::Selectable("(None)", texSlot.empty())) {
+                            texSlot.clear();
+                        }
+                        for (const auto& te : projectTextures) {
+                            bool isCur = (texSlot == te.fullPath || texSlot == te.filename);
+                            if (ImGui::Selectable(te.filename.c_str(), isCur)) {
+                                texSlot = te.fullPath;
+                            }
+                        }
+                        ImGui::EndPopup();
+                    }
+
+                    ImGui::Columns(1);
+                    ImGui::PopID();
+                };
+
+                drawTextureRow("Base Color", pm.baseColorTexture);
+                drawTextureRow("Normal Map", pm.normalTexture);
+                drawTextureRow("Roughness", pm.roughnessTexture);
+                drawTextureRow("Metallic", pm.metallicTexture);
+                drawTextureRow("AO Map", pm.aoTexture);
+                drawTextureRow("Emissive", pm.emissionTexture);
+                drawTextureRow("Opacity", pm.opacityTexture);
+            }
+
+            ImGui::PopID();
+            ImGui::Separator();
+        }
+
+        // Import Settings
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.9f, 0.8f, 0.3f, 1.0f), "IMPORT DESTINATION & SETTINGS");
+
+        char folderBuf[260];
+        strncpy_s(folderBuf, currentModelImport.targetFolder.c_str(), sizeof(folderBuf) - 1);
+        ImGui::SetNextItemWidth(300.0f);
+        if (ImGui::InputText("Materials Destination", folderBuf, sizeof(folderBuf))) {
+            currentModelImport.targetFolder = folderBuf;
+        }
+
+        ImGui::Checkbox("Spawn Model in Viewport / Active Scene", &currentModelImport.spawnInLevel);
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip("If checked, places the imported model directly into the active scene with the generated materials applied.");
+        }
+
+        ImGui::EndChild();
+
+        // ====================================================================
+        // BOTTOM ACTIONS BAR
+        // ====================================================================
+        ImGui::Separator();
+
+        if (pendingModelImportQueue.size() > 1) {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "📦 Model 1 of %zu in queue: %s", 
+                pendingModelImportQueue.size(), currentModelImport.modelName.c_str());
+        } else {
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "📦 Model: %s", currentModelImport.modelName.c_str());
+        }
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 480.0f);
+
+        // Import button (green)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.70f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.45f, 0.22f, 1.0f));
+        if (ImGui::Button("🚀 Import Model", ImVec2(130, 32))) {
+            ExecuteModelImport(scene, currentModelImport.spawnInLevel, true);
+        }
+        ImGui::PopStyleColor(3);
+
+        if (pendingModelImportQueue.size() > 1) {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.40f, 0.75f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.50f, 0.90f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.32f, 0.65f, 1.0f));
+            if (ImGui::Button("⚡ Import All", ImVec2(110, 32))) {
+                ExecuteModelImport(scene, currentModelImport.spawnInLevel, false);
+                while (pendingModelImportQueue.size() > 1) {
+                    pendingModelImportQueue.erase(pendingModelImportQueue.begin());
+                    OpenModelImportView(pendingModelImportQueue.front());
+                    ExecuteModelImport(scene, currentModelImport.spawnInLevel, false);
+                }
+                pendingModelImportQueue.clear();
+                showModelImportModal = false;
+            }
+            ImGui::PopStyleColor(3);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("⏭ Skip", ImVec2(80, 32))) {
+            AdvanceModelImportQueue();
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("✕ Cancel All", ImVec2(100, 32))) {
+            pendingModelImportQueue.clear();
+            showModelImportModal = false;
+        }
+    }
+    if (!open) {
+        pendingModelImportQueue.clear();
+        showModelImportModal = false;
+    }
+    ImGui::End();
 }
 
 // ============================================================================
