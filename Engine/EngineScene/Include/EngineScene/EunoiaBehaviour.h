@@ -407,6 +407,23 @@ struct BehaviourTransform {
 #endif
 
 // ============================================================================
+// CursorStateProxy — Cursor Lock / Unlock API (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+// ============================================================================
+struct CursorStateProxy {
+    EunoiaBehaviour* behaviour = nullptr;
+
+    void Locked() const;
+    void UnLocked() const;
+
+    void Lock() const { Locked(); }
+    void Unlock() const { UnLocked(); }
+    void Unlocked() const { UnLocked(); }
+
+    bool IsLocked() const;
+    bool isLocked() const { return IsLocked(); }
+};
+
+// ============================================================================
 // EunoiaBehaviour — Canonical Base Behaviour Class (dev.md Section 1)
 // ============================================================================
 class EunoiaBehaviour {
@@ -437,6 +454,8 @@ public:
         gameObject = owner;
         Transform.Init(this);
         GetRespectiveObject.behaviour = this;
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     Scene* GetScene() const { return m_scene; }
@@ -574,6 +593,10 @@ public:
     // RespectiveObject Accessor functor (dev.md Section 15)
     RespectiveObjectAccessor GetRespectiveObject;
 
+    // Cursor State Controller (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+    CursorStateProxy CursorState;
+    CursorStateProxy cursorState;
+
     // Transform accessors (Capitalized keywords: Transform.Location, Transform.Position, Transform.Rotation, Transform.Scale)
     BehaviourTransform Transform;
     BehaviourTransform& transform = Transform;
@@ -647,6 +670,8 @@ protected:
     EunoiaBehaviour() {
         GetRespectiveObject.behaviour = this;
         Transform.Init(this);
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     EunoiaBehaviour(const EunoiaBehaviour& other)
@@ -662,6 +687,8 @@ protected:
           m_properties(other.m_properties) {
         GetRespectiveObject.behaviour = this;
         Transform.Init(this);
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     EunoiaBehaviour& operator=(const EunoiaBehaviour& other) {
@@ -677,6 +704,8 @@ protected:
             GetRespectiveObject.behaviour = this;
             Transform = other.Transform;
             Transform.Init(this);
+            CursorState.behaviour = this;
+            cursorState.behaviour = this;
         }
         return *this;
     }
@@ -698,4 +727,8 @@ protected:
 // ============================================================================
 template<> LightComponent* EunoiaBehaviour::GetComponent<LightComponent>() const;
 template<> PrimitiveMesh*  EunoiaBehaviour::GetComponent<PrimitiveMesh>() const;
+
+// Global fallback accessors for CursorState (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+inline CursorStateProxy CursorState;
+inline CursorStateProxy cursorState;
 

@@ -51,6 +51,27 @@ GameObject* RespectiveObjectAccessor::CameraActor(void* objRef) const {
 }
 
 // ============================================================================
+// CursorStateProxy Implementations (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+// ============================================================================
+
+void CursorStateProxy::Locked() const {
+    auto& input = InputSystem::Get();
+    input.SetCursorLocked(true);
+    if (behaviour && behaviour->GetOwner()) {
+        glm::vec3 rot = behaviour->GetOwner()->rotation;
+        input.SetCursorPos((double)rot.y, (double)rot.x);
+    }
+}
+
+void CursorStateProxy::UnLocked() const {
+    InputSystem::Get().SetCursorLocked(false);
+}
+
+bool CursorStateProxy::IsLocked() const {
+    return InputSystem::Get().IsCursorLocked();
+}
+
+// ============================================================================
 // BehaviourTransformProperty Implementations
 // ============================================================================
 
@@ -324,9 +345,21 @@ void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ)
             return;
         }
         glm::vec3 current = GetValue();
+        bool isCamera = false;
+        if (parent && parent->gameObject) {
+            isCamera = (parent->gameObject->isCamera || parent->gameObject->type == PrimitiveType::Camera);
+        }
         if (inX != 0.0f) current.x = inX;
         if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) current.z = inZ;
+        if (inZ != 0.0f) {
+            current.z = inZ;
+            if (isCamera && inX == 0.0f) {
+                current.x = inZ;
+            }
+        }
+        if (isCamera) {
+            current.x = std::clamp(current.x, -89.0f, 89.0f);
+        }
         SetValue(current);
         return;
     }
@@ -490,9 +523,22 @@ void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) 
             return;
         }
         glm::vec3 current = GetValue();
+        bool isCamera = false;
+        if (parent && parent->m_behaviour && parent->m_behaviour->GetOwner()) {
+            auto* owner = parent->m_behaviour->GetOwner();
+            isCamera = (owner->isCamera || owner->type == PrimitiveType::Camera);
+        }
         if (inX != 0.0f) current.x = inX;
         if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) current.z = inZ;
+        if (inZ != 0.0f) {
+            current.z = inZ;
+            if (isCamera && inX == 0.0f) {
+                current.x = inZ;
+            }
+        }
+        if (isCamera) {
+            current.x = std::clamp(current.x, -89.0f, 89.0f);
+        }
         SetValue(current);
         return;
     }
@@ -848,6 +894,9 @@ void DynamicScriptBehaviour::Start() {
         Print(msg);
         AddEngineLog("LogBehaviour", "[" + m_className + "] " + msg, 0);
     }
+    if (m_startLockCursor) {
+        CursorState.Locked();
+    }
 }
 
 void DynamicScriptBehaviour::Update(float deltaTime) {
@@ -953,6 +1002,10 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             Transform.RelativeRotation(delta.x, delta.y, delta.z);
         } else if (action.type == DynamicTransformAction::ActionType::RotateWorld) {
             Transform.WorldRotation(delta.x, delta.y, delta.z);
+        } else if (action.type == DynamicTransformAction::ActionType::LockCursor) {
+            CursorState.Locked();
+        } else if (action.type == DynamicTransformAction::ActionType::UnlockCursor) {
+            CursorState.UnLocked();
         }
     }
 }
@@ -1422,6 +1475,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
 
         if (inStartMethod) {
+            if (l.find("CursorState.Locked") != std::string::npos || l.find("CursorState.Lock") != std::string::npos) {
+                m_startLockCursor = true;
+            }
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
                 size_t q1 = l.find('"', prPos);
@@ -1610,6 +1666,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                         for (int i = 0; i < 3; ++i) {
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
                         }
+                        // If mouse Y is in Z slot and X (pitch) is unassigned, map mouse Y to pitch (X)
+                        if (action.varNames[0].empty() && action.varNames[2] == "$__MouseY") {
+                            action.varNames[0] = "$__MouseY";
+                            action.varMultiplier[0] = action.varMultiplier[2];
+                            action.useDeltaTime[0] = action.useDeltaTime[2];
+                        }
                         if (!activeKeyConditions.empty()) {
                             action.requiredKeys = activeKeyConditions;
                             if (pendingSingleLineCondition) {
@@ -1620,6 +1682,31 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                         m_transformActions.push_back(action);
                     }
                 }
+            }
+
+            // 4. Scan for CursorState.Locked / CursorState.UnLocked
+            if (l.find("CursorState.UnLocked") != std::string::npos || l.find("CursorState.Unlock") != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = DynamicTransformAction::ActionType::UnlockCursor;
+                if (!activeKeyConditions.empty()) {
+                    action.requiredKeys = activeKeyConditions;
+                    if (pendingSingleLineCondition) {
+                        activeKeyConditions.clear();
+                        pendingSingleLineCondition = false;
+                    }
+                }
+                m_transformActions.push_back(action);
+            } else if (l.find("CursorState.Locked") != std::string::npos || l.find("CursorState.Lock") != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = DynamicTransformAction::ActionType::LockCursor;
+                if (!activeKeyConditions.empty()) {
+                    action.requiredKeys = activeKeyConditions;
+                    if (pendingSingleLineCondition) {
+                        activeKeyConditions.clear();
+                        pendingSingleLineCondition = false;
+                    }
+                }
+                m_transformActions.push_back(action);
             }
 
             if (!hasTranslate && !hasRotate && lineConditions.empty() && pendingSingleLineCondition) {

@@ -34,6 +34,7 @@ int main(int argc, char** argv) {
     }
 
     // 2. Setup Input System
+    InputSystem::Get().SetWindow(window.Handle());
     InputSystem::Get().SetupDefaultActions();
 
     // 3. Setup Scene

@@ -2760,7 +2760,7 @@ static void SyncLevelCameraToViewportCamera()
 			}
 
 			g_camera.yaw = worldRot.y;
-			g_camera.pitch = worldRot.x;
+			g_camera.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
 			g_camera.fov = camObj->camera.fov;
 			g_camera.isOrthographic = camObj->camera.isOrthographic;
 			g_camera.orthoSize = camObj->camera.orthoSize;
@@ -3067,7 +3067,7 @@ void updateConstantBuffer()
 
 			OrbitCamera pipCam;
 			pipCam.yaw = worldRot.y;
-			pipCam.pitch = worldRot.x;
+			pipCam.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
 			pipCam.fov = camObj->camera.fov;
 			pipCam.isOrthographic = camObj->camera.isOrthographic;
 			pipCam.orthoSize = camObj->camera.orthoSize;
@@ -4428,6 +4428,7 @@ int main(int argc, char** argv)
 	}
 	g_engineUI.SetWindow(g_window);
 	g_engineUI.isGameOnlyWindow = isGameOnlyMode;
+	InputSystem::Get().SetWindow(g_window);
 
 #ifdef _WIN32
 	// Set window icon (both large for Taskbar/Alt-Tab and small for title bar / system menu)
@@ -4596,7 +4597,7 @@ int main(int argc, char** argv)
 				}
 			}
 			g_camera.yaw = worldRot.y;
-			g_camera.pitch = worldRot.x;
+			g_camera.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
 			g_camera.fov = camObj->camera.fov;
 			g_camera.isOrthographic = camObj->camera.isOrthographic;
 			g_camera.orthoSize = camObj->camera.orthoSize;
@@ -4665,6 +4666,7 @@ int main(int argc, char** argv)
 		if (isGameOnlyMode && (InputSystem::Get().IsKeyPressed(Key::Escape) || glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS ||
 		                       InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS))
 		{
+			InputSystem::Get().SetCursorLocked(false);
 			glfwSetWindowShouldClose(g_window, GLFW_TRUE);
 		}
 

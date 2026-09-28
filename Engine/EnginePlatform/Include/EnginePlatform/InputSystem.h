@@ -138,6 +138,7 @@ public:
     
     // Must be called after glfwPollEvents each frame
     void Update(GLFWwindow* window) {
+        m_window = window;
         s_scrollInstance = this;
         for (int i = 0; i < MAX_KEYS; ++i) {
             m_keyDown[i] = (glfwGetKey(window, i) == GLFW_PRESS);
@@ -147,6 +148,16 @@ public:
         }
         
         glfwGetCursorPos(window, &m_mouseX, &m_mouseY);
+
+        if (m_cursorLocked && m_window) {
+            if (m_mouseY > 89.0) {
+                m_mouseY = 89.0;
+                glfwSetCursorPos(m_window, m_mouseX, 89.0);
+            } else if (m_mouseY < -89.0) {
+                m_mouseY = -89.0;
+                glfwSetCursorPos(m_window, m_mouseX, -89.0);
+            }
+        }
         
         if (m_isFirstMouse) {
             m_mouseXPrev = m_mouseX;
@@ -243,6 +254,47 @@ public:
 
     void SetMouseDeadzone(float deadzone) { m_mouseDeadzone = deadzone; }
     float GetMouseDeadzone() const { return m_mouseDeadzone; }
+
+    // --- Cursor State & Locking System (dev.md: CursorState.Locked(), CursorState.UnLocked()) ---
+    void SetWindow(GLFWwindow* window) {
+        m_window = window;
+    }
+    GLFWwindow* GetWindow() const {
+        return m_window;
+    }
+
+    void SetCursorLocked(bool locked) {
+        m_cursorLocked = locked;
+        if (m_window) {
+            if (locked) {
+                glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                if (glfwRawMouseMotionSupported()) {
+                    glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+                }
+            } else {
+                if (glfwRawMouseMotionSupported()) {
+                    glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+                }
+                glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+        }
+    }
+
+    bool IsCursorLocked() const {
+        return m_cursorLocked;
+    }
+
+    void SetCursorPos(double x, double y) {
+        m_mouseX = x;
+        m_mouseY = y;
+        m_mouseXPrev = x;
+        m_mouseYPrev = y;
+        m_mouseDeltaX = 0.0;
+        m_mouseDeltaY = 0.0;
+        if (m_window) {
+            glfwSetCursorPos(m_window, x, y);
+        }
+    }
 
     // --- Action Mapping ---
     void MapAction(const std::string& action, const InputBinding& binding) {
@@ -464,6 +516,8 @@ private:
     double m_scrollDelta = 0.0;
     double m_scrollAccum = 0.0;
     bool m_isFirstMouse = true;
+    GLFWwindow* m_window = nullptr;
+    bool m_cursorLocked = false;
 
     // Axis system fields
     float m_mouseSensitivity = 0.15f;

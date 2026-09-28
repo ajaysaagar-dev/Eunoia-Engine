@@ -15,6 +15,7 @@
 #include <EngineAssets/MeshImporter.h>
 #include <filesystem>
 #include <EngineScene/BehaviourRegistry.h>
+#include <EnginePlatform/InputSystem.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -1300,6 +1301,7 @@ public:
 
     void StopPlayMode() {
         if (!isPlayMode) return;
+        InputSystem::Get().SetCursorLocked(false);
 
         // Cleanup runtime state
         for (auto& obj : objects) {

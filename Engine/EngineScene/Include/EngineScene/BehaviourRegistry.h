@@ -226,10 +226,13 @@ public:
         clone->m_startPrintMessages = m_startPrintMessages;
         clone->m_updatePrintMessages = m_updatePrintMessages;
         clone->m_transformActions = m_transformActions;
+        clone->m_startLockCursor = m_startLockCursor;
         clone->RegisterProperties();
         clone->CopyPropertiesFrom(*this);
         clone->Transform.Init(clone.get());
         clone->GetRespectiveObject.behaviour = clone.get();
+        clone->CursorState.behaviour = clone.get();
+        clone->cursorState.behaviour = clone.get();
         return clone;
     }
 
@@ -259,6 +262,7 @@ public:
     float m_defaultMoveSpeed = 5.0f;
 
     bool m_hasInput = false;
+    bool m_startLockCursor = false;
     std::vector<std::string> m_startPrintMessages;
 
     struct DynamicUpdatePrint {
@@ -283,7 +287,9 @@ public:
             TranslateRelative,
             TranslateWorld,
             RotateRelative,
-            RotateWorld
+            RotateWorld,
+            LockCursor,
+            UnlockCursor
         };
         ActionType type = ActionType::TranslateRelative;
         glm::vec3 constantDelta{0.0f};
