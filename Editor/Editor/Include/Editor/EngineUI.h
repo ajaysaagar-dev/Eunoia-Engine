@@ -150,7 +150,7 @@ public:
     void LoadRecentProjects();
     void SaveRecentProjects();
     bool CreateNewProject(const std::string& parentDir, const std::string& projName, Scene& scene, OrbitCamera& camera);
-    bool LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera);
+    bool LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "");
     static std::string ShowSelectFolderDialog(void* owner = nullptr, const std::string& title = "Select Project Location");
     static std::string ShowOpenProjectFileDialog();
 
@@ -309,7 +309,7 @@ public:
     EngineUI();
 
     // Initialize EngineUI with a pre-selected project path (called after standalone project browser)
-    void InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera);
+    void InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "");
 
     // Dynamic layout splitters and Configs.Editor.econfigs management
     void LoadEditorConfig();

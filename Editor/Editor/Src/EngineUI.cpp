@@ -359,10 +359,12 @@ EngineUI::EngineUI() {
     showProjectBrowser = false;
 }
 
-void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera) {
+void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath) {
     if (projectPath.empty()) {
-        // No project selected — show in-editor project browser as fallback
-        showProjectBrowser = true;
+        // No project selected — show in-editor project browser as fallback if not game mode
+        if (!isGameMode) {
+            showProjectBrowser = true;
+        }
 
         // Set a default project path so the editor doesn't crash
         std::filesystem::path defaultProjectsDir = "C:\\Projects\\Eunoia-Engine\\Projects";
@@ -377,13 +379,17 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
         currentContentPath = contentRootPath;
         TextureManager::Get().SetProjectRoot(contentRootPath);
         AssetManager::Get().Initialize(contentRootPath);
-        LoadEditorConfig();
+        if (!isGameMode) {
+            LoadEditorConfig();
+        }
         return;
     }
 
     // Load the selected project
-    LoadProject(projectPath, scene, camera);
-    AddLog("LogWorld", "Project loaded from standalone browser: " + activeProjectName, 2);
+    LoadProject(projectPath, scene, camera, isGameMode, specificScenePath);
+    if (!isGameMode) {
+        AddLog("LogWorld", "Project loaded: " + activeProjectName, 2);
+    }
 }
 
 void EngineUI::LoadEditorConfig() {
@@ -1366,7 +1372,7 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     return LoadProject(root, scene, camera);
 }
 
-bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera) {
+bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath) {
     std::error_code ec;
     if (!std::filesystem::exists(projRoot, ec)) {
         AddLog("LogProject", "Failed to open project: directory does not exist: " + projRoot.string(), 3);
@@ -1375,8 +1381,10 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
 
     activeProjectRoot = std::filesystem::absolute(projRoot);
     activeProjectName = activeProjectRoot.filename().string();
-    LoadEditorConfig();
-    SetupProjectDependencies(activeProjectRoot);
+    if (!isGameMode) {
+        LoadEditorConfig();
+        SetupProjectDependencies(activeProjectRoot);
+    }
 
     // The in-engine-editor content browser root is inside project's folder called Content!
     contentRootPath = activeProjectRoot / "Content";
@@ -1390,7 +1398,9 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     // Re-initialize subsystems with new content root
     TextureManager::Get().SetProjectRoot(contentRootPath);
     AssetManager::Get().Initialize(contentRootPath);
-    AssetRegistry::Get().ScanDirectory(contentRootPath);
+    if (!isGameMode) {
+        AssetRegistry::Get().ScanDirectory(contentRootPath);
+    }
 
     // Scan and register all behaviour scripts in Content before loading the scene
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
@@ -1408,26 +1418,29 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         }
     }
 
-    // Load project's initial scene
-    std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-    if (std::filesystem::exists(mainScene, ec)) {
-        OpenLevelFromPath(scene, mainScene.string());
+    // Load scene: prioritize explicit specificScenePath if provided (fast game launch)
+    bool found = false;
+    if (!specificScenePath.empty() && std::filesystem::exists(specificScenePath, ec)) {
+        found = OpenLevelFromPath(scene, specificScenePath);
     } else {
-        bool found = false;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (entry.is_regular_file(ec)) {
-                std::string ext = entry.path().extension().string();
-                if (ext == ".escene" || ext == ".elevel") {
-                    OpenLevelFromPath(scene, entry.path().string());
-                    found = true;
-                    break;
+        std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
+        if (std::filesystem::exists(mainScene, ec)) {
+            found = OpenLevelFromPath(scene, mainScene.string());
+        } else {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                if (entry.is_regular_file(ec)) {
+                    std::string ext = entry.path().extension().string();
+                    if (ext == ".escene" || ext == ".elevel") {
+                        found = OpenLevelFromPath(scene, entry.path().string());
+                        break;
+                    }
                 }
             }
         }
-        if (!found) {
-            scene.Clear();
-            currentLevelFilePath = "";
-        }
+    }
+    if (!found) {
+        scene.Clear();
+        currentLevelFilePath = "";
     }
 
     camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
@@ -1435,28 +1448,32 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     camera.yaw = 45.0f;
     camera.pitch = 25.0f;
 
-    // Update recent projects history
-    time_t now = time(nullptr);
-    char timeBuf[64];
-    strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", localtime(&now));
+    if (!isGameMode) {
+        // Update recent projects history
+        time_t now = time(nullptr);
+        char timeBuf[64];
+        strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", localtime(&now));
 
-    for (auto it = recentProjects.begin(); it != recentProjects.end();) {
-        if (std::filesystem::equivalent(std::filesystem::path(it->rootPath), activeProjectRoot, ec) || it->rootPath == activeProjectRoot.string()) {
-            it = recentProjects.erase(it);
-        } else {
-            ++it;
+        for (auto it = recentProjects.begin(); it != recentProjects.end();) {
+            if (std::filesystem::equivalent(std::filesystem::path(it->rootPath), activeProjectRoot, ec) || it->rootPath == activeProjectRoot.string()) {
+                it = recentProjects.erase(it);
+            } else {
+                ++it;
+            }
         }
+
+        ProjectEntry pe;
+        pe.name = activeProjectName;
+        pe.rootPath = activeProjectRoot.string();
+        pe.lastOpened = timeBuf;
+        recentProjects.insert(recentProjects.begin(), pe);
+        SaveRecentProjects();
     }
 
-    ProjectEntry pe;
-    pe.name = activeProjectName;
-    pe.rootPath = activeProjectRoot.string();
-    pe.lastOpened = timeBuf;
-    recentProjects.insert(recentProjects.begin(), pe);
-    SaveRecentProjects();
-
     showProjectBrowser = false;
-    AddLog("LogProject", "Opened project '" + activeProjectName + "' [Content Root: " + contentRootPath.string() + "]", 2);
+    if (!isGameMode) {
+        AddLog("LogProject", "Opened project '" + activeProjectName + "' [Content Root: " + contentRootPath.string() + "]", 2);
+    }
 
     return true;
 }
@@ -7673,13 +7690,13 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
     std::filesystem::path gameBuildDir = projectBase / "Build";
     std::error_code ec;
 
-    // Auto-save current active scene so the separate game window always has latest actors & behaviours
-    std::filesystem::create_directories(gameBuildDir / "Scenes", ec);
-    std::filesystem::create_directories(projectBase / "Content" / "Scenes", ec);
-    SceneSerializer::SaveScene(scene, (gameBuildDir / "Scenes" / "Main.escene").string());
-    SceneSerializer::SaveScene(scene, (gameBuildDir / "Main.escene").string());
-    SceneSerializer::SaveScene(scene, (projectBase / "Content" / "Scenes" / "Main.escene").string());
-    AddLog("LogPlayLevel", "Saved active scene before opening Game Mode.", 0);
+    // Auto-save current active scene once so the separate game window has the latest state
+    std::filesystem::path targetScene = currentLevelFilePath.empty() 
+        ? (projectBase / "Content" / "Scenes" / "Main.escene") 
+        : std::filesystem::path(currentLevelFilePath);
+    std::filesystem::create_directories(targetScene.parent_path(), ec);
+    SceneSerializer::SaveScene(scene, targetScene.string());
+    AddLog("LogPlayLevel", "Saved active scene before opening Game Mode: " + targetScene.string(), 0);
 
     // Get current Eunoia-Editor.exe executable path
     char exePathBuf[MAX_PATH] = {};
@@ -7687,7 +7704,7 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
     std::filesystem::path editorExe(exePathBuf);
 
     if (std::filesystem::exists(editorExe, ec)) {
-        std::string cmdArgs = "--game \"" + projectBase.string() + "\"";
+        std::string cmdArgs = "--game \"" + projectBase.string() + "\" --scene \"" + targetScene.string() + "\"";
         std::string fullCmd = "\"" + editorExe.string() + "\" " + cmdArgs;
 
         STARTUPINFOA si = { sizeof(si) };
@@ -7695,6 +7712,7 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
         std::vector<char> cmdBuf(fullCmd.begin(), fullCmd.end());
         cmdBuf.push_back('\0');
 
+        std::filesystem::path engineWorkingDir = editorExe.parent_path();
         BOOL success = CreateProcessA(
             NULL,
             cmdBuf.data(),
@@ -7703,7 +7721,7 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
             FALSE,
             0,
             NULL,
-            projectBase.string().c_str(),
+            engineWorkingDir.string().c_str(),
             &si,
             &pi
         );

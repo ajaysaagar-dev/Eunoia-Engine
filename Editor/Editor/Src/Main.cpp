@@ -1626,6 +1626,61 @@ int initD3D12(HWND hwnd)
 	return EXIT_SUCCESS;
 }
 
+static HRESULT CompileOrLoadCachedShader(
+	const char* hlslSource,
+	const char* entryPoint,
+	const char* targetProfile,
+	ID3DBlob** ppBlobOut,
+	ID3DBlob** ppErrorBlobOut)
+{
+	if (!hlslSource || !entryPoint || !targetProfile || !ppBlobOut) {
+		return E_INVALIDARG;
+	}
+
+	// Compute a hash of source + entryPoint + profile to detect any changes
+	std::string key = std::string(entryPoint) + "_" + targetProfile + "_" + hlslSource;
+	size_t hashVal = std::hash<std::string>{}(key);
+	char hexHash[32];
+	snprintf(hexHash, sizeof(hexHash), "%016llx", (unsigned long long)hashVal);
+
+	std::filesystem::path cacheDir = "Shaders/Cache";
+	std::error_code ec;
+	if (!std::filesystem::exists(cacheDir, ec)) {
+		std::filesystem::create_directories(cacheDir, ec);
+	}
+
+	std::filesystem::path cacheFile = cacheDir / (std::string(entryPoint) + "_" + targetProfile + "_" + hexHash + ".cso");
+	if (std::filesystem::exists(cacheFile, ec)) {
+		std::ifstream f(cacheFile, std::ios::binary | std::ios::ate);
+		if (f.is_open()) {
+			std::streamsize size = f.tellg();
+			f.seekg(0, std::ios::beg);
+			if (size > 0) {
+				ID3DBlob* blob = nullptr;
+				HRESULT hr = D3DCreateBlob((SIZE_T)size, &blob);
+				if (SUCCEEDED(hr) && blob) {
+					if (f.read(reinterpret_cast<char*>(blob->GetBufferPointer()), size)) {
+						*ppBlobOut = blob;
+						return S_OK;
+					}
+					blob->Release();
+				}
+			}
+		}
+	}
+
+	// Cache miss or read failed: compile with D3DCompile
+	HRESULT hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, entryPoint, targetProfile, 0, 0, ppBlobOut, ppErrorBlobOut);
+	if (SUCCEEDED(hr) && *ppBlobOut) {
+		// Save compiled bytecode to cache file for instant future launches
+		std::ofstream out(cacheFile, std::ios::binary);
+		if (out.is_open()) {
+			out.write(reinterpret_cast<const char*>((*ppBlobOut)->GetBufferPointer()), (*ppBlobOut)->GetBufferSize());
+		}
+	}
+	return hr;
+}
+
 int createShadersAndPipeline()
 {
 	// 1. Root Signature (CBV b0, 32-bit constants b1, Descriptor Table t0-t5 for materials, Descriptor Table t6 for shadow map, Descriptor Table t7 for point shadows, Descriptor Table t8 for spot/area shadows, Samplers s0-s2)
@@ -2284,14 +2339,14 @@ int createShadersAndPipeline()
 	ID3DBlob* vertexShader = nullptr;
 	ID3DBlob* pixelShader = nullptr;
 
-	hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &vertexShader, &errorBlob);
+	hr = CompileOrLoadCachedShader(hlslSource, "VSMain", "vs_5_0", &vertexShader, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
 		return EXIT_FAILURE;
 	}
 
-	hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &pixelShader, &errorBlob);
+	hr = CompileOrLoadCachedShader(hlslSource, "PSMain", "ps_5_0", &pixelShader, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
@@ -2402,7 +2457,7 @@ int createShadersAndPipeline()
 	)";
 
 	ID3DBlob* shadowVS = nullptr;
-	hr = D3DCompile(shadowHlsl, strlen(shadowHlsl), nullptr, nullptr, nullptr, "VSShadow", "vs_5_0", 0, 0, &shadowVS, &errorBlob);
+	hr = CompileOrLoadCachedShader(shadowHlsl, "VSShadow", "vs_5_0", &shadowVS, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "Shadow VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
@@ -2562,13 +2617,13 @@ int createShadersAndPipeline()
 
 	ID3DBlob* skyboxVS = nullptr;
 	ID3DBlob* skyboxPS = nullptr;
-	hr = D3DCompile(skyboxHlsl, strlen(skyboxHlsl), nullptr, nullptr, nullptr, "VSSkybox", "vs_5_0", 0, 0, &skyboxVS, &errorBlob);
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "VSSkybox", "vs_5_0", &skyboxVS, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "Skybox VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
 		return EXIT_FAILURE;
 	}
-	hr = D3DCompile(skyboxHlsl, strlen(skyboxHlsl), nullptr, nullptr, nullptr, "PSSkybox", "ps_5_0", 0, 0, &skyboxPS, &errorBlob);
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "PSSkybox", "ps_5_0", &skyboxPS, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "Skybox PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
@@ -4292,6 +4347,7 @@ int main(int argc, char** argv)
 
 	bool isGameOnlyMode = false;
 	std::filesystem::path gameProjectPath;
+	std::string gameScenePath;
 
 	for (int i = 1; i < argc; ++i) {
 		std::string arg = argv[i];
@@ -4299,6 +4355,10 @@ int main(int argc, char** argv)
 			isGameOnlyMode = true;
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
 				gameProjectPath = argv[++i];
+			}
+		} else if (arg == "--scene" || arg == "-scene" || arg == "/scene") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameScenePath = argv[++i];
 			}
 		}
 	}
@@ -4416,16 +4476,16 @@ int main(int argc, char** argv)
 	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px)
 	ImFont* mainFont = nullptr;
 	ImFontConfig fontConfig;
-	fontConfig.OversampleH = 2;
-	fontConfig.OversampleV = 2;
+	fontConfig.OversampleH = isGameOnlyMode ? 1 : 2;
+	fontConfig.OversampleV = isGameOnlyMode ? 1 : 2;
 	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
 	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
 	}
 
-	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available
-	if (mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
+	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available (skip in game mode for fast launch)
+	if (!isGameOnlyMode && mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
 		ImFontConfig symbolConfig;
 		symbolConfig.MergeMode = true;
 		symbolConfig.OversampleH = 2;
@@ -4442,7 +4502,9 @@ int main(int argc, char** argv)
 		io.FontGlobalScale = 1.25f;
 	}
 
-	g_engineUI.SetupTheme();
+	if (!isGameOnlyMode) {
+		g_engineUI.SetupTheme();
+	}
 
 	ImGui_ImplGlfw_InitForOther(g_window, true);
 
@@ -4459,32 +4521,34 @@ int main(int argc, char** argv)
 	ImGui_ImplDX12_Init(&init_info);
 
 	InitFallbackTextures();
-	DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
-	g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
+	if (!isGameOnlyMode) {
+		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
+		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
-	g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
+		DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
+		g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
-	g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
+		DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
+		g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
-	g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
+		DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
+		g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
-	g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
+		DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
+		g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
-	g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
+		DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
+		g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
-	g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
-	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
-	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+		DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
+		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
+		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
+		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+	}
 	InputSystem::Get().SetupDefaultActions();
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
-	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera);
+	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath);
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;
