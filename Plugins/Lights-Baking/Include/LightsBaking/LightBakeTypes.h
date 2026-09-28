@@ -57,6 +57,14 @@ struct BakeStaticMesh {
     glm::vec3 aabbMax{-1e9f};
 };
 
+struct MeshAtlasRect {
+    int objectId = -1;
+    float uMin = 0.0f;
+    float vMin = 0.0f;
+    float uMax = 1.0f;
+    float vMax = 1.0f;
+};
+
 struct RuntimeBakedLightData {
     std::string lightGuid;
     uint32_t resolution = 1024;
@@ -64,7 +72,8 @@ struct RuntimeBakedLightData {
     std::filesystem::path shadowMapPath;
     std::vector<uint8_t> lightMapPixels;
     std::vector<uint8_t> shadowMapPixels;
-    // Map from objectId -> per-vertex baked irradiance color (RGB float)
+    std::vector<MeshAtlasRect> atlasRects;
+    std::unordered_map<int, std::vector<glm::vec2>> meshLightmapUvs;
     std::unordered_map<int, std::vector<glm::vec3>> staticMeshVertexLighting;
 };
 

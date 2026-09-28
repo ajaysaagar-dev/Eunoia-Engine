@@ -245,6 +245,12 @@ static DX12GpuTexture g_fallbackRoughness;
 static DX12GpuTexture g_fallbackMetallic;
 static DX12GpuTexture g_fallbackAO;
 static DX12GpuTexture g_fallbackMissing;
+static DX12GpuTexture g_fallbackBlack;  // Used as no-op lightmap when no bake is active
+
+// Lightmap SRV (t9) – filled by the light baking system or the black fallback
+static D3D12_CPU_DESCRIPTOR_HANDLE g_lightmapSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_lightmapSrvGpuHandle = {};
+static bool g_lightmapSrvInHeap = false; // true once the dedicated slot has been written
 
 // Real-Time Directional Shadow Resources
 static ID3D12Resource* g_shadowDepthBuffer = nullptr;
@@ -884,6 +890,9 @@ void InitFallbackTextures()
 	uint32_t aoPix = 0xFFFFFFFF;
 	g_fallbackAO = UploadTextureToD3D12(&aoPix, 1, 1, "Fallback_AO");
 
+	uint32_t blackPix = 0xFF000000;
+	g_fallbackBlack = UploadTextureToD3D12(&blackPix, 1, 1, "Fallback_Black");
+
 	// Missing texture checkerboard fallback from dev.md Section 20
 	CachedTexture* checker = AssetManager::Get().GetMissingTextureFallback();
 	if (checker && !checker->data.empty() && checker->width > 0 && checker->height > 0) {
@@ -892,6 +901,31 @@ void InitFallbackTextures()
 		g_fallbackMissing = g_fallbackWhite;
 	}
 }
+
+// Allocate a persistent SRV heap slot for the lightmap (t9). Call once after InitFallbackTextures().
+void InitLightmapSrvSlot()
+{
+	UINT idx = 0;
+	if (!TryAllocSrvDescriptors(1, idx))
+	{
+		std::cerr << "[LightBake] Failed to allocate SRV heap slot for lightmap.\n";
+		return;
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuBase = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuBase = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	g_lightmapSrvCpuHandle.ptr = cpuBase.ptr + (SIZE_T)idx * g_srvDescriptorSize;
+	g_lightmapSrvGpuHandle.ptr = gpuBase.ptr + (UINT64)idx * g_srvDescriptorSize;
+
+	// Write the black fallback so the slot is always valid
+	if (g_fallbackBlack.resource)
+	{
+		g_d3dDevice->CopyDescriptorsSimple(
+			1, g_lightmapSrvCpuHandle, g_fallbackBlack.cpuHandle,
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	}
+	g_lightmapSrvInHeap = true;
+}
+
 
 enum class TextureUsageSlot {
 	BaseColor,
@@ -944,6 +978,31 @@ DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture
 		return tex;
 	}
 	return fallback;
+}
+
+// Update the lightmap SRV slot with the current baked texture (or reset to black).
+// Call once per frame before scene draw calls.
+void UpdateLightmapSrv()
+{
+	if (!g_lightmapSrvInHeap) return;
+
+	auto& baker = Eunoia::LightBakeManager::Get();
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = g_fallbackBlack.cpuHandle;
+
+	if (baker.HasActiveLightmap())
+	{
+		std::string lmPath = baker.GetActiveLightmapTexturePath();
+		if (!lmPath.empty())
+		{
+			DX12GpuTexture lmTex = GetOrLoadGPUTexture(lmPath, g_fallbackBlack, TextureUsageSlot::BaseColor);
+			if (lmTex.resource && lmTex.cpuHandle.ptr != 0)
+				srcCpu = lmTex.cpuHandle;
+		}
+	}
+
+	g_d3dDevice->CopyDescriptorsSimple(
+		1, g_lightmapSrvCpuHandle, srcCpu,
+		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
@@ -1723,7 +1782,14 @@ int createShadersAndPipeline()
 	spotShadowSrvRange.RegisterSpace = 0;
 	spotShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER rootParams[6] = {};
+	D3D12_DESCRIPTOR_RANGE lightmapSrvRange = {};
+	lightmapSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	lightmapSrvRange.NumDescriptors = 1;
+	lightmapSrvRange.BaseShaderRegister = 9;
+	lightmapSrvRange.RegisterSpace = 0;
+	lightmapSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParams[7] = {};
 	// 0: CBV b0 (Frame Constants)
 	rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParams[0].Descriptor.ShaderRegister = 0;
@@ -1760,6 +1826,12 @@ int createShadersAndPipeline()
 	rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[5].DescriptorTable.pDescriptorRanges = &spotShadowSrvRange;
 	rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 6: Descriptor Table t9 (1 SRV for Baked Lightmap)
+	rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[6].DescriptorTable.pDescriptorRanges = &lightmapSrvRange;
+	rootParams[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	D3D12_STATIC_SAMPLER_DESC staticSamplers[3] = {};
 	// Sampler 0: s0 (Anisotropic wrap for materials)
@@ -1808,7 +1880,7 @@ int createShadersAndPipeline()
 	staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-	rootSigDesc.NumParameters = 6;
+	rootSigDesc.NumParameters = 7;
 	rootSigDesc.pParameters = rootParams;
 	rootSigDesc.NumStaticSamplers = 3;
 	rootSigDesc.pStaticSamplers = staticSamplers;
@@ -1903,6 +1975,7 @@ int createShadersAndPipeline()
 		Texture2D g_shadowMap : register(t6);
 		TextureCubeArray g_pointShadowMap : register(t7);
 		Texture2DArray g_spotShadowMap : register(t8);
+		Texture2D g_lightmapTex : register(t9);
 
 		SamplerState g_sampler : register(s0);
 		SamplerComparisonState g_shadowSampler : register(s1);
@@ -2351,7 +2424,14 @@ int createShadersAndPipeline()
 			}
 
 			float3 emissive = emissiveColor * emissiveIntensity;
-			float3 bakedLit = (1.0f - metal) * albedo * input.color * ao;
+			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
+			float hasLightmap = input.color.z;
+			float3 bakedLit = float3(0.0f, 0.0f, 0.0f);
+			if (hasLightmap > 0.5f)
+			{
+				float3 bakedIllum = g_lightmapTex.Sample(g_sampler, input.color.xy).rgb;
+				bakedLit = (1.0f - metal) * albedo * bakedIllum * ao;
+			}
 			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + bakedLit + emissive;
 
 			// Post Processing: Color Grading and Exposure
@@ -3226,6 +3306,9 @@ void renderFrame()
 
 	g_recordedFrameOps.clear();
 
+	// Update the lightmap SRV descriptor slot (t9) each frame
+	UpdateLightmapSrv();
+
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
@@ -3466,6 +3549,8 @@ void renderFrame()
 		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
 
 		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
@@ -3654,6 +3739,8 @@ void renderFrame()
 		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
 
 		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
@@ -4334,6 +4421,7 @@ bool RecoverD3D12Device(HWND hwnd)
 
 	// 4. Reload textures & fallbacks
 	InitFallbackTextures();
+	InitLightmapSrvSlot();
 	DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 	g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
 
@@ -4685,6 +4773,7 @@ int main(int argc, char** argv)
 	ImGui_ImplDX12_Init(&init_info);
 
 	InitFallbackTextures();
+	InitLightmapSrvSlot();
 	if (!isGameOnlyMode) {
 		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;

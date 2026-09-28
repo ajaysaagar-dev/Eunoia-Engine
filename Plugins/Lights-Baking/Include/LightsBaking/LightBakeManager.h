@@ -48,8 +48,9 @@ public:
     bool SaveBakeAssets(
         const std::filesystem::path& bakeDir,
         const BakedLightMetadata& meta,
-        const std::vector<uint8_t>& lightMapRgba,
-        const std::vector<uint8_t>& shadowMapRgba,
+        const std::vector<glm::vec3>& lightMapHdr,
+        const std::vector<float>& shadowMapHdr,
+        const std::vector<MeshAtlasRect>& atlasRects,
         uint32_t res
     );
 
@@ -65,6 +66,12 @@ public:
     glm::vec3 GetStaticVertexBakedLight(int objectId, size_t vertexIndex) const;
     bool HasStaticBakedLighting(int objectId) const;
 
+    // Runtime queries for lightmap UVs & active baked lightmap texture
+    bool HasMeshLightmapUV(int objectId) const;
+    glm::vec2 GetMeshLightmapUV(int objectId, size_t vertexIndex) const;
+    bool HasActiveLightmap() const;
+    std::string GetActiveLightmapTexturePath() const;
+
     // Progress / logging callback
     void SetProgressCallback(std::function<void(const std::string&, float)> cb) { m_progressCb = cb; }
 
@@ -77,14 +84,16 @@ private:
         const GameObject& lightObj,
         const std::vector<BakeStaticMesh>& staticMeshes,
         RuntimeBakedLightData& outData,
-        std::vector<uint8_t>& outLightMapRgba,
-        std::vector<uint8_t>& outShadowMapRgba,
+        std::vector<glm::vec3>& outLightMapHdr,
+        std::vector<float>& outShadowMapHdr,
         uint32_t resolution
     );
 
     std::unordered_map<std::string, RuntimeBakedLightData> m_bakedLights; // Key: LightGUID
     // Combined accumulated lighting for static objects: objectId -> vector<glm::vec3>
     std::unordered_map<int, std::vector<glm::vec3>> m_accumulatedStaticLighting;
+    std::unordered_map<int, std::vector<glm::vec2>> m_accumulatedMeshLightmapUvs;
+    std::string m_activeLightmapPath;
 
     void RecomputeAccumulatedStaticLighting();
 

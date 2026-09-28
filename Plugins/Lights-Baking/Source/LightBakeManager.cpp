@@ -158,12 +158,22 @@ static inline bool RayTriangleIntersect(
     return (t > EPSILON && t < maxDist);
 }
 
+static inline uint16_t FloatToHalf(float val) {
+    uint32_t x = *reinterpret_cast<uint32_t*>(&val);
+    uint32_t sign = (x >> 16) & 0x8000;
+    int32_t exp = ((x >> 23) & 0xff) - 127 + 15;
+    uint32_t mant = x & 0x007fffff;
+    if (exp <= 0) return (uint16_t)sign;
+    if (exp >= 31) return (uint16_t)(sign | 0x7c00);
+    return (uint16_t)(sign | (exp << 10) | (mant >> 13));
+}
+
 void LightBakeManager::RaycastShadowsAndIllumination(
     const GameObject& lightObj,
     const std::vector<BakeStaticMesh>& staticMeshes,
     RuntimeBakedLightData& outData,
-    std::vector<uint8_t>& outLightMapRgba,
-    std::vector<uint8_t>& outShadowMapRgba,
+    std::vector<glm::vec3>& outLightMapHdr,
+    std::vector<float>& outShadowMapHdr,
     uint32_t resolution)
 {
     glm::vec3 lightPos = lightObj.position;
@@ -182,115 +192,235 @@ void LightBakeManager::RaycastShadowsAndIllumination(
         cosOuter = std::cos(glm::radians(std::max(lightObj.light.innerConeAngle, lightObj.light.outerConeAngle)));
     }
 
+    outData.atlasRects.clear();
+    outData.meshLightmapUvs.clear();
     outData.staticMeshVertexLighting.clear();
 
-    // 1. Calculate per-vertex direct lighting and static shadow occlusion
-    for (const auto& mesh : staticMeshes) {
-        std::vector<glm::vec3> vLight(mesh.worldVertices.size(), glm::vec3(0.0f));
+    size_t meshCount = staticMeshes.size();
+    if (meshCount == 0) return;
 
-        for (size_t vi = 0; vi < mesh.worldVertices.size(); ++vi) {
-            glm::vec3 P = mesh.worldVertices[vi];
-            glm::vec3 N = mesh.worldNormals[vi];
+    // 1. Generate dedicated Lightmap UV atlas coordinates for all static meshes (dev.md Step 2, 3)
+    int cols = (int)std::ceil(std::sqrt((double)meshCount));
+    if (cols < 1) cols = 1;
+    int rows = (int)std::ceil((double)meshCount / (double)cols);
+    if (rows < 1) rows = 1;
 
-            glm::vec3 L;
-            float dist = 0.0f;
-            float atten = 1.0f;
-            float maxRayDist = 1000.0f;
+    float cellW = 1.0f / (float)cols;
+    float cellH = 1.0f / (float)rows;
+    float margin = 0.003f;
 
-            if (lType == LightType::Directional) {
-                L = -lightDir;
-                dist = 1000.0f;
-                maxRayDist = 500.0f;
-            } else {
-                glm::vec3 toLight = lightPos - P;
-                dist = glm::length(toLight);
-                if (dist >= lightRange || dist <= 1e-4f) continue;
-                L = toLight / dist;
-                maxRayDist = dist - 0.015f;
+    for (size_t k = 0; k < meshCount; ++k) {
+        const auto& sm = staticMeshes[k];
+        int col = (int)(k % cols);
+        int row = (int)(k / cols);
 
-                float normDist = dist / lightRange;
-                float distAtten = std::clamp(1.0f - normDist, 0.0f, 1.0f);
-                distAtten = std::pow(distAtten, std::max(lightAtten, 0.2f)) / (dist * dist + 1.0f);
+        MeshAtlasRect rect;
+        rect.objectId = sm.objectId;
+        rect.uMin = col * cellW + margin;
+        rect.vMin = row * cellH + margin;
+        rect.uMax = (col + 1) * cellW - margin;
+        rect.vMax = (row + 1) * cellH - margin;
+        outData.atlasRects.push_back(rect);
 
-                if (lType == LightType::Spot) {
-                    float cosDir = glm::dot(lightDir, -L);
-                    float spotAtten = std::clamp((cosDir - cosOuter) / std::max(cosInner - cosOuter, 0.001f), 0.0f, 1.0f);
-                    atten = distAtten * spotAtten * spotAtten;
-                } else {
-                    atten = distAtten;
-                }
+        float minU = 1e9f, maxU = -1e9f;
+        float minV = 1e9f, maxV = -1e9f;
+
+        bool hasExistingUvs = false;
+        if (!sm.uvs.empty() && sm.uvs.size() == sm.worldVertices.size()) {
+            for (const auto& uv : sm.uvs) {
+                minU = std::min(minU, uv.x);
+                maxU = std::max(maxU, uv.x);
+                minV = std::min(minV, uv.y);
+                maxV = std::max(maxV, uv.y);
             }
-
-            float NdotL = std::max(glm::dot(N, L), 0.0f);
-            if (NdotL <= 1e-4f || atten <= 1e-5f) continue;
-
-            // Cast shadow ray
-            float shadowFactor = 1.0f;
-            if (castShadows) {
-                glm::vec3 rayOrig = P + N * 0.02f;
-                bool occluded = false;
-
-                for (const auto& occMesh : staticMeshes) {
-                    if (!RayBoxIntersect(rayOrig, L, maxRayDist, occMesh.aabbMin - glm::vec3(0.05f), occMesh.aabbMax + glm::vec3(0.05f))) {
-                        continue;
-                    }
-
-                    for (size_t tri = 0; tri + 2 < occMesh.indices.size(); tri += 3) {
-                        uint32_t i0 = occMesh.indices[tri];
-                        uint32_t i1 = occMesh.indices[tri + 1];
-                        uint32_t i2 = occMesh.indices[tri + 2];
-                        if (i0 >= occMesh.worldVertices.size() || i1 >= occMesh.worldVertices.size() || i2 >= occMesh.worldVertices.size()) continue;
-
-                        if (RayTriangleIntersect(rayOrig, L, maxRayDist, occMesh.worldVertices[i0], occMesh.worldVertices[i1], occMesh.worldVertices[i2])) {
-                            occluded = true;
-                            break;
-                        }
-                    }
-                    if (occluded) break;
-                }
-
-                if (occluded) {
-                    shadowFactor = 1.0f - shadowStrength;
-                }
+            if ((maxU - minU) > 0.001f && (maxV - minV) > 0.001f) {
+                hasExistingUvs = true;
             }
-
-            glm::vec3 directIllum = lightColor * (lightIntensity * NdotL * atten * shadowFactor);
-            vLight[vi] = directIllum;
         }
 
-        outData.staticMeshVertexLighting[mesh.objectId] = std::move(vLight);
+        glm::vec3 avgNormal(0.0f);
+        if (!hasExistingUvs) {
+            for (const auto& n : sm.worldNormals) avgNormal += n;
+            float len = glm::length(avgNormal);
+            if (len > 1e-4f) avgNormal /= len;
+            else avgNormal = glm::vec3(0, 1, 0);
+
+            minU = 1e9f; maxU = -1e9f;
+            minV = 1e9f; maxV = -1e9f;
+            for (const auto& p : sm.worldVertices) {
+                float u = 0.0f, v = 0.0f;
+                if (std::abs(avgNormal.y) >= std::abs(avgNormal.x) && std::abs(avgNormal.y) >= std::abs(avgNormal.z)) {
+                    u = p.x; v = p.z;
+                } else if (std::abs(avgNormal.x) >= std::abs(avgNormal.y) && std::abs(avgNormal.x) >= std::abs(avgNormal.z)) {
+                    u = p.z; v = p.y;
+                } else {
+                    u = p.x; v = p.y;
+                }
+                minU = std::min(minU, u); maxU = std::max(maxU, u);
+                minV = std::min(minV, v); maxV = std::max(maxV, v);
+            }
+        }
+
+        float rangeU = std::max(maxU - minU, 0.001f);
+        float rangeV = std::max(maxV - minV, 0.001f);
+        float rectW = rect.uMax - rect.uMin;
+        float rectH = rect.vMax - rect.vMin;
+
+        std::vector<glm::vec2> atlasUvs;
+        atlasUvs.reserve(sm.worldVertices.size());
+
+        for (size_t vi = 0; vi < sm.worldVertices.size(); ++vi) {
+            float u = 0.0f, v = 0.0f;
+            if (hasExistingUvs) {
+                u = sm.uvs[vi].x;
+                v = sm.uvs[vi].y;
+            } else {
+                const auto& p = sm.worldVertices[vi];
+                if (std::abs(avgNormal.y) >= std::abs(avgNormal.x) && std::abs(avgNormal.y) >= std::abs(avgNormal.z)) {
+                    u = p.x; v = p.z;
+                } else if (std::abs(avgNormal.x) >= std::abs(avgNormal.y) && std::abs(avgNormal.x) >= std::abs(avgNormal.z)) {
+                    u = p.z; v = p.y;
+                } else {
+                    u = p.x; v = p.y;
+                }
+            }
+
+            float normU = std::clamp((u - minU) / rangeU, 0.0f, 1.0f);
+            float normV = std::clamp((v - minV) / rangeV, 0.0f, 1.0f);
+
+            float atlasU = rect.uMin + normU * rectW;
+            float atlasV = rect.vMin + normV * rectH;
+            atlasUvs.push_back(glm::vec2(atlasU, atlasV));
+        }
+
+        outData.meshLightmapUvs[sm.objectId] = std::move(atlasUvs);
     }
 
-    // 2. Generate 2D LightMap and ShadowMap textures (RGBA8)
-    outLightMapRgba.resize(resolution * resolution * 4, 0);
-    outShadowMapRgba.resize(resolution * resolution * 4, 255);
+    // 2. Rasterize triangles into LightMap and ShadowMap (dev.md Step 4, 5, 6, 7, 8, 9, 10)
+    uint32_t W = resolution;
+    uint32_t H = resolution;
+    outLightMapHdr.assign(W * H, glm::vec3(0.0f));
+    outShadowMapHdr.assign(W * H, 1.0f);
 
-    // Fill textures with baseline representation
-    for (uint32_t y = 0; y < resolution; ++y) {
-        for (uint32_t x = 0; x < resolution; ++x) {
-            uint32_t idx = (y * resolution + x) * 4;
+    for (size_t k = 0; k < meshCount; ++k) {
+        const auto& sm = staticMeshes[k];
+        const auto& atlasUvs = outData.meshLightmapUvs[sm.objectId];
+        if (atlasUvs.size() != sm.worldVertices.size()) continue;
 
-            float u = (x + 0.5f) / (float)resolution;
-            float v = (y + 0.5f) / (float)resolution;
+        for (size_t tri = 0; tri + 2 < sm.indices.size(); tri += 3) {
+            uint32_t i0 = sm.indices[tri];
+            uint32_t i1 = sm.indices[tri + 1];
+            uint32_t i2 = sm.indices[tri + 2];
+            if (i0 >= sm.worldVertices.size() || i1 >= sm.worldVertices.size() || i2 >= sm.worldVertices.size()) continue;
 
-            // Generate falloff gradient representation
-            float dx = u - 0.5f;
-            float dy = v - 0.5f;
-            float r = std::sqrt(dx * dx + dy * dy) * 2.0f;
-            float falloff = std::clamp(1.0f - r, 0.0f, 1.0f);
+            const glm::vec3& P0 = sm.worldVertices[i0];
+            const glm::vec3& P1 = sm.worldVertices[i1];
+            const glm::vec3& P2 = sm.worldVertices[i2];
 
-            glm::vec3 rgb = lightColor * (lightIntensity * falloff);
-            outLightMapRgba[idx + 0] = (uint8_t)std::clamp(rgb.r * 255.0f, 0.0f, 255.0f);
-            outLightMapRgba[idx + 1] = (uint8_t)std::clamp(rgb.g * 255.0f, 0.0f, 255.0f);
-            outLightMapRgba[idx + 2] = (uint8_t)std::clamp(rgb.b * 255.0f, 0.0f, 255.0f);
-            outLightMapRgba[idx + 3] = 255;
+            const glm::vec3& N0 = sm.worldNormals[i0];
+            const glm::vec3& N1 = sm.worldNormals[i1];
+            const glm::vec3& N2 = sm.worldNormals[i2];
 
-            // Shadow map stores shadow attenuation / depth
-            uint8_t sVal = (uint8_t)(falloff * 255.0f);
-            outShadowMapRgba[idx + 0] = sVal;
-            outShadowMapRgba[idx + 1] = sVal;
-            outShadowMapRgba[idx + 2] = sVal;
-            outShadowMapRgba[idx + 3] = 255;
+            glm::vec2 p0 = atlasUvs[i0] * glm::vec2((float)W, (float)H);
+            glm::vec2 p1 = atlasUvs[i1] * glm::vec2((float)W, (float)H);
+            glm::vec2 p2 = atlasUvs[i2] * glm::vec2((float)W, (float)H);
+
+            float denom = (p1.y - p2.y) * (p0.x - p2.x) + (p2.x - p1.x) * (p0.y - p2.y);
+            if (std::abs(denom) < 1e-6f) continue;
+            float invDenom = 1.0f / denom;
+
+            int minX = std::max(0, (int)std::floor(std::min({p0.x, p1.x, p2.x})));
+            int maxX = std::min((int)W - 1, (int)std::ceil(std::max({p0.x, p1.x, p2.x})));
+            int minY = std::max(0, (int)std::floor(std::min({p0.y, p1.y, p2.y})));
+            int maxY = std::min((int)H - 1, (int)std::ceil(std::max({p0.y, p1.y, p2.y})));
+
+            for (int y = minY; y <= maxY; ++y) {
+                float py = (float)y + 0.5f;
+                for (int x = minX; x <= maxX; ++x) {
+                    float px = (float)x + 0.5f;
+
+                    float w0 = ((p1.y - p2.y) * (px - p2.x) + (p2.x - p1.x) * (py - p2.y)) * invDenom;
+                    float w1 = ((p2.y - p0.y) * (px - p2.x) + (p0.x - p2.x) * (py - p2.y)) * invDenom;
+                    float w2 = 1.0f - w0 - w1;
+
+                    if (w0 < -0.01f || w1 < -0.01f || w2 < -0.01f) continue;
+
+                    glm::vec3 P = w0 * P0 + w1 * P1 + w2 * P2;
+                    glm::vec3 N = glm::normalize(w0 * N0 + w1 * N1 + w2 * N2);
+
+                    glm::vec3 toLight = lightPos - P;
+                    float dist = glm::length(toLight);
+                    if (dist >= lightRange || dist <= 1e-4f) continue;
+                    glm::vec3 L = toLight / dist;
+
+                    float NdotL = std::max(glm::dot(N, L), 0.0f);
+                    if (NdotL <= 1e-5f) continue;
+
+                    float normDist = dist / lightRange;
+                    float distAtten = std::clamp(1.0f - normDist, 0.0f, 1.0f);
+                    float attenExp = std::max(lightAtten, 0.2f);
+                    distAtten = std::pow(distAtten, attenExp) / (dist * dist + 1.0f);
+
+                    float spotAngleAtten = 1.0f;
+                    if (lType == LightType::Spot) {
+                        float cosDir = glm::dot(lightDir, -L);
+                        spotAngleAtten = std::clamp((cosDir - cosOuter) / std::max(cosInner - cosOuter, 0.001f), 0.0f, 1.0f);
+                        spotAngleAtten = spotAngleAtten * spotAngleAtten;
+                    }
+                    if (distAtten * spotAngleAtten <= 1e-5f) continue;
+
+                    float shadowFactor = 1.0f;
+                    if (castShadows) {
+                        glm::vec3 rayOrig = P + N * 0.015f;
+                        float maxDist = dist - 0.02f;
+                        bool occluded = false;
+
+                        for (const auto& occMesh : staticMeshes) {
+                            if (!RayBoxIntersect(rayOrig, L, maxDist, occMesh.aabbMin - glm::vec3(0.05f), occMesh.aabbMax + glm::vec3(0.05f))) continue;
+                            for (size_t oTri = 0; oTri + 2 < occMesh.indices.size(); oTri += 3) {
+                                uint32_t o0 = occMesh.indices[oTri];
+                                uint32_t o1 = occMesh.indices[oTri + 1];
+                                uint32_t o2 = occMesh.indices[oTri + 2];
+                                if (RayTriangleIntersect(rayOrig, L, maxDist, occMesh.worldVertices[o0], occMesh.worldVertices[o1], occMesh.worldVertices[o2])) {
+                                    occluded = true;
+                                    break;
+                                }
+                            }
+                            if (occluded) break;
+                        }
+
+                        if (occluded) {
+                            shadowFactor = 1.0f - shadowStrength;
+                        }
+                    }
+
+                    glm::vec3 illum = lightColor * (lightIntensity * NdotL * distAtten * spotAngleAtten * shadowFactor);
+                    uint32_t pIdx = y * W + x;
+                    outLightMapHdr[pIdx] = illum;
+                    outShadowMapHdr[pIdx] = shadowFactor;
+                }
+            }
+        }
+    }
+
+    // 3. Dilation pass (2 pixels) to prevent bilinear edge seam bleeding
+    for (int pass = 0; pass < 2; ++pass) {
+        auto copyLm = outLightMapHdr;
+        for (uint32_t y = 1; y + 1 < H; ++y) {
+            for (uint32_t x = 1; x + 1 < W; ++x) {
+                uint32_t idx = y * W + x;
+                if (copyLm[idx] == glm::vec3(0.0f)) {
+                    glm::vec3 sum(0.0f);
+                    int count = 0;
+                    if (copyLm[(y-1)*W + x] != glm::vec3(0.0f)) { sum += copyLm[(y-1)*W + x]; count++; }
+                    if (copyLm[(y+1)*W + x] != glm::vec3(0.0f)) { sum += copyLm[(y+1)*W + x]; count++; }
+                    if (copyLm[y*W + (x-1)] != glm::vec3(0.0f)) { sum += copyLm[y*W + (x-1)]; count++; }
+                    if (copyLm[y*W + (x+1)] != glm::vec3(0.0f)) { sum += copyLm[y*W + (x+1)]; count++; }
+                    if (count > 0) {
+                        outLightMapHdr[idx] = sum / (float)count;
+                    }
+                }
+            }
         }
     }
 }
@@ -347,8 +477,9 @@ std::filesystem::path LightBakeManager::GetCookedBakeDir(const std::filesystem::
 bool LightBakeManager::SaveBakeAssets(
     const std::filesystem::path& bakeDir,
     const BakedLightMetadata& meta,
-    const std::vector<uint8_t>& lightMapRgba,
-    const std::vector<uint8_t>& shadowMapRgba,
+    const std::vector<glm::vec3>& lightMapHdr,
+    const std::vector<float>& shadowMapHdr,
+    const std::vector<MeshAtlasRect>& atlasRects,
     uint32_t res)
 {
     std::error_code ec;
@@ -358,23 +489,39 @@ bool LightBakeManager::SaveBakeAssets(
         return false;
     }
 
-    // 1. Save LightMap.dds using DirectXTex
+    // 1. Save LightMap.dds using DirectXTex (DXGI_FORMAT_R16G16B16A16_FLOAT HDR)
     std::filesystem::path lmPath = bakeDir / "LightMap.dds";
     {
         DirectX::ScratchImage img;
-        if (img.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, res, res, 1, 1)) {
-            memcpy(img.GetPixels(), lightMapRgba.data(), lightMapRgba.size());
-            DirectX::SaveToDDSFile(img.GetImages(), img.GetImageCount(), img.GetMetadata(), lmPath.string().c_str());
+        if (SUCCEEDED(img.Initialize2D(DXGI_FORMAT_R16G16B16A16_FLOAT, res, res, 1, 1))) {
+            uint16_t* pixels = reinterpret_cast<uint16_t*>(img.GetPixels());
+            for (size_t i = 0; i < lightMapHdr.size(); ++i) {
+                const auto& col = lightMapHdr[i];
+                pixels[i * 4 + 0] = FloatToHalf(col.r);
+                pixels[i * 4 + 1] = FloatToHalf(col.g);
+                pixels[i * 4 + 2] = FloatToHalf(col.b);
+                pixels[i * 4 + 3] = FloatToHalf(1.0f);
+            }
+            std::string lmPathStr = lmPath.string();
+            DirectX::SaveToDDSFile(img.GetImages(), img.GetImageCount(), img.GetMetadata(), lmPathStr.c_str());
         }
     }
 
-    // 2. Save ShadowMap.dds using DirectXTex
+    // 2. Save ShadowMap.dds using DirectXTex (DXGI_FORMAT_R8G8B8A8_UNORM)
     std::filesystem::path smPath = bakeDir / "ShadowMap.dds";
     {
         DirectX::ScratchImage img;
-        if (img.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, res, res, 1, 1)) {
-            memcpy(img.GetPixels(), shadowMapRgba.data(), shadowMapRgba.size());
-            DirectX::SaveToDDSFile(img.GetImages(), img.GetImageCount(), img.GetMetadata(), smPath.string().c_str());
+        if (SUCCEEDED(img.Initialize2D(DXGI_FORMAT_R8G8B8A8_UNORM, res, res, 1, 1))) {
+            uint8_t* pixels = img.GetPixels();
+            for (size_t i = 0; i < shadowMapHdr.size(); ++i) {
+                uint8_t sVal = (uint8_t)std::clamp(shadowMapHdr[i] * 255.0f, 0.0f, 255.0f);
+                pixels[i * 4 + 0] = sVal;
+                pixels[i * 4 + 1] = sVal;
+                pixels[i * 4 + 2] = sVal;
+                pixels[i * 4 + 3] = 255;
+            }
+            std::string smPathStr = smPath.string();
+            DirectX::SaveToDDSFile(img.GetImages(), img.GetImageCount(), img.GetMetadata(), smPathStr.c_str());
         }
     }
 
@@ -396,7 +543,16 @@ bool LightBakeManager::SaveBakeAssets(
         ofs << "  \"bakedOuterCone\": " << meta.bakedOuterCone << ",\n";
         ofs << "  \"bakedShadowBias\": " << meta.bakedShadowBias << ",\n";
         ofs << "  \"bakeSignature\": \"" << std::to_string(meta.bakeSignature) << "\",\n";
-        ofs << "  \"bakeDate\": \"" << meta.bakeDate << "\"\n";
+        ofs << "  \"bakeDate\": \"" << meta.bakeDate << "\",\n";
+        ofs << "  \"meshAtlas\": [\n";
+        for (size_t i = 0; i < atlasRects.size(); ++i) {
+            const auto& ar = atlasRects[i];
+            ofs << "    { \"objectId\": " << ar.objectId
+                << ", \"uMin\": " << ar.uMin << ", \"vMin\": " << ar.vMin
+                << ", \"uMax\": " << ar.uMax << ", \"vMax\": " << ar.vMax << " }"
+                << (i + 1 < atlasRects.size() ? ",\n" : "\n");
+        }
+        ofs << "  ]\n";
         ofs << "}\n";
     }
 
@@ -440,8 +596,9 @@ bool LightBakeManager::BakeLight(Scene& scene, GameObject& lightObj, const std::
     runtimeData.lightMapPath = bakeDir / "LightMap.dds";
     runtimeData.shadowMapPath = bakeDir / "ShadowMap.dds";
 
-    std::vector<uint8_t> lmRgba, smRgba;
-    RaycastShadowsAndIllumination(lightObj, staticMeshes, runtimeData, lmRgba, smRgba, res);
+    std::vector<glm::vec3> lmHdr;
+    std::vector<float> smHdr;
+    RaycastShadowsAndIllumination(lightObj, staticMeshes, runtimeData, lmHdr, smHdr, res);
 
     if (m_progressCb) m_progressCb("Saving baked assets to Cooked folder...", 0.7f);
 
@@ -465,7 +622,7 @@ bool LightBakeManager::BakeLight(Scene& scene, GameObject& lightObj, const std::
     strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M:%S", localtime(&now));
     meta.bakeDate = timeBuf;
 
-    if (!SaveBakeAssets(bakeDir, meta, lmRgba, smRgba, res)) {
+    if (!SaveBakeAssets(bakeDir, meta, lmHdr, smHdr, runtimeData.atlasRects, res)) {
         outStatus = "Failed to save baked assets to Cooked folder.";
         return false;
     }
@@ -493,6 +650,27 @@ bool LightBakeManager::BakeLight(Scene& scene, GameObject& lightObj, const std::
 
     m_bakedLights[lightObj.light.lightGuid] = std::move(runtimeData);
     RecomputeAccumulatedStaticLighting();
+
+    float minHdrVal = 1e9f, maxHdrVal = 0.0f;
+    for (const auto& c : lmHdr) {
+        float lum = glm::dot(c, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+        minHdrVal = std::min(minHdrVal, lum);
+        maxHdrVal = std::max(maxHdrVal, lum);
+    }
+    if (minHdrVal > 1e8f) minHdrVal = 0.0f;
+
+    // Specific logging requirements (dev.md Section 293-327)
+    std::cout << "\n========================================\n";
+    std::cout << "[Bake] Light: " << lightObj.name << "\n";
+    std::cout << "[Bake] Resolution: " << res << "\n";
+    std::cout << "[Bake] Participating meshes: " << staticMeshes.size() << "\n";
+    std::cout << "[Bake] Light contribution generated\n";
+    std::cout << "[Bake] Shadow contribution generated\n";
+    std::cout << "[Bake] HDR range: min=" << minHdrVal << ", max=" << maxHdrVal << "\n";
+    std::cout << "[Bake] Lightmap asset: " << meta.lightMapAsset << "\n";
+    std::cout << "[Bake] Realtime contribution disabled\n";
+    std::cout << "[Bake] Baked contribution enabled\n";
+    std::cout << "========================================\n\n";
 
     if (m_progressCb) m_progressCb("Bake complete.", 1.0f);
     outStatus = "Bake complete for " + lightObj.name + ". Assets saved to Cooked folder.";
@@ -532,7 +710,6 @@ bool LightBakeManager::LoadBakeForLight(GameObject& lightObj, const std::filesys
 
     std::error_code ec;
     if (!std::filesystem::exists(metaFile, ec)) {
-        // Assets were deleted or missing
         lightObj.light.isBakeDirty = true;
         return false;
     }
@@ -556,7 +733,7 @@ void LightBakeManager::LoadAllBakesForScene(Scene& scene, const std::filesystem:
         }
     }
 
-    // Reconstruct static lighting across all loaded bakes
+    // Reconstruct static lighting & lightmap UVs across all loaded bakes
     std::vector<BakeStaticMesh> staticMeshes;
     std::string err;
     if (CollectBakeGeometry(scene, staticMeshes, err)) {
@@ -564,7 +741,8 @@ void LightBakeManager::LoadAllBakesForScene(Scene& scene, const std::filesystem:
             if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.bakeState == LightBakeState::Baked) {
                 auto it = m_bakedLights.find(obj.light.lightGuid);
                 if (it != m_bakedLights.end()) {
-                    std::vector<uint8_t> dummyLm, dummySm;
+                    std::vector<glm::vec3> dummyLm;
+                    std::vector<float> dummySm;
                     RaycastShadowsAndIllumination(obj, staticMeshes, it->second, dummyLm, dummySm, (uint32_t)obj.light.bakeResolution);
                 }
             }
@@ -582,9 +760,19 @@ void LightBakeManager::OnLightDeleted(const std::string& lightGuid) {
 
 void LightBakeManager::RecomputeAccumulatedStaticLighting() {
     m_accumulatedStaticLighting.clear();
+    m_accumulatedMeshLightmapUvs.clear();
+    m_activeLightmapPath.clear();
 
     for (const auto& kv : m_bakedLights) {
         const auto& lightData = kv.second;
+        if (!lightData.lightMapPath.empty() && std::filesystem::exists(lightData.lightMapPath)) {
+            m_activeLightmapPath = lightData.lightMapPath.generic_string();
+        }
+
+        for (const auto& uvsKv : lightData.meshLightmapUvs) {
+            m_accumulatedMeshLightmapUvs[uvsKv.first] = uvsKv.second;
+        }
+
         for (const auto& meshKv : lightData.staticMeshVertexLighting) {
             int objId = meshKv.first;
             const auto& vCols = meshKv.second;
@@ -621,6 +809,28 @@ glm::vec3 LightBakeManager::GetStaticVertexBakedLight(int objectId, size_t verte
 
 bool LightBakeManager::HasStaticBakedLighting(int objectId) const {
     return m_accumulatedStaticLighting.find(objectId) != m_accumulatedStaticLighting.end();
+}
+
+bool LightBakeManager::HasMeshLightmapUV(int objectId) const {
+    return m_accumulatedMeshLightmapUvs.find(objectId) != m_accumulatedMeshLightmapUvs.end();
+}
+
+glm::vec2 LightBakeManager::GetMeshLightmapUV(int objectId, size_t vertexIndex) const {
+    auto it = m_accumulatedMeshLightmapUvs.find(objectId);
+    if (it != m_accumulatedMeshLightmapUvs.end()) {
+        if (vertexIndex < it->second.size()) {
+            return it->second[vertexIndex];
+        }
+    }
+    return glm::vec2(0.0f, 0.0f);
+}
+
+bool LightBakeManager::HasActiveLightmap() const {
+    return !m_activeLightmapPath.empty() && std::filesystem::exists(m_activeLightmapPath);
+}
+
+std::string LightBakeManager::GetActiveLightmapTexturePath() const {
+    return m_activeLightmapPath;
 }
 
 } // namespace Eunoia

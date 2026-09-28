@@ -1553,7 +1553,10 @@ struct RenderBatch {
                 glm::vec4 outTangent = glm::vec4(worldTangent, mv.tangent.w);
 
                 glm::vec3 vColor{0.0f, 0.0f, 0.0f};
-                if (obj.mobility == Mobility::Static || Eunoia::LightBakeManager::Get().HasStaticBakedLighting(obj.id)) {
+                if (Eunoia::LightBakeManager::Get().HasMeshLightmapUV(obj.id)) {
+                    glm::vec2 lmUv = Eunoia::LightBakeManager::Get().GetMeshLightmapUV(obj.id, vi);
+                    vColor = glm::vec3(lmUv.x, lmUv.y, 1.0f);
+                } else if (obj.mobility == Mobility::Static || Eunoia::LightBakeManager::Get().HasStaticBakedLighting(obj.id)) {
                     vColor = Eunoia::LightBakeManager::Get().GetStaticVertexBakedLight(obj.id, vi);
                 }
 
