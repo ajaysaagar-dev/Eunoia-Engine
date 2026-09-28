@@ -880,6 +880,22 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
     // Execute real-time dynamic Transform actions inside Update() (dev.md: Transform.Translate, Transform.Rotate)
     Transform.Init(this);
     for (const auto& action : m_transformActions) {
+        if (!action.requiredKeys.empty()) {
+            auto& input = InputSystem::Get();
+            bool conditionMet = false;
+            for (const auto& cond : action.requiredKeys) {
+                if (cond.key != -1) {
+                    bool keyState = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    if (cond.isNegated) keyState = !keyState;
+                    if (keyState) {
+                        conditionMet = true;
+                        break;
+                    }
+                }
+            }
+            if (!conditionMet) continue;
+        }
+
         glm::vec3 delta(0.0f);
         for (int i = 0; i < 3; ++i) {
             float val = action.constantDelta[i];
@@ -1267,8 +1283,73 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
     };
 
+    auto extractKeyConditions = [](const std::string& str) -> std::vector<DynamicScriptBehaviour::DynamicKeyCondition> {
+        std::vector<DynamicScriptBehaviour::DynamicKeyCondition> conds;
+        static const std::unordered_map<std::string, int> keyMap = {
+            {"w", Key::W}, {"a", Key::A}, {"s", Key::S}, {"d", Key::D},
+            {"q", Key::Q}, {"e", Key::E}, {"r", Key::R}, {"f", Key::F},
+            {"c", Key::C}, {"x", Key::X}, {"z", Key::Z}, {"v", Key::V},
+            {"b", Key::B}, {"g", Key::G}, {"h", Key::H}, {"i", Key::I},
+            {"j", Key::J}, {"k", Key::K}, {"l", Key::L}, {"m", Key::M},
+            {"n", Key::N}, {"o", Key::O}, {"p", Key::P}, {"t", Key::T},
+            {"u", Key::U}, {"y", Key::Y},
+            {"space", Key::Space}, {"lshift", Key::LShift}, {"rshift", Key::RShift},
+            {"lctrl", Key::LCtrl}, {"rctrl", Key::RCtrl}, {"lalt", Key::LAlt}, {"ralt", Key::RAlt},
+            {"up", Key::Up}, {"down", Key::Down}, {"left", Key::Left}, {"right", Key::Right},
+            {"escape", Key::Escape}, {"enter", Key::Enter}, {"tab", Key::Tab},
+            {"delete", Key::Delete}, {"backspace", Key::Backspace}
+        };
+
+        size_t searchPos = 0;
+        while (searchPos < str.size()) {
+            size_t kdPos = str.find("IsKeyDown(", searchPos);
+            size_t kpPos = str.find("IsKeyPressed(", searchPos);
+            size_t nextPos = std::min(kdPos, kpPos);
+            if (nextPos == std::string::npos) break;
+
+            bool isPress = (nextPos == kpPos);
+            bool isNegated = false;
+            if (nextPos > 0 && str[nextPos - 1] == '!') isNegated = true;
+            else if (nextPos >= 2 && str[nextPos - 2] == '!' && str[nextPos - 1] == ' ') isNegated = true;
+
+            size_t openP = str.find('(', nextPos);
+            size_t closeP = str.find(')', openP);
+            if (openP == std::string::npos || closeP == std::string::npos) break;
+
+            std::string arg = str.substr(openP + 1, closeP - openP - 1);
+            std::string lowerArg = arg;
+            std::transform(lowerArg.begin(), lowerArg.end(), lowerArg.begin(), ::tolower);
+
+            size_t colon = lowerArg.rfind("::");
+            if (colon != std::string::npos) lowerArg = lowerArg.substr(colon + 2);
+            size_t glfwPrefix = lowerArg.find("glfw_key_");
+            if (glfwPrefix != std::string::npos) lowerArg = lowerArg.substr(glfwPrefix + 9);
+
+            size_t b = lowerArg.find_first_not_of(" \t\r\n'\"");
+            size_t e = lowerArg.find_last_not_of(" \t\r\n'\"");
+            if (b != std::string::npos && e != std::string::npos) {
+                lowerArg = lowerArg.substr(b, e - b + 1);
+            }
+
+            auto it = keyMap.find(lowerArg);
+            if (it != keyMap.end()) {
+                DynamicScriptBehaviour::DynamicKeyCondition cond;
+                cond.key = it->second;
+                cond.isPressed = isPress;
+                cond.isNegated = isNegated;
+                conds.push_back(cond);
+            }
+
+            searchPos = closeP + 1;
+        }
+        return conds;
+    };
+
     bool inStartMethod = false;
     bool inUpdateMethod = false;
+    std::vector<DynamicScriptBehaviour::DynamicKeyCondition> activeKeyConditions;
+    bool pendingSingleLineCondition = false;
+    int conditionBraceLevel = 0;
 
     for (const auto& rawLine : lines) {
         std::string l = rawLine;
@@ -1284,6 +1365,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         } else if (l.find("void Update(") != std::string::npos || l.find("Update(float") != std::string::npos) {
             inUpdateMethod = true;
             inStartMethod = false;
+            activeKeyConditions.clear();
+            pendingSingleLineCondition = false;
+            conditionBraceLevel = 0;
         }
 
         if (inStartMethod) {
@@ -1303,6 +1387,43 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
 
         if (inUpdateMethod) {
+            // Track block braces for active condition
+            if (conditionBraceLevel > 0) {
+                for (char c : l) {
+                    if (c == '{') conditionBraceLevel++;
+                    else if (c == '}') conditionBraceLevel--;
+                }
+                if (conditionBraceLevel <= 0) {
+                    conditionBraceLevel = 0;
+                    activeKeyConditions.clear();
+                }
+            }
+
+            // Check if this line introduces an if (...) with key checks
+            size_t ifPos = l.find("if (");
+            if (ifPos == std::string::npos) ifPos = l.find("if(");
+            std::vector<DynamicScriptBehaviour::DynamicKeyCondition> lineConditions;
+            if (ifPos != std::string::npos) {
+                lineConditions = extractKeyConditions(l);
+            }
+
+            bool hasTranslate = (l.find("Translate(") != std::string::npos);
+            bool hasRotate = (l.find("Rotate(") != std::string::npos && l.find("AutoRotate") == std::string::npos);
+
+            if (!lineConditions.empty()) {
+                if (hasTranslate || hasRotate) {
+                    activeKeyConditions = lineConditions;
+                    pendingSingleLineCondition = true;
+                } else if (l.find('{') != std::string::npos) {
+                    activeKeyConditions = lineConditions;
+                    conditionBraceLevel = 1;
+                    pendingSingleLineCondition = false;
+                } else {
+                    activeKeyConditions = lineConditions;
+                    pendingSingleLineCondition = true;
+                }
+            }
+
             // 1. Scan for Print statements
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
@@ -1394,6 +1515,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                         for (int i = 0; i < 3; ++i) {
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
                         }
+                        if (!activeKeyConditions.empty()) {
+                            action.requiredKeys = activeKeyConditions;
+                            if (pendingSingleLineCondition) {
+                                activeKeyConditions.clear();
+                                pendingSingleLineCondition = false;
+                            }
+                        }
                         m_transformActions.push_back(action);
                     }
                 }
@@ -1430,13 +1558,29 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                         for (int i = 0; i < 3; ++i) {
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i]);
                         }
+                        if (!activeKeyConditions.empty()) {
+                            action.requiredKeys = activeKeyConditions;
+                            if (pendingSingleLineCondition) {
+                                activeKeyConditions.clear();
+                                pendingSingleLineCondition = false;
+                            }
+                        }
                         m_transformActions.push_back(action);
                     }
                 }
             }
 
-            if (l.find('}') != std::string::npos && l.find('{') == std::string::npos) {
+            if (!hasTranslate && !hasRotate && lineConditions.empty() && pendingSingleLineCondition) {
+                if (l.find(';') != std::string::npos || l.find('{') != std::string::npos) {
+                    activeKeyConditions.clear();
+                    pendingSingleLineCondition = false;
+                }
+            }
+
+            if (conditionBraceLevel == 0 && l.find('}') != std::string::npos && l.find('{') == std::string::npos) {
                 inUpdateMethod = false;
+                activeKeyConditions.clear();
+                pendingSingleLineCondition = false;
             }
         }
 

@@ -272,6 +272,12 @@ public:
     };
     std::vector<DynamicUpdatePrint> m_updatePrintMessages;
 
+    struct DynamicKeyCondition {
+        int key = -1;
+        bool isPressed = false; // true: IsKeyPressed, false: IsKeyDown
+        bool isNegated = false; // true: !IsKeyDown
+    };
+
     struct DynamicTransformAction {
         enum class ActionType {
             TranslateRelative,
@@ -284,6 +290,7 @@ public:
         bool useDeltaTime[3] = {false, false, false};
         std::string varNames[3];
         float varMultiplier[3] = {1.0f, 1.0f, 1.0f};
+        std::vector<DynamicKeyCondition> requiredKeys;
     };
     std::vector<DynamicTransformAction> m_transformActions;
 

@@ -8142,7 +8142,21 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             const auto& allRegistry = BehaviourRegistry::Get().GetAll();
             auto regIt = allRegistry.find(b->GetClassName());
             if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                if (regIt->second.isNative) {
+                bool sourceModifiedAfterBuild = false;
+                std::error_code ec;
+                if (std::filesystem::exists(regIt->second.sourceCpp, ec)) {
+                    char exePathBuf[MAX_PATH] = {};
+                    GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+                    if (std::filesystem::exists(exePathBuf, ec)) {
+                        auto cppTime = std::filesystem::last_write_time(regIt->second.sourceCpp, ec);
+                        auto exeTime = std::filesystem::last_write_time(exePathBuf, ec);
+                        if (!ec && cppTime > exeTime) {
+                            sourceModifiedAfterBuild = true;
+                        }
+                    }
+                }
+
+                if (regIt->second.isNative && !sourceModifiedAfterBuild) {
                     // Native compiled behaviour
                     if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
                         auto nativeB = regIt->second.factory();
@@ -8155,7 +8169,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                     } else {
                         b->RefreshPropertiesFromSource();
                     }
-                } else if (b->GetSourceCppPath().empty() || b->GetProperties().empty()) {
+                } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
                     auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
                     dynB->SetScene(&scene);
                     dynB->SetOwner(obj);
