@@ -51,25 +51,22 @@ GameObject* RespectiveObjectAccessor::CameraActor(void* objRef) const {
 }
 
 // ============================================================================
-// CursorStateProxy Implementations (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+// CursorStateController (dev.md: CursorState.Locked(); CursorState.UnLocked();)
 // ============================================================================
 
-void CursorStateProxy::Locked() const {
-    auto& input = InputSystem::Get();
-    input.SetCursorLocked(true);
-    if (behaviour && behaviour->GetOwner()) {
-        glm::vec3 rot = behaviour->GetOwner()->rotation;
-        input.SetCursorPos((double)rot.y, (double)rot.x);
+static struct CursorSyncInitializer {
+    CursorSyncInitializer() {
+        CursorStateController::s_cursorSyncCallback = []() {
+            if (CursorStateController::s_activeBehaviour) {
+                auto* beh = reinterpret_cast<EunoiaBehaviour*>(CursorStateController::s_activeBehaviour);
+                if (beh && beh->GetOwner()) {
+                    glm::vec3 rot = beh->GetOwner()->rotation;
+                    InputSystem::Get().SetCursorPos((double)rot.y, (double)rot.x);
+                }
+            }
+        };
     }
-}
-
-void CursorStateProxy::UnLocked() const {
-    InputSystem::Get().SetCursorLocked(false);
-}
-
-bool CursorStateProxy::IsLocked() const {
-    return InputSystem::Get().IsCursorLocked();
-}
+} s_cursorSyncInitializer;
 
 // ============================================================================
 // BehaviourTransformProperty Implementations
@@ -477,12 +474,12 @@ void GameObjectTransform::WorldTranslate(const glm::vec3& fromPoint, const glm::
 void GameObjectTransform::RelativeTranslate(const glm::vec3& delta) {
     if (!gameObject) return;
     glm::vec3 rot = GetRelativeRotationInternal();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    glm::vec3 rotatedDelta = glm::vec3(rotMat * glm::vec4(delta, 0.0f));
-    SetRelativeLocationInternal(GetRelativeLocationInternal() + rotatedDelta);
+    float rYaw = glm::radians(rot.y);
+    glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+    glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+    glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
+    SetRelativeLocationInternal(GetRelativeLocationInternal() + localDelta);
 }
 
 void GameObjectTransform::RelativeTranslate(const glm::vec3& fromPoint, const glm::vec3& toLocation) {

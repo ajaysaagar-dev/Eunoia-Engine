@@ -536,3 +536,44 @@ private:
 
 inline InputSystem* InputSystem::s_scrollInstance = nullptr;
 
+// ============================================================================
+// CursorStateController — Simple Cursor Lock / Unlock API (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+// Allows single-line commands anywhere:
+//   CursorState.Locked();
+//   CursorState.UnLocked();
+// ============================================================================
+struct CursorStateController {
+    void* behaviour = nullptr;
+    static inline void* s_activeBehaviour = nullptr;
+    static inline void (*s_cursorSyncCallback)() = nullptr;
+
+    CursorStateController() = default;
+    CursorStateController(void* b) : behaviour(b) {
+        if (b) s_activeBehaviour = b;
+    }
+
+    static void Locked() {
+        InputSystem::Get().SetCursorLocked(true);
+        if (s_cursorSyncCallback) {
+            s_cursorSyncCallback();
+        }
+    }
+    static void UnLocked() {
+        InputSystem::Get().SetCursorLocked(false);
+    }
+    static void Lock() { Locked(); }
+    static void Unlock() { UnLocked(); }
+    static void Unlocked() { UnLocked(); }
+
+    static bool IsLocked() {
+        return InputSystem::Get().IsCursorLocked();
+    }
+    static bool isLocked() {
+        return IsLocked();
+    }
+};
+
+inline CursorStateController CursorState;
+inline CursorStateController cursorState;
+using CursorStateProxy = CursorStateController;
+

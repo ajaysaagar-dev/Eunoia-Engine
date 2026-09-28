@@ -9,6 +9,7 @@
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <EngineScene/TransformTypes.h>
+#include <EnginePlatform/InputSystem.h>
 
 // Forward declarations
 struct GameObject;
@@ -364,7 +365,17 @@ struct BehaviourTransform {
 
     // Relative Translate (dev.md: Transform.RelativeTranslate(0, 0, 0);)
     // 1. By delta (x, y, z) / (delta) / (new Vector3(...))
-    void RelativeTranslate(const glm::vec3& delta) { Location.LocalSpace(Location.LocalSpace() + delta); }
+    // Transforms movement relative to current facing direction (local space heading):
+    // +X = Forward, -X = Backward, +Z = Right, -Z = Left, +Y = Up, -Y = Down
+    void RelativeTranslate(const glm::vec3& delta) {
+        glm::vec3 rot = Rotation.LocalSpace();
+        float rYaw = glm::radians(rot.y);
+        glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+        glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+        glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
+        Location.LocalSpace(Location.LocalSpace() + localDelta);
+    }
     void RelativeTranslate(float x, float y, float z) { RelativeTranslate(glm::vec3(x, y, z)); }
     void RelativeTranslate(const glm::vec3* delta) { if (delta) { RelativeTranslate(*delta); delete delta; } }
 
@@ -407,23 +418,6 @@ struct BehaviourTransform {
 #endif
 
 // ============================================================================
-// CursorStateProxy — Cursor Lock / Unlock API (dev.md: CursorState.Locked(); CursorState.UnLocked();)
-// ============================================================================
-struct CursorStateProxy {
-    EunoiaBehaviour* behaviour = nullptr;
-
-    void Locked() const;
-    void UnLocked() const;
-
-    void Lock() const { Locked(); }
-    void Unlock() const { UnLocked(); }
-    void Unlocked() const { UnLocked(); }
-
-    bool IsLocked() const;
-    bool isLocked() const { return IsLocked(); }
-};
-
-// ============================================================================
 // EunoiaBehaviour — Canonical Base Behaviour Class (dev.md Section 1)
 // ============================================================================
 class EunoiaBehaviour {
@@ -454,6 +448,7 @@ public:
         gameObject = owner;
         Transform.Init(this);
         GetRespectiveObject.behaviour = this;
+        CursorStateController::s_activeBehaviour = this;
         CursorState.behaviour = this;
         cursorState.behaviour = this;
     }
@@ -727,8 +722,4 @@ protected:
 // ============================================================================
 template<> LightComponent* EunoiaBehaviour::GetComponent<LightComponent>() const;
 template<> PrimitiveMesh*  EunoiaBehaviour::GetComponent<PrimitiveMesh>() const;
-
-// Global fallback accessors for CursorState (dev.md: CursorState.Locked(); CursorState.UnLocked();)
-inline CursorStateProxy CursorState;
-inline CursorStateProxy cursorState;
 
