@@ -8,6 +8,7 @@
 #include <EngineAssets/AssetSystem.h>
 #include <EngineScene/TransformTypes.h>
 #include <EngineScene/EunoiaBehaviour.h>
+#include <LightsBaking/LightBakeTypes.h>
 
 enum class LightType {
     Directional,
@@ -102,6 +103,26 @@ struct LightComponent {
 
     // Light Channels / Layer
     uint32_t lightLayer = 1;
+
+    // Baking System (dev.md)
+    Eunoia::LightBakeState bakeState = Eunoia::LightBakeState::Realtime;
+    int bakeResolution = 1024;
+    bool isBakeDirty = false;
+    std::string lightGuid = "";
+    std::string bakedLightmapPath = "";
+    std::string bakedShadowmapPath = "";
+    uint64_t bakeSignature = 0;
+
+    // Stored properties at bake time for dirty detection
+    glm::vec3 bakedPosition{0.0f};
+    glm::vec3 bakedRotation{0.0f};
+    float bakedIntensity = 2.0f;
+    glm::vec3 bakedColor{1.0f, 1.0f, 1.0f};
+    float bakedRange = 10.0f;
+    float bakedInnerCone = 20.0f;
+    float bakedOuterCone = 45.0f;
+    float bakedShadowBias = 0.0012f;
+    int bakedResolution = 1024;
 };
 
 struct PrimitiveParams {

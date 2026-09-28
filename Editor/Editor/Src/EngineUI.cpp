@@ -32,6 +32,7 @@
 #include <nlohmann/json.hpp>
 #include <MeshClusterCulling/MeshClusterCulling.h>
 #include <Water/WaterSystem.h>
+#include <LightsBaking/LightBakeManager.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -1167,6 +1168,7 @@ bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath, bool
     if (loaded) {
         currentLevelFilePath = filePath;
         levelUnsaved = false;
+        Eunoia::LightBakeManager::Get().LoadAllBakesForScene(level, activeProjectRoot);
         if (!isGameMode) {
             FinishLoadingTask("Level loaded: " + filename + " (" + std::to_string(level.objects.size()) + " actors)");
             AddLog("LogWorld", "Opened Level from: " + currentLevelFilePath + " (" + std::to_string(level.objects.size()) + " actors)", 2);
@@ -3883,6 +3885,70 @@ void EngineUI::RenderDetails(Scene& scene) {
                 int layer = (int)obj->light.lightLayer;
                 if (ImGui::InputInt("Light Layer / Channel", &layer)) {
                     obj->light.lightLayer = (uint32_t)std::max(0, layer);
+                }
+
+                // BAKING Section (dev.md Section 3)
+                ImGui::Separator();
+                ImGui::TextDisabled("BAKING");
+
+                // Bake Resolution combo
+                const char* bakeResOptions[] = { "256", "512", "1024", "2048", "4096" };
+                int bakeResVals[] = { 256, 512, 1024, 2048, 4096 };
+                int curBakeResIdx = 2; // default 1024
+                for (int r = 0; r < 5; ++r) {
+                    if (obj->light.bakeResolution == bakeResVals[r]) { curBakeResIdx = r; break; }
+                }
+                if (ImGui::Combo("Bake Resolution", &curBakeResIdx, bakeResOptions, 5)) {
+                    obj->light.bakeResolution = bakeResVals[curBakeResIdx];
+                    if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
+                        obj->light.isBakeDirty = true;
+                    }
+                }
+
+                // Dirty / Outdated check
+                Eunoia::LightBakeManager::Get().CheckBakeDirty(*obj);
+                const char* statusStr = "Realtime";
+                ImVec4 statusColor(0.4f, 0.9f, 0.4f, 1.0f);
+                if (obj->light.bakeState == Eunoia::LightBakeState::Baking) {
+                    statusStr = "Baking...";
+                    statusColor = ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
+                } else if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
+                    if (obj->light.isBakeDirty) {
+                        statusStr = "Baked - Outdated";
+                        statusColor = ImVec4(1.0f, 0.7f, 0.2f, 1.0f);
+                    } else {
+                        statusStr = "Baked";
+                        statusColor = ImVec4(0.3f, 1.0f, 0.5f, 1.0f);
+                    }
+                }
+                ImGui::Text("Status:             ");
+                ImGui::SameLine();
+                ImGui::TextColored(statusColor, "%s", statusStr);
+
+                if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
+                    if (!obj->light.bakedLightmapPath.empty()) {
+                        ImGui::TextDisabled("Light Map:  %s", obj->light.bakedLightmapPath.c_str());
+                    }
+                    if (!obj->light.bakedShadowmapPath.empty()) {
+                        ImGui::TextDisabled("Shadow Map: %s", obj->light.bakedShadowmapPath.c_str());
+                    }
+
+                    if (ImGui::Button("Re-Bake Light", ImVec2(120, 26))) {
+                        std::string statusMsg;
+                        Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, statusMsg);
+                        AddLog("Lighting", statusMsg, 1);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Clear Bake", ImVec2(110, 26))) {
+                        Eunoia::LightBakeManager::Get().ClearBake(scene, *obj, activeProjectRoot);
+                        AddLog("Lighting", "Cleared baked data for light: " + obj->name, 1);
+                    }
+                } else {
+                    if (ImGui::Button("Bake Light", ImVec2(120, 28))) {
+                        std::string statusMsg;
+                        Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, statusMsg);
+                        AddLog("Lighting", statusMsg, 1);
+                    }
                 }
             }
 

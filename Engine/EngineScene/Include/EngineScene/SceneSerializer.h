@@ -276,6 +276,23 @@ public:
             file << "      \"lightVolIntensity\": " << obj.light.volumetricIntensity << ",\n";
             file << "      \"lightLayer\": " << obj.light.lightLayer << ",\n";
 
+            // Baking System (dev.md)
+            file << "      \"lightBakeState\": " << (int)obj.light.bakeState << ",\n";
+            file << "      \"lightBakeRes\": " << obj.light.bakeResolution << ",\n";
+            file << "      \"lightBakeDirty\": " << BoolStr(obj.light.isBakeDirty) << ",\n";
+            file << "      \"lightGuid\": " << QuoteStr(obj.light.lightGuid) << ",\n";
+            file << "      \"lightBakedLightmap\": " << QuoteStr(obj.light.bakedLightmapPath) << ",\n";
+            file << "      \"lightBakedShadowmap\": " << QuoteStr(obj.light.bakedShadowmapPath) << ",\n";
+            file << "      \"lightBakeSig\": " << QuoteStr(std::to_string(obj.light.bakeSignature)) << ",\n";
+            file << "      \"lightBakedPos\": " << WriteVec3(obj.light.bakedPosition) << ",\n";
+            file << "      \"lightBakedRot\": " << WriteVec3(obj.light.bakedRotation) << ",\n";
+            file << "      \"lightBakedIntensity\": " << obj.light.bakedIntensity << ",\n";
+            file << "      \"lightBakedColor\": " << WriteVec3(obj.light.bakedColor) << ",\n";
+            file << "      \"lightBakedRange\": " << obj.light.bakedRange << ",\n";
+            file << "      \"lightBakedInnerCone\": " << obj.light.bakedInnerCone << ",\n";
+            file << "      \"lightBakedOuterCone\": " << obj.light.bakedOuterCone << ",\n";
+            file << "      \"lightBakedShadowBias\": " << obj.light.bakedShadowBias << ",\n";
+
             // Camera Component Properties
             file << "      \"isCamera\": " << BoolStr(obj.isCamera) << ",\n";
             file << "      \"camOrthographic\": " << BoolStr(obj.camera.isOrthographic) << ",\n";
@@ -992,6 +1009,28 @@ private:
             p = actorBlock.find("\"lightVolScattering\""); if (p != std::string::npos) obj.light.volumetricScattering = ParseFloatAt(actorBlock, p, 0.2f);
             p = actorBlock.find("\"lightVolIntensity\""); if (p != std::string::npos) obj.light.volumetricIntensity = ParseFloatAt(actorBlock, p, 1.0f);
             p = actorBlock.find("\"lightLayer\""); if (p != std::string::npos) obj.light.lightLayer = (uint32_t)ParseIntAt(actorBlock, p, 1);
+
+            // Parse Baking Properties (dev.md)
+            p = actorBlock.find("\"lightBakeState\""); if (p != std::string::npos) obj.light.bakeState = (Eunoia::LightBakeState)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"lightBakeRes\""); if (p != std::string::npos) obj.light.bakeResolution = ParseIntAt(actorBlock, p, 1024);
+            p = actorBlock.find("\"lightBakeDirty\""); if (p != std::string::npos) obj.light.isBakeDirty = ParseBoolAt(actorBlock, p, false);
+            p = actorBlock.find("\"lightGuid\""); if (p != std::string::npos) obj.light.lightGuid = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakedLightmap\""); if (p != std::string::npos) obj.light.bakedLightmapPath = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakedShadowmap\""); if (p != std::string::npos) obj.light.bakedShadowmapPath = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakeSig\""); if (p != std::string::npos) {
+                std::string sigStr = ParseStringAt(actorBlock, p, "");
+                if (!sigStr.empty()) {
+                    try { obj.light.bakeSignature = std::stoull(sigStr); } catch (...) {}
+                }
+            }
+            p = actorBlock.find("\"lightBakedPos\""); if (p != std::string::npos) obj.light.bakedPosition = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedRot\""); if (p != std::string::npos) obj.light.bakedRotation = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedIntensity\""); if (p != std::string::npos) obj.light.bakedIntensity = ParseFloatAt(actorBlock, p, 2.0f);
+            p = actorBlock.find("\"lightBakedColor\""); if (p != std::string::npos) obj.light.bakedColor = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedRange\""); if (p != std::string::npos) obj.light.bakedRange = ParseFloatAt(actorBlock, p, 10.0f);
+            p = actorBlock.find("\"lightBakedInnerCone\""); if (p != std::string::npos) obj.light.bakedInnerCone = ParseFloatAt(actorBlock, p, 20.0f);
+            p = actorBlock.find("\"lightBakedOuterCone\""); if (p != std::string::npos) obj.light.bakedOuterCone = ParseFloatAt(actorBlock, p, 45.0f);
+            p = actorBlock.find("\"lightBakedShadowBias\""); if (p != std::string::npos) obj.light.bakedShadowBias = ParseFloatAt(actorBlock, p, 0.0012f);
 
             // Parse Camera Properties
             p = actorBlock.find("\"isCamera\""); if (p != std::string::npos) obj.isCamera = ParseBoolAt(actorBlock, p, false);

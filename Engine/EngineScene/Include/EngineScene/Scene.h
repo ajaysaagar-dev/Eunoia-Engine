@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <EngineScene/BehaviourRegistry.h>
 #include <EnginePlatform/InputSystem.h>
+#include <LightsBaking/LightBakeManager.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -49,6 +50,10 @@ struct PointLight {
     float height = 1.0f;
     float radius = 0.5f;
     bool twoSided = false;
+
+    // Baking System (dev.md)
+    Eunoia::LightBakeState bakeState = Eunoia::LightBakeState::Realtime;
+    int bakeResolution = 1024;
 };
 
 class Scene {
@@ -1521,7 +1526,8 @@ struct RenderBatch {
             uint32_t vertexOffset = (uint32_t)outVertices.size();
             uint32_t indexStart = (uint32_t)outIndices.size();
 
-            for (const auto& mv : obj.mesh.vertices) {
+            for (size_t vi = 0; vi < obj.mesh.vertices.size(); ++vi) {
+                const auto& mv = obj.mesh.vertices[vi];
                 glm::vec4 worldPos = model * glm::vec4(mv.pos, 1.0f);
                 // Task 3 – defense in depth: if the model matrix is corrupted (NaN/Inf),
                 // fall back to local-space position rather than sending NaN to the GPU.
@@ -1538,7 +1544,12 @@ struct RenderBatch {
                 glm::vec3 worldTangent = (tLen > 1e-6f && !std::isnan(tLen)) ? (t / tLen) : glm::vec3(1.0f, 0.0f, 0.0f);
                 glm::vec4 outTangent = glm::vec4(worldTangent, mv.tangent.w);
 
-                outVertices.push_back({ glm::vec3(worldPos), worldNormal, mv.uv, glm::vec3(1.0f, 1.0f, 1.0f), outTangent });
+                glm::vec3 vColor{0.0f, 0.0f, 0.0f};
+                if (obj.mobility == Mobility::Static) {
+                    vColor = Eunoia::LightBakeManager::Get().GetStaticVertexBakedLight(obj.id, vi);
+                }
+
+                outVertices.push_back({ glm::vec3(worldPos), worldNormal, mv.uv, vColor, outTangent });
             }
 
             for (uint32_t idx : obj.mesh.indices) {

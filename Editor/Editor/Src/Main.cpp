@@ -44,6 +44,7 @@
 #include <EngineScene/ScreenPrint.h>
 #include <MeshClusterCulling/MeshClusterCulling.h>
 #include <Water/WaterSystem.h>
+#include <LightsBaking/LightBakeManager.h>
 
 extern "C" {
     unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -250,6 +251,7 @@ static ID3D12Resource* g_shadowDepthBuffer = nullptr;
 static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowDsvHandle = {};
 static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowSrvCpuHandle = {};
 static D3D12_GPU_DESCRIPTOR_HANDLE g_shadowSrvGpuHandle = {};
+static bool g_isDirectionalLightBaked = false;
 
 // Real-Time Point Light Shadow Cubemap Array Resources
 static ID3D12Resource* g_pointShadowDepthBuffer = nullptr;
@@ -2149,7 +2151,7 @@ int createShadersAndPipeline()
 				N = normalize(mul(nSample, TBN));
 			}
 
-			float3 albedo = input.color * baseColor;
+			float3 albedo = baseColor;
 			if (hasAlbedoTex > 0.5f)
 			{
 				float4 albedoSample = g_albedoTex.Sample(g_sampler, uv);
@@ -2225,7 +2227,8 @@ int createShadersAndPipeline()
 
 			if (isUnlit > 0.5f)
 			{
-				return float4(pow(saturate(albedo + emissiveColor * emissiveIntensity), 1.0f / 2.2f), currentOpacity);
+				float3 unlitBase = (length(input.color) > 0.001f && hasAlbedoTex < 0.5f) ? (input.color * albedo) : albedo;
+				return float4(pow(saturate(unlitBase + emissiveColor * emissiveIntensity), 1.0f / 2.2f), currentOpacity);
 			}
 
 			float NdotL = max(dot(N, L), 0.0f);
@@ -2348,7 +2351,8 @@ int createShadersAndPipeline()
 			}
 
 			float3 emissive = emissiveColor * emissiveIntensity;
-			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + emissive;
+			float3 bakedLit = diffBRDF * input.color;
+			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + bakedLit + emissive;
 
 			// Post Processing: Color Grading and Exposure
 			if (enablePostProcessing > 0.5f)
@@ -2996,12 +3000,19 @@ void updateConstantBuffer()
 		glm::vec3 tintLight = g_scene.skyboxLightingColor * g_scene.skyboxTint;
 		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, tintLight, 0.7f), 1.0f);
 	}
+	g_isDirectionalLightBaked = false;
+	for (const auto& obj : g_scene.objects) {
+		if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional && obj.light.bakeState == Eunoia::LightBakeState::Baked) {
+			g_isDirectionalLightBaked = true;
+			break;
+		}
+	}
 	cb.lightDir = lightDir;
 	cb.shadowBias = g_scene.shadowBias;
-	cb.lightColor = g_scene.lightColor * g_scene.lightIntensity;
-	cb.shadowStrength = g_scene.shadowStrength;
+	cb.lightColor = g_isDirectionalLightBaked ? glm::vec3(0.0f) : (g_scene.lightColor * g_scene.lightIntensity);
+	cb.shadowStrength = g_isDirectionalLightBaked ? 0.0f : g_scene.shadowStrength;
 	cb.pcfRadius = g_scene.pcfRadius;
-	cb.enableShadows = g_scene.enableShadows ? 1.0f : 0.0f;
+	cb.enableShadows = (g_scene.enableShadows && !g_isDirectionalLightBaked) ? 1.0f : 0.0f;
 	cb.shadowMapSize = (float)g_currentDirShadowRes;
 
 	// Post Processing parameters (Color Grading & Exposure)
@@ -3032,6 +3043,7 @@ void updateConstantBuffer()
 	{
 		const auto& pl = g_scene.pointLights[i];
 		if (!pl.enabled) continue;
+		if (pl.bakeState == Eunoia::LightBakeState::Baked) continue; // Baked lights bypass realtime light submission
 
 		cb.pointLightPosRange[activePointLights] = glm::vec4(pl.position, pl.range);
 		cb.pointLightColorIntensity[activePointLights] = glm::vec4(pl.color, pl.intensity);
@@ -3217,7 +3229,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows)
+	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
 	{
 		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,

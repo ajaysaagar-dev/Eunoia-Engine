@@ -89,6 +89,7 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "-I%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Include" ^
     "-I%PROJECT_DIR%\Plugins\water\include" ^
     "-I%PROJECT_DIR%\Plugins\skybox\include" ^
+    "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\Editor\Editor\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
@@ -105,6 +106,8 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\HiZManager.cpp" ^
     "%PROJECT_DIR%\Plugins\water\src\WaterSystem.cpp" ^
     "%PROJECT_DIR%\Plugins\water\src\WaterPlugin.cpp" ^
+    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightBakeManager.cpp" ^
+    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightsBakingPlugin.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
@@ -198,6 +201,7 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "-I%PROJECT_DIR%\Engine\EngineRHI\Include" ^
     "-I%PROJECT_DIR%\Engine\EngineRenderer\Include" ^
     "-I%PROJECT_DIR%\Engine\EunoiaPluginCore\Include" ^
+    "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
     "-I%PROJECT_DIR%\deps\ufbx" ^
@@ -213,6 +217,7 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
+    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightBakeManager.cpp" ^
     "%PROJECT_DIR%\Runtime\Src\Main.cpp" ^
     !PROJECT_USER_SCRIPTS! ^
     "-L%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64" ^
