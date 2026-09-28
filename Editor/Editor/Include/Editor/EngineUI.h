@@ -398,6 +398,7 @@ public:
     // Skybox Asset File I/O & World Skybox Settings
     bool showSkyboxEditor = false;
     bool showSkyboxSettingsModal = false;
+    bool showPostProcessingModal = false;
     bool showNewSkyboxPopup = false;
     char newSkyboxNameBuf[64] = "Skybox_New";
     SkyboxAsset activeSkybox;
@@ -547,6 +548,7 @@ private:
     void RenderSkyboxEditor(Scene& scene);
     void RenderWaterEditor(Scene& scene);
     void RenderWorldSkyboxSettingsModal(Scene& scene);
+    void RenderPostProcessingModal(Scene& scene);
     void RenderReferenceViewer(Scene& scene);
     void RenderCookModal();
     void RenderHelpModal();

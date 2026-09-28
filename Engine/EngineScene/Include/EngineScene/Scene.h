@@ -84,6 +84,19 @@ public:
     float skyboxLightingSpecular = 1.0f;
     float skyboxLightingDiffuse = 1.0f;
 
+    // Post Processing Settings (Color Grading & Exposure)
+    // Disabled by default for a level as requested
+    bool enablePostProcessing = false;
+    float postExposureEV = 0.0f;
+    float postExposureMultiplier = 1.0f;
+    int postTonemapper = 1; // 0=None/Linear, 1=ACES Filmic, 2=Reinhard
+    float postSaturation = 1.0f;
+    float postContrast = 1.0f;
+    float postGamma = 1.0f;
+    glm::vec3 postColorFilter{1.0f, 1.0f, 1.0f};
+    float postColorTemperature = 6500.0f;
+    float postColorTint = 0.0f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
@@ -1210,6 +1223,16 @@ public:
         skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
         skyboxLightingSpecular = 1.0f;
         skyboxLightingDiffuse = 1.0f;
+        enablePostProcessing = false;
+        postExposureEV = 0.0f;
+        postExposureMultiplier = 1.0f;
+        postTonemapper = 1;
+        postSaturation = 1.0f;
+        postContrast = 1.0f;
+        postGamma = 1.0f;
+        postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
+        postColorTemperature = 6500.0f;
+        postColorTint = 0.0f;
     }
 
     // Play Mode State & Runtime Lifecycle (dev.md Section 30-36)

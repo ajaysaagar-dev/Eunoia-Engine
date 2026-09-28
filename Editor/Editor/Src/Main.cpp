@@ -98,6 +98,15 @@ struct alignas(256) SceneConstantBuffer
 	glm::vec4 pointLightSpotAreaParams[MAX_POINT_LIGHTS];
 	glm::vec4 pointLightShadowParams[MAX_POINT_LIGHTS];
 	glm::mat4 spotLightSpaceMatrices[MAX_SHADOW_SPOT_LIGHTS];
+	float enablePostProcessing;
+	float postExposureEV;
+	float postExposureMultiplier;
+	float postTonemapper;
+	float postSaturation;
+	float postContrast;
+	float postGamma;
+	float padPost;
+	glm::vec4 postColorFilter;
 };
 
 struct alignas(256) ShadowConstantBuffer
@@ -1841,6 +1850,15 @@ int createShadersAndPipeline()
 			float4 pointLightSpotAreaParams[64];
 			float4 pointLightShadowParams[64];
 			float4x4 spotLightSpaceMatrices[4];
+			float enablePostProcessing;
+			float postExposureEV;
+			float postExposureMultiplier;
+			float postTonemapper;
+			float postSaturation;
+			float postContrast;
+			float postGamma;
+			float padPost;
+			float4 postColorFilter;
 		};
 
 		cbuffer MaterialConstants : register(b1)
@@ -2331,7 +2349,56 @@ int createShadersAndPipeline()
 
 			float3 emissive = emissiveColor * emissiveIntensity;
 			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + emissive;
-			litColor = pow(saturate(litColor), 1.0f / 2.2f);
+
+			// Post Processing: Color Grading and Exposure
+			if (enablePostProcessing > 0.5f)
+			{
+				// 1. Exposure (EV Compensation & Multiplier)
+				float evFactor = exp2(postExposureEV);
+				litColor *= (evFactor * max(postExposureMultiplier, 0.0f));
+
+				// 2. Color Filter / White Balance Tint
+				litColor *= max(postColorFilter.rgb, float3(0, 0, 0));
+
+				// 3. Contrast (Linear Power Curve)
+				if (abs(postContrast - 1.0f) > 0.001f)
+				{
+					litColor = pow(max(litColor, 0.00001f), max(postContrast, 0.01f));
+				}
+
+				// 4. Tonemapping
+				if (postTonemapper > 0.5f && postTonemapper < 1.5f)
+				{
+					// ACES Filmic tonemapping curve fit (Narkowicz 2015)
+					float a = 2.51f;
+					float b = 0.03f;
+					float c = 2.43f;
+					float d = 0.59f;
+					float e = 0.14f;
+					litColor = saturate((litColor * (a * litColor + b)) / (litColor * (c * litColor + d) + e));
+				}
+				else if (postTonemapper > 1.5f)
+				{
+					// Reinhard tonemapping
+					litColor = litColor / (litColor + 1.0f);
+				}
+
+				// 5. Saturation
+				if (abs(postSaturation - 1.0f) > 0.001f)
+				{
+					float luma = dot(litColor, float3(0.2126f, 0.7152f, 0.0722f));
+					litColor = lerp(float3(luma, luma, luma), litColor, max(postSaturation, 0.0f));
+				}
+
+				// 6. Gamma correction
+				float invGamma = 1.0f / max(2.2f * max(postGamma, 0.1f), 0.01f);
+				litColor = pow(saturate(litColor), invGamma);
+			}
+			else
+			{
+				litColor = pow(saturate(litColor), 1.0f / 2.2f);
+			}
+
 			return float4(litColor, currentOpacity);
 		}
 	)";
@@ -2936,6 +3003,25 @@ void updateConstantBuffer()
 	cb.pcfRadius = g_scene.pcfRadius;
 	cb.enableShadows = g_scene.enableShadows ? 1.0f : 0.0f;
 	cb.shadowMapSize = (float)g_currentDirShadowRes;
+
+	// Post Processing parameters (Color Grading & Exposure)
+	cb.enablePostProcessing = g_scene.enablePostProcessing ? 1.0f : 0.0f;
+	cb.postExposureEV = g_scene.postExposureEV;
+	cb.postExposureMultiplier = g_scene.postExposureMultiplier;
+	cb.postTonemapper = (float)g_scene.postTonemapper;
+	cb.postSaturation = g_scene.postSaturation;
+	cb.postContrast = g_scene.postContrast;
+	cb.postGamma = g_scene.postGamma;
+	cb.padPost = 0.0f;
+
+	// Calculate white balance adjusted color filter
+	glm::vec3 ppFilter = g_scene.postColorFilter;
+	float tempDelta = (g_scene.postColorTemperature - 6500.0f) / 6500.0f;
+	ppFilter.r *= (1.0f - tempDelta * 0.35f);
+	ppFilter.b *= (1.0f + tempDelta * 0.35f);
+	ppFilter.g *= (1.0f + g_scene.postColorTint * 0.20f);
+	ppFilter = glm::max(ppFilter, glm::vec3(0.0f));
+	cb.postColorFilter = glm::vec4(ppFilter, 1.0f);
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;

@@ -72,6 +72,18 @@ public:
         file << "      \"lightingColor\": " << WriteVec3(scene.skyboxLightingColor) << ",\n";
         file << "      \"lightingSpecular\": " << scene.skyboxLightingSpecular << ",\n";
         file << "      \"lightingDiffuse\": " << scene.skyboxLightingDiffuse << "\n";
+        file << "    },\n";
+        file << "    \"postProcessing\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enablePostProcessing) << ",\n";
+        file << "      \"exposureEV\": " << scene.postExposureEV << ",\n";
+        file << "      \"exposureMultiplier\": " << scene.postExposureMultiplier << ",\n";
+        file << "      \"tonemapper\": " << scene.postTonemapper << ",\n";
+        file << "      \"saturation\": " << scene.postSaturation << ",\n";
+        file << "      \"contrast\": " << scene.postContrast << ",\n";
+        file << "      \"gamma\": " << scene.postGamma << ",\n";
+        file << "      \"colorFilter\": " << WriteVec3(scene.postColorFilter) << ",\n";
+        file << "      \"colorTemperature\": " << scene.postColorTemperature << ",\n";
+        file << "      \"colorTint\": " << scene.postColorTint << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -677,6 +689,28 @@ private:
             p = sBlock.find("\"lightingColor\""); if (p != std::string::npos) scene.skyboxLightingColor = ParseVec3(sBlock, p);
             p = sBlock.find("\"lightingSpecular\""); if (p != std::string::npos) scene.skyboxLightingSpecular = ParseFloatAt(sBlock, p, 1.0f);
             p = sBlock.find("\"lightingDiffuse\""); if (p != std::string::npos) scene.skyboxLightingDiffuse = ParseFloatAt(sBlock, p, 1.0f);
+        }
+
+        // Post Processing (Color Grading & Exposure)
+        size_t ppPos = envBlock.find("\"postProcessing\"");
+        if (ppPos != std::string::npos) {
+            size_t pStart = envBlock.find('{', ppPos);
+            size_t pEnd = FindMatchingBrace(envBlock, pStart);
+            std::string pBlock = envBlock.substr(pStart, pEnd - pStart + 1);
+
+            size_t p;
+            p = pBlock.find("\"enabled\""); if (p != std::string::npos) scene.enablePostProcessing = ParseBoolAt(pBlock, p, false);
+            p = pBlock.find("\"exposureEV\""); if (p != std::string::npos) scene.postExposureEV = ParseFloatAt(pBlock, p, 0.0f);
+            p = pBlock.find("\"exposureMultiplier\""); if (p != std::string::npos) scene.postExposureMultiplier = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"tonemapper\""); if (p != std::string::npos) scene.postTonemapper = (int)ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"saturation\""); if (p != std::string::npos) scene.postSaturation = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"contrast\""); if (p != std::string::npos) scene.postContrast = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"gamma\""); if (p != std::string::npos) scene.postGamma = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"colorFilter\""); if (p != std::string::npos) scene.postColorFilter = ParseVec3(pBlock, p);
+            p = pBlock.find("\"colorTemperature\""); if (p != std::string::npos) scene.postColorTemperature = ParseFloatAt(pBlock, p, 6500.0f);
+            p = pBlock.find("\"colorTint\""); if (p != std::string::npos) scene.postColorTint = ParseFloatAt(pBlock, p, 0.0f);
+        } else {
+            scene.enablePostProcessing = false;
         }
     }
 

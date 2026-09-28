@@ -2104,6 +2104,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showSkyboxSettingsModal) {
         RenderWorldSkyboxSettingsModal(scene);
     }
+    if (showPostProcessingModal) {
+        RenderPostProcessingModal(scene);
+    }
 
     // 7. Asset Reference Viewer (dev.md Section 33)
     if (showReferenceViewer) {
@@ -2536,30 +2539,49 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("🌌 Skybox Settings...", nullptr, showSkyboxSettingsModal)) {
                     showSkyboxSettingsModal = true;
                 }
-                if (ImGui::BeginMenu("🌌 Quick Skybox")) {
-                    if (ImGui::Checkbox("Enable Skybox", &scene.enableSkybox)) {
-                        AddLog("LogWorld", scene.enableSkybox ? "Enabled Skybox rendering" : "Disabled Skybox rendering", 0);
+                ImGui::Separator();
+                if (ImGui::MenuItem("🎬 Post Processing Settings...", nullptr, showPostProcessingModal)) {
+                    showPostProcessingModal = true;
+                }
+                if (ImGui::BeginMenu("🎬 Post Processing")) {
+                    if (ImGui::Checkbox("Enable Post Processing", &scene.enablePostProcessing)) {
+                        AddLog("LogWorld", scene.enablePostProcessing ? "Enabled Level Post Processing" : "Disabled Level Post Processing", 0);
                     }
                     ImGui::Separator();
-                    ImGui::SliderFloat("Exposure", &scene.skyboxExposure, 0.05f, 10.0f, "%.2f");
-                    ImGui::SliderFloat("Rotation", &scene.skyboxRotation, 0.0f, 360.0f, "%.1f°");
-                    ImGui::ColorEdit3("Tint", &scene.skyboxTint.x);
-                    ImGui::SliderFloat("Ambient Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
+
+                    ImGui::TextDisabled("Exposure & Brightness:");
+                    ImGui::SliderFloat("EV Compensation", &scene.postExposureEV, -5.0f, 5.0f, "%.2f EV");
+                    ImGui::SliderFloat("Exposure Multiplier", &scene.postExposureMultiplier, 0.0f, 5.0f, "%.2f");
                     ImGui::Separator();
-                    if (ImGui::Checkbox("Skybox Lighting", &scene.enableSkyboxLighting)) {
-                        AddLog("LogWorld", scene.enableSkyboxLighting ? "Enabled Skybox based scene lighting" : "Disabled Skybox based scene lighting", 0);
-                    }
-                    if (scene.enableSkyboxLighting) {
-                        ImGui::SliderFloat("Light Intensity", &scene.skyboxLightingIntensity, 0.0f, 10.0f, "%.2f");
-                    }
+
+                    ImGui::TextDisabled("Color Grading & Tonemapping:");
+                    const char* tonemappers[] = { "None / Linear", "ACES Filmic (UE5 Standard)", "Reinhard" };
+                    ImGui::Combo("Tonemapper", &scene.postTonemapper, tonemappers, IM_ARRAYSIZE(tonemappers));
+                    ImGui::SliderFloat("Saturation", &scene.postSaturation, 0.0f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("Contrast", &scene.postContrast, 0.5f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("Gamma", &scene.postGamma, 0.5f, 2.0f, "%.2f");
+                    ImGui::ColorEdit3("Color Filter", &scene.postColorFilter.x);
+                    ImGui::SliderFloat("Temperature", &scene.postColorTemperature, 2000.0f, 12000.0f, "%.0f K");
+                    ImGui::SliderFloat("Tint", &scene.postColorTint, -1.0f, 1.0f, "%.2f");
+
                     ImGui::Separator();
-                    if (!scene.skyboxAssetPath.empty()) {
-                        std::string assetLbl = "Asset: " + std::filesystem::path(scene.skyboxAssetPath).stem().string();
-                        ImGui::TextDisabled("%s", assetLbl.c_str());
-                        if (ImGui::MenuItem("Open in Skybox Editor")) {
-                            OpenSkyboxEditor(scene.skyboxAssetPath);
-                        }
+                    if (ImGui::Button("Reset to Defaults##ResetQuickPP")) {
+                        scene.enablePostProcessing = false;
+                        scene.postExposureEV = 0.0f;
+                        scene.postExposureMultiplier = 1.0f;
+                        scene.postTonemapper = 1;
+                        scene.postSaturation = 1.0f;
+                        scene.postContrast = 1.0f;
+                        scene.postGamma = 1.0f;
+                        scene.postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
+                        scene.postColorTemperature = 6500.0f;
+                        scene.postColorTint = 0.0f;
                     }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Full Settings##OpenFullPP")) {
+                        showPostProcessingModal = true;
+                    }
+
                     ImGui::EndMenu();
                 }
 
@@ -5943,6 +5965,142 @@ void EngineUI::RenderWorldSkyboxSettingsModal(Scene& scene) {
         ImGui::Spacing();
         if (ImGui::Button("Close", ImVec2(120, 0))) {
             showSkyboxSettingsModal = false;
+        }
+    }
+    ImGui::End();
+}
+
+void EngineUI::RenderPostProcessingModal(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(640, 640), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("🎬 World Post Processing Settings###WorldPostProcessingWin", &showPostProcessingModal, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "World Post Processing & Color Pipeline");
+        ImGui::TextWrapped("Configure real-time exposure and color grading for the active level. Post processing is disabled by default for each level.");
+        ImGui::Separator();
+
+        // Master Enable Toggle
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.2f, 0.9f, 0.4f, 1.0f));
+        if (ImGui::Checkbox("Enable Post Processing for Level", &scene.enablePostProcessing)) {
+            AddLog("LogWorld", scene.enablePostProcessing ? "Enabled level post processing" : "Disabled level post processing", 0);
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (scene.enablePostProcessing) {
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "[ACTIVE]");
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "[DISABLED (Default)]");
+        }
+        ImGui::Spacing();
+
+        if (!scene.enablePostProcessing) {
+            ImGui::TextDisabled("Enable the checkbox above to activate real-time exposure and color grading in the viewport.");
+            ImGui::Spacing();
+        }
+
+        // ====================================================================
+        // 1. EXPOSURE & LUMINANCE
+        // ====================================================================
+        if (ImGui::CollapsingHeader("EXPOSURE & LUMINANCE", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::SliderFloat("EV Compensation", &scene.postExposureEV, -5.0f, 5.0f, "%.2f EV");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Exposure Value compensation in photographic stops (2^EV factor). 0 = Neutral.");
+            }
+
+            // Quick preset EV buttons
+            ImGui::TextDisabled("Quick EV Presets:");
+            ImGui::SameLine();
+            if (ImGui::SmallButton("-2 EV")) scene.postExposureEV = -2.0f;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("-1 EV")) scene.postExposureEV = -1.0f;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("0 EV (Neutral)")) scene.postExposureEV = 0.0f;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("+1 EV")) scene.postExposureEV = 1.0f;
+            ImGui::SameLine();
+            if (ImGui::SmallButton("+2 EV")) scene.postExposureEV = 2.0f;
+
+            ImGui::SliderFloat("Exposure Multiplier", &scene.postExposureMultiplier, 0.0f, 8.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Linear intensity multiplier applied to camera exposure.");
+            }
+            ImGui::Spacing();
+        }
+
+        // ====================================================================
+        // 2. TONEMAPPING & CONTRAST
+        // ====================================================================
+        if (ImGui::CollapsingHeader("TONEMAPPING & CONTRAST", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            const char* tonemappers[] = {
+                "None / Linear (Clamped)",
+                "ACES Filmic (Unreal Engine 5 Standard)",
+                "Reinhard (Soft Shoulder)"
+            };
+            ImGui::SetNextItemWidth(340.0f);
+            ImGui::Combo("Tonemapping Operator", &scene.postTonemapper, tonemappers, IM_ARRAYSIZE(tonemappers));
+
+            ImGui::SliderFloat("Contrast", &scene.postContrast, 0.4f, 2.2f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Expands or compresses dynamic range contrast (1.0 = Default neutral).");
+            }
+
+            ImGui::SliderFloat("Gamma Curve", &scene.postGamma, 0.4f, 2.2f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Gamma power curve exponent (1.0 = standard 2.2 display gamma).");
+            }
+            ImGui::Spacing();
+        }
+
+        // ====================================================================
+        // 3. COLOR GRADING & WHITE BALANCE
+        // ====================================================================
+        if (ImGui::CollapsingHeader("COLOR GRADING & WHITE BALANCE", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::SliderFloat("Saturation", &scene.postSaturation, 0.0f, 2.5f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Color vibrance and intensity (0.0 = Grayscale/Monochrome, 1.0 = Natural, 2.0 = Saturated).");
+            }
+
+            ImGui::ColorEdit3("Color Filter / Grading Tint", &scene.postColorFilter.x);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Direct RGB tint filter multiplied across final scene pixels.");
+            }
+
+            ImGui::SliderFloat("Color Temperature (K)", &scene.postColorTemperature, 2000.0f, 12000.0f, "%.0f K");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("White balance color temperature in Kelvin. 6500K is neutral daylight. <6500K is warm/amber, >6500K is cool/blue.");
+            }
+            ImGui::TextDisabled("  Reference: 2500K (Candle) | 4000K (Warm Sun) | 6500K (Daylight) | 9000K (Overcast/Cool)");
+
+            ImGui::SliderFloat("Color Tint (Green - Magenta)", &scene.postColorTint, -1.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("White balance tint axis: negative shifts towards green, positive shifts towards magenta.");
+            }
+            ImGui::Spacing();
+        }
+
+        // Reset to Defaults & Close Buttons
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Reset to Defaults##ResetPPModal", ImVec2(160, 30))) {
+            scene.enablePostProcessing = false;
+            scene.postExposureEV = 0.0f;
+            scene.postExposureMultiplier = 1.0f;
+            scene.postTonemapper = 1;
+            scene.postSaturation = 1.0f;
+            scene.postContrast = 1.0f;
+            scene.postGamma = 1.0f;
+            scene.postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
+            scene.postColorTemperature = 6500.0f;
+            scene.postColorTint = 0.0f;
+            AddLog("LogWorld", "Reset post processing settings to defaults (Disabled).", 0);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Close", ImVec2(100, 30))) {
+            showPostProcessingModal = false;
         }
     }
     ImGui::End();
