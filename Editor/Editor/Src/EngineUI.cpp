@@ -627,6 +627,291 @@ static void ApplyProjectBrowserTheme() {
     colors[ImGuiCol_PopupBg]        = ImVec4(0.09f, 0.09f, 0.12f, 0.98f);
 }
 
+#include <GL/gl.h>
+
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
+
+extern "C" {
+    unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
+    void stbi_image_free(void *retval_from_stbi_load);
+}
+
+void SplashScreen::Init(GLFWwindow* window, ImGuiContext* ctx, const std::string& projectName) {
+    m_window = window;
+    m_imguiContext = ctx;
+    m_projectName = projectName;
+    m_statusMessage = "Initializing Eunoia Engine...";
+    m_currentProgress = 0.05f;
+    m_active = true;
+
+    if (!m_window) return;
+
+    glfwMakeContextCurrent(m_window);
+    glfwSetWindowTitle(m_window, "Eunoia Engine");
+
+    // Load Eunoia Engine logo from Resources/Icons/eunoia.png
+    const char* paths[] = {
+        "Resources/Icons/eunoia.png",
+        "../Resources/Icons/eunoia.png",
+        "../../Resources/Icons/eunoia.png",
+        "Build/Engine/Resources/Icons/eunoia.png"
+    };
+    unsigned char* data = nullptr;
+    int w = 0, h = 0, comp = 0;
+    for (const char* p : paths) {
+        std::error_code ec;
+        if (std::filesystem::exists(p, ec)) {
+            data = stbi_load(p, &w, &h, &comp, 4);
+            if (data) break;
+        }
+    }
+    if (data) {
+        GLuint tex = 0;
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glBindTexture(GL_TEXTURE_2D, 0);
+        stbi_image_free(data);
+        m_logoTexture = tex;
+        m_logoWidth = w;
+        m_logoHeight = h;
+    }
+
+    RenderFrame();
+}
+
+void SplashScreen::RenderFrame() {
+    if (!m_window || !m_active) return;
+
+    ImGuiContext* prevCtx = ImGui::GetCurrentContext();
+    glfwMakeContextCurrent(m_window);
+    if (m_imguiContext) {
+        ImGui::SetCurrentContext(m_imguiContext);
+    }
+
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    int fbW = 860, fbH = 580;
+    glfwGetFramebufferSize(m_window, &fbW, &fbH);
+
+    ImGui::SetNextWindowPos(ImVec2(0, 0));
+    ImGui::SetNextWindowSize(ImVec2((float)fbW, (float)fbH));
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.065f, 0.085f, 1.0f));
+
+    if (ImGui::Begin("##SplashScreenWindow", nullptr, flags)) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        ImVec2 winPos = ImGui::GetWindowPos();
+        ImVec2 winSize = ImGui::GetWindowSize();
+
+        // 1. Subtle background gradient
+        drawList->AddRectFilledMultiColor(
+            winPos,
+            ImVec2(winPos.x + winSize.x, winPos.y + winSize.y),
+            IM_COL32(14, 16, 22, 255),
+            IM_COL32(14, 16, 22, 255),
+            IM_COL32(8, 9, 12, 255),
+            IM_COL32(8, 9, 12, 255)
+        );
+
+        float centerX = winPos.x + winSize.x * 0.5f;
+        float logoCenterY = winPos.y + 165.0f;
+
+        // Ambient radial glow behind the logo
+        drawList->AddCircleFilled(ImVec2(centerX, logoCenterY), 110.0f, IM_COL32(14, 110, 220, 25), 64);
+        drawList->AddCircleFilled(ImVec2(centerX, logoCenterY), 70.0f, IM_COL32(0, 190, 255, 30), 48);
+
+        // 2. Eunoia Engine Logo
+        float logoSize = 130.0f;
+        float logoX = centerX - logoSize * 0.5f;
+        float logoY = winPos.y + 100.0f;
+
+        if (m_logoTexture != 0) {
+            drawList->AddRectFilled(
+                ImVec2(logoX + 2, logoY + 4),
+                ImVec2(logoX + logoSize + 2, logoY + logoSize + 4),
+                IM_COL32(0, 0, 0, 100), 16.0f
+            );
+            drawList->AddImage(
+                (ImTextureID)(intptr_t)m_logoTexture,
+                ImVec2(logoX, logoY),
+                ImVec2(logoX + logoSize, logoY + logoSize)
+            );
+        } else {
+            drawList->AddRectFilled(
+                ImVec2(logoX, logoY),
+                ImVec2(logoX + logoSize, logoY + logoSize),
+                IM_COL32(18, 20, 26, 255), 16.0f
+            );
+            drawList->AddRect(
+                ImVec2(logoX, logoY),
+                ImVec2(logoX + logoSize, logoY + logoSize),
+                IM_COL32(20, 120, 240, 200), 16.0f, 0, 2.0f
+            );
+            const char* fallbackText = "EUEN";
+            ImVec2 textSize = ImGui::CalcTextSize(fallbackText);
+            drawList->AddText(
+                ImVec2(centerX - textSize.x * 0.5f, logoY + (logoSize - textSize.y) * 0.5f),
+                IM_COL32(255, 255, 255, 255), fallbackText
+            );
+        }
+
+        // 3. Engine Title Header
+        const char* titleText = "E U N O I A   E N G I N E";
+        ImVec2 titleSize = ImGui::CalcTextSize(titleText);
+        drawList->AddText(
+            ImVec2(centerX - titleSize.x * 0.5f, logoY + logoSize + 22.0f),
+            IM_COL32(255, 255, 255, 255), titleText
+        );
+
+        // Subtitle
+        const char* subText = "Next-Generation DirectX 12 3D Game Engine";
+        ImVec2 subSize = ImGui::CalcTextSize(subText);
+        drawList->AddText(
+            ImVec2(centerX - subSize.x * 0.5f, logoY + logoSize + 46.0f),
+            IM_COL32(130, 140, 160, 230), subText
+        );
+
+        // Project Name
+        if (!m_projectName.empty()) {
+            std::string projStr = "Opening Project: " + m_projectName;
+            ImVec2 projSize = ImGui::CalcTextSize(projStr.c_str());
+            drawList->AddText(
+                ImVec2(centerX - projSize.x * 0.5f, logoY + logoSize + 70.0f),
+                IM_COL32(32, 180, 255, 255), projStr.c_str()
+            );
+        }
+
+        // 4. Progress bar area
+        float barWidth = 560.0f;
+        float barHeight = 12.0f;
+        float barX = centerX - barWidth * 0.5f;
+        float barY = winPos.y + winSize.y - 120.0f;
+
+        // Status Message (above bar, left aligned with bar)
+        drawList->AddText(
+            ImVec2(barX, barY - 26.0f),
+            IM_COL32(210, 215, 225, 255), m_statusMessage.c_str()
+        );
+
+        // Percentage Text (above bar, right aligned with bar)
+        int pct = (int)std::round(glm::clamp(m_currentProgress, 0.0f, 1.0f) * 100.0f);
+        char pctBuf[16];
+        snprintf(pctBuf, sizeof(pctBuf), "%d%%", pct);
+        ImVec2 pctSize = ImGui::CalcTextSize(pctBuf);
+        drawList->AddText(
+            ImVec2(barX + barWidth - pctSize.x, barY - 26.0f),
+            IM_COL32(0, 229, 255, 255), pctBuf
+        );
+
+        // Track (Bar Background)
+        drawList->AddRectFilled(
+            ImVec2(barX, barY),
+            ImVec2(barX + barWidth, barY + barHeight),
+            IM_COL32(20, 22, 28, 255), 6.0f
+        );
+        drawList->AddRect(
+            ImVec2(barX, barY),
+            ImVec2(barX + barWidth, barY + barHeight),
+            IM_COL32(40, 44, 55, 180), 6.0f, 0, 1.0f
+        );
+
+        // Fill Bar (Vibrant cyan-blue gradient with rounded corners)
+        float fillW = barWidth * glm::clamp(m_currentProgress, 0.0f, 1.0f);
+        if (fillW > 4.0f) {
+            drawList->AddRectFilledMultiColor(
+                ImVec2(barX, barY),
+                ImVec2(barX + fillW, barY + barHeight),
+                IM_COL32(14, 112, 224, 255), // Left: Eunoia Blue
+                IM_COL32(0, 229, 255, 255),  // Right: Vibrant Cyan
+                IM_COL32(0, 229, 255, 255),
+                IM_COL32(14, 112, 224, 255)
+            );
+
+            // Subtle leading-edge highlight
+            drawList->AddRectFilled(
+                ImVec2(barX + fillW - 3.0f, barY),
+                ImVec2(barX + fillW, barY + barHeight),
+                IM_COL32(255, 255, 255, 220), 4.0f
+            );
+        }
+
+        // 5. Footer info
+        const char* footerText = "DirectX 12 Ultimate  |  Clustered PBR  |  Mesh Culling Pipeline";
+        ImVec2 footerSize = ImGui::CalcTextSize(footerText);
+        drawList->AddText(
+            ImVec2(centerX - footerSize.x * 0.5f, winPos.y + winSize.y - 40.0f),
+            IM_COL32(75, 82, 100, 200), footerText
+        );
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
+
+    ImGui::Render();
+
+    glViewport(0, 0, fbW, fbH);
+    glClearColor(0.06f, 0.065f, 0.085f, 1.00f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(m_window);
+    glfwPollEvents();
+
+    if (prevCtx && prevCtx != m_imguiContext) {
+        ImGui::SetCurrentContext(prevCtx);
+    }
+}
+
+void SplashScreen::UpdateProgress(float progress, const std::string& statusMessage) {
+    if (!m_active || !m_window) return;
+    m_statusMessage = statusMessage;
+    float start = m_currentProgress;
+    int frames = 6;
+    for (int i = 1; i <= frames; ++i) {
+        float t = (float)i / (float)frames;
+        m_currentProgress = start + (progress - start) * t;
+        RenderFrame();
+        std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    }
+    m_currentProgress = progress;
+    RenderFrame();
+}
+
+void SplashScreen::Finish() {
+    if (!m_active) return;
+
+    if (m_window) {
+        glfwMakeContextCurrent(m_window);
+        if (m_logoTexture != 0) {
+            glDeleteTextures(1, &m_logoTexture);
+            m_logoTexture = 0;
+        }
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        if (m_imguiContext) {
+            ImGui::DestroyContext(m_imguiContext);
+            m_imguiContext = nullptr;
+        }
+        glfwDestroyWindow(m_window);
+        m_window = nullptr;
+    }
+    glfwDefaultWindowHints();
+    m_active = false;
+}
+
 std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
     // GLFW must already be initialized before calling this
 
@@ -1051,15 +1336,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         glfwSwapBuffers(browserWindow);
     }
 
-    // Cleanup the standalone project browser window
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext(browserCtx);
-    glfwDestroyWindow(browserWindow);
-
-    // Reset GLFW hints for the main editor D3D12 window
-    glfwDefaultWindowHints();
-
     // If user chose to create a new project, create the directory structure and return the path
     if (shouldCreateNew && !createProjName.empty() && !createParentDir.empty()) {
         std::filesystem::path root = std::filesystem::path(createParentDir) / createProjName;
@@ -1092,7 +1368,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         }
 
         // Starter scene in Content/Scenes/Main.escene
-        // Starter scene in Content/Scenes/Main.escene (completely empty - no objects, no lights)
         std::filesystem::path starterScenePath = scenesDir / "Main.escene";
         if (!std::filesystem::exists(starterScenePath, ec)) {
             Scene starterScene;
@@ -1170,6 +1445,21 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
 
         selectedProject = root;
     }
+
+    // If user closed the window or clicked Quit without selecting:
+    if (selectedProject.empty()) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(browserCtx);
+        glfwDestroyWindow(browserWindow);
+        glfwDefaultWindowHints();
+        return {};
+    }
+
+    // Project is selected! Transition standalone window into SplashScreen mode.
+    // The engine and project will load in the background while this shows the logo & progress bar.
+    SplashScreen::Get().Init(browserWindow, browserCtx, selectedProject.filename().string());
+    SplashScreen::Get().UpdateProgress(0.08f, "Loading Project Configuration...");
 
     return selectedProject;
 }

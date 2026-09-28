@@ -13,6 +13,35 @@
 #include <thread>
 
 struct GLFWwindow;
+struct ImGuiContext;
+
+class SplashScreen {
+public:
+    static SplashScreen& Get() {
+        static SplashScreen s_instance;
+        return s_instance;
+    }
+
+    void Init(GLFWwindow* window, ImGuiContext* ctx, const std::string& projectName);
+    void UpdateProgress(float progress, const std::string& statusMessage);
+    void Finish();
+    bool IsActive() const { return m_active; }
+
+private:
+    SplashScreen() = default;
+
+    GLFWwindow* m_window = nullptr;
+    ImGuiContext* m_imguiContext = nullptr;
+    std::string m_projectName;
+    std::string m_statusMessage = "Loading Eunoia Engine...";
+    float m_currentProgress = 0.0f;
+    unsigned int m_logoTexture = 0;
+    int m_logoWidth = 0;
+    int m_logoHeight = 0;
+    bool m_active = false;
+
+    void RenderFrame();
+};
 
 struct EngineLogEntry {
     std::string category;

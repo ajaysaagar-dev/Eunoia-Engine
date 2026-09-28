@@ -4658,11 +4658,15 @@ int main(int argc, char** argv)
 		glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 	}
+	if (SplashScreen::Get().IsActive()) {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Keep editor window hidden while splash loading
+	}
 	std::string winTitle = isGameOnlyMode ? (selectedProjectPath.filename().string() + " - Game Mode") : "Eunoia-Editor";
 	g_window = glfwCreateWindow(WIDTH, HEIGHT, winTitle.c_str(), nullptr, nullptr);
 	if (!g_window)
 	{
 		std::cerr << "Failed to create GLFW window!" << std::endl;
+		SplashScreen::Get().Finish();
 		glfwTerminate();
 		return -1;
 	}
@@ -4694,8 +4698,10 @@ int main(int argc, char** argv)
 	}
 #endif
 
-	ShowWindow(hwnd, SW_SHOW);
-	UpdateWindow(hwnd);
+	if (!SplashScreen::Get().IsActive()) {
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
+	}
 
 	int fbWidth = 0, fbHeight = 0;
 	glfwGetFramebufferSize(g_window, &fbWidth, &fbHeight);
@@ -4711,24 +4717,35 @@ int main(int argc, char** argv)
 	glfwSetScrollCallback(g_window, scrollCallback);
 	glfwSetDropCallback(g_window, dropCallback);
 
+	SplashScreen::Get().UpdateProgress(0.18f, "Initializing DirectX 12 Graphics System...");
+
 	// 2. Initialize DirectX 12
 	if (initD3D12(hwnd) != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 initialization failed!" << std::endl;
+		SplashScreen::Get().Finish();
 		return -1;
 	}
+
+	SplashScreen::Get().UpdateProgress(0.36f, "Compiling Graphics Pipelines & Shaders...");
 
 	if (createShadersAndPipeline() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 pipeline creation failed!" << std::endl;
+		SplashScreen::Get().Finish();
 		return -1;
 	}
+
+	SplashScreen::Get().UpdateProgress(0.52f, "Allocating Dynamic Buffers & GPU Heaps...");
 
 	if (createDynamicBuffers() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 buffer creation failed!" << std::endl;
+		SplashScreen::Get().Finish();
 		return -1;
 	}
+
+	SplashScreen::Get().UpdateProgress(0.68f, "Initializing Editor Interface & Asset Systems...");
 
 	// 3. Initialize Dear ImGui for DirectX 12
 	IMGUI_CHECKVERSION();
@@ -4810,10 +4827,13 @@ int main(int argc, char** argv)
 		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
 	}
-	InputSystem::Get().SetupDefaultActions();
+	SplashScreen::Get().UpdateProgress(0.85f, "Loading Project Content & Scene Assets...");
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
 	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
+
+	SplashScreen::Get().UpdateProgress(0.96f, "Building Scene Geometry & Preparing Viewport...");
+	updateSceneGeometry();
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;
@@ -4861,6 +4881,15 @@ int main(int argc, char** argv)
 		g_scene.showGrid = false;
 		g_engineUI.showGizmo = false;
 		g_scene.StartPlayMode();
+	}
+
+	if (SplashScreen::Get().IsActive()) {
+		SplashScreen::Get().UpdateProgress(1.00f, "Engine Ready!");
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
+		SplashScreen::Get().Finish();
+
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
 	}
 
 	auto lastTime = std::chrono::high_resolution_clock::now();
