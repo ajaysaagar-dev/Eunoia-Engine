@@ -770,14 +770,20 @@ public:
                 }
 
                 if (obj.light.type == LightType::Directional && obj.light.enabled) {
-                    lightDirection = -obj.light.direction;
-                    lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
-                    lightIntensity = obj.light.intensity;
-                    enableShadows = obj.light.castShadows;
-                    shadowStrength = obj.light.shadowStrength;
-                    shadowBias = obj.light.shadowBias;
-                    shadowResolution = obj.light.shadowResolution;
-                    hasDirectional = true;
+                    if (obj.light.bakeState == Eunoia::LightBakeState::Baked) {
+                        hasDirectional = false;
+                        lightIntensity = 0.0f;
+                        enableShadows = false;
+                    } else {
+                        lightDirection = -obj.light.direction;
+                        lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
+                        lightIntensity = obj.light.intensity;
+                        enableShadows = obj.light.castShadows;
+                        shadowStrength = obj.light.shadowStrength;
+                        shadowBias = obj.light.shadowBias;
+                        shadowResolution = obj.light.shadowResolution;
+                        hasDirectional = true;
+                    }
                 }
                 else if (obj.light.type == LightType::Sky && obj.light.enabled) {
                     glm::vec3 sCol = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
@@ -812,6 +818,8 @@ public:
                         pl.height = obj.light.height;
                         pl.radius = obj.light.radius;
                         pl.twoSided = obj.light.twoSided;
+                        pl.bakeState = obj.light.bakeState;
+                        pl.bakeResolution = obj.light.bakeResolution;
                         pointLights.push_back(pl);
                         obj.lightId = (int)pointLights.size() - 1;
                     }
@@ -1545,7 +1553,7 @@ struct RenderBatch {
                 glm::vec4 outTangent = glm::vec4(worldTangent, mv.tangent.w);
 
                 glm::vec3 vColor{0.0f, 0.0f, 0.0f};
-                if (obj.mobility == Mobility::Static) {
+                if (obj.mobility == Mobility::Static || Eunoia::LightBakeManager::Get().HasStaticBakedLighting(obj.id)) {
                     vColor = Eunoia::LightBakeManager::Get().GetStaticVertexBakedLight(obj.id, vi);
                 }
 

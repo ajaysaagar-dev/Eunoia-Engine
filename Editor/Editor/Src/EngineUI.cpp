@@ -3925,30 +3925,43 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::SameLine();
                 ImGui::TextColored(statusColor, "%s", statusStr);
 
+                std::vector<Eunoia::BakeStaticMesh> previewMeshes;
+                std::string previewErr;
+                Eunoia::LightBakeManager::Get().CollectBakeGeometry(scene, previewMeshes, previewErr);
+                ImGui::TextDisabled("Geometry:           %d participating mesh(es)", (int)previewMeshes.size());
+
+                static std::string s_lastBakeFeedback;
+                static bool s_lastBakeSuccess = false;
+
                 if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
                     if (!obj->light.bakedLightmapPath.empty()) {
-                        ImGui::TextDisabled("Light Map:  %s", obj->light.bakedLightmapPath.c_str());
+                        ImGui::TextDisabled("Light Map:          %s", obj->light.bakedLightmapPath.c_str());
                     }
                     if (!obj->light.bakedShadowmapPath.empty()) {
-                        ImGui::TextDisabled("Shadow Map: %s", obj->light.bakedShadowmapPath.c_str());
+                        ImGui::TextDisabled("Shadow Map:         %s", obj->light.bakedShadowmapPath.c_str());
                     }
 
                     if (ImGui::Button("Re-Bake Light", ImVec2(120, 26))) {
-                        std::string statusMsg;
-                        Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, statusMsg);
-                        AddLog("Lighting", statusMsg, 1);
+                        s_lastBakeSuccess = Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, s_lastBakeFeedback);
+                        AddLog("Lighting", s_lastBakeFeedback, s_lastBakeSuccess ? 0 : 2);
                     }
                     ImGui::SameLine();
                     if (ImGui::Button("Clear Bake", ImVec2(110, 26))) {
                         Eunoia::LightBakeManager::Get().ClearBake(scene, *obj, activeProjectRoot);
-                        AddLog("Lighting", "Cleared baked data for light: " + obj->name, 1);
+                        s_lastBakeFeedback = "Cleared baked data for light: " + obj->name;
+                        s_lastBakeSuccess = true;
+                        AddLog("Lighting", s_lastBakeFeedback, 0);
                     }
                 } else {
                     if (ImGui::Button("Bake Light", ImVec2(120, 28))) {
-                        std::string statusMsg;
-                        Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, statusMsg);
-                        AddLog("Lighting", statusMsg, 1);
+                        s_lastBakeSuccess = Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, s_lastBakeFeedback);
+                        AddLog("Lighting", s_lastBakeFeedback, s_lastBakeSuccess ? 0 : 2);
                     }
+                }
+
+                if (!s_lastBakeFeedback.empty()) {
+                    ImVec4 col = s_lastBakeSuccess ? ImVec4(0.3f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
+                    ImGui::TextColored(col, "%s", s_lastBakeFeedback.c_str());
                 }
             }
 
@@ -3972,14 +3985,21 @@ void EngineUI::RenderDetails(Scene& scene) {
                 pl.height = obj->light.height;
                 pl.radius = obj->light.radius;
                 pl.twoSided = obj->light.twoSided;
+                pl.bakeState = obj->light.bakeState;
+                pl.bakeResolution = obj->light.bakeResolution;
             }
             if (obj->light.type == LightType::Directional) {
-                scene.lightColor = obj->light.color;
-                scene.lightIntensity = obj->light.intensity;
-                scene.enableShadows = obj->light.castShadows;
-                scene.shadowStrength = obj->light.shadowStrength;
-                scene.shadowBias = obj->light.shadowBias;
-                scene.shadowResolution = obj->light.shadowResolution;
+                if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
+                    scene.lightIntensity = 0.0f;
+                    scene.enableShadows = false;
+                } else {
+                    scene.lightColor = obj->light.color;
+                    scene.lightIntensity = obj->light.intensity;
+                    scene.enableShadows = obj->light.castShadows;
+                    scene.shadowStrength = obj->light.shadowStrength;
+                    scene.shadowBias = obj->light.shadowBias;
+                    scene.shadowResolution = obj->light.shadowResolution;
+                }
             } else if (obj->light.type == LightType::Sky) {
                 scene.ambientColor = obj->light.color;
                 scene.ambientIntensity = obj->light.intensity;

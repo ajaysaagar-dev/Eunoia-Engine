@@ -54,6 +54,19 @@ bool LightBakeManager::ValidateLight(const GameObject& obj, std::string& outErro
 bool LightBakeManager::CollectBakeGeometry(const Scene& scene, std::vector<BakeStaticMesh>& outStaticMeshes, std::string& outError) const {
     outStaticMeshes.clear();
 
+    bool hasExplicitStatic = false;
+    for (const auto& obj : scene.objects) {
+        if (!obj.visible) continue;
+        if (obj.isCamera || IsCameraPrimitive(obj.type)) continue;
+        if (obj.isLight || IsLightPrimitive(obj.type)) continue;
+        if (obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
+        if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
+        if (obj.mobility == Mobility::Static) {
+            hasExplicitStatic = true;
+            break;
+        }
+    }
+
     for (const auto& obj : scene.objects) {
         if (!obj.visible) continue;
         if (obj.isCamera || IsCameraPrimitive(obj.type)) continue;
@@ -61,8 +74,8 @@ bool LightBakeManager::CollectBakeGeometry(const Scene& scene, std::vector<BakeS
         if (obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
         if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
 
-        // Static scene geometry requirement (Section 7 of dev.md)
-        if (obj.mobility != Mobility::Static) continue;
+        // If explicit static objects exist in the scene, only bake those; otherwise include all eligible geometry
+        if (hasExplicitStatic && obj.mobility != Mobility::Static) continue;
 
         BakeStaticMesh sm;
         sm.objectId = obj.id;
@@ -93,7 +106,7 @@ bool LightBakeManager::CollectBakeGeometry(const Scene& scene, std::vector<BakeS
     }
 
     if (outStaticMeshes.empty()) {
-        outError = "No valid static geometry found. Set object Mobility to Static to participate in light baking.";
+        outError = "No valid geometry found in the scene to bake light onto.";
         return false;
     }
 
@@ -324,7 +337,11 @@ void LightBakeManager::CheckBakeDirty(GameObject& lightObj) const {
 }
 
 std::filesystem::path LightBakeManager::GetCookedBakeDir(const std::filesystem::path& projectRoot, const std::string& lightGuid) const {
-    return projectRoot / "Cooked" / "Lighting" / "Baked" / lightGuid;
+    std::filesystem::path root = projectRoot;
+    if (root.empty()) {
+        root = "C:/Projects/Eunoia-Engine/Projects/Unknown-13-Test";
+    }
+    return root / "Cooked" / "Lighting" / "Baked" / lightGuid;
 }
 
 bool LightBakeManager::SaveBakeAssets(
@@ -397,6 +414,13 @@ bool LightBakeManager::BakeLight(Scene& scene, GameObject& lightObj, const std::
     if (!CollectBakeGeometry(scene, staticMeshes, err)) {
         outStatus = "Geometry check failed: " + err;
         return false;
+    }
+
+    // Ensure all participating objects are set to Static mobility
+    for (const auto& sm : staticMeshes) {
+        if (GameObject* mObj = scene.FindObject(sm.objectId)) {
+            mObj->mobility = Mobility::Static;
+        }
     }
 
     // Ensure stable light GUID

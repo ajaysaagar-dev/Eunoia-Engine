@@ -2351,7 +2351,7 @@ int createShadersAndPipeline()
 			}
 
 			float3 emissive = emissiveColor * emissiveIntensity;
-			float3 bakedLit = diffBRDF * input.color;
+			float3 bakedLit = (1.0f - metal) * albedo * input.color * ao;
 			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + bakedLit + emissive;
 
 			// Post Processing: Color Grading and Exposure
