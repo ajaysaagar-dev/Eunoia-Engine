@@ -2426,13 +2426,24 @@ int createShadersAndPipeline()
 			float3 emissive = emissiveColor * emissiveIntensity;
 			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
 			float hasLightmap = input.color.z;
-			float3 bakedLit = float3(0.0f, 0.0f, 0.0f);
+			float3 litColor;
 			if (hasLightmap > 0.5f)
 			{
+				// Baked mesh: the lightmap already encodes the baked light's full contribution
+				// (NdotL * intensity * attenuation * shadowFactor). We combine it with:
+				//   - ambient (sky/indirect) so dark unlit areas are NOT pure black
+				//   - emissive for self-illuminated surfaces
+				// We deliberately exclude directLit and pointLightsContribution for this mesh
+				// because the baked light has been removed from realtime submission.
 				float3 bakedIllum = g_lightmapTex.Sample(g_sampler, input.color.xy).rgb;
-				bakedLit = (1.0f - metal) * albedo * bakedIllum * ao;
+				float3 bakedLit = (1.0f - metal) * albedo * bakedIllum * ao;
+				litColor = ambientDiff + ambientSpec + bakedLit + emissive;
 			}
-			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + bakedLit + emissive;
+			else
+			{
+				// Non-baked mesh: full realtime lighting path
+				litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + emissive;
+			}
 
 			// Post Processing: Color Grading and Exposure
 			if (enablePostProcessing > 0.5f)

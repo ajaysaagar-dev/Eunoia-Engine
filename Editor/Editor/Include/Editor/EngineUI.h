@@ -209,6 +209,9 @@ public:
     std::filesystem::path currentContentPath;
     char contentBrowserSearch[64] = "";
     std::string selectedContentItem = "";
+    std::unordered_set<std::string> selectedContentItems;
+    std::string lastSelectedContentItem = "";
+    std::string popupTargetVirtualDir = "";
 
     // Folder & Material creation modal/state
     bool showNewFolderPopup = false;
@@ -308,6 +311,8 @@ public:
     // Outliner search filter
     char outlinerFilter[64] = "";
     char consoleInput[128] = "";
+    std::unordered_set<int> selectedActorIds;
+    int lastSelectedActorId = -1;
 
     std::vector<EngineLogEntry> logs;
 
