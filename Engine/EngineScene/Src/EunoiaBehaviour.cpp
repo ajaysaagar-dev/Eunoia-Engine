@@ -1334,10 +1334,17 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             outUseDt = true;
         }
 
+        bool isMouseNegated = false;
         if (lowerS.find("getmousex") != std::string::npos) {
             outVar = "$__MouseX";
+            if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos) {
+                isMouseNegated = true;
+            }
         } else if (lowerS.find("getmousey") != std::string::npos) {
             outVar = "$__MouseY";
+            if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos) {
+                isMouseNegated = true;
+            }
         } else {
             for (const auto& v : declaredVars) {
                 std::string vName = v.first;
@@ -1349,7 +1356,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
 
         outConst = 0.0f;
-        outMul = 1.0f;
+        outMul = isMouseNegated ? -1.0f : 1.0f;
 
         size_t numStart = s.find_first_of("-+0123456789.");
         if (numStart != std::string::npos) {

@@ -229,18 +229,18 @@ public:
         return !m_mouseDown[button] && m_mouseDownPrev[button];
     }
     
-    double GetMouseX() const { return m_mouseX; }
-    double GetMouseY() const { return m_mouseY; }
-    double GetMouseDeltaX() const { return m_mouseDeltaX; }
-    double GetMouseDeltaY() const { return m_mouseDeltaY; }
+    double GetMouseX(bool negate = false) const { return negate ? -m_mouseX : m_mouseX; }
+    double GetMouseY(bool negate = false) const { return negate ? -m_mouseY : m_mouseY; }
+    double GetMouseDeltaX(bool negate = false) const { return negate ? -m_mouseDeltaX : m_mouseDeltaX; }
+    double GetMouseDeltaY(bool negate = false) const { return negate ? -m_mouseDeltaY : m_mouseDeltaY; }
     glm::vec2 GetMouseDelta() const { return glm::vec2((float)m_mouseDeltaX, (float)m_mouseDeltaY); }
     double GetScrollDelta() const { return m_scrollDelta; }
 
     // --- Axis System: Continuous Cursor Movement ---
     // Returns 2D cursor movement axis based on moving direction and speed (X: +Right/-Left, Y: +Up/-Down)
     glm::vec2 GetMouseAxis() const { return m_mouseAxis; }
-    float GetMouseAxisX() const { return m_mouseAxis.x; }
-    float GetMouseAxisY() const { return m_mouseAxis.y; }
+    float GetMouseAxisX(bool negate = false) const { return negate ? -m_mouseAxis.x : m_mouseAxis.x; }
+    float GetMouseAxisY(bool negate = false) const { return negate ? -m_mouseAxis.y : m_mouseAxis.y; }
 
     // Returns normalized unit vector in the direction the cursor is currently moving
     glm::vec2 GetMouseDirection() const { return m_mouseDirection; }
