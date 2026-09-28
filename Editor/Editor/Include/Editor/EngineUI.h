@@ -200,7 +200,7 @@ public:
     void LoadRecentProjects();
     void SaveRecentProjects();
     bool CreateNewProject(const std::string& parentDir, const std::string& projName, Scene& scene, OrbitCamera& camera);
-    bool LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "");
+    bool LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "", const std::string& specificBinPath = "");
     static std::string ShowSelectFolderDialog(void* owner = nullptr, const std::string& title = "Select Project Location");
     static std::string ShowOpenProjectFileDialog();
 
@@ -334,7 +334,7 @@ public:
     bool SaveLevel(Scene& level);                              // Save to current file (or Save As if new)
     bool SaveLevelAs(Scene& level);                            // Save to new file via dialog
     bool OpenLevel(Scene& level);                              // Open level via file dialog
-    bool OpenLevelFromPath(Scene& level, const std::string& filePath); // Open level directly from disk path
+    bool OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode = false, const std::string& binPath = ""); // Open level directly from disk path
 
     // Scene Save/Load aliases
     bool SaveScene(Scene& scene) { return SaveLevel(scene); }
@@ -359,7 +359,7 @@ public:
     EngineUI();
 
     // Initialize EngineUI with a pre-selected project path (called after standalone project browser)
-    void InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "");
+    void InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "", const std::string& specificBinPath = "");
 
     // Dynamic layout splitters and Configs.Editor.econfigs management
     void LoadEditorConfig();
@@ -440,7 +440,7 @@ public:
     void RenderBehavioursSection(Scene& scene, GameObject* obj);
     void EnterPlayMode(Scene& scene, OrbitCamera* camera = nullptr);
     void ExitPlayMode(Scene& scene, OrbitCamera* camera = nullptr);
-    void LaunchGameSeparateWindow(Scene& scene);
+    void LaunchGameSeparateWindow(Scene& scene, OrbitCamera* cameraPtr = nullptr);
     bool IsExternalGameRunning();
     void StopExternalGame();
     void RenderScreenPrintOverlay(float startX, float startY);

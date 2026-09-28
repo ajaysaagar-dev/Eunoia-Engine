@@ -24,6 +24,69 @@ using SceneProgressFn = std::function<void(float progress, const std::string& st
 class SceneSerializer {
 public:
 
+    // Fast binary cache for pre-parsed mesh geometries (bypasses heavy OBJ/FBX disk parsing on game start)
+    static bool SaveFastMeshCache(const Scene& scene, const std::string& binPath) {
+        std::ofstream out(binPath, std::ios::binary);
+        if (!out.is_open()) return false;
+
+        uint32_t magic = 0x454D5348; // "EMSH"
+        out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+
+        uint32_t actorCount = (uint32_t)scene.objects.size();
+        out.write(reinterpret_cast<const char*>(&actorCount), sizeof(actorCount));
+
+        for (const auto& obj : scene.objects) {
+            out.write(reinterpret_cast<const char*>(&obj.id), sizeof(obj.id));
+            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+            out.write(reinterpret_cast<const char*>(&vCount), sizeof(vCount));
+            if (vCount > 0) {
+                out.write(reinterpret_cast<const char*>(obj.mesh.vertices.data()), vCount * sizeof(MeshVertex));
+            }
+            uint32_t iCount = (uint32_t)obj.mesh.indices.size();
+            out.write(reinterpret_cast<const char*>(&iCount), sizeof(iCount));
+            if (iCount > 0) {
+                out.write(reinterpret_cast<const char*>(obj.mesh.indices.data()), iCount * sizeof(uint32_t));
+            }
+        }
+        return true;
+    }
+
+    static std::unordered_map<int, PrimitiveMesh> LoadFastMeshMap(const std::string& binPath) {
+        std::unordered_map<int, PrimitiveMesh> meshMap;
+        if (binPath.empty() || !std::filesystem::exists(binPath)) return meshMap;
+        std::ifstream in(binPath, std::ios::binary);
+        if (!in.is_open()) return meshMap;
+
+        uint32_t magic = 0;
+        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (magic != 0x454D5348) return meshMap; // "EMSH"
+
+        uint32_t count = 0;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+
+        for (uint32_t i = 0; i < count; ++i) {
+            int id = -1;
+            in.read(reinterpret_cast<char*>(&id), sizeof(id));
+            uint32_t vCount = 0;
+            in.read(reinterpret_cast<char*>(&vCount), sizeof(vCount));
+            PrimitiveMesh pm;
+            pm.vertices.resize(vCount);
+            if (vCount > 0) {
+                in.read(reinterpret_cast<char*>(pm.vertices.data()), vCount * sizeof(MeshVertex));
+            }
+            uint32_t iCount = 0;
+            in.read(reinterpret_cast<char*>(&iCount), sizeof(iCount));
+            pm.indices.resize(iCount);
+            if (iCount > 0) {
+                in.read(reinterpret_cast<char*>(pm.indices.data()), iCount * sizeof(uint32_t));
+            }
+            if (vCount > 0) {
+                meshMap[id] = std::move(pm);
+            }
+        }
+        return meshMap;
+    }
+
     // Save the entire scene to a JSON file
     static bool SaveScene(const Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr) {
         if (onProgress) onProgress(0.1f, "Opening file for writing", filePath);
@@ -315,7 +378,7 @@ public:
     }
 
     // Load a scene from a JSON file
-    static bool LoadScene(Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr) {
+    static bool LoadScene(Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr, const std::string& binPath = "") {
         if (onProgress) onProgress(0.1f, "Opening level file", filePath);
         std::ifstream file(filePath);
         if (!file.is_open()) return false;
@@ -342,7 +405,15 @@ public:
 
         if (onProgress) onProgress(0.70f, "Parsing scene actors", "Loading geometry, materials & hierarchy");
         // Parse actors
-        ParseActors(content, scene);
+        std::string effectiveBin = binPath;
+        if (effectiveBin.empty()) {
+            std::filesystem::path p(filePath);
+            std::filesystem::path cand = p.parent_path() / (p.stem().string() + ".bin");
+            if (std::filesystem::exists(cand)) {
+                effectiveBin = cand.string();
+            }
+        }
+        ParseActors(content, scene, effectiveBin);
 
         if (onProgress) onProgress(0.90f, "Finalizing scene metadata", std::to_string(scene.objects.size()) + " actors loaded");
         // Parse metadata
@@ -748,7 +819,8 @@ private:
         }
     }
 
-    static void ParseActors(const std::string& json, Scene& scene) {
+    static void ParseActors(const std::string& json, Scene& scene, const std::string& binPath = "") {
+        auto fastMeshes = LoadFastMeshMap(binPath);
         size_t actorsPos = json.find("\"actors\"");
         if (actorsPos == std::string::npos) return;
 
@@ -1035,93 +1107,98 @@ private:
                 }
             }
 
-            // Rebuild mesh geometry with loaded params for standard primitives
-            if (!obj.isImportedMesh && !obj.isLight && !IsLightPrimitive(obj.type) && !obj.isCamera && !IsCameraPrimitive(obj.type) && obj.type != PrimitiveType::Empty) {
-                obj.RebuildMesh();
-            }
-
-            // Restore mesh geometry for imported meshes, or empty mesh for empty/light actors
-            if (obj.isImportedMesh && !obj.meshFilePath.empty()) {
-                ImportedModel model;
-                try {
-                    model = MeshImporter::Load(obj.meshFilePath);
-                } catch (const std::exception& e) {
-                    std::cout << "[SceneSerializer] Error loading mesh for " << obj.name << ": " << e.what() << " (neglecting, forcing open)\n";
-                } catch (...) {
-                    std::cout << "[SceneSerializer] Unknown error loading mesh for " << obj.name << " (neglecting, forcing open)\n";
+            auto itFast = fastMeshes.find(obj.id);
+            if (itFast != fastMeshes.end() && !itFast->second.vertices.empty()) {
+                obj.mesh = std::move(itFast->second);
+            } else {
+                // Rebuild mesh geometry with loaded params for standard primitives
+                if (!obj.isImportedMesh && !obj.isLight && !IsLightPrimitive(obj.type) && !obj.isCamera && !IsCameraPrimitive(obj.type) && obj.type != PrimitiveType::Empty) {
+                    obj.RebuildMesh();
                 }
-                if (model.valid && !model.meshes.empty()) {
-                    if (obj.submeshIndex >= 0 && obj.submeshIndex < (int)model.meshes.size()) {
-                        obj.mesh.vertices = model.meshes[obj.submeshIndex].vertices;
-                        obj.mesh.indices  = model.meshes[obj.submeshIndex].indices;
 
-                        glm::vec3 minBound(1e9f);
-                        glm::vec3 maxBound(-1e9f);
-                        for (const auto& v : obj.mesh.vertices) {
-                            if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
-                                !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
-                                minBound = glm::min(minBound, v.pos);
-                                maxBound = glm::max(maxBound, v.pos);
+                // Restore mesh geometry for imported meshes, or empty mesh for empty/light actors
+                if (obj.isImportedMesh && !obj.meshFilePath.empty()) {
+                    ImportedModel model;
+                    try {
+                        model = MeshImporter::Load(obj.meshFilePath);
+                    } catch (const std::exception& e) {
+                        std::cout << "[SceneSerializer] Error loading mesh for " << obj.name << ": " << e.what() << " (neglecting, forcing open)\n";
+                    } catch (...) {
+                        std::cout << "[SceneSerializer] Unknown error loading mesh for " << obj.name << " (neglecting, forcing open)\n";
+                    }
+                    if (model.valid && !model.meshes.empty()) {
+                        if (obj.submeshIndex >= 0 && obj.submeshIndex < (int)model.meshes.size()) {
+                            obj.mesh.vertices = model.meshes[obj.submeshIndex].vertices;
+                            obj.mesh.indices  = model.meshes[obj.submeshIndex].indices;
+
+                            glm::vec3 minBound(1e9f);
+                            glm::vec3 maxBound(-1e9f);
+                            for (const auto& v : obj.mesh.vertices) {
+                                if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
+                                    !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
+                                    minBound = glm::min(minBound, v.pos);
+                                    maxBound = glm::max(maxBound, v.pos);
+                                }
                             }
-                        }
-                        glm::vec3 pivot = (minBound + maxBound) * 0.5f;
-                        uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
-                        for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
-                        for (auto& v : obj.mesh.vertices) {
-                            if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
-                                std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
-                                v.pos = glm::vec3(0.0f);
+                            glm::vec3 pivot = (minBound + maxBound) * 0.5f;
+                            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+                            for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
+                            for (auto& v : obj.mesh.vertices) {
+                                if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
+                                    std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
+                                    v.pos = glm::vec3(0.0f);
+                                } else {
+                                    v.pos -= pivot;
+                                }
+                            }
+                            if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
+                                obj.position = pivot;
+                            }
+                        } else if (model.meshes.size() == 1) {
+                            if (!model.meshes[0].vertices.empty()) {
+                                obj.mesh.vertices = model.meshes[0].vertices;
+                                obj.mesh.indices  = model.meshes[0].indices;
                             } else {
-                                v.pos -= pivot;
+                                obj.mesh = model.GetMergedMesh();
                             }
-                        }
-                        if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
-                            obj.position = pivot;
-                        }
-                    } else if (model.meshes.size() == 1) {
-                        if (!model.meshes[0].vertices.empty()) {
-                            obj.mesh.vertices = model.meshes[0].vertices;
-                            obj.mesh.indices  = model.meshes[0].indices;
+                            glm::vec3 minBound(1e9f);
+                            glm::vec3 maxBound(-1e9f);
+                            for (const auto& v : obj.mesh.vertices) {
+                                if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
+                                    !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
+                                    minBound = glm::min(minBound, v.pos);
+                                    maxBound = glm::max(maxBound, v.pos);
+                                }
+                            }
+                            glm::vec3 pivot = (minBound + maxBound) * 0.5f;
+                            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+                            for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
+                            for (auto& v : obj.mesh.vertices) {
+                                if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
+                                    std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
+                                    v.pos = glm::vec3(0.0f);
+                                } else {
+                                    v.pos -= pivot;
+                                }
+                            }
+                            if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
+                                obj.position = pivot;
+                            }
                         } else {
-                            obj.mesh = model.GetMergedMesh();
-                        }
-                        glm::vec3 minBound(1e9f);
-                        glm::vec3 maxBound(-1e9f);
-                        for (const auto& v : obj.mesh.vertices) {
-                            if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
-                                !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
-                                minBound = glm::min(minBound, v.pos);
-                                maxBound = glm::max(maxBound, v.pos);
-                            }
-                        }
-                        glm::vec3 pivot = (minBound + maxBound) * 0.5f;
-                        uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
-                        for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
-                        for (auto& v : obj.mesh.vertices) {
-                            if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
-                                std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
-                                v.pos = glm::vec3(0.0f);
-                            } else {
-                                v.pos -= pivot;
-                            }
-                        }
-                        if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
-                            obj.position = pivot;
+                            // submeshIndex == -1 with multiple meshes: parent/root node, keeps empty geometry
+                            obj.mesh.vertices.clear();
+                            obj.mesh.indices.clear();
                         }
                     } else {
-                        // submeshIndex == -1 with multiple meshes: parent/root node, keeps empty geometry
-                        obj.mesh.vertices.clear();
-                        obj.mesh.indices.clear();
+                        // Fallback to empty mesh or default cube representation so scene forces open
+                        obj.mesh = GeometryBuilder::CreateCube(1.0f, 1);
+                        std::cout << "[SceneSerializer] Notice: Actor '" << obj.name << "' (ID: " << obj.id << ") mesh '" << obj.meshFilePath << "' could not be loaded. Force opening with fallback geometry.\n";
                     }
-                } else {
-                    // Fallback to empty mesh or default cube representation so scene forces open
-                    obj.mesh = GeometryBuilder::CreateCube(1.0f, 1);
-                    std::cout << "[SceneSerializer] Notice: Actor '" << obj.name << "' (ID: " << obj.id << ") mesh '" << obj.meshFilePath << "' could not be loaded. Force opening with fallback geometry.\n";
+                } else if (obj.type == PrimitiveType::Empty || obj.isLight || IsLightPrimitive(obj.type)) {
+                    obj.isLight = (obj.type != PrimitiveType::Empty);
+                    obj.mesh.vertices.clear();
+                    obj.mesh.indices.clear();
                 }
-            } else if (obj.type == PrimitiveType::Empty || obj.isLight || IsLightPrimitive(obj.type)) {
-                obj.isLight = (obj.type != PrimitiveType::Empty);
-                obj.mesh.vertices.clear();
-                obj.mesh.indices.clear();
             }
 
             // --- Task 4: sanitize already-corrupted scenes on load ---
@@ -1218,8 +1295,8 @@ private:
         return std::string::npos;
     }
 
-    static bool LoadLevel(Scene& level, const std::string& filePath) {
-        return LoadScene(level, filePath);
+    static bool LoadLevel(Scene& level, const std::string& filePath, const std::string& binPath = "") {
+        return LoadScene(level, filePath, nullptr, binPath);
     }
 };
 

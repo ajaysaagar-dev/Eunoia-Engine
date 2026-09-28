@@ -4036,9 +4036,24 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 {
 	if (g_scene.isPlayMode)
 	{
-		if (button == GLFW_MOUSE_BUTTON_LEFT) s_isLeftMouseDown = (action == GLFW_PRESS);
+		if (button == GLFW_MOUSE_BUTTON_LEFT)
+		{
+			s_isLeftMouseDown = (action == GLFW_PRESS);
+			// User Request: when click on the game play mode screen than again lock automatically
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked())
+			{
+				CursorState.Locked();
+			}
+		}
 		else if (button == GLFW_MOUSE_BUTTON_MIDDLE) s_isMiddleMouseDown = (action == GLFW_PRESS);
-		else if (button == GLFW_MOUSE_BUTTON_RIGHT) s_isRightMouseDown = (action == GLFW_PRESS);
+		else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+		{
+			s_isRightMouseDown = (action == GLFW_PRESS);
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked())
+			{
+				CursorState.Locked();
+			}
+		}
 		return;
 	}
 
@@ -4452,6 +4467,13 @@ int main(int argc, char** argv)
 	bool isGameOnlyMode = false;
 	std::filesystem::path gameProjectPath;
 	std::string gameScenePath;
+	std::string gameBinPath;
+	float cmdCamYaw = 0.0f;
+	float cmdCamPitch = 0.0f;
+	glm::vec3 cmdCamTarget(0.0f);
+	float cmdCamDist = 0.001f;
+	float cmdCamFov = 60.0f;
+	bool hasCmdCam = false;
 
 	for (int i = 1; i < argc; ++i) {
 		std::string arg = argv[i];
@@ -4464,6 +4486,31 @@ int main(int argc, char** argv)
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
 				gameScenePath = argv[++i];
 			}
+		} else if (arg == "--bin" || arg == "-bin" || arg == "/bin") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameBinPath = argv[++i];
+			}
+		} else if (arg == "--cam-yaw" && i + 1 < argc) {
+			cmdCamYaw = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-pitch" && i + 1 < argc) {
+			cmdCamPitch = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tx" && i + 1 < argc) {
+			cmdCamTarget.x = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-ty" && i + 1 < argc) {
+			cmdCamTarget.y = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tz" && i + 1 < argc) {
+			cmdCamTarget.z = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-dist" && i + 1 < argc) {
+			cmdCamDist = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-fov" && i + 1 < argc) {
+			cmdCamFov = std::stof(argv[++i]);
+			hasCmdCam = true;
 		}
 	}
 
@@ -4653,7 +4700,7 @@ int main(int argc, char** argv)
 	InputSystem::Get().SetupDefaultActions();
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
-	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath);
+	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;
@@ -4691,6 +4738,12 @@ int main(int argc, char** argv)
 			g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
 			g_camera.distance = 0.001f;
 			g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+		} else if (hasCmdCam) {
+			g_camera.yaw = cmdCamYaw;
+			g_camera.pitch = std::clamp(cmdCamPitch, -89.0f, 89.0f);
+			g_camera.target = cmdCamTarget;
+			g_camera.distance = cmdCamDist;
+			g_camera.fov = cmdCamFov;
 		}
 		g_scene.showGrid = false;
 		g_engineUI.showGizmo = false;
@@ -4748,12 +4801,38 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Game Mode exit key listener (ESC or DELETE closes external game window)
-		if (isGameOnlyMode && (InputSystem::Get().IsKeyPressed(Key::Escape) || glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS ||
-		                       InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS))
+		// Game Mode ESC & Exit listener
+		if (isGameOnlyMode)
 		{
-			InputSystem::Get().SetCursorLocked(false);
-			glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+			static bool s_escWasPressed = false;
+			bool escNow = InputSystem::Get().IsKeyDown(Key::Escape) || (glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
+			if (escNow && !s_escWasPressed)
+			{
+				// User Request: in the game mode when press esc dont close the game play mode instead do nothing
+				// and if mouse cursor state is locked then make it unlocked when press esc
+				if (InputSystem::Get().IsCursorLocked())
+				{
+					CursorState.UnLocked();
+				}
+			}
+			s_escWasPressed = escNow;
+
+			// Delete key closes the game mode window
+			if (InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS)
+			{
+				CursorState.UnLocked();
+				glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+			}
+
+			// User Request: when click on the game play mode screen than again lock automatically
+			if (!InputSystem::Get().IsCursorLocked())
+			{
+				if (glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS ||
+				    glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
+				{
+					CursorState.Locked();
+				}
+			}
 		}
 
 		frameCount += 1.0f;

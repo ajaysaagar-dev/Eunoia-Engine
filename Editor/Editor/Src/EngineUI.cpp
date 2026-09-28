@@ -360,7 +360,7 @@ EngineUI::EngineUI() {
     showProjectBrowser = false;
 }
 
-void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath) {
+void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath, const std::string& specificBinPath) {
     if (projectPath.empty()) {
         // No project selected — show in-editor project browser as fallback if not game mode
         if (!isGameMode) {
@@ -383,23 +383,23 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
         knownModelFiles.clear();
         pendingModelImportQueue.clear();
         showModelImportModal = false;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (!entry.is_directory(ec)) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
-                    knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+        if (!isGameMode) {
+            for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                if (!entry.is_directory(ec)) {
+                    std::string ext = entry.path().extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
+                        knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+                    }
                 }
             }
-        }
-        if (!isGameMode) {
             LoadEditorConfig();
         }
         return;
     }
 
     // Load the selected project
-    LoadProject(projectPath, scene, camera, isGameMode, specificScenePath);
+    LoadProject(projectPath, scene, camera, isGameMode, specificScenePath, specificBinPath);
     if (!isGameMode) {
         AddLog("LogWorld", "Project loaded: " + activeProjectName, 2);
     }
@@ -1155,20 +1155,28 @@ bool EngineUI::OpenLevel(Scene& level) {
     return OpenLevelFromPath(level, path);
 }
 
-bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath) {
+bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode, const std::string& binPath) {
     std::string filename = std::filesystem::path(filePath).filename().string();
-    StartLoadingTask("Loading Level", "Opening file: " + filename, 0.05f);
-    if (SceneSerializer::LoadScene(level, filePath, [](float p, const std::string& step, const std::string& detail) {
+    if (!isGameMode) {
+        StartLoadingTask("Loading Level", "Opening file: " + filename, 0.05f);
+    }
+    bool loaded = SceneSerializer::LoadScene(level, filePath, isGameMode ? nullptr : [](float p, const std::string& step, const std::string& detail) {
         UpdateLoadingTask(p, step, detail);
-    })) {
+    }, binPath);
+
+    if (loaded) {
         currentLevelFilePath = filePath;
         levelUnsaved = false;
-        FinishLoadingTask("Level loaded: " + filename + " (" + std::to_string(level.objects.size()) + " actors)");
-        AddLog("LogWorld", "Opened Level from: " + currentLevelFilePath + " (" + std::to_string(level.objects.size()) + " actors)", 2);
+        if (!isGameMode) {
+            FinishLoadingTask("Level loaded: " + filename + " (" + std::to_string(level.objects.size()) + " actors)");
+            AddLog("LogWorld", "Opened Level from: " + currentLevelFilePath + " (" + std::to_string(level.objects.size()) + " actors)", 2);
+        }
         return true;
     } else {
-        FinishLoadingTask("Failed to open Level: " + filename, false);
-        AddLog("LogWorld", "Failed to open Level: " + filePath, 3);
+        if (!isGameMode) {
+            FinishLoadingTask("Failed to open Level: " + filename, false);
+            AddLog("LogWorld", "Failed to open Level: " + filePath, 3);
+        }
         return false;
     }
 }
@@ -1385,7 +1393,7 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     return LoadProject(root, scene, camera);
 }
 
-bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath) {
+bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath, const std::string& specificBinPath) {
     std::error_code ec;
     if (!std::filesystem::exists(projRoot, ec)) {
         AddLog("LogProject", "Failed to open project: directory does not exist: " + projRoot.string(), 3);
@@ -1415,16 +1423,18 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         AssetRegistry::Get().ScanDirectory(contentRootPath);
     }
 
-    // Scan and register existing 3D models so they don't trigger import popups on open
-    knownModelFiles.clear();
-    pendingModelImportQueue.clear();
-    showModelImportModal = false;
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-        if (!entry.is_directory(ec)) {
-            std::string ext = entry.path().extension().string();
-            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
-                knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+    // Scan and register existing 3D models so they don't trigger import popups on open (skip in game mode)
+    if (!isGameMode) {
+        knownModelFiles.clear();
+        pendingModelImportQueue.clear();
+        showModelImportModal = false;
+        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+            if (!entry.is_directory(ec)) {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
+                    knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+                }
             }
         }
     }
@@ -1448,17 +1458,17 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     // Load scene: prioritize explicit specificScenePath if provided (fast game launch)
     bool found = false;
     if (!specificScenePath.empty() && std::filesystem::exists(specificScenePath, ec)) {
-        found = OpenLevelFromPath(scene, specificScenePath);
+        found = OpenLevelFromPath(scene, specificScenePath, isGameMode, specificBinPath);
     } else {
         std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
         if (std::filesystem::exists(mainScene, ec)) {
-            found = OpenLevelFromPath(scene, mainScene.string());
+            found = OpenLevelFromPath(scene, mainScene.string(), isGameMode, specificBinPath);
         } else {
             for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
                 if (entry.is_regular_file(ec)) {
                     std::string ext = entry.path().extension().string();
                     if (ext == ".escene" || ext == ".elevel") {
-                        found = OpenLevelFromPath(scene, entry.path().string());
+                        found = OpenLevelFromPath(scene, entry.path().string(), isGameMode, specificBinPath);
                         break;
                     }
                 }
@@ -1470,10 +1480,12 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         currentLevelFilePath = "";
     }
 
-    camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
-    camera.distance = 7.0f;
-    camera.yaw = 45.0f;
-    camera.pitch = 25.0f;
+    if (!isGameMode) {
+        camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
+        camera.distance = 7.0f;
+        camera.yaw = 45.0f;
+        camera.pitch = 25.0f;
+    }
 
     if (!isGameMode) {
         // Update recent projects history
@@ -1843,7 +1855,7 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit) {
     if (isGameOnlyWindow) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Escape) || ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
             outShouldExit = true;
         }
 
@@ -1853,13 +1865,13 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         // Render subtle top-right exit hint
         ImGuiViewport* vp = ImGui::GetMainViewport();
         if (vp) {
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 260.0f, vp->WorkPos.y + 16.0f));
+            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 330.0f, vp->WorkPos.y + 16.0f));
             ImGui::SetNextWindowBgAlpha(0.35f);
             ImGuiWindowFlags hintFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
                                          ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                          ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
             if (ImGui::Begin("##GameWindowHint", nullptr, hintFlags)) {
-                ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.92f, 0.75f), "Game Mode | Press ESC to Exit");
+                ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.92f, 0.75f), "Game Mode | ESC: Free Cursor | Click: Lock | DEL: Exit");
             }
             ImGui::End();
         }
@@ -7873,14 +7885,14 @@ void EngineUI::StopExternalGame() {
 
 void EngineUI::EnterPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
     // Only external window game mode is supported (User Request: dont same window game mode)
-    LaunchGameSeparateWindow(scene);
+    LaunchGameSeparateWindow(scene, cameraPtr);
 }
 
 void EngineUI::ExitPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
     StopExternalGame();
 }
 
-void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
+void EngineUI::LaunchGameSeparateWindow(Scene& scene, OrbitCamera* cameraPtr) {
     if (IsExternalGameRunning()) {
         AddLog("LogPlayLevel", "Game Mode is already running in an external window.", 1);
         return;
@@ -7891,13 +7903,22 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
     std::filesystem::path gameBuildDir = projectBase / "Build";
     std::error_code ec;
 
-    // Auto-save current active scene once so the separate game window has the latest state
-    std::filesystem::path targetScene = currentLevelFilePath.empty() 
-        ? (projectBase / "Content" / "Scenes" / "Main.escene") 
-        : std::filesystem::path(currentLevelFilePath);
+    // Fast-save active level snapshot to dedicated session files:
+    // .active_play_level.escene (JSON scene state) and .active_play_level.bin (fast binary mesh cache)
+    std::filesystem::path targetScene = projectBase / "Content" / ".active_play_level.escene";
+    std::filesystem::path targetBin   = projectBase / "Content" / ".active_play_level.bin";
     std::filesystem::create_directories(targetScene.parent_path(), ec);
+
     SceneSerializer::SaveScene(scene, targetScene.string());
-    AddLog("LogPlayLevel", "Saved active scene before opening Game Mode: " + targetScene.string(), 0);
+    SceneSerializer::SaveFastMeshCache(scene, targetBin.string());
+    AddLog("LogPlayLevel", "Prepared active level exact snapshot for Play Mode", 0);
+
+    OrbitCamera* activeCam = cameraPtr ? cameraPtr : currentCamera;
+    float camYaw = activeCam ? activeCam->yaw : 45.0f;
+    float camPitch = activeCam ? activeCam->pitch : 25.0f;
+    glm::vec3 camTarget = activeCam ? activeCam->target : glm::vec3(0.0f, 0.5f, 0.0f);
+    float camDist = activeCam ? activeCam->distance : 7.0f;
+    float camFov = activeCam ? activeCam->fov : 60.0f;
 
     // Get current Eunoia-Editor.exe executable path
     char exePathBuf[MAX_PATH] = {};
@@ -7905,7 +7926,17 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene) {
     std::filesystem::path editorExe(exePathBuf);
 
     if (std::filesystem::exists(editorExe, ec)) {
-        std::string cmdArgs = "--game \"" + projectBase.string() + "\" --scene \"" + targetScene.string() + "\"";
+        std::string cmdArgs = "--game \"" + projectBase.string() + "\""
+                            + " --scene \"" + targetScene.string() + "\""
+                            + " --bin \"" + targetBin.string() + "\""
+                            + " --cam-yaw " + std::to_string(camYaw)
+                            + " --cam-pitch " + std::to_string(camPitch)
+                            + " --cam-tx " + std::to_string(camTarget.x)
+                            + " --cam-ty " + std::to_string(camTarget.y)
+                            + " --cam-tz " + std::to_string(camTarget.z)
+                            + " --cam-dist " + std::to_string(camDist)
+                            + " --cam-fov " + std::to_string(camFov);
+
         std::string fullCmd = "\"" + editorExe.string() + "\" " + cmdArgs;
 
         STARTUPINFOA si = { sizeof(si) };
