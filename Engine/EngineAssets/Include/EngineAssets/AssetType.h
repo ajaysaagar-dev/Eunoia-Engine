@@ -37,7 +37,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Font:         return "Font";
         case AssetType::Particle:     return "Particle";
         case AssetType::Script:       return "Script";
-        case AssetType::Behaviour:    return "Behaviour";
+        case AssetType::Behaviour:    return "Behavior Script";
         case AssetType::Skybox:       return "Skybox";
         case AssetType::Water:        return "Water Body";
         case AssetType::Data:         return "Data";

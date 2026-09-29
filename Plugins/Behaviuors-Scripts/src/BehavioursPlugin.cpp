@@ -1,5 +1,5 @@
 // ============================================================================
-// Eunoia Engine — Behaviours Plugin Implementation
+// Eunoia Engine — Behaviuors-Scripts Plugin Implementation
 // ============================================================================
 
 #include "Behaviours/IBehaviourService.h"
@@ -14,33 +14,33 @@ public:
     size_t GetRegisteredCount() const override { return 0; }
 };
 
-class BehavioursPlugin : public IPlugin {
+class BehavioursScriptsPlugin : public IPlugin {
 public:
-    explicit BehavioursPlugin(const EunoiaPluginContext* /*ctx*/) {}
-    ~BehavioursPlugin() override = default;
+    explicit BehavioursScriptsPlugin(const EunoiaPluginContext* /*ctx*/) {}
+    ~BehavioursScriptsPlugin() override = default;
 
-    const char* GetName() const override { return "behaviours"; }
+    const char* GetName() const override { return "Behaviuors-Scripts"; }
     bool SupportsHotReload() const override { return true; }
 
     void OnRegister(ServiceRegistry& registry) override {
-        std::cout << "[BehavioursPlugin] Registering IBehaviourService service..." << std::endl;
+        std::cout << "[Behaviuors-Scripts] Registering IBehaviourService service..." << std::endl;
         registry.Register<IBehaviourService>("IBehaviourService", &m_service);
     }
 
     void OnInit() override {
-        std::cout << "[BehavioursPlugin] Behaviours plugin initialized." << std::endl;
+        std::cout << "[Behaviuors-Scripts] Plugin initialized." << std::endl;
     }
 
     void OnShutdown() override {
-        std::cout << "[BehavioursPlugin] Behaviours plugin shutdown." << std::endl;
+        std::cout << "[Behaviuors-Scripts] Plugin shutdown." << std::endl;
     }
 
 private:
     BehaviourServiceImpl m_service;
 };
 
-static EunoiaPluginInfo s_behavioursInfo = {
-    "behaviours",
+static EunoiaPluginInfo s_behaviuorsScriptsInfo = {
+    "Behaviuors-Scripts",
     "1.0.0",
     "Component gameplay scripting and reflection",
     "Eunoia Team",
@@ -49,4 +49,4 @@ static EunoiaPluginInfo s_behavioursInfo = {
     false // dynamic tier
 };
 
-EUNOIA_DECLARE_PLUGIN(BehavioursPlugin, &s_behavioursInfo)
+EUNOIA_DECLARE_PLUGIN(BehavioursScriptsPlugin, &s_behaviuorsScriptsInfo)
