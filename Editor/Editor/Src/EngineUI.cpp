@@ -512,6 +512,12 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
     if (!isGameMode) {
         AddLog("LogWorld", "Project loaded: " + activeProjectName, 2);
     }
+
+    currentAntiAliasing = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+    Eunoia::GraphicsSystem::Get().RegisterAntiAliasingChangedCallback("EngineUI", [this](Eunoia::AntiAliasingMethod /*oldM*/, Eunoia::AntiAliasingMethod newM) {
+        this->currentAntiAliasing = newM;
+        this->AddLog("LogGraphics", "Anti-Aliasing applied to scene: " + std::string(Eunoia::GraphicsSystem::Get().GetAntiAliasingName(newM)), 0);
+    });
 }
 
 void EngineUI::LoadEditorConfig() {
@@ -551,6 +557,12 @@ void EngineUI::LoadEditorConfig() {
                 rightSidebarWidth = std::clamp(fVal, 200.0f, 900.0f);
             } else if (key == "BottomDockHeight" || key == "bottomDockHeight" || key == "BottomContentHeight") {
                 bottomDockHeight = std::clamp(fVal, 100.0f, 800.0f);
+            } else if (key == "AntiAliasing" || key == "antiAliasing") {
+                int aa = (int)fVal;
+                if (aa >= 0 && aa <= 9) {
+                    currentAntiAliasing = (AntiAliasingMethod)aa;
+                    Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(currentAntiAliasing);
+                }
             }
         } catch (...) {
             // Ignore format errors
@@ -571,6 +583,8 @@ void EngineUI::SaveEditorConfig() {
     file << "LeftSidebarWidth=" << leftSidebarWidth << "\n";
     file << "RightSidebarWidth=" << rightSidebarWidth << "\n";
     file << "BottomDockHeight=" << bottomDockHeight << "\n";
+    file << "\n[Graphics]\n";
+    file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
     file.close();
 }
 
@@ -895,6 +909,16 @@ void SplashScreen::Finish() {
 
     if (m_window) {
         glfwMakeContextCurrent(m_window);
+
+        // IMPORTANT: Set the splash ImGui context as current BEFORE shutting down
+        // its backends. Without this, if the main editor ImGui context has already
+        // been created (which it has at this point in startup), the shutdown calls
+        // would operate on the wrong context, unregistering the main editor's GLFW
+        // callbacks and breaking the editor window entirely.
+        if (m_imguiContext) {
+            ImGui::SetCurrentContext(m_imguiContext);
+        }
+
         if (m_logoTexture != 0) {
             glDeleteTextures(1, &m_logoTexture);
             m_logoTexture = 0;
@@ -905,6 +929,11 @@ void SplashScreen::Finish() {
             ImGui::DestroyContext(m_imguiContext);
             m_imguiContext = nullptr;
         }
+
+        // Clear the current context pointer since the splash context is now destroyed.
+        // The main editor's render loop will re-establish its own context on first frame.
+        ImGui::SetCurrentContext(nullptr);
+
         glfwDestroyWindow(m_window);
         m_window = nullptr;
     }
@@ -1456,10 +1485,12 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         return {};
     }
 
-    // Project is selected! Transition standalone window into SplashScreen mode.
-    // The engine and project will load in the background while this shows the logo & progress bar.
-    SplashScreen::Get().Init(browserWindow, browserCtx, selectedProject.filename().string());
-    SplashScreen::Get().UpdateProgress(0.08f, "Loading Project Configuration...");
+    // Project selected — clean up the project browser window and return directly.
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext(browserCtx);
+    glfwDestroyWindow(browserWindow);
+    glfwDefaultWindowHints();
 
     return selectedProject;
 }
@@ -2501,6 +2532,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showClusterCullingStats) {
         RenderClusterCullingStats(scene);
     }
+    if (showQualitySettings) {
+        RenderQualitySettings();
+    }
 
     // 6. Material Editor Window (Opened via double-click on material in Content Browser)
     if (showMaterialEditor) {
@@ -2878,6 +2912,48 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::Separator();
                 if (ImGui::MenuItem("Deselect All", "Esc")) {
                     scene.selectedId = -1;
+                }
+                ImGui::EndMenu();
+            }
+
+            if (ImGui::BeginMenu("Graphics")) {
+                if (ImGui::BeginMenu("Anti Aliasing")) {
+                    const auto& aaMethods = GetAntiAliasingMethods();
+                    for (const auto& m : aaMethods) {
+                        bool isSelected = (currentAntiAliasing == m.method);
+                        if (ImGui::MenuItem(m.name, m.shortcutHint, isSelected)) {
+                            currentAntiAliasing = m.method;
+                            Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(m.method);
+                            SaveEditorConfig();
+                            AddLog("LogRenderer", std::string("Anti-Aliasing set globally to: ") + m.name + " (" + m.role + ")", 0);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Quality: %s\nCost: %s\nRole: %s", m.quality, m.cost, m.role);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+
+                if (ImGui::BeginMenu("Quality")) {
+                    if (ImGui::BeginMenu("Anti Aliasing")) {
+                        const auto& aaMethods = GetAntiAliasingMethods();
+                        for (const auto& m : aaMethods) {
+                            bool isSelected = (currentAntiAliasing == m.method);
+                            if (ImGui::MenuItem(m.name, m.shortcutHint, isSelected)) {
+                                currentAntiAliasing = m.method;
+                                Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(m.method);
+                                SaveEditorConfig();
+                                AddLog("LogRenderer", std::string("Anti-Aliasing set globally to: ") + m.name + " (" + m.role + ")", 0);
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Quality: %s\nCost: %s\nRole: %s", m.quality, m.cost, m.role);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::Separator();
+                    ImGui::MenuItem("⚙ Quality Settings Window...", nullptr, &showQualitySettings);
+                    ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
             }
@@ -8580,6 +8656,89 @@ void EngineUI::RenderClusterCullingStats(Scene& scene) {
     ImGui::End();
 }
 
+const std::vector<EngineUI::AntiAliasingInfo>& EngineUI::GetAntiAliasingMethods() {
+    return Eunoia::GraphicsSystem::GetAllMethods();
+}
+
+const char* EngineUI::GetAntiAliasingName(AntiAliasingMethod method) {
+    return Eunoia::GraphicsSystem::MethodToString(method);
+}
+
+void EngineUI::RenderQualitySettings() {
+    ImGui::SetNextWindowSize(ImVec2(660, 480), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Quality Settings###QualitySettingsWin", &showQualitySettings)) {
+        ImGui::TextColored(ImVec4(0.3f, 0.75f, 1.0f, 1.0f), "Graphics Quality Settings (Graphics Plugin)");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Active Global Method: ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%s", GetAntiAliasingName(currentAntiAliasing));
+
+            const auto& methods = GetAntiAliasingMethods();
+            const char* currentLabel = GetAntiAliasingName(currentAntiAliasing);
+
+            if (ImGui::BeginCombo("Select Method##AACombo", currentLabel)) {
+                for (const auto& m : methods) {
+                    bool isSelected = (currentAntiAliasing == m.method);
+                    if (ImGui::Selectable(m.name, isSelected)) {
+                        currentAntiAliasing = m.method;
+                        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(m.method);
+                        SaveEditorConfig();
+                        AddLog("LogRenderer", std::string("Anti-Aliasing set globally to: ") + m.name + " (" + m.role + ")", 0);
+                    }
+                    if (isSelected) ImGui::SetItemDefaultFocus();
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Quality: %s\nCost: %s\nRecommended: %s", m.quality, m.cost, m.role);
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            ImGui::Spacing();
+            ImGui::TextDisabled("Available Methods (from dev.md):");
+
+            if (ImGui::BeginTable("AAMethodsTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Method", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableSetupColumn("Quality", ImGuiTableColumnFlags_WidthFixed, 150.0f);
+                ImGui::TableSetupColumn("Cost", ImGuiTableColumnFlags_WidthFixed, 90.0f);
+                ImGui::TableSetupColumn("Recommended Role", ImGuiTableColumnFlags_WidthStretch);
+                ImGui::TableHeadersRow();
+
+                for (const auto& m : methods) {
+                    ImGui::TableNextRow();
+                    bool isSelected = (currentAntiAliasing == m.method);
+                    if (isSelected) {
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(30, 90, 160, 120));
+                    }
+
+                    ImGui::TableSetColumnIndex(0);
+                    char radioLabel[128];
+                    snprintf(radioLabel, sizeof(radioLabel), "%s##row_%d", m.name, (int)m.method);
+                    if (ImGui::RadioButton(radioLabel, isSelected)) {
+                        currentAntiAliasing = m.method;
+                        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(m.method);
+                        SaveEditorConfig();
+                        AddLog("LogRenderer", std::string("Anti-Aliasing set globally to: ") + m.name + " (" + m.role + ")", 0);
+                    }
+
+                    ImGui::TableSetColumnIndex(1);
+                    ImGui::Text("%s", m.quality);
+
+                    ImGui::TableSetColumnIndex(2);
+                    ImGui::Text("%s", m.cost);
+
+                    ImGui::TableSetColumnIndex(3);
+                    ImGui::Text("%s", m.role);
+                }
+                ImGui::EndTable();
+            }
+        }
+    }
+    ImGui::End();
+}
+
 void EngineUI::RenderLoadingModal() {
     if (!s_loadingState.active) return;
 
@@ -10333,7 +10492,9 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                         nativeB->ResolveReferences(scene);
                         b = std::move(nativeB);
                     } else {
+                        b->SetScene(&scene);
                         b->RefreshPropertiesFromSource();
+                        b->ResolveReferences(scene);
                     }
                 } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
                     auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
@@ -10344,17 +10505,21 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                     dynB->ResolveReferences(scene);
                     b = std::move(dynB);
                 } else {
+                    b->SetScene(&scene);
                     b->RefreshPropertiesFromSource();
+                    b->ResolveReferences(scene);
                 }
             } else {
+                b->SetScene(&scene);
                 b->RefreshPropertiesFromSource();
+                b->ResolveReferences(scene);
             }
 
             ImGui::PushID((int)i);
             ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
             ImGui::BeginChild("BehaviourCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
 
-            // Header line: Reorder, Class Title, Enable checkbox, Remove button
+            // Header line: Reorder, Class Title, Enable checkbox, Reset & Remove buttons
             if (i > 0) {
                 if (ImGui::SmallButton("▲")) moveUpIdx = (int)i;
                 ImGui::SameLine();
@@ -10375,9 +10540,24 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", b->GetClassName().c_str());
 
-            // Right-aligned Remove button
+            // Right-aligned Reset and Remove buttons
             float availW = ImGui::GetContentRegionAvail().x;
-            if (availW > 70.0f) {
+            if (availW > 140.0f) {
+                ImGui::SameLine(ImGui::GetWindowWidth() - 150.0f);
+                if (ImGui::SmallButton("🔄 Reset")) {
+                    UndoManager::Get().RecordSnapshot(scene, "Reset Behaviour to Defaults");
+                    b->SetScene(&scene);
+                    b->ResetToDefaults();
+                    b->ResolveReferences(scene);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Reset all properties and references to default values as defined in code.");
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("🗑 Remove")) {
+                    removeIdx = (int)i;
+                }
+            } else if (availW > 70.0f) {
                 ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
                 if (ImGui::SmallButton("🗑 Remove")) {
                     removeIdx = (int)i;
@@ -10553,6 +10733,17 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 }
 
                 ImGui::PopID();
+            }
+
+            ImGui::Spacing();
+            if (ImGui::Button("🔄 Reset to Code Defaults")) {
+                UndoManager::Get().RecordSnapshot(scene, "Reset Behaviour to Defaults");
+                b->SetScene(&scene);
+                b->ResetToDefaults();
+                b->ResolveReferences(scene);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Reset all properties and references to their initial default values as defined in code.");
             }
 
             ImGui::EndChild();

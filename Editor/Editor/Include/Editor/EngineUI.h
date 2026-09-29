@@ -3,6 +3,7 @@
 #include <EngineRenderer/Camera.h>
 #include <EngineAssets/AssetSystem.h>
 #include <EngineScene/SceneSerializer.h>
+#include <Graphics/GraphicsSystem.h>
 #include <string>
 #include <vector>
 #include <filesystem>
@@ -201,6 +202,16 @@ public:
     bool showHelpModal = false;
     bool showUndoHistory = false;
     bool showClusterCullingStats = false;
+    bool showQualitySettings = false;
+
+    // Graphics Quality & Anti-Aliasing (managed globally by Graphics Plugin)
+    using AntiAliasingMethod = Eunoia::AntiAliasingMethod;
+    using AntiAliasingInfo = Eunoia::AntiAliasingInfo;
+
+    AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::TAA;
+    void RenderQualitySettings();
+    static const std::vector<AntiAliasingInfo>& GetAntiAliasingMethods();
+    static const char* GetAntiAliasingName(AntiAliasingMethod method);
 
     void RenderClusterCullingStats(Scene& scene);
 
