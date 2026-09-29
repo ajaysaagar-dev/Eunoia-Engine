@@ -35,12 +35,18 @@
 #include <Editor/EngineUI.h>
 #include <Editor/EditorGizmoSystem.h>
 #include <EngineAssets/TextureManager.h>
+#include <EngineAssets/DirectXTex.h>
+#include <EngineAssets/DirectXTexD3D12.h>
 #include <EngineAssets/AssetSystem.h>
 #include <EngineAssets/MeshImporter.h>
 #include <EnginePlatform/InputSystem.h>
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <MeshClusterCulling/MeshClusterCulling.h>
+#include <Water/WaterSystem.h>
+#include <LightsBaking/LightBakeManager.h>
+#include <Graphics/GraphicsSystem.h>
+#include <sstream>
 
 extern "C" {
     unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -95,6 +101,15 @@ struct alignas(256) SceneConstantBuffer
 	glm::vec4 pointLightSpotAreaParams[MAX_POINT_LIGHTS];
 	glm::vec4 pointLightShadowParams[MAX_POINT_LIGHTS];
 	glm::mat4 spotLightSpaceMatrices[MAX_SHADOW_SPOT_LIGHTS];
+	float enablePostProcessing;
+	float postExposureEV;
+	float postExposureMultiplier;
+	float postTonemapper;
+	float postSaturation;
+	float postContrast;
+	float postGamma;
+	float padPost;
+	glm::vec4 postColorFilter;
 };
 
 struct alignas(256) ShadowConstantBuffer
@@ -134,6 +149,20 @@ struct MaterialShaderConstants
 };
 static_assert(sizeof(MaterialShaderConstants) == 128, "MaterialShaderConstants must be 128 bytes (32 floats)");
 
+struct SkyboxShaderConstants
+{
+	glm::mat4 invViewProj;
+	glm::vec3 cameraPos;
+	float exposure;
+	glm::vec3 tint;
+	float rotation;
+	float hasHdrTex;
+	float ambientContribution;
+	float pad0;
+	float pad1;
+};
+static_assert(sizeof(SkyboxShaderConstants) == 112, "SkyboxShaderConstants must be 112 bytes (28 floats)");
+
 // Window & GLFW
 static GLFWwindow* g_window = nullptr;
 static int g_currentWidth = WIDTH;
@@ -151,6 +180,20 @@ static UINT g_rtvDescriptorSize = 0;
 static UINT g_srvDescriptorSize = 0;
 
 static ID3D12Resource* g_renderTargets[FRAME_COUNT] = {};
+
+// Offscreen Scene Render Targets & Real-Time Anti-Aliasing (dev.md)
+static ID3D12Resource* g_sceneRenderTarget = nullptr;
+static ID3D12Resource* g_sceneHistoryRenderTarget = nullptr;
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneRtvHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneHistoryRtvHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_sceneSrvGpuHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneHistorySrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_sceneHistorySrvGpuHandle = {};
+static ID3D12RootSignature* g_antiAliasingRootSignature = nullptr;
+static ID3D12PipelineState* g_antiAliasingPipelineState = nullptr;
+static uint64_t g_globalFrameCounter = 0;
+static glm::vec2 g_currentJitter = { 0.0f, 0.0f };
 static ID3D12CommandAllocator* g_commandAllocators[FRAME_COUNT] = {};
 static ID3D12GraphicsCommandList* g_commandLists[FRAME_COUNT] = {};
 static ID3D12GraphicsCommandList* g_commandList = nullptr;
@@ -204,6 +247,8 @@ struct DX12GpuTexture {
 	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle{};
 	int width = 0;
 	int height = 0;
+	UINT mipLevels = 1;
+	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
 };
 
 static std::vector<ID3D12Resource*> g_allocatedTextures;
@@ -216,12 +261,19 @@ static DX12GpuTexture g_fallbackRoughness;
 static DX12GpuTexture g_fallbackMetallic;
 static DX12GpuTexture g_fallbackAO;
 static DX12GpuTexture g_fallbackMissing;
+static DX12GpuTexture g_fallbackBlack;  // Used as no-op lightmap when no bake is active
+
+// Lightmap SRV (t9) – filled by the light baking system or the black fallback
+static D3D12_CPU_DESCRIPTOR_HANDLE g_lightmapSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_lightmapSrvGpuHandle = {};
+static bool g_lightmapSrvInHeap = false; // true once the dedicated slot has been written
 
 // Real-Time Directional Shadow Resources
 static ID3D12Resource* g_shadowDepthBuffer = nullptr;
 static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowDsvHandle = {};
 static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowSrvCpuHandle = {};
 static D3D12_GPU_DESCRIPTOR_HANDLE g_shadowSrvGpuHandle = {};
+static bool g_isDirectionalLightBaked = false;
 
 // Real-Time Point Light Shadow Cubemap Array Resources
 static ID3D12Resource* g_pointShadowDepthBuffer = nullptr;
@@ -239,6 +291,10 @@ static int g_activeShadowSpotLights = 0;
 
 static ID3D12RootSignature* g_shadowRootSignature = nullptr;
 static ID3D12PipelineState* g_shadowPipelineState = nullptr;
+
+static ID3D12RootSignature* g_skyboxRootSignature = nullptr;
+static ID3D12PipelineState* g_skyboxPipelineState = nullptr;
+static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_skyboxDescriptorTables;
 
 static ID3D12Resource* g_shadowConstantBuffer = nullptr;
 static void* g_pShadowConstantMapped = nullptr;
@@ -260,6 +316,10 @@ static bool s_firstMouseAfterCapture = true;
 static double s_lastMouseX = 0.0, s_lastMouseY = 0.0;
 bool g_pendingPickClick = false;
 #define s_pendingPickClick g_pendingPickClick
+
+// Forward declarations for real-time graphics pipelines
+int createAntiAliasingPipeline();
+int createSceneRenderTargets(int width, int height);
 
 // D3D12 Helper Functions
 inline D3D12_RESOURCE_BARRIER CreateTransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
@@ -694,76 +754,53 @@ void WaitForGpuIdle()
 	}
 }
 
-DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, const std::string& debugName = "")
+DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const std::string& debugName = "")
 {
 	DX12GpuTexture result = {};
-	if (!pixels || width <= 0 || height <= 0 || !g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return result;
+	if (scratch.GetImageCount() == 0 || !g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return result;
 
-	UINT rowPitch = (width * 4 + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
-	UINT64 uploadSize = (UINT64)rowPitch * height;
+	const DirectX::TexMetadata& meta = scratch.GetMetadata();
+	if (meta.width == 0 || meta.height == 0) return result;
 
-	D3D12_RESOURCE_DESC texDesc = {};
-	texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-	texDesc.Width = width;
-	texDesc.Height = height;
-	texDesc.DepthOrArraySize = 1;
-	texDesc.MipLevels = 1;
-	texDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	texDesc.SampleDesc.Count = 1;
-	texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-
-	D3D12_HEAP_PROPERTIES defHeap = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
 	ID3D12Resource* tex = nullptr;
-	HRESULT hr = g_d3dDevice->CreateCommittedResource(&defHeap, D3D12_HEAP_FLAG_NONE, &texDesc,
-		D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex));
-	if (FAILED(hr)) return result;
+	HRESULT hr = DirectX::CreateTexture(g_d3dDevice, meta, &tex);
+	if (FAILED(hr) || !tex) {
+		std::cerr << "[TEXTURE UPLOAD] Failed to create D3D12 texture resource: hr=0x" << std::hex << hr << std::dec << "\n";
+		return result;
+	}
 
-	if (!debugName.empty())
-	{
+	if (!debugName.empty()) {
 		std::wstring wname(debugName.begin(), debugName.end());
 		tex->SetName(wname.c_str());
+	} else {
+		tex->SetName(L"Texture_DirectXTex");
 	}
-	else
-	{
-		tex->SetName(L"Texture_Unnamed");
+
+	std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+	hr = DirectX::PrepareUpload(g_d3dDevice, scratch.GetImages(), scratch.GetImageCount(), meta, subresources);
+	if (FAILED(hr) || subresources.empty()) {
+		tex->Release();
+		return result;
 	}
+
+	UINT numSub = static_cast<UINT>(subresources.size());
+	UINT64 uploadSize = DirectX::GetRequiredIntermediateSize(g_d3dDevice, tex, 0, numSub);
 
 	D3D12_RESOURCE_DESC upDesc = CreateBufferResourceDesc(uploadSize);
 	D3D12_HEAP_PROPERTIES upHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
 	ID3D12Resource* uploadBuf = nullptr;
 	hr = g_d3dDevice->CreateCommittedResource(&upHeap, D3D12_HEAP_FLAG_NONE, &upDesc,
 		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
-	if (FAILED(hr)) {
+	if (FAILED(hr) || !uploadBuf) {
 		tex->Release();
 		return result;
 	}
-	if (uploadBuf) uploadBuf->SetName(L"Texture_Upload_Staging");
-
-	void* pData = nullptr;
-	uploadBuf->Map(0, nullptr, &pData);
-	for (int y = 0; y < height; ++y) {
-		memcpy((uint8_t*)pData + y * rowPitch, (const uint8_t*)pixels + y * width * 4, width * 4);
-	}
-	uploadBuf->Unmap(0, nullptr);
+	uploadBuf->SetName(L"Texture_Upload_Staging_Mips");
 
 	g_uploadCmdAlloc->Reset();
 	g_uploadCmdList->Reset(g_uploadCmdAlloc, nullptr);
 
-	D3D12_TEXTURE_COPY_LOCATION dst = {};
-	dst.pResource = tex;
-	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
-	dst.SubresourceIndex = 0;
-
-	D3D12_TEXTURE_COPY_LOCATION src = {};
-	src.pResource = uploadBuf;
-	src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
-	src.PlacedFootprint.Footprint.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	src.PlacedFootprint.Footprint.Width = width;
-	src.PlacedFootprint.Footprint.Height = height;
-	src.PlacedFootprint.Footprint.Depth = 1;
-	src.PlacedFootprint.Footprint.RowPitch = rowPitch;
-
-	g_uploadCmdList->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+	DirectX::UpdateSubresources(g_d3dDevice, g_uploadCmdList, tex, uploadBuf, 0, 0, numSub, subresources.data());
 
 	D3D12_RESOURCE_BARRIER b = CreateTransitionBarrier(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
 	g_uploadCmdList->ResourceBarrier(1, &b);
@@ -772,14 +809,12 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 	ID3D12CommandList* lists[] = { g_uploadCmdList };
 	g_commandQueue->ExecuteCommandLists(1, lists);
 
-	// Dedicated upload fence synchronization (does not interfere with frame fence)
 	g_uploadFenceValue++;
 	g_commandQueue->Signal(g_uploadFence, g_uploadFenceValue);
-	bool uploadOk = SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "UploadTexture");
+	bool uploadOk = SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "UploadTextureMips");
 
-	if (!uploadOk)
-	{
-		std::cerr << "[TEXTURE UPLOAD] Fence wait failed for texture (" << width << "x" << height << ")\n";
+	if (!uploadOk) {
+		std::cerr << "[TEXTURE UPLOAD] Fence wait failed for texture (" << meta.width << "x" << meta.height << ")\n";
 		if (uploadBuf) uploadBuf->Release();
 		if (tex) tex->Release();
 		return result;
@@ -788,10 +823,9 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 	uploadBuf->Release();
 
 	UINT descIdx = 0;
-	if (!TryAllocSrvDescriptors(1, descIdx))
-	{
+	if (!TryAllocSrvDescriptors(1, descIdx)) {
 		tex->Release();
-		return result; // Returns empty DX12GpuTexture so caller falls back safely
+		return result;
 	}
 	D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
 	D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
@@ -800,18 +834,62 @@ DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, c
 
 	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-	srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-	srvDesc.Texture2D.MipLevels = 1;
+	srvDesc.Format = meta.format;
+
+	if (meta.IsCubemap()) {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.TextureCube.MostDetailedMip = 0;
+		srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+	} else {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+	}
+
 	g_d3dDevice->CreateShaderResourceView(tex, &srvDesc, cpu);
 
 	result.resource = tex;
 	result.cpuHandle = cpu;
 	result.gpuHandle = gpu;
-	result.width = width;
-	result.height = height;
+	result.width = static_cast<int>(meta.width);
+	result.height = static_cast<int>(meta.height);
+	result.mipLevels = static_cast<UINT>(meta.mipLevels);
+	result.format = meta.format;
 
 	g_allocatedTextures.push_back(tex);
+	return result;
+}
+
+DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, const std::string& debugName = "", bool isNormalMap = false)
+{
+	DX12GpuTexture result = {};
+	if (!pixels || width <= 0 || height <= 0) return result;
+
+	// Wrap pixels and generate mip chain using DirectXTex
+	DirectX::Image baseImg;
+	baseImg.width = static_cast<size_t>(width);
+	baseImg.height = static_cast<size_t>(height);
+	baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	baseImg.rowPitch = static_cast<size_t>(width * 4);
+	baseImg.slicePitch = static_cast<size_t>(width * height * 4);
+	baseImg.pixels = const_cast<uint8_t*>(static_cast<const uint8_t*>(pixels));
+
+	uint32_t filterFlags = DirectX::TEX_FILTER_BOX;
+	if (isNormalMap) filterFlags |= DirectX::TEX_FILTER_NORMAL_NORMALIZE;
+	else filterFlags |= DirectX::TEX_FILTER_SRGB;
+
+	DirectX::ScratchImage mipChain;
+	if (DirectX::GenerateMipMaps(baseImg, filterFlags, 0, mipChain)) {
+		return UploadTextureToD3D12(mipChain, debugName);
+	}
+
+	// Fallback single-level image if mip generation failed
+	DirectX::ScratchImage single;
+	if (single.InitializeFromImage(baseImg)) {
+		return UploadTextureToD3D12(single, debugName);
+	}
 	return result;
 }
 
@@ -821,7 +899,7 @@ void InitFallbackTextures()
 	g_fallbackWhite = UploadTextureToD3D12(&whitePix, 1, 1, "Fallback_White");
 
 	uint8_t normalPix[4] = { 128, 128, 255, 255 };
-	g_fallbackNormal = UploadTextureToD3D12(normalPix, 1, 1, "Fallback_Normal");
+	g_fallbackNormal = UploadTextureToD3D12(normalPix, 1, 1, "Fallback_Normal", true);
 
 	uint32_t roughPix = 0xFFFFFFFF;
 	g_fallbackRoughness = UploadTextureToD3D12(&roughPix, 1, 1, "Fallback_Roughness");
@@ -832,6 +910,9 @@ void InitFallbackTextures()
 	uint32_t aoPix = 0xFFFFFFFF;
 	g_fallbackAO = UploadTextureToD3D12(&aoPix, 1, 1, "Fallback_AO");
 
+	uint32_t blackPix = 0xFF000000;
+	g_fallbackBlack = UploadTextureToD3D12(&blackPix, 1, 1, "Fallback_Black");
+
 	// Missing texture checkerboard fallback from dev.md Section 20
 	CachedTexture* checker = AssetManager::Get().GetMissingTextureFallback();
 	if (checker && !checker->data.empty() && checker->width > 0 && checker->height > 0) {
@@ -840,6 +921,31 @@ void InitFallbackTextures()
 		g_fallbackMissing = g_fallbackWhite;
 	}
 }
+
+// Allocate a persistent SRV heap slot for the lightmap (t9). Call once after InitFallbackTextures().
+void InitLightmapSrvSlot()
+{
+	UINT idx = 0;
+	if (!TryAllocSrvDescriptors(1, idx))
+	{
+		std::cerr << "[LightBake] Failed to allocate SRV heap slot for lightmap.\n";
+		return;
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuBase = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuBase = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	g_lightmapSrvCpuHandle.ptr = cpuBase.ptr + (SIZE_T)idx * g_srvDescriptorSize;
+	g_lightmapSrvGpuHandle.ptr = gpuBase.ptr + (UINT64)idx * g_srvDescriptorSize;
+
+	// Write the black fallback so the slot is always valid
+	if (g_fallbackBlack.resource)
+	{
+		g_d3dDevice->CopyDescriptorsSimple(
+			1, g_lightmapSrvCpuHandle, g_fallbackBlack.cpuHandle,
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	}
+	g_lightmapSrvInHeap = true;
+}
+
 
 enum class TextureUsageSlot {
 	BaseColor,
@@ -867,6 +973,7 @@ DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture
 		if (!tmResolved.empty()) resolved = tmResolved;
 	}
 
+	bool isNormal = (slot == TextureUsageSlot::Normal);
 	std::string cacheKey = resolved + "@slot=" + std::to_string((int)slot);
 	auto it = g_gpuTextureMap.find(cacheKey);
 	if (it != g_gpuTextureMap.end()) {
@@ -874,17 +981,68 @@ DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture
 	}
 
 	// Single-source decoded pixels from TextureManager cache (zero duplicate disk reads)
-	CachedTexture* cached = TextureManager::Get().GetTexture(resolved);
-	if (!cached || !cached->valid || cached->data.empty() || cached->width <= 0 || cached->height <= 0) {
+	CachedTexture* cached = TextureManager::Get().GetTexture(resolved, isNormal);
+	if (!cached || !cached->valid) {
 		return fallback;
 	}
 
-	DX12GpuTexture tex = UploadTextureToD3D12(cached->data.data(), cached->width, cached->height, resolved);
+	DX12GpuTexture tex;
+	if (cached->scratchImage.GetImageCount() > 0) {
+		tex = UploadTextureToD3D12(cached->scratchImage, resolved);
+	} else if (!cached->data.empty() && cached->width > 0 && cached->height > 0) {
+		tex = UploadTextureToD3D12(cached->data.data(), cached->width, cached->height, resolved, isNormal);
+	}
+
 	if (tex.resource) {
 		g_gpuTextureMap[cacheKey] = tex;
 		return tex;
 	}
 	return fallback;
+}
+
+void InvalidateGpuTexture(const std::string& name)
+{
+	TextureManager::Get().InvalidateTexture(name);
+	for (int s = 0; s < 6; ++s) {
+		g_gpuTextureMap.erase(name + "@slot=" + std::to_string(s));
+	}
+}
+
+// Update the lightmap SRV slot with the current baked texture (or reset to black).
+// Call once per frame before scene draw calls.
+void UpdateLightmapSrv()
+{
+	if (!g_lightmapSrvInHeap) return;
+
+	auto& baker = Eunoia::LightBakeManager::Get();
+	static uint64_t s_lastLightmapRev = 0;
+	uint64_t curRev = baker.GetLightmapRevision();
+	if (curRev != s_lastLightmapRev)
+	{
+		s_lastLightmapRev = curRev;
+		std::string activePath = baker.GetActiveLightmapTexturePath();
+		if (!activePath.empty())
+		{
+			InvalidateGpuTexture(activePath);
+		}
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = g_fallbackBlack.cpuHandle;
+
+	if (baker.HasActiveLightmap())
+	{
+		std::string lmPath = baker.GetActiveLightmapTexturePath();
+		if (!lmPath.empty())
+		{
+			DX12GpuTexture lmTex = GetOrLoadGPUTexture(lmPath, g_fallbackBlack, TextureUsageSlot::BaseColor);
+			if (lmTex.resource && lmTex.cpuHandle.ptr != 0)
+				srcCpu = lmTex.cpuHandle;
+		}
+	}
+
+	g_d3dDevice->CopyDescriptorsSimple(
+		1, g_lightmapSrvCpuHandle, srcCpu,
+		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 }
 
 D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
@@ -946,6 +1104,36 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 	return baseGpu;
 }
 
+D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSkyboxTable(const std::string& texturePath)
+{
+	std::string key = texturePath.empty() ? "__default_skybox__" : texturePath;
+	auto it = g_skyboxDescriptorTables.find(key);
+	if (it != g_skyboxDescriptorTables.end()) {
+		return it->second;
+	}
+
+	DX12GpuTexture tex = (!texturePath.empty() && texturePath != "none")
+		? GetOrLoadGPUTexture(texturePath, g_fallbackWhite, TextureUsageSlot::BaseColor)
+		: g_fallbackWhite;
+
+	UINT baseIdx = 0;
+	if (!TryAllocSrvDescriptors(1, baseIdx))
+	{
+		return g_srvDescHeap ? g_srvDescHeap->GetGPUDescriptorHandleForHeapStart() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	baseCpu.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+	baseGpu.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
+	g_d3dDevice->CopyDescriptorsSimple(1, baseCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	g_skyboxDescriptorTables[key] = baseGpu;
+	return baseGpu;
+}
+
 // Pre-upload all textures and material descriptor tables needed by current scene batches
 // Runs BEFORE renderFrame() resets the frame command list, eliminating GPU command queue deadlocks
 void PreRenderUploadTextures()
@@ -955,6 +1143,11 @@ void PreRenderUploadTextures()
 		if (batch.indexCount == 0) continue;
 		GetOrCreateMaterialTable(
 			batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex);
+	}
+
+	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
+	{
+		GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
 	}
 }
 
@@ -973,7 +1166,7 @@ int createDepthStencilView(int width, int height)
 	depthDesc.Height = (UINT)height;
 	depthDesc.DepthOrArraySize = 1;
 	depthDesc.MipLevels = 1;
-	depthDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
 	depthDesc.SampleDesc.Count = 1;
 	depthDesc.SampleDesc.Quality = 0;
 	depthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
@@ -1302,6 +1495,109 @@ int createShadowResources(UINT dirRes = 2048, UINT ptRes = 512, UINT spotRes = 1
 	return EXIT_SUCCESS;
 }
 
+int createSceneRenderTargets(int width, int height)
+{
+	if (!g_d3dDevice || width <= 0 || height <= 0) return EXIT_FAILURE;
+
+	SafeDeferredRelease(g_sceneRenderTarget);
+	SafeDeferredRelease(g_sceneHistoryRenderTarget);
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+
+	D3D12_RESOURCE_DESC rtDesc = {};
+	rtDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	rtDesc.Alignment = 0;
+	rtDesc.Width = (UINT64)width;
+	rtDesc.Height = (UINT)height;
+	rtDesc.DepthOrArraySize = 1;
+	rtDesc.MipLevels = 1;
+	rtDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	rtDesc.SampleDesc.Count = 1;
+	rtDesc.SampleDesc.Quality = 0;
+	rtDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	rtDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+	D3D12_CLEAR_VALUE clearVal = {};
+	clearVal.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	clearVal.Color[0] = g_scene.clearColor.r;
+	clearVal.Color[1] = g_scene.clearColor.g;
+	clearVal.Color[2] = g_scene.clearColor.b;
+	clearVal.Color[3] = 1.0f;
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&rtDesc,
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		&clearVal,
+		IID_PPV_ARGS(&g_sceneRenderTarget)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create D3D12 scene render target: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_sceneRenderTarget->SetName(L"g_sceneRenderTarget");
+
+	hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&rtDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&clearVal,
+		IID_PPV_ARGS(&g_sceneHistoryRenderTarget)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create D3D12 scene history render target: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_sceneHistoryRenderTarget->SetName(L"g_sceneHistoryRenderTarget");
+
+	if (g_rtvDescHeap)
+	{
+		g_sceneRtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_sceneRtvHandle.ptr += (SIZE_T)(FRAME_COUNT + 0) * g_rtvDescriptorSize;
+		g_d3dDevice->CreateRenderTargetView(g_sceneRenderTarget, nullptr, g_sceneRtvHandle);
+
+		g_sceneHistoryRtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_sceneHistoryRtvHandle.ptr += (SIZE_T)(FRAME_COUNT + 1) * g_rtvDescriptorSize;
+		g_d3dDevice->CreateRenderTargetView(g_sceneHistoryRenderTarget, nullptr, g_sceneHistoryRtvHandle);
+	}
+
+	if (g_srvDescHeap)
+	{
+		if (g_sceneSrvCpuHandle.ptr == 0)
+		{
+			UINT baseIdx = 0;
+			if (TryAllocSrvDescriptors(2, baseIdx))
+			{
+				g_sceneSrvCpuHandle = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+				g_sceneSrvGpuHandle = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+				g_sceneSrvCpuHandle.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+				g_sceneSrvGpuHandle.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+				g_sceneHistorySrvCpuHandle.ptr = g_sceneSrvCpuHandle.ptr + g_srvDescriptorSize;
+				g_sceneHistorySrvGpuHandle.ptr = g_sceneSrvGpuHandle.ptr + (UINT64)g_srvDescriptorSize;
+			}
+		}
+
+		if (g_sceneSrvCpuHandle.ptr != 0)
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			g_d3dDevice->CreateShaderResourceView(g_sceneRenderTarget, &srvDesc, g_sceneSrvCpuHandle);
+			g_d3dDevice->CreateShaderResourceView(g_sceneHistoryRenderTarget, &srvDesc, g_sceneHistorySrvCpuHandle);
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
+
 void EnsureShadowBuffers(UINT reqDirRes, UINT reqPtRes, UINT reqSpotRes)
 {
 	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
@@ -1456,7 +1752,7 @@ int initD3D12(HWND hwnd)
 
 	// 6. Create Descriptor Heaps (RTV, DSV, SRV)
 	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
-	rtvHeapDesc.NumDescriptors = FRAME_COUNT;
+	rtvHeapDesc.NumDescriptors = FRAME_COUNT + 4;
 	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
 	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
 	g_d3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g_rtvDescHeap));
@@ -1493,9 +1789,10 @@ int initD3D12(HWND hwnd)
 		rtvHandle.ptr += g_rtvDescriptorSize;
 	}
 
-	// 8. Create Depth Stencil View & Shadow Map Resources
+	// 8. Create Depth Stencil View, Shadow Map Resources & Scene Color Render Targets
 	createDepthStencilView(g_currentWidth, g_currentHeight);
 	createShadowResources();
+	createSceneRenderTargets(g_currentWidth, g_currentHeight);
 
 	// 9. Create Command Allocators & Lists (Per-frame for zero concurrency hazard)
 	for (UINT i = 0; i < FRAME_COUNT; i++)
@@ -1537,7 +1834,68 @@ int initD3D12(HWND hwnd)
 	// 12. Initialize Mesh Cluster Culling Pipeline (dev.md Plugin)
 	Eunoia::MeshClusterCullingSystem::Get().Initialize(g_d3dDevice, g_commandQueue, (UINT)g_currentWidth, (UINT)g_currentHeight);
 
+	// 13. Initialize AquaTerrain DX12 Water System (dev.md Plugin)
+	Eunoia::WaterSystem::Get().Initialize(g_d3dDevice, g_commandQueue, (UINT)g_currentWidth, (UINT)g_currentHeight);
+
+	// 14. Initialize Real-Time Anti-Aliasing Pipeline (dev.md Plugin)
+	createAntiAliasingPipeline();
+
 	return EXIT_SUCCESS;
+}
+
+static HRESULT CompileOrLoadCachedShader(
+	const char* hlslSource,
+	const char* entryPoint,
+	const char* targetProfile,
+	ID3DBlob** ppBlobOut,
+	ID3DBlob** ppErrorBlobOut)
+{
+	if (!hlslSource || !entryPoint || !targetProfile || !ppBlobOut) {
+		return E_INVALIDARG;
+	}
+
+	// Compute a hash of source + entryPoint + profile to detect any changes
+	std::string key = std::string(entryPoint) + "_" + targetProfile + "_" + hlslSource;
+	size_t hashVal = std::hash<std::string>{}(key);
+	char hexHash[32];
+	snprintf(hexHash, sizeof(hexHash), "%016llx", (unsigned long long)hashVal);
+
+	std::filesystem::path cacheDir = "Shaders/Cache";
+	std::error_code ec;
+	if (!std::filesystem::exists(cacheDir, ec)) {
+		std::filesystem::create_directories(cacheDir, ec);
+	}
+
+	std::filesystem::path cacheFile = cacheDir / (std::string(entryPoint) + "_" + targetProfile + "_" + hexHash + ".cso");
+	if (std::filesystem::exists(cacheFile, ec)) {
+		std::ifstream f(cacheFile, std::ios::binary | std::ios::ate);
+		if (f.is_open()) {
+			std::streamsize size = f.tellg();
+			f.seekg(0, std::ios::beg);
+			if (size > 0) {
+				ID3DBlob* blob = nullptr;
+				HRESULT hr = D3DCreateBlob((SIZE_T)size, &blob);
+				if (SUCCEEDED(hr) && blob) {
+					if (f.read(reinterpret_cast<char*>(blob->GetBufferPointer()), size)) {
+						*ppBlobOut = blob;
+						return S_OK;
+					}
+					blob->Release();
+				}
+			}
+		}
+	}
+
+	// Cache miss or read failed: compile with D3DCompile
+	HRESULT hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, entryPoint, targetProfile, 0, 0, ppBlobOut, ppErrorBlobOut);
+	if (SUCCEEDED(hr) && *ppBlobOut) {
+		// Save compiled bytecode to cache file for instant future launches
+		std::ofstream out(cacheFile, std::ios::binary);
+		if (out.is_open()) {
+			out.write(reinterpret_cast<const char*>((*ppBlobOut)->GetBufferPointer()), (*ppBlobOut)->GetBufferSize());
+		}
+	}
+	return hr;
 }
 
 int createShadersAndPipeline()
@@ -1571,7 +1929,14 @@ int createShadersAndPipeline()
 	spotShadowSrvRange.RegisterSpace = 0;
 	spotShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
-	D3D12_ROOT_PARAMETER rootParams[6] = {};
+	D3D12_DESCRIPTOR_RANGE lightmapSrvRange = {};
+	lightmapSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	lightmapSrvRange.NumDescriptors = 1;
+	lightmapSrvRange.BaseShaderRegister = 9;
+	lightmapSrvRange.RegisterSpace = 0;
+	lightmapSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParams[7] = {};
 	// 0: CBV b0 (Frame Constants)
 	rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
 	rootParams[0].Descriptor.ShaderRegister = 0;
@@ -1608,6 +1973,12 @@ int createShadersAndPipeline()
 	rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[5].DescriptorTable.pDescriptorRanges = &spotShadowSrvRange;
 	rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 6: Descriptor Table t9 (1 SRV for Baked Lightmap)
+	rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[6].DescriptorTable.pDescriptorRanges = &lightmapSrvRange;
+	rootParams[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	D3D12_STATIC_SAMPLER_DESC staticSamplers[3] = {};
 	// Sampler 0: s0 (Anisotropic wrap for materials)
@@ -1656,7 +2027,7 @@ int createShadersAndPipeline()
 	staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
 	D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
-	rootSigDesc.NumParameters = 6;
+	rootSigDesc.NumParameters = 7;
 	rootSigDesc.pParameters = rootParams;
 	rootSigDesc.NumStaticSamplers = 3;
 	rootSigDesc.pStaticSamplers = staticSamplers;
@@ -1700,6 +2071,15 @@ int createShadersAndPipeline()
 			float4 pointLightSpotAreaParams[64];
 			float4 pointLightShadowParams[64];
 			float4x4 spotLightSpaceMatrices[4];
+			float enablePostProcessing;
+			float postExposureEV;
+			float postExposureMultiplier;
+			float postTonemapper;
+			float postSaturation;
+			float postContrast;
+			float postGamma;
+			float padPost;
+			float4 postColorFilter;
 		};
 
 		cbuffer MaterialConstants : register(b1)
@@ -1742,6 +2122,7 @@ int createShadersAndPipeline()
 		Texture2D g_shadowMap : register(t6);
 		TextureCubeArray g_pointShadowMap : register(t7);
 		Texture2DArray g_spotShadowMap : register(t8);
+		Texture2D g_lightmapTex : register(t9);
 
 		SamplerState g_sampler : register(s0);
 		SamplerComparisonState g_shadowSampler : register(s1);
@@ -1990,7 +2371,7 @@ int createShadersAndPipeline()
 				N = normalize(mul(nSample, TBN));
 			}
 
-			float3 albedo = input.color * baseColor;
+			float3 albedo = baseColor;
 			if (hasAlbedoTex > 0.5f)
 			{
 				float4 albedoSample = g_albedoTex.Sample(g_sampler, uv);
@@ -2066,7 +2447,8 @@ int createShadersAndPipeline()
 
 			if (isUnlit > 0.5f)
 			{
-				return float4(pow(saturate(albedo + emissiveColor * emissiveIntensity), 1.0f / 2.2f), currentOpacity);
+				float3 unlitBase = (length(input.color) > 0.001f && hasAlbedoTex < 0.5f) ? (input.color * albedo) : albedo;
+				return float4(pow(saturate(unlitBase + emissiveColor * emissiveIntensity), 1.0f / 2.2f), currentOpacity);
 			}
 
 			float NdotL = max(dot(N, L), 0.0f);
@@ -2189,8 +2571,71 @@ int createShadersAndPipeline()
 			}
 
 			float3 emissive = emissiveColor * emissiveIntensity;
-			float3 litColor = ambientDiff + ambientSpec + directLit + pointLightsContribution + emissive;
-			litColor = pow(saturate(litColor), 1.0f / 2.2f);
+			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
+			float hasLightmap = input.color.z;
+			float3 bakedLit = float3(0.0f, 0.0f, 0.0f);
+			if (hasLightmap > 0.5f)
+			{
+				float3 bakedIllum = g_lightmapTex.Sample(g_sampler, input.color.xy).rgb;
+				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
+				bakedLit = pkD * albedo * bakedIllum;
+			}
+			else if (length(input.color.rgb) > 0.0001f)
+			{
+				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
+				bakedLit = pkD * albedo * input.color.rgb;
+			}
+			float3 litColor = ambientDiff + ambientSpec + bakedLit + directLit + pointLightsContribution + emissive;
+
+			// Post Processing: Color Grading and Exposure
+			if (enablePostProcessing > 0.5f)
+			{
+				// 1. Exposure (EV Compensation & Multiplier)
+				float evFactor = exp2(postExposureEV);
+				litColor *= (evFactor * max(postExposureMultiplier, 0.0f));
+
+				// 2. Color Filter / White Balance Tint
+				litColor *= max(postColorFilter.rgb, float3(0, 0, 0));
+
+				// 3. Contrast (Linear Power Curve)
+				if (abs(postContrast - 1.0f) > 0.001f)
+				{
+					litColor = pow(max(litColor, 0.00001f), max(postContrast, 0.01f));
+				}
+
+				// 4. Tonemapping
+				if (postTonemapper > 0.5f && postTonemapper < 1.5f)
+				{
+					// ACES Filmic tonemapping curve fit (Narkowicz 2015)
+					float a = 2.51f;
+					float b = 0.03f;
+					float c = 2.43f;
+					float d = 0.59f;
+					float e = 0.14f;
+					litColor = saturate((litColor * (a * litColor + b)) / (litColor * (c * litColor + d) + e));
+				}
+				else if (postTonemapper > 1.5f)
+				{
+					// Reinhard tonemapping
+					litColor = litColor / (litColor + 1.0f);
+				}
+
+				// 5. Saturation
+				if (abs(postSaturation - 1.0f) > 0.001f)
+				{
+					float luma = dot(litColor, float3(0.2126f, 0.7152f, 0.0722f));
+					litColor = lerp(float3(luma, luma, luma), litColor, max(postSaturation, 0.0f));
+				}
+
+				// 6. Gamma correction
+				float invGamma = 1.0f / max(2.2f * max(postGamma, 0.1f), 0.01f);
+				litColor = pow(saturate(litColor), invGamma);
+			}
+			else
+			{
+				litColor = pow(saturate(litColor), 1.0f / 2.2f);
+			}
+
 			return float4(litColor, currentOpacity);
 		}
 	)";
@@ -2198,14 +2643,14 @@ int createShadersAndPipeline()
 	ID3DBlob* vertexShader = nullptr;
 	ID3DBlob* pixelShader = nullptr;
 
-	hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &vertexShader, &errorBlob);
+	hr = CompileOrLoadCachedShader(hlslSource, "VSMain", "vs_5_0", &vertexShader, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
 		return EXIT_FAILURE;
 	}
 
-	hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &pixelShader, &errorBlob);
+	hr = CompileOrLoadCachedShader(hlslSource, "PSMain", "ps_5_0", &pixelShader, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
@@ -2213,6 +2658,13 @@ int createShadersAndPipeline()
 	}
 
 	// 3. Input Layout (Position, Normal, UV, Color, Tangent)
+	static_assert(sizeof(Vertex) == 60, "Vertex struct size must be exactly 60 bytes matching input layout");
+	static_assert(offsetof(Vertex, position) == 0,  "Vertex position offset mismatch");
+	static_assert(offsetof(Vertex, normal)   == 12, "Vertex normal offset mismatch");
+	static_assert(offsetof(Vertex, uv)       == 24, "Vertex uv offset mismatch");
+	static_assert(offsetof(Vertex, color)    == 32, "Vertex color offset mismatch");
+	static_assert(offsetof(Vertex, tangent)  == 44, "Vertex tangent offset mismatch");
+
 	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
 		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
@@ -2309,7 +2761,7 @@ int createShadersAndPipeline()
 	)";
 
 	ID3DBlob* shadowVS = nullptr;
-	hr = D3DCompile(shadowHlsl, strlen(shadowHlsl), nullptr, nullptr, nullptr, "VSShadow", "vs_5_0", 0, 0, &shadowVS, &errorBlob);
+	hr = CompileOrLoadCachedShader(shadowHlsl, "VSShadow", "vs_5_0", &shadowVS, &errorBlob);
 	if (FAILED(hr))
 	{
 		if (errorBlob) { std::cerr << "Shadow VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
@@ -2345,6 +2797,325 @@ int createShadersAndPipeline()
 		return EXIT_FAILURE;
 	}
 
+	// 5. Create Skybox Root Signature and Pipeline State
+	D3D12_ROOT_PARAMETER skyboxRootParams[2] = {};
+
+	// Root Parameter 0: 28 32-bit constants for Skybox (invViewProj, cameraPos, exposure, tint, rotation, hasHdrTex, ambientContribution)
+	skyboxRootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	skyboxRootParams[0].Constants.ShaderRegister = 0;
+	skyboxRootParams[0].Constants.RegisterSpace = 0;
+	skyboxRootParams[0].Constants.Num32BitValues = 28;
+	skyboxRootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// Root Parameter 1: Descriptor Table (1 SRV: t0, Texture2D HDR Skybox)
+	D3D12_DESCRIPTOR_RANGE skyboxSrvRange = {};
+	skyboxSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	skyboxSrvRange.NumDescriptors = 1;
+	skyboxSrvRange.BaseShaderRegister = 0;
+	skyboxSrvRange.RegisterSpace = 0;
+	skyboxSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	skyboxRootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	skyboxRootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+	skyboxRootParams[1].DescriptorTable.pDescriptorRanges = &skyboxSrvRange;
+	skyboxRootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// Static Sampler for Skybox: Linear Wrap
+	D3D12_STATIC_SAMPLER_DESC skyboxSampler = {};
+	skyboxSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	skyboxSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	skyboxSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.MipLODBias = 0.0f;
+	skyboxSampler.MaxAnisotropy = 1;
+	skyboxSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	skyboxSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	skyboxSampler.MinLOD = 0.0f;
+	skyboxSampler.MaxLOD = D3D12_FLOAT32_MAX;
+	skyboxSampler.ShaderRegister = 0;
+	skyboxSampler.RegisterSpace = 0;
+	skyboxSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC skyboxRootSigDesc = {};
+	skyboxRootSigDesc.NumParameters = 2;
+	skyboxRootSigDesc.pParameters = skyboxRootParams;
+	skyboxRootSigDesc.NumStaticSamplers = 1;
+	skyboxRootSigDesc.pStaticSamplers = &skyboxSampler;
+	skyboxRootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+	ID3DBlob* serializedSkyboxRootSig = nullptr;
+	hr = D3D12SerializeRootSignature(&skyboxRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serializedSkyboxRootSig, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox RootSig error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	g_d3dDevice->CreateRootSignature(0, serializedSkyboxRootSig->GetBufferPointer(), serializedSkyboxRootSig->GetBufferSize(), IID_PPV_ARGS(&g_skyboxRootSignature));
+	serializedSkyboxRootSig->Release();
+
+	const char* skyboxHlsl = R"(
+		cbuffer SkyboxConstants : register(b0)
+		{
+			float4x4 invViewProj;
+			float3 cameraPos;
+			float exposure;
+			float3 tint;
+			float rotation;
+			float hasHdrTex;
+			float ambientContribution;
+			float2 padding;
+		};
+
+		struct SkyboxVSOutput
+		{
+			float4 position : SV_Position;
+			float2 clipPos : TEXCOORD0;
+		};
+
+		SkyboxVSOutput VSSkybox(uint vertexId : SV_VertexID)
+		{
+			SkyboxVSOutput output;
+			float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+			output.position = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 1.0f, 1.0f);
+			output.clipPos = output.position.xy;
+			return output;
+		}
+
+		Texture2D g_skyboxTexture : register(t0);
+		SamplerState g_skyboxSampler : register(s0);
+
+		float4 PSSkybox(SkyboxVSOutput input) : SV_Target
+		{
+			float4 unprojected = mul(invViewProj, float4(input.clipPos, 1.0f, 1.0f));
+			float3 dir = normalize(unprojected.xyz / max(abs(unprojected.w), 1e-6f));
+			float rad = radians(rotation);
+			float cosR = cos(rad);
+			float sinR = sin(rad);
+			float3 rotDir;
+			rotDir.x = dir.x * cosR - dir.z * sinR;
+			rotDir.y = dir.y;
+			rotDir.z = dir.x * sinR + dir.z * cosR;
+
+			float3 color;
+			if (hasHdrTex > 0.5f)
+			{
+				const float PI = 3.14159265358979323846f;
+				float u = 0.5f + atan2(rotDir.z, rotDir.x) / (2.0f * PI);
+				float v = 0.5f - asin(clamp(rotDir.y, -1.0f, 1.0f)) / PI;
+				color = g_skyboxTexture.Sample(g_skyboxSampler, float2(u, v)).rgb;
+			}
+			else
+			{
+				float t = 0.5f * (rotDir.y + 1.0f);
+				color = lerp(float3(0.08f, 0.10f, 0.14f), float3(0.25f, 0.45f, 0.75f), saturate(t));
+				float horizon = 1.0f - abs(rotDir.y);
+				color += float3(0.18f, 0.18f, 0.15f) * pow(saturate(horizon), 6.0f);
+			}
+
+			color *= tint * exposure;
+			color = color / (color + 1.0f);
+			color = pow(saturate(color), 1.0f / 2.2f);
+			return float4(color, 1.0f);
+		}
+	)";
+
+	ID3DBlob* skyboxVS = nullptr;
+	ID3DBlob* skyboxPS = nullptr;
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "VSSkybox", "vs_5_0", &skyboxVS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "PSSkybox", "ps_5_0", &skyboxPS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyboxPsoDesc = {};
+	skyboxPsoDesc.InputLayout = { nullptr, 0 };
+	skyboxPsoDesc.pRootSignature = g_skyboxRootSignature;
+	skyboxPsoDesc.VS = { skyboxVS->GetBufferPointer(), skyboxVS->GetBufferSize() };
+	skyboxPsoDesc.PS = { skyboxPS->GetBufferPointer(), skyboxPS->GetBufferSize() };
+	skyboxPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	skyboxPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	skyboxPsoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+	skyboxPsoDesc.RasterizerState.DepthClipEnable = TRUE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	skyboxPsoDesc.DepthStencilState.DepthEnable = TRUE;
+	skyboxPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // Don't write depth!
+	skyboxPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // Draw only where depth is 1.0 (empty background)
+	skyboxPsoDesc.DepthStencilState.StencilEnable = FALSE;
+	skyboxPsoDesc.SampleMask = UINT_MAX;
+	skyboxPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	skyboxPsoDesc.NumRenderTargets = 1;
+	skyboxPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	skyboxPsoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	skyboxPsoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&skyboxPsoDesc, IID_PPV_ARGS(&g_skyboxPipelineState));
+	skyboxVS->Release();
+	skyboxPS->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create skybox PSO: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	return EXIT_SUCCESS;
+}
+
+int createAntiAliasingPipeline()
+{
+	if (!g_d3dDevice) return EXIT_FAILURE;
+
+	// 1. Root Signature
+	D3D12_DESCRIPTOR_RANGE texTableRange = {};
+	texTableRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	texTableRange.NumDescriptors = 2; // t0: SceneTexture, t1: HistoryTexture
+	texTableRange.BaseShaderRegister = 0;
+	texTableRange.RegisterSpace = 0;
+	texTableRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParams[2] = {};
+	// Param 0: 32-bit constants (12 floats)
+	rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParams[0].Constants.ShaderRegister = 0;
+	rootParams[0].Constants.RegisterSpace = 0;
+	rootParams[0].Constants.Num32BitValues = 12;
+	rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// Param 1: SRV table (t0..t1)
+	rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[1].DescriptorTable.pDescriptorRanges = &texTableRange;
+	rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+	// s0: Linear Clamp
+	samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].MipLODBias = 0.0f;
+	samplers[0].MaxAnisotropy = 1;
+	samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	samplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	samplers[0].MinLOD = 0.0f;
+	samplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+	samplers[0].ShaderRegister = 0;
+	samplers[0].RegisterSpace = 0;
+	samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// s1: Point Clamp
+	samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+	samplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].MipLODBias = 0.0f;
+	samplers[1].MaxAnisotropy = 1;
+	samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	samplers[1].MinLOD = 0.0f;
+	samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	samplers[1].ShaderRegister = 1;
+	samplers[1].RegisterSpace = 0;
+	samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+	rsDesc.NumParameters = 2;
+	rsDesc.pParameters = rootParams;
+	rsDesc.NumStaticSamplers = 2;
+	rsDesc.pStaticSamplers = samplers;
+	rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ID3DBlob* sigBlob = nullptr;
+	ID3DBlob* errBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA RootSig error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	hr = g_d3dDevice->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&g_antiAliasingRootSignature));
+	sigBlob->Release();
+	if (FAILED(hr)) return EXIT_FAILURE;
+	g_antiAliasingRootSignature->SetName(L"g_antiAliasingRootSignature");
+
+	// 2. Load/Compile Shaders
+	std::string hlslSource;
+	std::ifstream shaderFile("Shaders/AntiAliasing.hlsl");
+	if (shaderFile.is_open())
+	{
+		std::stringstream ss;
+		ss << shaderFile.rdbuf();
+		hlslSource = ss.str();
+	}
+	if (hlslSource.empty())
+	{
+		std::ifstream fallbackFile("../Shaders/AntiAliasing.hlsl");
+		if (fallbackFile.is_open())
+		{
+			std::stringstream ss;
+			ss << fallbackFile.rdbuf();
+			hlslSource = ss.str();
+		}
+	}
+	if (hlslSource.empty())
+	{
+		std::cerr << "[Graphics] Could not read Shaders/AntiAliasing.hlsl!\n";
+		return EXIT_FAILURE;
+	}
+
+	ID3DBlob* vsBlob = nullptr;
+	ID3DBlob* psBlob = nullptr;
+	hr = CompileOrLoadCachedShader(hlslSource.c_str(), "VS_AntiAliasing", "vs_5_0", &vsBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA VS error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	hr = CompileOrLoadCachedShader(hlslSource.c_str(), "PS_AntiAliasing", "ps_5_0", &psBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA PS error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		if (vsBlob) vsBlob->Release();
+		return EXIT_FAILURE;
+	}
+
+	// 3. Pipeline State
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = g_antiAliasingRootSignature;
+	psoDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
+	psoDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+	psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+	psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	psoDesc.DepthStencilState.DepthEnable = FALSE;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&g_antiAliasingPipelineState));
+	vsBlob->Release();
+	psBlob->Release();
+
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create Anti-Aliasing PSO: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_antiAliasingPipelineState->SetName(L"g_antiAliasingPipelineState");
+	std::cout << "[Graphics] Real-time Anti-Aliasing pipeline initialized successfully.\n";
 	return EXIT_SUCCESS;
 }
 
@@ -2430,11 +3201,20 @@ static void SyncLevelCameraToViewportCamera()
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
 		{
 			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-			glm::vec3 worldPos, worldRot, worldScale;
-			Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
 
 			g_camera.yaw = worldRot.y;
-			g_camera.pitch = worldRot.x;
+			g_camera.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
 			g_camera.fov = camObj->camera.fov;
 			g_camera.isOrthographic = camObj->camera.isOrthographic;
 			g_camera.orthoSize = camObj->camera.orthoSize;
@@ -2514,6 +3294,21 @@ void updateConstantBuffer()
 	glm::mat4 model = glm::mat4(1.0f);
 	glm::mat4 view  = g_camera.GetViewMatrix();
 	glm::mat4 proj  = g_camera.GetProjectionMatrix(aspect);
+
+	g_currentJitter = glm::vec2(0.0f, 0.0f);
+	auto currentAaMethod = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+	bool isTemporalAA = (currentAaMethod == Eunoia::AntiAliasingMethod::TAA ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::TSR ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::DLSS ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::FSR ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::XeSS);
+	if (isTemporalAA && vpRect.width > 1.0f && vpRect.height > 1.0f)
+	{
+		g_currentJitter = Eunoia::GraphicsSystem::Get().GetTemporalJitter(g_globalFrameCounter, (uint32_t)vpRect.width, (uint32_t)vpRect.height);
+		proj[2][0] += (2.0f * g_currentJitter.x) / vpRect.width;
+		proj[2][1] += (2.0f * g_currentJitter.y) / vpRect.height;
+	}
+	++g_globalFrameCounter;
 
 	// Update Mesh Cluster Culling Camera (dev.md Section 6, 15, 16)
 	if (Eunoia::MeshClusterCullingSystem::Get().IsInitialized())
@@ -2596,13 +3391,46 @@ void updateConstantBuffer()
 	cb.cameraPos = g_camera.GetPosition();
 	cb.ambientIntensity = g_scene.ambientIntensity;
 	cb.ambientColor = glm::vec4(g_scene.ambientColor, 1.0f);
+	if (g_scene.enableSkybox && g_scene.enableSkyboxLighting)
+	{
+		float skyAmbient = g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse * (g_scene.skyboxExposure * 0.5f);
+		cb.ambientIntensity = g_scene.ambientIntensity + skyAmbient;
+		glm::vec3 tintLight = g_scene.skyboxLightingColor * g_scene.skyboxTint;
+		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, tintLight, 0.7f), 1.0f);
+	}
+	g_isDirectionalLightBaked = false;
+	for (const auto& obj : g_scene.objects) {
+		if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional && obj.light.bakeState == Eunoia::LightBakeState::Baked) {
+			g_isDirectionalLightBaked = true;
+			break;
+		}
+	}
 	cb.lightDir = lightDir;
 	cb.shadowBias = g_scene.shadowBias;
-	cb.lightColor = g_scene.lightColor * g_scene.lightIntensity;
-	cb.shadowStrength = g_scene.shadowStrength;
+	cb.lightColor = g_isDirectionalLightBaked ? glm::vec3(0.0f) : (g_scene.lightColor * g_scene.lightIntensity);
+	cb.shadowStrength = g_isDirectionalLightBaked ? 0.0f : g_scene.shadowStrength;
 	cb.pcfRadius = g_scene.pcfRadius;
-	cb.enableShadows = g_scene.enableShadows ? 1.0f : 0.0f;
+	cb.enableShadows = (g_scene.enableShadows && !g_isDirectionalLightBaked) ? 1.0f : 0.0f;
 	cb.shadowMapSize = (float)g_currentDirShadowRes;
+
+	// Post Processing parameters (Color Grading & Exposure)
+	cb.enablePostProcessing = g_scene.enablePostProcessing ? 1.0f : 0.0f;
+	cb.postExposureEV = g_scene.postExposureEV;
+	cb.postExposureMultiplier = g_scene.postExposureMultiplier;
+	cb.postTonemapper = (float)g_scene.postTonemapper;
+	cb.postSaturation = g_scene.postSaturation;
+	cb.postContrast = g_scene.postContrast;
+	cb.postGamma = g_scene.postGamma;
+	cb.padPost = 0.0f;
+
+	// Calculate white balance adjusted color filter
+	glm::vec3 ppFilter = g_scene.postColorFilter;
+	float tempDelta = (g_scene.postColorTemperature - 6500.0f) / 6500.0f;
+	ppFilter.r *= (1.0f - tempDelta * 0.35f);
+	ppFilter.b *= (1.0f + tempDelta * 0.35f);
+	ppFilter.g *= (1.0f + g_scene.postColorTint * 0.20f);
+	ppFilter = glm::max(ppFilter, glm::vec3(0.0f));
+	cb.postColorFilter = glm::vec4(ppFilter, 1.0f);
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;
@@ -2613,6 +3441,7 @@ void updateConstantBuffer()
 	{
 		const auto& pl = g_scene.pointLights[i];
 		if (!pl.enabled) continue;
+		if (pl.bakeState == Eunoia::LightBakeState::Baked) continue; // Baked lights bypass realtime light submission
 
 		cb.pointLightPosRange[activePointLights] = glm::vec4(pl.position, pl.range);
 		cb.pointLightColorIntensity[activePointLights] = glm::vec4(pl.color, pl.intensity);
@@ -2720,12 +3549,21 @@ void updateConstantBuffer()
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
 		{
 			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-			glm::vec3 worldPos, worldRot, worldScale;
-			Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
 
 			OrbitCamera pipCam;
 			pipCam.yaw = worldRot.y;
-			pipCam.pitch = worldRot.x;
+			pipCam.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
 			pipCam.fov = camObj->camera.fov;
 			pipCam.isOrthographic = camObj->camera.isOrthographic;
 			pipCam.orthoSize = camObj->camera.orthoSize;
@@ -2774,6 +3612,7 @@ void resizeBuffers(int width, int height)
 	}
 
 	createDepthStencilView(width, height);
+	createSceneRenderTargets(width, height);
 }
 
 void renderFrame()
@@ -2786,10 +3625,13 @@ void renderFrame()
 
 	g_recordedFrameOps.clear();
 
+	// Update the lightmap SRV descriptor slot (t9) each frame
+	UpdateLightmapSrv();
+
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows)
+	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
 	{
 		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,
@@ -3003,15 +3845,24 @@ void renderFrame()
 		// First clear entire backbuffer to editor background #2B2B2B (RGB 0.169f, 0.169f, 0.169f)
 		const float editorBgColor[4] = { 0.169f, 0.169f, 0.169f, 1.0f };
 		g_commandList->ClearRenderTargetView(rtvHandle, editorBgColor, 0, nullptr);
+	}
 
-		// Clear the 3D viewport area to scene clear color
+	D3D12_CPU_DESCRIPTOR_HANDLE activeSceneRtv = rtvHandle;
+	if (g_sceneRenderTarget && g_antiAliasingPipelineState)
+	{
+		activeSceneRtv = g_sceneRtvHandle;
+		g_commandList->ClearRenderTargetView(g_sceneRtvHandle, clearColor, 0, nullptr);
+	}
+	else if (!g_engineUI.isGameOnlyWindow)
+	{
+		// Fallback: Clear viewport area of backbuffer directly
 		g_commandList->ClearRenderTargetView(rtvHandle, clearColor, 1, &scissor);
 	}
 
 	RecordGpuBreadcrumbOp("[ClearDSV] DepthStencilBuffer");
 	g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
 
-	g_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, &dsvHandle);
+	g_commandList->OMSetRenderTargets(1, &activeSceneRtv, FALSE, &dsvHandle);
 
 	// Set Descriptor Heap (for ImGui and scene resources)
 	ID3D12DescriptorHeap* descriptorHeaps[] = { g_srvDescHeap };
@@ -3026,6 +3877,8 @@ void renderFrame()
 		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
 
 		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
@@ -3106,6 +3959,85 @@ void renderFrame()
 	}
 
 	// ----------------------------------------------------
+	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
+	// ----------------------------------------------------
+	if (!g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	{
+		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
+		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+		g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+		EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+		if (aspect <= 0.01f || std::isnan(aspect)) aspect = 1.777f;
+
+		glm::mat4 view = g_camera.GetViewMatrix();
+		glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+		glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+		glm::mat4 invVP = glm::inverse(proj * skyboxView);
+
+		SkyboxShaderConstants skyConsts = {};
+		skyConsts.invViewProj = invVP;
+		skyConsts.cameraPos = glm::vec3(0.0f);
+		skyConsts.exposure = g_scene.skyboxExposure;
+		skyConsts.tint = g_scene.skyboxTint;
+		skyConsts.rotation = g_scene.skyboxRotation;
+		skyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
+
+		bool hasHdrTex = !g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none";
+		skyConsts.hasHdrTex = hasHdrTex ? 1.0f : 0.0f;
+
+		g_commandList->SetGraphicsRoot32BitConstants(0, 28, &skyConsts, 0);
+
+		D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+		if (skyTable.ptr != 0)
+		{
+			g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+		}
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.3: AquaTerrain DX12 Water System (Simulation & Translucent Render)
+	// ----------------------------------------------------
+	if (!g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
+	{
+		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain GPU Simulation");
+		Eunoia::WaterSystem::Get().Simulate(g_commandList, g_scene);
+
+		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain Water Render");
+		EngineUI::ViewportRect vpRectW = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspectW = (vpRectW.width > 0 && vpRectW.height > 0) ? (vpRectW.width / vpRectW.height) : 1.777f;
+		if (aspectW <= 0.01f || std::isnan(aspectW)) aspectW = 1.777f;
+
+		glm::mat4 viewW = g_camera.GetViewMatrix();
+		glm::mat4 projW = g_camera.GetProjectionMatrix(aspectW);
+		glm::vec3 camPosW = g_camera.GetPosition();
+
+		Eunoia::WaterSystem::Get().Render(
+			g_commandList,
+			g_scene,
+			viewW,
+			projW,
+			camPosW,
+			g_depthStencilBuffer,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			g_camera.nearPlane,
+			g_camera.farPlane,
+			(float)g_currentWidth,
+			(float)g_currentHeight,
+			g_vertexBuffer,
+			g_vertexBufferView,
+			g_indexBuffer,
+			g_indexBufferView,
+			g_pVertexMapped,
+			g_pIndexMapped
+		);
+	}
+
+	// ----------------------------------------------------
 	// PASS 2.5: Selected Camera Picture-in-Picture (PiP) Hardware Pass
 	// ----------------------------------------------------
 	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
@@ -3126,7 +4058,7 @@ void renderFrame()
 		// Clear Depth & Stencil exclusively within the PiP rect for a fresh camera z-buffer
 		g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &pipScissor);
 		// Clear PiP color rectangle to scene background clear color
-		g_commandList->ClearRenderTargetView(rtvHandle, clearColor, 1, &pipScissor);
+		g_commandList->ClearRenderTargetView(activeSceneRtv, clearColor, 1, &pipScissor);
 
 		// Set camera Constant Buffer from Slot 1 (Camera MVP & Pos)
 		g_commandList->SetGraphicsRootSignature(g_rootSignature);
@@ -3135,6 +4067,8 @@ void renderFrame()
 		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
 		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
 
 		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
@@ -3189,10 +4123,139 @@ void renderFrame()
 			g_commandList->DrawIndexedInstanced(drawCount, 1, (UINT)batch.startIndex, 0, 0);
 		}
 
+		if (g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+		{
+			g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+			g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+			const GameObject* selCamObj = g_scene.FindObject(pipRect.selectedCameraId);
+			glm::mat4 pipView = selCamObj ? glm::inverse(g_scene.GetWorldMatrix(*selCamObj)) : g_camera.GetViewMatrix();
+			glm::mat4 skyboxPipView = glm::mat4(glm::mat3(pipView));
+			float pipAspect = (ph > 0.0f) ? (pw / ph) : 1.777f;
+			float pipFov = (selCamObj && selCamObj->camera.fov > 0.0f) ? glm::radians(selCamObj->camera.fov) : glm::radians(45.0f);
+			glm::mat4 pipProj = glm::perspective(pipFov, pipAspect, 0.1f, 500.0f);
+			glm::mat4 pipInvVP = glm::inverse(pipProj * skyboxPipView);
+
+			SkyboxShaderConstants pipSkyConsts = {};
+			pipSkyConsts.invViewProj = pipInvVP;
+			pipSkyConsts.cameraPos = glm::vec3(0.0f);
+			pipSkyConsts.exposure = g_scene.skyboxExposure;
+			pipSkyConsts.tint = g_scene.skyboxTint;
+			pipSkyConsts.rotation = g_scene.skyboxRotation;
+			pipSkyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
+			pipSkyConsts.hasHdrTex = (!g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none") ? 1.0f : 0.0f;
+
+			g_commandList->SetGraphicsRoot32BitConstants(0, 28, &pipSkyConsts, 0);
+			D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+			if (skyTable.ptr != 0)
+			{
+				g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+			}
+			g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			g_commandList->DrawInstanced(3, 1, 0, 0);
+		}
+
 		// Restore main viewport and scissor
 		g_commandList->RSSetViewports(1, &viewport);
 		g_commandList->RSSetScissorRects(1, &scissor);
 	}
+
+	// ----------------------------------------------------
+	// PASS 2.6: Real-Time Anti-Aliasing Resolve Pass (dev.md)
+	// Resolves g_sceneRenderTarget to backbuffer with active AA method
+	// ----------------------------------------------------
+	if (g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
+	{
+		RecordGpuBreadcrumbOp("[AntiAliasing] Resolve Pass");
+
+		// Transition scene render target to pixel shader resource
+		D3D12_RESOURCE_BARRIER toSrvBarrier = CreateTransitionBarrier(
+			g_sceneRenderTarget,
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		);
+		g_commandList->ResourceBarrier(1, &toSrvBarrier);
+
+		// Output to BackBuffer inside 3D viewport region
+		g_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+		g_commandList->RSSetViewports(1, &viewport);
+		g_commandList->RSSetScissorRects(1, &scissor);
+
+		g_commandList->SetGraphicsRootSignature(g_antiAliasingRootSignature);
+		g_commandList->SetPipelineState(g_antiAliasingPipelineState);
+
+		ID3D12DescriptorHeap* descriptorHeaps[] = { g_srvDescHeap };
+		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+		// Root descriptor table t0..t1 (Current scene + History)
+		g_commandList->SetGraphicsRootDescriptorTable(1, g_sceneSrvGpuHandle);
+
+		uint32_t aaMethodVal = (uint32_t)Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+		struct alignas(16) {
+			uint32_t method;
+			float totalWidth;
+			float totalHeight;
+			float invTotalWidth;
+			float invTotalHeight;
+			float jitterX;
+			float jitterY;
+			uint32_t frameCount;
+			float sharpness;
+			float pad[3];
+		} aaParams = {
+			aaMethodVal,
+			(float)g_currentWidth,
+			(float)g_currentHeight,
+			1.0f / (float)g_currentWidth,
+			1.0f / (float)g_currentHeight,
+			g_currentJitter.x,
+			g_currentJitter.y,
+			(uint32_t)g_globalFrameCounter,
+			1.0f,
+			{ 0.0f, 0.0f, 0.0f }
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(0, 12, &aaParams, 0);
+
+		// Draw full-screen triangle to resolve into viewport area of BackBuffer
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+
+		// If temporal AA is active, copy current frame to history buffer
+		bool isTemporal = (aaMethodVal == 1 || aaMethodVal == 2 || aaMethodVal >= 8);
+		if (isTemporal && g_sceneHistoryRenderTarget)
+		{
+			D3D12_RESOURCE_BARRIER copyBarriers[2] = {
+				CreateTransitionBarrier(g_sceneRenderTarget, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE),
+				CreateTransitionBarrier(g_sceneHistoryRenderTarget, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST)
+			};
+			g_commandList->ResourceBarrier(2, copyBarriers);
+
+			g_commandList->CopyResource(g_sceneHistoryRenderTarget, g_sceneRenderTarget);
+
+			D3D12_RESOURCE_BARRIER restoreBarriers[2] = {
+				CreateTransitionBarrier(g_sceneRenderTarget, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+				CreateTransitionBarrier(g_sceneHistoryRenderTarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+			};
+			g_commandList->ResourceBarrier(2, restoreBarriers);
+		}
+		else
+		{
+			// Transition scene target back to RENDER_TARGET for next frame
+			D3D12_RESOURCE_BARRIER toRtBarrier = CreateTransitionBarrier(
+				g_sceneRenderTarget,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+				D3D12_RESOURCE_STATE_RENDER_TARGET
+			);
+			g_commandList->ResourceBarrier(1, &toRtBarrier);
+		}
+	}
+
+	// Reset viewport & scissor for ImGui to full window
+	D3D12_VIEWPORT guiViewport = { 0.0f, 0.0f, (float)g_currentWidth, (float)g_currentHeight, 0.0f, 1.0f };
+	D3D12_RECT guiScissor = { 0, 0, (LONG)g_currentWidth, (LONG)g_currentHeight };
+	g_commandList->RSSetViewports(1, &guiViewport);
+	g_commandList->RSSetScissorRects(1, &guiScissor);
+	g_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
 
 	// 2. Render Unreal Engine 5 UI with Dear ImGui
 	ImDrawData* drawData = ImGui::GetDrawData();
@@ -3255,6 +4318,7 @@ void cleanUpD3D12()
 	WaitForGpuIdle();
 	FlushDeferredReleases();
 	Eunoia::MeshClusterCullingSystem::Get().Shutdown();
+	Eunoia::WaterSystem::Get().Shutdown();
 
 	ImGui_ImplDX12_Shutdown();
 	ImGui_ImplGlfw_Shutdown();
@@ -3293,6 +4357,18 @@ void cleanUpD3D12()
 	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
 	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
 	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
+
+	if (g_sceneRenderTarget) { g_sceneRenderTarget->Release(); g_sceneRenderTarget = nullptr; }
+	if (g_sceneHistoryRenderTarget) { g_sceneHistoryRenderTarget->Release(); g_sceneHistoryRenderTarget = nullptr; }
+	if (g_antiAliasingPipelineState) { g_antiAliasingPipelineState->Release(); g_antiAliasingPipelineState = nullptr; }
+	if (g_antiAliasingRootSignature) { g_antiAliasingRootSignature->Release(); g_antiAliasingRootSignature = nullptr; }
+	g_sceneSrvCpuHandle.ptr = 0;
+	g_sceneSrvGpuHandle.ptr = 0;
+	g_sceneHistorySrvCpuHandle.ptr = 0;
+	g_sceneHistorySrvGpuHandle.ptr = 0;
 
 	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
 	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }
@@ -3324,6 +4400,7 @@ static void frameBufferResizeCallback(GLFWwindow* window, int width, int height)
 	g_currentHeight = height;
 	resizeBuffers(width, height);
 	Eunoia::MeshClusterCullingSystem::Get().Resize((UINT)width, (UINT)height);
+	Eunoia::WaterSystem::Get().Resize((UINT)width, (UINT)height);
 }
 
 static bool RayTriangleIntersect(
@@ -3492,9 +4569,25 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 {
 	if (g_scene.isPlayMode)
 	{
-		if (button == GLFW_MOUSE_BUTTON_LEFT) s_isLeftMouseDown = (action == GLFW_PRESS);
+		ImGuiIO& io = ImGui::GetIO();
+		if (button == GLFW_MOUSE_BUTTON_LEFT)
+		{
+			s_isLeftMouseDown = (action == GLFW_PRESS);
+			// User Request: when click on the game play mode screen than again lock automatically
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
+			{
+				CursorState.Locked();
+			}
+		}
 		else if (button == GLFW_MOUSE_BUTTON_MIDDLE) s_isMiddleMouseDown = (action == GLFW_PRESS);
-		else if (button == GLFW_MOUSE_BUTTON_RIGHT) s_isRightMouseDown = (action == GLFW_PRESS);
+		else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+		{
+			s_isRightMouseDown = (action == GLFW_PRESS);
+			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
+			{
+				CursorState.Locked();
+			}
+		}
 		return;
 	}
 
@@ -3701,6 +4794,9 @@ bool RecoverD3D12Device(HWND hwnd)
 	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
 	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
 	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
 
 	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
 	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }
@@ -3760,6 +4856,7 @@ bool RecoverD3D12Device(HWND hwnd)
 
 	// 4. Reload textures & fallbacks
 	InitFallbackTextures();
+	InitLightmapSrvSlot();
 	DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 	g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
 
@@ -3904,6 +5001,14 @@ int main(int argc, char** argv)
 
 	bool isGameOnlyMode = false;
 	std::filesystem::path gameProjectPath;
+	std::string gameScenePath;
+	std::string gameBinPath;
+	float cmdCamYaw = 0.0f;
+	float cmdCamPitch = 0.0f;
+	glm::vec3 cmdCamTarget(0.0f);
+	float cmdCamDist = 0.001f;
+	float cmdCamFov = 60.0f;
+	bool hasCmdCam = false;
 
 	for (int i = 1; i < argc; ++i) {
 		std::string arg = argv[i];
@@ -3912,6 +5017,35 @@ int main(int argc, char** argv)
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
 				gameProjectPath = argv[++i];
 			}
+		} else if (arg == "--scene" || arg == "-scene" || arg == "/scene") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameScenePath = argv[++i];
+			}
+		} else if (arg == "--bin" || arg == "-bin" || arg == "/bin") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameBinPath = argv[++i];
+			}
+		} else if (arg == "--cam-yaw" && i + 1 < argc) {
+			cmdCamYaw = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-pitch" && i + 1 < argc) {
+			cmdCamPitch = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tx" && i + 1 < argc) {
+			cmdCamTarget.x = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-ty" && i + 1 < argc) {
+			cmdCamTarget.y = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tz" && i + 1 < argc) {
+			cmdCamTarget.z = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-dist" && i + 1 < argc) {
+			cmdCamDist = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-fov" && i + 1 < argc) {
+			cmdCamFov = std::stof(argv[++i]);
+			hasCmdCam = true;
 		}
 	}
 
@@ -3947,6 +5081,7 @@ int main(int argc, char** argv)
 		glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
 	}
+
 	std::string winTitle = isGameOnlyMode ? (selectedProjectPath.filename().string() + " - Game Mode") : "Eunoia-Editor";
 	g_window = glfwCreateWindow(WIDTH, HEIGHT, winTitle.c_str(), nullptr, nullptr);
 	if (!g_window)
@@ -3962,6 +5097,7 @@ int main(int argc, char** argv)
 	}
 	g_engineUI.SetWindow(g_window);
 	g_engineUI.isGameOnlyWindow = isGameOnlyMode;
+	InputSystem::Get().SetWindow(g_window);
 
 #ifdef _WIN32
 	// Set window icon (both large for Taskbar/Alt-Tab and small for title bar / system menu)
@@ -4028,16 +5164,16 @@ int main(int argc, char** argv)
 	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px)
 	ImFont* mainFont = nullptr;
 	ImFontConfig fontConfig;
-	fontConfig.OversampleH = 2;
-	fontConfig.OversampleV = 2;
+	fontConfig.OversampleH = isGameOnlyMode ? 1 : 2;
+	fontConfig.OversampleV = isGameOnlyMode ? 1 : 2;
 	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
 	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
 	}
 
-	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available
-	if (mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
+	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available (skip in game mode for fast launch)
+	if (!isGameOnlyMode && mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
 		ImFontConfig symbolConfig;
 		symbolConfig.MergeMode = true;
 		symbolConfig.OversampleH = 2;
@@ -4054,7 +5190,9 @@ int main(int argc, char** argv)
 		io.FontGlobalScale = 1.25f;
 	}
 
-	g_engineUI.SetupTheme();
+	if (!isGameOnlyMode) {
+		g_engineUI.SetupTheme();
+	}
 
 	ImGui_ImplGlfw_InitForOther(g_window, true);
 
@@ -4071,32 +5209,35 @@ int main(int argc, char** argv)
 	ImGui_ImplDX12_Init(&init_info);
 
 	InitFallbackTextures();
-	DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
-	g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
+	InitLightmapSrvSlot();
+	if (!isGameOnlyMode) {
+		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
+		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
-	g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
+		DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
+		g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
-	g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
+		DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
+		g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
-	g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
+		DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
+		g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
-	g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
+		DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
+		g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
-	g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
+		DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
+		g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
 
-	DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
-	g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
-	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
-	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
-	InputSystem::Get().SetupDefaultActions();
-
+		DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
+		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
+		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
+		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+	}
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
-	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera);
+	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
+
+	updateSceneGeometry();
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;
@@ -4113,19 +5254,34 @@ int main(int argc, char** argv)
 			}
 		}
 		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera)) {
-				glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
-				glm::vec3 worldPos, worldRot, worldScale;
-				Scene::DecomposeMatrix(worldMat, worldPos, worldRot, worldScale);
-				g_camera.yaw = worldRot.y;
-				g_camera.pitch = worldRot.x;
-				g_camera.fov = camObj->camera.fov;
-				g_camera.isOrthographic = camObj->camera.isOrthographic;
-				g_camera.orthoSize = camObj->camera.orthoSize;
-				g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
-				g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
-				g_camera.distance = 0.001f;
-				g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
 			}
+			g_camera.yaw = worldRot.y;
+			g_camera.pitch = std::clamp(worldRot.x, -89.0f, 89.0f);
+			g_camera.fov = camObj->camera.fov;
+			g_camera.isOrthographic = camObj->camera.isOrthographic;
+			g_camera.orthoSize = camObj->camera.orthoSize;
+			g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+			g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
+			g_camera.distance = 0.001f;
+			g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+		} else if (hasCmdCam) {
+			g_camera.yaw = cmdCamYaw;
+			g_camera.pitch = std::clamp(cmdCamPitch, -89.0f, 89.0f);
+			g_camera.target = cmdCamTarget;
+			g_camera.distance = cmdCamDist;
+			g_camera.fov = cmdCamFov;
+		}
 		g_scene.showGrid = false;
 		g_engineUI.showGizmo = false;
 		g_scene.StartPlayMode();
@@ -4182,11 +5338,45 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Game Mode exit key listener (ESC or DELETE closes external game window)
-		if (isGameOnlyMode && (InputSystem::Get().IsKeyPressed(Key::Escape) || glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS ||
-		                       InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS))
+		// Game Mode ESC & Exit listener (for both standalone game and in-editor Play Mode)
+		if (isGameOnlyMode || g_scene.isPlayMode)
 		{
-			glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+			static bool s_escWasPressed = false;
+			bool escNow = InputSystem::Get().IsKeyDown(Key::Escape) || (glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
+			if (escNow && !s_escWasPressed)
+			{
+				// User Request: in the game mode when press esc dont close the game play mode instead do nothing
+				// and if mouse cursor state is locked then make it unlocked when press esc
+				if (InputSystem::Get().IsCursorLocked())
+				{
+					CursorState.UnLocked();
+				}
+			}
+			s_escWasPressed = escNow;
+
+			// Delete key closes the standalone game mode window or exits in-editor play mode
+			if (InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS)
+			{
+				CursorState.UnLocked();
+				if (isGameOnlyMode)
+				{
+					glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+				}
+				else if (g_scene.isPlayMode)
+				{
+					g_engineUI.ExitPlayMode(g_scene, &g_camera);
+				}
+			}
+
+			// User Request: when click on the game play mode screen than again lock automatically
+			if (!InputSystem::Get().IsCursorLocked() && !ImGui::GetIO().WantCaptureMouse)
+			{
+				if (glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS ||
+				    glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
+				{
+					CursorState.Locked();
+				}
+			}
 		}
 
 		frameCount += 1.0f;
@@ -4201,6 +5391,7 @@ int main(int argc, char** argv)
 
 		// Update 3D Scene animations and runtime behaviours
 		g_scene.Update(deltaTime);
+		Eunoia::WaterSystem::Get().Update(deltaTime);
 
 		// Synchronize viewport camera dynamically as the level camera moves or rotates
 		SyncLevelCameraToViewportCamera();

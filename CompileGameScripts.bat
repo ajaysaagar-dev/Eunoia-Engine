@@ -83,6 +83,7 @@ echo [INFO] Compiling behaviour scripts into %PROJ_BUILD%\%PROJ_NAME%.exe and te
     "-I%ENGINE_ROOT%\Engine\EngineRHI\Include" ^
     "-I%ENGINE_ROOT%\Engine\EngineRenderer\Include" ^
     "-I%ENGINE_ROOT%\Engine\EunoiaPluginCore\Include" ^
+    "-I%ENGINE_ROOT%\Plugins\Lights-Baking\Include" ^
     "-I%ENGINE_ROOT%\deps\tinyobj" ^
     "-I%ENGINE_ROOT%\deps\cgltf" ^
     "-I%ENGINE_ROOT%\deps\ufbx" ^

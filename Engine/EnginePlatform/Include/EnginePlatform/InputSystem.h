@@ -138,6 +138,7 @@ public:
     
     // Must be called after glfwPollEvents each frame
     void Update(GLFWwindow* window) {
+        m_window = window;
         s_scrollInstance = this;
         for (int i = 0; i < MAX_KEYS; ++i) {
             m_keyDown[i] = (glfwGetKey(window, i) == GLFW_PRESS);
@@ -218,18 +219,18 @@ public:
         return !m_mouseDown[button] && m_mouseDownPrev[button];
     }
     
-    double GetMouseX() const { return m_mouseX; }
-    double GetMouseY() const { return m_mouseY; }
-    double GetMouseDeltaX() const { return m_mouseDeltaX; }
-    double GetMouseDeltaY() const { return m_mouseDeltaY; }
+    double GetMouseX(bool negate = false) const { return negate ? -m_mouseX : m_mouseX; }
+    double GetMouseY(bool negate = false) const { return negate ? -m_mouseY : m_mouseY; }
+    double GetMouseDeltaX(bool negate = false) const { return negate ? -m_mouseDeltaX : m_mouseDeltaX; }
+    double GetMouseDeltaY(bool negate = false) const { return negate ? -m_mouseDeltaY : m_mouseDeltaY; }
     glm::vec2 GetMouseDelta() const { return glm::vec2((float)m_mouseDeltaX, (float)m_mouseDeltaY); }
     double GetScrollDelta() const { return m_scrollDelta; }
 
     // --- Axis System: Continuous Cursor Movement ---
     // Returns 2D cursor movement axis based on moving direction and speed (X: +Right/-Left, Y: +Up/-Down)
     glm::vec2 GetMouseAxis() const { return m_mouseAxis; }
-    float GetMouseAxisX() const { return m_mouseAxis.x; }
-    float GetMouseAxisY() const { return m_mouseAxis.y; }
+    float GetMouseAxisX(bool negate = false) const { return negate ? -m_mouseAxis.x : m_mouseAxis.x; }
+    float GetMouseAxisY(bool negate = false) const { return negate ? -m_mouseAxis.y : m_mouseAxis.y; }
 
     // Returns normalized unit vector in the direction the cursor is currently moving
     glm::vec2 GetMouseDirection() const { return m_mouseDirection; }
@@ -243,6 +244,48 @@ public:
 
     void SetMouseDeadzone(float deadzone) { m_mouseDeadzone = deadzone; }
     float GetMouseDeadzone() const { return m_mouseDeadzone; }
+
+    // --- Cursor State & Locking System (dev.md: CursorState.Locked(), CursorState.UnLocked()) ---
+    void SetWindow(GLFWwindow* window) {
+        m_window = window;
+    }
+    GLFWwindow* GetWindow() const {
+        return m_window;
+    }
+
+    void SetCursorLocked(bool locked) {
+        m_cursorLocked = locked;
+        if (m_window) {
+            if (locked) {
+                glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                if (glfwRawMouseMotionSupported()) {
+                    glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+                }
+            } else {
+                if (glfwRawMouseMotionSupported()) {
+                    glfwSetInputMode(m_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+                }
+                glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            }
+        }
+    }
+
+    bool IsCursorLocked() const {
+        return m_cursorLocked;
+    }
+
+    void SetCursorPos(double x, double y) {
+        m_mouseX = x;
+        m_mouseY = y;
+        m_mouseXPrev = x;
+        m_mouseYPrev = y;
+        m_mouseDeltaX = 0.0;
+        m_mouseDeltaY = 0.0;
+        m_isFirstMouse = false;
+        if (m_window) {
+            glfwSetCursorPos(m_window, x, y);
+        }
+    }
 
     // --- Action Mapping ---
     void MapAction(const std::string& action, const InputBinding& binding) {
@@ -464,6 +507,8 @@ private:
     double m_scrollDelta = 0.0;
     double m_scrollAccum = 0.0;
     bool m_isFirstMouse = true;
+    GLFWwindow* m_window = nullptr;
+    bool m_cursorLocked = false;
 
     // Axis system fields
     float m_mouseSensitivity = 0.15f;
@@ -481,4 +526,45 @@ private:
 };
 
 inline InputSystem* InputSystem::s_scrollInstance = nullptr;
+
+// ============================================================================
+// CursorStateController — Simple Cursor Lock / Unlock API (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+// Allows single-line commands anywhere:
+//   CursorState.Locked();
+//   CursorState.UnLocked();
+// ============================================================================
+struct CursorStateController {
+    void* behaviour = nullptr;
+    static inline void* s_activeBehaviour = nullptr;
+    static inline void (*s_cursorSyncCallback)() = nullptr;
+
+    CursorStateController() = default;
+    CursorStateController(void* b) : behaviour(b) {
+        if (b) s_activeBehaviour = b;
+    }
+
+    static void Locked() {
+        InputSystem::Get().SetCursorLocked(true);
+        if (s_cursorSyncCallback) {
+            s_cursorSyncCallback();
+        }
+    }
+    static void UnLocked() {
+        InputSystem::Get().SetCursorLocked(false);
+    }
+    static void Lock() { Locked(); }
+    static void Unlock() { UnLocked(); }
+    static void Unlocked() { UnLocked(); }
+
+    static bool IsLocked() {
+        return InputSystem::Get().IsCursorLocked();
+    }
+    static bool isLocked() {
+        return IsLocked();
+    }
+};
+
+inline CursorStateController CursorState;
+inline CursorStateController cursorState;
+using CursorStateProxy = CursorStateController;
 

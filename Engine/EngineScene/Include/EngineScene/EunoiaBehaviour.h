@@ -9,6 +9,7 @@
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <EngineScene/TransformTypes.h>
+#include <EnginePlatform/InputSystem.h>
 
 // Forward declarations
 struct GameObject;
@@ -55,11 +56,11 @@ enum class ObjectRefType {
 
 inline const char* ObjectRefTypeToString(ObjectRefType type) {
     switch (type) {
-        case ObjectRefType::Actor:  return "Actor";
+        case ObjectRefType::Actor:  return "GameObject";
         case ObjectRefType::Light:  return "Light";
         case ObjectRefType::Mesh:   return "Mesh";
         case ObjectRefType::Camera: return "Camera";
-        default:                    return "Object";
+        default:                    return "GameObject";
     }
 }
 
@@ -364,7 +365,17 @@ struct BehaviourTransform {
 
     // Relative Translate (dev.md: Transform.RelativeTranslate(0, 0, 0);)
     // 1. By delta (x, y, z) / (delta) / (new Vector3(...))
-    void RelativeTranslate(const glm::vec3& delta) { Location.LocalSpace(Location.LocalSpace() + delta); }
+    // Transforms movement relative to current facing direction (local space heading):
+    // +X = Forward, -X = Backward, +Z = Right, -Z = Left, +Y = Up, -Y = Down
+    void RelativeTranslate(const glm::vec3& delta) {
+        glm::vec3 rot = Rotation.LocalSpace();
+        float rYaw = glm::radians(rot.y);
+        glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+        glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+        glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
+        Location.LocalSpace(Location.LocalSpace() + localDelta);
+    }
     void RelativeTranslate(float x, float y, float z) { RelativeTranslate(glm::vec3(x, y, z)); }
     void RelativeTranslate(const glm::vec3* delta) { if (delta) { RelativeTranslate(*delta); delete delta; } }
 
@@ -437,6 +448,9 @@ public:
         gameObject = owner;
         Transform.Init(this);
         GetRespectiveObject.behaviour = this;
+        CursorStateController::s_activeBehaviour = this;
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     Scene* GetScene() const { return m_scene; }
@@ -549,6 +563,7 @@ public:
     // Reflection & Properties (dev.md Section 7, 8, 23, 24)
     virtual void RegisterProperties() {}
     virtual void RefreshPropertiesFromSource() {}
+    virtual void ResetToDefaults();
     virtual std::string GetSourceCppPath() const { return ""; }
     std::vector<BehaviourProperty>& GetProperties() { return m_properties; }
     const std::vector<BehaviourProperty>& GetProperties() const { return m_properties; }
@@ -568,11 +583,16 @@ public:
     void RegisterProperty(const std::string& name, glm::vec4* val, const std::string& category = "General");
     void RegisterColor(const std::string& name, glm::vec3* val, const std::string& category = "General");
 
-    // Helper to register scene object references
+    // Helper to register scene object references (objectRefType is optional, defaults to Actor / all GameObjects selectable)
+    void RegisterReference(const std::string& name, void* ptrAddr, const std::string& category = "References");
     void RegisterReference(const std::string& name, void* ptrAddr, ObjectRefType refType, const std::string& category = "References");
 
     // RespectiveObject Accessor functor (dev.md Section 15)
     RespectiveObjectAccessor GetRespectiveObject;
+
+    // Cursor State Controller (dev.md: CursorState.Locked(); CursorState.UnLocked();)
+    CursorStateProxy CursorState;
+    CursorStateProxy cursorState;
 
     // Transform accessors (Capitalized keywords: Transform.Location, Transform.Position, Transform.Rotation, Transform.Scale)
     BehaviourTransform Transform;
@@ -629,6 +649,12 @@ public:
     TransformVector3 GetRightVector() const { return Transform.GetRightVector(); }
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
 
+    // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
+    double GetMouseX(bool negate = false) const;
+    double GetMouseY(bool negate = false) const;
+    double GetMouseDeltaX(bool negate = false) const;
+    double GetMouseDeltaY(bool negate = false) const;
+
     // On-screen Print function (prints in game view screen top-left with time)
     template<typename T>
     void Print(const T& value, float time) {
@@ -647,6 +673,8 @@ protected:
     EunoiaBehaviour() {
         GetRespectiveObject.behaviour = this;
         Transform.Init(this);
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     EunoiaBehaviour(const EunoiaBehaviour& other)
@@ -662,6 +690,8 @@ protected:
           m_properties(other.m_properties) {
         GetRespectiveObject.behaviour = this;
         Transform.Init(this);
+        CursorState.behaviour = this;
+        cursorState.behaviour = this;
     }
 
     EunoiaBehaviour& operator=(const EunoiaBehaviour& other) {
@@ -677,6 +707,8 @@ protected:
             GetRespectiveObject.behaviour = this;
             Transform = other.Transform;
             Transform.Init(this);
+            CursorState.behaviour = this;
+            cursorState.behaviour = this;
         }
         return *this;
     }

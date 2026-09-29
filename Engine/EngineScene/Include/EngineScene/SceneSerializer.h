@@ -1,6 +1,9 @@
 #pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
+#ifdef GetClassName
+#undef GetClassName
+#endif
 #include <string>
 #include <fstream>
 #include <sstream>
@@ -20,6 +23,69 @@ using SceneProgressFn = std::function<void(float progress, const std::string& st
 
 class SceneSerializer {
 public:
+
+    // Fast binary cache for pre-parsed mesh geometries (bypasses heavy OBJ/FBX disk parsing on game start)
+    static bool SaveFastMeshCache(const Scene& scene, const std::string& binPath) {
+        std::ofstream out(binPath, std::ios::binary);
+        if (!out.is_open()) return false;
+
+        uint32_t magic = 0x454D5348; // "EMSH"
+        out.write(reinterpret_cast<const char*>(&magic), sizeof(magic));
+
+        uint32_t actorCount = (uint32_t)scene.objects.size();
+        out.write(reinterpret_cast<const char*>(&actorCount), sizeof(actorCount));
+
+        for (const auto& obj : scene.objects) {
+            out.write(reinterpret_cast<const char*>(&obj.id), sizeof(obj.id));
+            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+            out.write(reinterpret_cast<const char*>(&vCount), sizeof(vCount));
+            if (vCount > 0) {
+                out.write(reinterpret_cast<const char*>(obj.mesh.vertices.data()), vCount * sizeof(MeshVertex));
+            }
+            uint32_t iCount = (uint32_t)obj.mesh.indices.size();
+            out.write(reinterpret_cast<const char*>(&iCount), sizeof(iCount));
+            if (iCount > 0) {
+                out.write(reinterpret_cast<const char*>(obj.mesh.indices.data()), iCount * sizeof(uint32_t));
+            }
+        }
+        return true;
+    }
+
+    static std::unordered_map<int, PrimitiveMesh> LoadFastMeshMap(const std::string& binPath) {
+        std::unordered_map<int, PrimitiveMesh> meshMap;
+        if (binPath.empty() || !std::filesystem::exists(binPath)) return meshMap;
+        std::ifstream in(binPath, std::ios::binary);
+        if (!in.is_open()) return meshMap;
+
+        uint32_t magic = 0;
+        in.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+        if (magic != 0x454D5348) return meshMap; // "EMSH"
+
+        uint32_t count = 0;
+        in.read(reinterpret_cast<char*>(&count), sizeof(count));
+
+        for (uint32_t i = 0; i < count; ++i) {
+            int id = -1;
+            in.read(reinterpret_cast<char*>(&id), sizeof(id));
+            uint32_t vCount = 0;
+            in.read(reinterpret_cast<char*>(&vCount), sizeof(vCount));
+            PrimitiveMesh pm;
+            pm.vertices.resize(vCount);
+            if (vCount > 0) {
+                in.read(reinterpret_cast<char*>(pm.vertices.data()), vCount * sizeof(MeshVertex));
+            }
+            uint32_t iCount = 0;
+            in.read(reinterpret_cast<char*>(&iCount), sizeof(iCount));
+            pm.indices.resize(iCount);
+            if (iCount > 0) {
+                in.read(reinterpret_cast<char*>(pm.indices.data()), iCount * sizeof(uint32_t));
+            }
+            if (vCount > 0) {
+                meshMap[id] = std::move(pm);
+            }
+        }
+        return meshMap;
+    }
 
     // Save the entire scene to a JSON file
     static bool SaveScene(const Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr) {
@@ -55,6 +121,32 @@ public:
         file << "      \"size\": " << scene.gridSize << ",\n";
         file << "      \"divisions\": " << scene.gridDivisions << ",\n";
         file << "      \"color\": " << WriteVec3(scene.gridColor) << "\n";
+        file << "    },\n";
+        file << "    \"skybox\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enableSkybox) << ",\n";
+        file << "      \"assetPath\": " << QuoteStr(scene.skyboxAssetPath) << ",\n";
+        file << "      \"texturePath\": " << QuoteStr(scene.skyboxTexturePath) << ",\n";
+        file << "      \"exposure\": " << scene.skyboxExposure << ",\n";
+        file << "      \"rotation\": " << scene.skyboxRotation << ",\n";
+        file << "      \"tint\": " << WriteVec3(scene.skyboxTint) << ",\n";
+        file << "      \"ambientContribution\": " << scene.skyboxAmbientContribution << ",\n";
+        file << "      \"enableLighting\": " << BoolStr(scene.enableSkyboxLighting) << ",\n";
+        file << "      \"lightingIntensity\": " << scene.skyboxLightingIntensity << ",\n";
+        file << "      \"lightingColor\": " << WriteVec3(scene.skyboxLightingColor) << ",\n";
+        file << "      \"lightingSpecular\": " << scene.skyboxLightingSpecular << ",\n";
+        file << "      \"lightingDiffuse\": " << scene.skyboxLightingDiffuse << "\n";
+        file << "    },\n";
+        file << "    \"postProcessing\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enablePostProcessing) << ",\n";
+        file << "      \"exposureEV\": " << scene.postExposureEV << ",\n";
+        file << "      \"exposureMultiplier\": " << scene.postExposureMultiplier << ",\n";
+        file << "      \"tonemapper\": " << scene.postTonemapper << ",\n";
+        file << "      \"saturation\": " << scene.postSaturation << ",\n";
+        file << "      \"contrast\": " << scene.postContrast << ",\n";
+        file << "      \"gamma\": " << scene.postGamma << ",\n";
+        file << "      \"colorFilter\": " << WriteVec3(scene.postColorFilter) << ",\n";
+        file << "      \"colorTemperature\": " << scene.postColorTemperature << ",\n";
+        file << "      \"colorTint\": " << scene.postColorTint << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -184,6 +276,23 @@ public:
             file << "      \"lightVolIntensity\": " << obj.light.volumetricIntensity << ",\n";
             file << "      \"lightLayer\": " << obj.light.lightLayer << ",\n";
 
+            // Baking System (dev.md)
+            file << "      \"lightBakeState\": " << (int)obj.light.bakeState << ",\n";
+            file << "      \"lightBakeRes\": " << obj.light.bakeResolution << ",\n";
+            file << "      \"lightBakeDirty\": " << BoolStr(obj.light.isBakeDirty) << ",\n";
+            file << "      \"lightGuid\": " << QuoteStr(obj.light.lightGuid) << ",\n";
+            file << "      \"lightBakedLightmap\": " << QuoteStr(obj.light.bakedLightmapPath) << ",\n";
+            file << "      \"lightBakedShadowmap\": " << QuoteStr(obj.light.bakedShadowmapPath) << ",\n";
+            file << "      \"lightBakeSig\": " << QuoteStr(std::to_string(obj.light.bakeSignature)) << ",\n";
+            file << "      \"lightBakedPos\": " << WriteVec3(obj.light.bakedPosition) << ",\n";
+            file << "      \"lightBakedRot\": " << WriteVec3(obj.light.bakedRotation) << ",\n";
+            file << "      \"lightBakedIntensity\": " << obj.light.bakedIntensity << ",\n";
+            file << "      \"lightBakedColor\": " << WriteVec3(obj.light.bakedColor) << ",\n";
+            file << "      \"lightBakedRange\": " << obj.light.bakedRange << ",\n";
+            file << "      \"lightBakedInnerCone\": " << obj.light.bakedInnerCone << ",\n";
+            file << "      \"lightBakedOuterCone\": " << obj.light.bakedOuterCone << ",\n";
+            file << "      \"lightBakedShadowBias\": " << obj.light.bakedShadowBias << ",\n";
+
             // Camera Component Properties
             file << "      \"isCamera\": " << BoolStr(obj.isCamera) << ",\n";
             file << "      \"camOrthographic\": " << BoolStr(obj.camera.isOrthographic) << ",\n";
@@ -192,6 +301,36 @@ public:
             file << "      \"camNearPlane\": " << obj.camera.nearPlane << ",\n";
             file << "      \"camFarPlane\": " << obj.camera.farPlane << ",\n";
             file << "      \"camAspectRatio\": " << obj.camera.aspectRatio << ",\n";
+
+            file << "      \"isWaterBody\": " << BoolStr(obj.isWaterBody) << ",\n";
+            file << "      \"waterType\": " << (int)obj.water.type << ",\n";
+            file << "      \"waterName\": " << QuoteStr(obj.water.name) << ",\n";
+            file << "      \"waterRoughness\": " << obj.water.roughness << ",\n";
+            file << "      \"waterMetallic\": " << obj.water.metallic << ",\n";
+            file << "      \"waterOpacity\": " << obj.water.opacity << ",\n";
+            file << "      \"waterEnableDepth\": " << BoolStr(obj.water.enableDepth) << ",\n";
+            file << "      \"waterWaveSpeed\": " << obj.water.waveSpeed << ",\n";
+            file << "      \"waterWaveScale\": " << obj.water.waveScale << ",\n";
+            file << "      \"waterWaveHeight\": " << obj.water.waveHeight << ",\n";
+            file << "      \"waterNormalScale\": " << obj.water.normalScale << ",\n";
+            file << "      \"waterDepthRange\": " << obj.water.depthRange << ",\n";
+            file << "      \"waterFoamDistance\": " << obj.water.foamDistance << ",\n";
+            file << "      \"waterFoamStrength\": " << obj.water.foamStrength << ",\n";
+            file << "      \"waterFoamSpeed\": " << obj.water.foamSpeed << ",\n";
+            file << "      \"waterFresnelStrength\": " << obj.water.fresnelStrength << ",\n";
+            file << "      \"waterSpecularPower\": " << obj.water.specularPower << ",\n";
+            file << "      \"waterSparklePower\": " << obj.water.sparklePower << ",\n";
+            file << "      \"waterSimEnabled\": " << BoolStr(obj.water.simulationEnabled) << ",\n";
+            file << "      \"waterWaveDamping\": " << obj.water.waveDamping << ",\n";
+            file << "      \"waterDisturbanceStrength\": " << obj.water.disturbanceStrength << ",\n";
+            file << "      \"waterHeightScale\": " << obj.water.heightScale << ",\n";
+            file << "      \"waterColor\": [" << obj.water.waterColor.r << ", " << obj.water.waterColor.g << ", " << obj.water.waterColor.b << ", " << obj.water.waterColor.a << "],\n";
+            file << "      \"waterShallowColor\": [" << obj.water.shallowColor.r << ", " << obj.water.shallowColor.g << ", " << obj.water.shallowColor.b << ", " << obj.water.shallowColor.a << "],\n";
+            file << "      \"waterChoppiness\": " << obj.water.choppiness << ",\n";
+            file << "      \"waterOceanExtent\": " << obj.water.oceanExtent << ",\n";
+            file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
+            file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
+
 
             // Attached Behaviours (dev.md Section 14)
             file << "      \"behaviours\": [\n";
@@ -256,7 +395,7 @@ public:
     }
 
     // Load a scene from a JSON file
-    static bool LoadScene(Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr) {
+    static bool LoadScene(Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr, const std::string& binPath = "") {
         if (onProgress) onProgress(0.1f, "Opening level file", filePath);
         std::ifstream file(filePath);
         if (!file.is_open()) return false;
@@ -283,7 +422,15 @@ public:
 
         if (onProgress) onProgress(0.70f, "Parsing scene actors", "Loading geometry, materials & hierarchy");
         // Parse actors
-        ParseActors(content, scene);
+        std::string effectiveBin = binPath;
+        if (effectiveBin.empty()) {
+            std::filesystem::path p(filePath);
+            std::filesystem::path cand = p.parent_path() / (p.stem().string() + ".bin");
+            if (std::filesystem::exists(cand)) {
+                effectiveBin = cand.string();
+            }
+        }
+        ParseActors(content, scene, effectiveBin);
 
         if (onProgress) onProgress(0.90f, "Finalizing scene metadata", std::to_string(scene.objects.size()) + " actors loaded");
         // Parse metadata
@@ -609,6 +756,50 @@ private:
             p = gBlock.find("\"divisions\""); if (p != std::string::npos) scene.gridDivisions = ParseIntAt(gBlock, p, 16);
             p = gBlock.find("\"color\""); if (p != std::string::npos) scene.gridColor = ParseVec3(gBlock, p);
         }
+
+        // Skybox
+        size_t skyPos = envBlock.find("\"skybox\"");
+        if (skyPos != std::string::npos) {
+            size_t sStart = envBlock.find('{', skyPos);
+            size_t sEnd = FindMatchingBrace(envBlock, sStart);
+            std::string sBlock = envBlock.substr(sStart, sEnd - sStart + 1);
+
+            size_t p;
+            p = sBlock.find("\"enabled\""); if (p != std::string::npos) scene.enableSkybox = ParseBoolAt(sBlock, p, true);
+            p = sBlock.find("\"assetPath\""); if (p != std::string::npos) scene.skyboxAssetPath = ParseString(sBlock, "\"assetPath\"", "");
+            p = sBlock.find("\"texturePath\""); if (p != std::string::npos) scene.skyboxTexturePath = ParseString(sBlock, "\"texturePath\"", "");
+            p = sBlock.find("\"exposure\""); if (p != std::string::npos) scene.skyboxExposure = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"rotation\""); if (p != std::string::npos) scene.skyboxRotation = ParseFloatAt(sBlock, p, 0.0f);
+            p = sBlock.find("\"tint\""); if (p != std::string::npos) scene.skyboxTint = ParseVec3(sBlock, p);
+            p = sBlock.find("\"ambientContribution\""); if (p != std::string::npos) scene.skyboxAmbientContribution = ParseFloatAt(sBlock, p, 0.5f);
+            p = sBlock.find("\"enableLighting\""); if (p != std::string::npos) scene.enableSkyboxLighting = ParseBoolAt(sBlock, p, false);
+            p = sBlock.find("\"lightingIntensity\""); if (p != std::string::npos) scene.skyboxLightingIntensity = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"lightingColor\""); if (p != std::string::npos) scene.skyboxLightingColor = ParseVec3(sBlock, p);
+            p = sBlock.find("\"lightingSpecular\""); if (p != std::string::npos) scene.skyboxLightingSpecular = ParseFloatAt(sBlock, p, 1.0f);
+            p = sBlock.find("\"lightingDiffuse\""); if (p != std::string::npos) scene.skyboxLightingDiffuse = ParseFloatAt(sBlock, p, 1.0f);
+        }
+
+        // Post Processing (Color Grading & Exposure)
+        size_t ppPos = envBlock.find("\"postProcessing\"");
+        if (ppPos != std::string::npos) {
+            size_t pStart = envBlock.find('{', ppPos);
+            size_t pEnd = FindMatchingBrace(envBlock, pStart);
+            std::string pBlock = envBlock.substr(pStart, pEnd - pStart + 1);
+
+            size_t p;
+            p = pBlock.find("\"enabled\""); if (p != std::string::npos) scene.enablePostProcessing = ParseBoolAt(pBlock, p, false);
+            p = pBlock.find("\"exposureEV\""); if (p != std::string::npos) scene.postExposureEV = ParseFloatAt(pBlock, p, 0.0f);
+            p = pBlock.find("\"exposureMultiplier\""); if (p != std::string::npos) scene.postExposureMultiplier = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"tonemapper\""); if (p != std::string::npos) scene.postTonemapper = (int)ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"saturation\""); if (p != std::string::npos) scene.postSaturation = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"contrast\""); if (p != std::string::npos) scene.postContrast = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"gamma\""); if (p != std::string::npos) scene.postGamma = ParseFloatAt(pBlock, p, 1.0f);
+            p = pBlock.find("\"colorFilter\""); if (p != std::string::npos) scene.postColorFilter = ParseVec3(pBlock, p);
+            p = pBlock.find("\"colorTemperature\""); if (p != std::string::npos) scene.postColorTemperature = ParseFloatAt(pBlock, p, 6500.0f);
+            p = pBlock.find("\"colorTint\""); if (p != std::string::npos) scene.postColorTint = ParseFloatAt(pBlock, p, 0.0f);
+        } else {
+            scene.enablePostProcessing = false;
+        }
     }
 
     static void ParsePointLights(const std::string& json, Scene& scene) {
@@ -645,7 +836,8 @@ private:
         }
     }
 
-    static void ParseActors(const std::string& json, Scene& scene) {
+    static void ParseActors(const std::string& json, Scene& scene, const std::string& binPath = "") {
+        auto fastMeshes = LoadFastMeshMap(binPath);
         size_t actorsPos = json.find("\"actors\"");
         if (actorsPos == std::string::npos) return;
 
@@ -818,6 +1010,28 @@ private:
             p = actorBlock.find("\"lightVolIntensity\""); if (p != std::string::npos) obj.light.volumetricIntensity = ParseFloatAt(actorBlock, p, 1.0f);
             p = actorBlock.find("\"lightLayer\""); if (p != std::string::npos) obj.light.lightLayer = (uint32_t)ParseIntAt(actorBlock, p, 1);
 
+            // Parse Baking Properties (dev.md)
+            p = actorBlock.find("\"lightBakeState\""); if (p != std::string::npos) obj.light.bakeState = (Eunoia::LightBakeState)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"lightBakeRes\""); if (p != std::string::npos) obj.light.bakeResolution = ParseIntAt(actorBlock, p, 1024);
+            p = actorBlock.find("\"lightBakeDirty\""); if (p != std::string::npos) obj.light.isBakeDirty = ParseBoolAt(actorBlock, p, false);
+            p = actorBlock.find("\"lightGuid\""); if (p != std::string::npos) obj.light.lightGuid = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakedLightmap\""); if (p != std::string::npos) obj.light.bakedLightmapPath = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakedShadowmap\""); if (p != std::string::npos) obj.light.bakedShadowmapPath = ParseStringAt(actorBlock, p, "");
+            p = actorBlock.find("\"lightBakeSig\""); if (p != std::string::npos) {
+                std::string sigStr = ParseStringAt(actorBlock, p, "");
+                if (!sigStr.empty()) {
+                    try { obj.light.bakeSignature = std::stoull(sigStr); } catch (...) {}
+                }
+            }
+            p = actorBlock.find("\"lightBakedPos\""); if (p != std::string::npos) obj.light.bakedPosition = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedRot\""); if (p != std::string::npos) obj.light.bakedRotation = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedIntensity\""); if (p != std::string::npos) obj.light.bakedIntensity = ParseFloatAt(actorBlock, p, 2.0f);
+            p = actorBlock.find("\"lightBakedColor\""); if (p != std::string::npos) obj.light.bakedColor = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"lightBakedRange\""); if (p != std::string::npos) obj.light.bakedRange = ParseFloatAt(actorBlock, p, 10.0f);
+            p = actorBlock.find("\"lightBakedInnerCone\""); if (p != std::string::npos) obj.light.bakedInnerCone = ParseFloatAt(actorBlock, p, 20.0f);
+            p = actorBlock.find("\"lightBakedOuterCone\""); if (p != std::string::npos) obj.light.bakedOuterCone = ParseFloatAt(actorBlock, p, 45.0f);
+            p = actorBlock.find("\"lightBakedShadowBias\""); if (p != std::string::npos) obj.light.bakedShadowBias = ParseFloatAt(actorBlock, p, 0.0012f);
+
             // Parse Camera Properties
             p = actorBlock.find("\"isCamera\""); if (p != std::string::npos) obj.isCamera = ParseBoolAt(actorBlock, p, false);
             if (obj.type == PrimitiveType::Camera) obj.isCamera = true;
@@ -827,6 +1041,42 @@ private:
             p = actorBlock.find("\"camNearPlane\""); if (p != std::string::npos) obj.camera.nearPlane = ParseFloatAt(actorBlock, p, 0.1f);
             p = actorBlock.find("\"camFarPlane\""); if (p != std::string::npos) obj.camera.farPlane = ParseFloatAt(actorBlock, p, 1000.0f);
             p = actorBlock.find("\"camAspectRatio\""); if (p != std::string::npos) obj.camera.aspectRatio = ParseFloatAt(actorBlock, p, 16.0f / 9.0f);
+
+            // Parse Water Properties
+            p = actorBlock.find("\"isWaterBody\""); if (p != std::string::npos) obj.isWaterBody = ParseBoolAt(actorBlock, p, false);
+            if (obj.type == PrimitiveType::WaterBody) obj.isWaterBody = true;
+            p = actorBlock.find("\"waterType\""); if (p != std::string::npos) obj.water.type = (WaterBodyType)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"waterName\""); if (p != std::string::npos) obj.water.name = ParseStringAt(actorBlock, p, "WaterBody");
+            p = actorBlock.find("\"waterRoughness\""); if (p != std::string::npos) obj.water.roughness = ParseFloatAt(actorBlock, p, 0.1f);
+            p = actorBlock.find("\"waterMetallic\""); if (p != std::string::npos) obj.water.metallic = ParseFloatAt(actorBlock, p, 0.1f);
+            p = actorBlock.find("\"waterOpacity\""); if (p != std::string::npos) obj.water.opacity = ParseFloatAt(actorBlock, p, 0.8f);
+            p = actorBlock.find("\"waterEnableDepth\""); if (p != std::string::npos) obj.water.enableDepth = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterWaveSpeed\""); if (p != std::string::npos) obj.water.waveSpeed = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterWaveScale\""); if (p != std::string::npos) obj.water.waveScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterWaveHeight\""); if (p != std::string::npos) obj.water.waveHeight = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterNormalScale\""); if (p != std::string::npos) obj.water.normalScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterDepthRange\""); if (p != std::string::npos) obj.water.depthRange = ParseFloatAt(actorBlock, p, 10.0f);
+            p = actorBlock.find("\"waterFoamDistance\""); if (p != std::string::npos) obj.water.foamDistance = ParseFloatAt(actorBlock, p, 1.5f);
+            p = actorBlock.find("\"waterFoamStrength\""); if (p != std::string::npos) obj.water.foamStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterFoamSpeed\""); if (p != std::string::npos) obj.water.foamSpeed = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterFresnelStrength\""); if (p != std::string::npos) obj.water.fresnelStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterSpecularPower\""); if (p != std::string::npos) obj.water.specularPower = ParseFloatAt(actorBlock, p, 128.0f);
+            p = actorBlock.find("\"waterSparklePower\""); if (p != std::string::npos) obj.water.sparklePower = ParseFloatAt(actorBlock, p, 800.0f);
+            p = actorBlock.find("\"waterSimEnabled\""); if (p != std::string::npos) obj.water.simulationEnabled = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterWaveDamping\""); if (p != std::string::npos) obj.water.waveDamping = ParseFloatAt(actorBlock, p, 0.985f);
+            p = actorBlock.find("\"waterDisturbanceStrength\""); if (p != std::string::npos) obj.water.disturbanceStrength = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterHeightScale\""); if (p != std::string::npos) obj.water.heightScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"waterColor\""); if (p != std::string::npos) {
+                obj.water.waterColor = ParseVec4(actorBlock, p);
+            }
+            p = actorBlock.find("\"waterShallowColor\""); if (p != std::string::npos) {
+                obj.water.shallowColor = ParseVec4(actorBlock, p);
+            }
+            p = actorBlock.find("\"waterChoppiness\""); if (p != std::string::npos) obj.water.choppiness = ParseFloatAt(actorBlock, p, 0.7f);
+            p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
+            p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"waterDebugMode\""); if (p != std::string::npos) obj.water.debugMode = ParseIntAt(actorBlock, p, 0);
+
 
             // Parse Attached Behaviours (dev.md Section 14)
             size_t behPos = actorBlock.find("\"behaviours\"");
@@ -896,93 +1146,98 @@ private:
                 }
             }
 
-            // Rebuild mesh geometry with loaded params for standard primitives
-            if (!obj.isImportedMesh && !obj.isLight && !IsLightPrimitive(obj.type) && !obj.isCamera && !IsCameraPrimitive(obj.type) && obj.type != PrimitiveType::Empty) {
-                obj.RebuildMesh();
-            }
-
-            // Restore mesh geometry for imported meshes, or empty mesh for empty/light actors
-            if (obj.isImportedMesh && !obj.meshFilePath.empty()) {
-                ImportedModel model;
-                try {
-                    model = MeshImporter::Load(obj.meshFilePath);
-                } catch (const std::exception& e) {
-                    std::cout << "[SceneSerializer] Error loading mesh for " << obj.name << ": " << e.what() << " (neglecting, forcing open)\n";
-                } catch (...) {
-                    std::cout << "[SceneSerializer] Unknown error loading mesh for " << obj.name << " (neglecting, forcing open)\n";
+            auto itFast = fastMeshes.find(obj.id);
+            if (itFast != fastMeshes.end() && !itFast->second.vertices.empty()) {
+                obj.mesh = std::move(itFast->second);
+            } else {
+                // Rebuild mesh geometry with loaded params for standard primitives
+                if (!obj.isImportedMesh && !obj.isLight && !IsLightPrimitive(obj.type) && !obj.isCamera && !IsCameraPrimitive(obj.type) && obj.type != PrimitiveType::Empty) {
+                    obj.RebuildMesh();
                 }
-                if (model.valid && !model.meshes.empty()) {
-                    if (obj.submeshIndex >= 0 && obj.submeshIndex < (int)model.meshes.size()) {
-                        obj.mesh.vertices = model.meshes[obj.submeshIndex].vertices;
-                        obj.mesh.indices  = model.meshes[obj.submeshIndex].indices;
 
-                        glm::vec3 minBound(1e9f);
-                        glm::vec3 maxBound(-1e9f);
-                        for (const auto& v : obj.mesh.vertices) {
-                            if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
-                                !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
-                                minBound = glm::min(minBound, v.pos);
-                                maxBound = glm::max(maxBound, v.pos);
+                // Restore mesh geometry for imported meshes, or empty mesh for empty/light actors
+                if (obj.isImportedMesh && !obj.meshFilePath.empty()) {
+                    ImportedModel model;
+                    try {
+                        model = MeshImporter::Load(obj.meshFilePath);
+                    } catch (const std::exception& e) {
+                        std::cout << "[SceneSerializer] Error loading mesh for " << obj.name << ": " << e.what() << " (neglecting, forcing open)\n";
+                    } catch (...) {
+                        std::cout << "[SceneSerializer] Unknown error loading mesh for " << obj.name << " (neglecting, forcing open)\n";
+                    }
+                    if (model.valid && !model.meshes.empty()) {
+                        if (obj.submeshIndex >= 0 && obj.submeshIndex < (int)model.meshes.size()) {
+                            obj.mesh.vertices = model.meshes[obj.submeshIndex].vertices;
+                            obj.mesh.indices  = model.meshes[obj.submeshIndex].indices;
+
+                            glm::vec3 minBound(1e9f);
+                            glm::vec3 maxBound(-1e9f);
+                            for (const auto& v : obj.mesh.vertices) {
+                                if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
+                                    !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
+                                    minBound = glm::min(minBound, v.pos);
+                                    maxBound = glm::max(maxBound, v.pos);
+                                }
                             }
-                        }
-                        glm::vec3 pivot = (minBound + maxBound) * 0.5f;
-                        uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
-                        for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
-                        for (auto& v : obj.mesh.vertices) {
-                            if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
-                                std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
-                                v.pos = glm::vec3(0.0f);
+                            glm::vec3 pivot = (minBound + maxBound) * 0.5f;
+                            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+                            for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
+                            for (auto& v : obj.mesh.vertices) {
+                                if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
+                                    std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
+                                    v.pos = glm::vec3(0.0f);
+                                } else {
+                                    v.pos -= pivot;
+                                }
+                            }
+                            if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
+                                obj.position = pivot;
+                            }
+                        } else if (model.meshes.size() == 1) {
+                            if (!model.meshes[0].vertices.empty()) {
+                                obj.mesh.vertices = model.meshes[0].vertices;
+                                obj.mesh.indices  = model.meshes[0].indices;
                             } else {
-                                v.pos -= pivot;
+                                obj.mesh = model.GetMergedMesh();
                             }
-                        }
-                        if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
-                            obj.position = pivot;
-                        }
-                    } else if (model.meshes.size() == 1) {
-                        if (!model.meshes[0].vertices.empty()) {
-                            obj.mesh.vertices = model.meshes[0].vertices;
-                            obj.mesh.indices  = model.meshes[0].indices;
+                            glm::vec3 minBound(1e9f);
+                            glm::vec3 maxBound(-1e9f);
+                            for (const auto& v : obj.mesh.vertices) {
+                                if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
+                                    !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
+                                    minBound = glm::min(minBound, v.pos);
+                                    maxBound = glm::max(maxBound, v.pos);
+                                }
+                            }
+                            glm::vec3 pivot = (minBound + maxBound) * 0.5f;
+                            uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
+                            for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
+                            for (auto& v : obj.mesh.vertices) {
+                                if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
+                                    std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
+                                    v.pos = glm::vec3(0.0f);
+                                } else {
+                                    v.pos -= pivot;
+                                }
+                            }
+                            if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
+                                obj.position = pivot;
+                            }
                         } else {
-                            obj.mesh = model.GetMergedMesh();
-                        }
-                        glm::vec3 minBound(1e9f);
-                        glm::vec3 maxBound(-1e9f);
-                        for (const auto& v : obj.mesh.vertices) {
-                            if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
-                                !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
-                                minBound = glm::min(minBound, v.pos);
-                                maxBound = glm::max(maxBound, v.pos);
-                            }
-                        }
-                        glm::vec3 pivot = (minBound + maxBound) * 0.5f;
-                        uint32_t vCount = (uint32_t)obj.mesh.vertices.size();
-                        for (uint32_t& idx : obj.mesh.indices) { if (idx >= vCount) idx = 0; }
-                        for (auto& v : obj.mesh.vertices) {
-                            if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
-                                std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
-                                v.pos = glm::vec3(0.0f);
-                            } else {
-                                v.pos -= pivot;
-                            }
-                        }
-                        if (obj.parentId != -1 && glm::length(obj.position) < 0.0001f && glm::length(pivot) > 0.0001f) {
-                            obj.position = pivot;
+                            // submeshIndex == -1 with multiple meshes: parent/root node, keeps empty geometry
+                            obj.mesh.vertices.clear();
+                            obj.mesh.indices.clear();
                         }
                     } else {
-                        // submeshIndex == -1 with multiple meshes: parent/root node, keeps empty geometry
-                        obj.mesh.vertices.clear();
-                        obj.mesh.indices.clear();
+                        // Fallback to empty mesh or default cube representation so scene forces open
+                        obj.mesh = GeometryBuilder::CreateCube(1.0f, 1);
+                        std::cout << "[SceneSerializer] Notice: Actor '" << obj.name << "' (ID: " << obj.id << ") mesh '" << obj.meshFilePath << "' could not be loaded. Force opening with fallback geometry.\n";
                     }
-                } else {
-                    // Fallback to empty mesh or default cube representation so scene forces open
-                    obj.mesh = GeometryBuilder::CreateCube(1.0f, 1);
-                    std::cout << "[SceneSerializer] Notice: Actor '" << obj.name << "' (ID: " << obj.id << ") mesh '" << obj.meshFilePath << "' could not be loaded. Force opening with fallback geometry.\n";
+                } else if (obj.type == PrimitiveType::Empty || obj.isLight || IsLightPrimitive(obj.type)) {
+                    obj.isLight = (obj.type != PrimitiveType::Empty);
+                    obj.mesh.vertices.clear();
+                    obj.mesh.indices.clear();
                 }
-            } else if (obj.type == PrimitiveType::Empty || obj.isLight || IsLightPrimitive(obj.type)) {
-                obj.isLight = (obj.type != PrimitiveType::Empty);
-                obj.mesh.vertices.clear();
-                obj.mesh.indices.clear();
             }
 
             // --- Task 4: sanitize already-corrupted scenes on load ---
@@ -1079,8 +1334,8 @@ private:
         return std::string::npos;
     }
 
-    static bool LoadLevel(Scene& level, const std::string& filePath) {
-        return LoadScene(level, filePath);
+    static bool LoadLevel(Scene& level, const std::string& filePath, const std::string& binPath = "") {
+        return LoadScene(level, filePath, nullptr, binPath);
     }
 };
 

@@ -15,6 +15,11 @@
 #include <EngineAssets/MeshImporter.h>
 #include <filesystem>
 #include <EngineScene/BehaviourRegistry.h>
+#include <EnginePlatform/InputSystem.h>
+#include <LightsBaking/LightBakeManager.h>
+#ifdef GetClassName
+#undef GetClassName
+#endif
 
 void AddEngineLog(const std::string& category, const std::string& message, int level);
 
@@ -45,6 +50,10 @@ struct PointLight {
     float height = 1.0f;
     float radius = 0.5f;
     bool twoSided = false;
+
+    // Baking System (dev.md)
+    Eunoia::LightBakeState bakeState = Eunoia::LightBakeState::Realtime;
+    int bakeResolution = 1024;
 };
 
 class Scene {
@@ -64,6 +73,35 @@ public:
     glm::vec3 ambientColor{0.15f, 0.15f, 0.18f};
     glm::vec4 clearColor{0.07f, 0.07f, 0.08f, 1.0f};
 
+    // Skybox Environment Settings
+    bool enableSkybox = true;
+    std::string skyboxAssetPath = "";
+    std::string skyboxTexturePath = "";
+    float skyboxExposure = 1.0f;
+    float skyboxRotation = 0.0f; // degrees 0..360
+    glm::vec3 skyboxTint{1.0f, 1.0f, 1.0f};
+    float skyboxAmbientContribution = 0.5f;
+
+    // Skybox Based Lighting Settings (default disabled)
+    bool enableSkyboxLighting = false;
+    float skyboxLightingIntensity = 1.0f;
+    glm::vec3 skyboxLightingColor{1.0f, 1.0f, 1.0f};
+    float skyboxLightingSpecular = 1.0f;
+    float skyboxLightingDiffuse = 1.0f;
+
+    // Post Processing Settings (Color Grading & Exposure)
+    // Disabled by default for a level as requested
+    bool enablePostProcessing = false;
+    float postExposureEV = 0.0f;
+    float postExposureMultiplier = 1.0f;
+    int postTonemapper = 1; // 0=None/Linear, 1=ACES Filmic, 2=Reinhard
+    float postSaturation = 1.0f;
+    float postContrast = 1.0f;
+    float postGamma = 1.0f;
+    glm::vec3 postColorFilter{1.0f, 1.0f, 1.0f};
+    float postColorTemperature = 6500.0f;
+    float postColorTint = 0.0f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
@@ -76,6 +114,9 @@ public:
 
     // Multiple Point Lights Support
     std::vector<PointLight> pointLights;
+
+    // Water Bodies Support
+    std::vector<WaterBodyComponent> waterBodies;
 
     // Grid
     bool showGrid = true;
@@ -226,9 +267,17 @@ public:
         if (scale.z > 1e-6f) rotM[2] = glm::vec3(m[2]) / scale.z;
 
         const float RAD2DEG = 180.0f / 3.14159265358979323846f;
-        rotation.x = RAD2DEG * std::atan2(rotM[2][1], rotM[2][2]);
-        rotation.y = RAD2DEG * std::atan2(-rotM[2][0], std::sqrt(rotM[2][1] * rotM[2][1] + rotM[2][2] * rotM[2][2]));
-        rotation.z = RAD2DEG * std::atan2(rotM[1][0], rotM[0][0]);
+        float sinY = glm::clamp(rotM[2][0], -1.0f, 1.0f);
+        float cosY = std::sqrt(std::max(0.0f, 1.0f - sinY * sinY));
+        if (cosY > 1e-4f) {
+            rotation.x = RAD2DEG * std::atan2(-rotM[2][1], rotM[2][2]);
+            rotation.y = RAD2DEG * std::atan2(sinY, cosY);
+            rotation.z = RAD2DEG * std::atan2(-rotM[1][0], rotM[0][0]);
+        } else {
+            rotation.x = RAD2DEG * std::atan2(rotM[1][2], rotM[1][1]);
+            rotation.y = (sinY > 0.0f) ? 90.0f : -90.0f;
+            rotation.z = 0.0f;
+        }
 
         if (std::isnan(translation.x) || std::isinf(translation.x)) translation.x = 0.0f;
         if (std::isnan(translation.y) || std::isinf(translation.y)) translation.y = 0.0f;
@@ -296,6 +345,340 @@ public:
         selectedId = id;
         return obj;
     }
+
+    // Apply type-specific default preset to a WaterBodyComponent
+    static void ApplyWaterBodyPreset(WaterBodyComponent& w, WaterBodyType wbType) {
+        w.type = wbType;
+        // Global baseline defaults for AquaTerrain simulation & shading (dev.md Section 30)
+        w.simulationEnabled = true;
+        w.simulationResolution = 256;
+        w.waveDamping = 0.985f;
+        w.disturbanceStrength = 0.3f;
+        w.heightScale = 0.03f; // Subtle local ripple displacement (Section 7)
+        w.depthRange = 12.0f;
+        w.foamDistance = 0.6f;
+        w.foamStrength = 0.15f; // Conservative broken shoreline foam (Section 23)
+        w.foamSpeed = 0.5f;
+        w.fresnelStrength = 0.8f;
+        w.specularPower = 90.0f;
+        w.sparklePower = 300.0f;
+        w.choppiness = 0.7f;
+        w.oceanExtent = 3000.0f;
+        w.debugMode = 0;
+        w.isCameraCentered = (wbType == WaterBodyType::Ocean || wbType == WaterBodyType::Sea);
+
+        switch (wbType) {
+
+        case WaterBodyType::Ocean:
+            // Continuous Open-World Ocean (dev.md Sections 1-38)
+            w.width = 2000.0f;  w.length = 2000.0f;  w.gridResolution = 256;
+            w.waterColor   = {0.02f, 0.08f, 0.14f, 0.90f}; // Dark blue-green deep water (Section 17)
+            w.shallowColor = {0.04f, 0.20f, 0.28f, 0.80f}; // Dark teal shallow water
+            w.roughness = 0.12f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.75f;  w.refractionStrength = 0.4f;  w.specularIntensity = 0.8f;
+            w.normalScale = 0.35f;  w.waveSpeed = 1.0f;  w.waveScale = 0.20f;  w.waveHeight = 0.18f;
+            w.choppiness = 0.7f;
+            w.enableFoam = true;
+            w.foamColor = {0.92f, 0.96f, 1.0f, 0.70f};  w.foamScale = 1.0f;  w.foamOpacity = 0.6f;
+            w.enableDepth = true;  w.depthFadeDistance = 30.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.15f;
+            w.caustics = false;
+            w.enableWaves = true;
+            w.oceanWaveAmplitude = 0.2f;  w.oceanWavePeriod = 15.0f;
+            w.oceanWaveDirection = 45.0f;  w.tessellationLevel = 8;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.2f;
+            w.subsurfaceScattering = 0.25f;
+            w.subsurfaceColor = {0.02f, 0.15f, 0.25f};
+            break;
+
+        case WaterBodyType::Sea:
+            // Enclosed sea: calm rolling waves
+            w.width = 1000.0f;  w.length = 1000.0f;  w.gridResolution = 128;
+            w.waterColor   = {0.03f, 0.10f, 0.16f, 0.88f};
+            w.shallowColor = {0.06f, 0.24f, 0.30f, 0.78f};
+            w.roughness = 0.14f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.70f;  w.refractionStrength = 0.4f;  w.specularIntensity = 0.75f;
+            w.normalScale = 0.30f;  w.waveSpeed = 0.8f;  w.waveScale = 0.25f;  w.waveHeight = 0.12f;
+            w.choppiness = 0.6f;
+            w.enableFoam = true;
+            w.foamColor = {0.92f, 0.95f, 0.98f, 0.65f};  w.foamScale = 1.2f;  w.foamOpacity = 0.5f;
+            w.enableDepth = true;  w.depthFadeDistance = 25.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.12f;
+            w.enableWaves = true;
+            w.oceanWaveAmplitude = 0.15f;  w.oceanWavePeriod = 12.0f;
+            w.oceanWaveDirection = 30.0f;  w.tessellationLevel = 6;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.20f;
+            w.subsurfaceColor = {0.03f, 0.12f, 0.22f};
+            break;
+
+        case WaterBodyType::Lake:
+            // Calm inland lake: medium scale, clear blue-green, still surface
+            w.width = 60.0f;  w.length = 60.0f;  w.gridResolution = 48;
+            w.waterColor   = {0.04f, 0.18f, 0.28f, 0.88f};
+            w.shallowColor = {0.12f, 0.38f, 0.45f, 0.72f};
+            w.roughness = 0.04f;  w.metallic = 0.0f;  w.opacity = 0.82f;
+            w.reflectionStrength = 0.92f;  w.refractionStrength = 0.3f;  w.specularIntensity = 1.6f;
+            w.normalScale = 0.5f;  w.waveSpeed = 0.3f;  w.waveScale = 1.2f;  w.waveHeight = 0.15f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 15.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.08f;
+            w.caustics = true;  w.causticsScale = 1.5f;  w.causticsSpeed = 0.4f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.2f;
+            w.subsurfaceScattering = 0.2f;
+            w.subsurfaceColor = {0.05f, 0.18f, 0.22f};
+            break;
+
+        case WaterBodyType::River:
+            // Flowing river: medium-wide, flowing current, slight turbulence
+            w.width = 8.0f;  w.length = 80.0f;  w.gridResolution = 48;
+            w.waterColor   = {0.06f, 0.20f, 0.22f, 0.85f};
+            w.shallowColor = {0.15f, 0.40f, 0.35f, 0.70f};
+            w.roughness = 0.25f;  w.metallic = 0.0f;  w.opacity = 0.80f;
+            w.reflectionStrength = 0.6f;  w.refractionStrength = 0.4f;  w.specularIntensity = 1.1f;
+            w.normalScale = 1.5f;  w.waveSpeed = 1.8f;  w.waveScale = 1.8f;  w.waveHeight = 0.4f;
+            w.enableFoam = true;
+            w.foamColor = {0.90f, 0.93f, 0.95f, 0.65f};  w.foamScale = 2.5f;  w.foamOpacity = 0.5f;
+            w.enableDepth = true;  w.depthFadeDistance = 6.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.3f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 1.5f;  w.flowTiling = 2.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.15f;
+            w.subsurfaceColor = {0.08f, 0.20f, 0.18f};
+            break;
+
+        case WaterBodyType::Stream:
+            // Narrow fast stream: small scale, fast flow, clear, rocky
+            w.width = 2.5f;  w.length = 25.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.10f, 0.28f, 0.25f, 0.78f};
+            w.shallowColor = {0.20f, 0.50f, 0.40f, 0.60f};
+            w.roughness = 0.35f;  w.metallic = 0.0f;  w.opacity = 0.72f;
+            w.reflectionStrength = 0.5f;  w.refractionStrength = 0.5f;  w.specularIntensity = 0.9f;
+            w.normalScale = 2.0f;  w.waveSpeed = 2.5f;  w.waveScale = 2.5f;  w.waveHeight = 0.25f;
+            w.enableFoam = true;
+            w.foamColor = {1.0f, 1.0f, 1.0f, 0.8f};  w.foamScale = 3.0f;  w.foamOpacity = 0.65f;
+            w.enableDepth = true;  w.depthFadeDistance = 2.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.4f;
+            w.caustics = true;  w.causticsScale = 2.0f;  w.causticsSpeed = 1.2f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 2.5f;  w.flowTiling = 3.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.1f;
+            w.subsurfaceColor = {0.12f, 0.25f, 0.20f};
+            break;
+
+        case WaterBodyType::Waterfall:
+            // Vertical cascade: tall and narrow, heavy foam, fast flow
+            w.width = 4.0f;  w.length = 12.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.30f, 0.45f, 0.50f, 0.75f};
+            w.shallowColor = {0.55f, 0.70f, 0.72f, 0.60f};
+            w.roughness = 0.55f;  w.metallic = 0.0f;  w.opacity = 0.70f;
+            w.reflectionStrength = 0.35f;  w.refractionStrength = 0.6f;  w.specularIntensity = 0.8f;
+            w.normalScale = 2.5f;  w.waveSpeed = 3.5f;  w.waveScale = 3.0f;  w.waveHeight = 0.6f;
+            w.enableFoam = true;
+            w.foamColor = {1.0f, 1.0f, 1.0f, 0.92f};  w.foamScale = 2.0f;  w.foamOpacity = 0.85f;
+            w.enableDepth = false;
+            w.enableRefraction = true;  w.distortionStrength = 0.7f;
+            w.enableFlow = true;
+            w.flowDirection = {0.0f, 1.0f};  w.flowSpeed = 4.0f;  w.flowTiling = 4.0f;
+            w.enableWaves = false;
+            w.waterfallFallHeight = 12.0f;  w.waterfallFlowRate = 4.0f;  w.waterfallSprayAmount = 1.5f;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.05f;
+            break;
+
+        case WaterBodyType::Pond:
+            // Small still pond: small, dark-green tint, very calm
+            w.width = 12.0f;  w.length = 12.0f;  w.gridResolution = 24;
+            w.waterColor   = {0.03f, 0.12f, 0.10f, 0.90f};
+            w.shallowColor = {0.08f, 0.28f, 0.22f, 0.75f};
+            w.roughness = 0.06f;  w.metallic = 0.0f;  w.opacity = 0.85f;
+            w.reflectionStrength = 0.88f;  w.refractionStrength = 0.2f;  w.specularIntensity = 1.4f;
+            w.normalScale = 0.3f;  w.waveSpeed = 0.2f;  w.waveScale = 0.8f;  w.waveHeight = 0.05f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 5.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.05f;
+            w.caustics = true;  w.causticsScale = 1.0f;  w.causticsSpeed = 0.3f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.12f;
+            w.subsurfaceColor = {0.04f, 0.14f, 0.12f};
+            break;
+
+        case WaterBodyType::Pool:
+            // Clean swimming pool: rectangular, bright turquoise, very clear
+            w.width = 10.0f;  w.length = 20.0f;  w.gridResolution = 24;
+            w.waterColor   = {0.05f, 0.45f, 0.55f, 0.88f};
+            w.shallowColor = {0.15f, 0.65f, 0.72f, 0.70f};
+            w.roughness = 0.03f;  w.metallic = 0.0f;  w.opacity = 0.82f;
+            w.reflectionStrength = 0.95f;  w.refractionStrength = 0.35f;  w.specularIntensity = 2.0f;
+            w.normalScale = 0.4f;  w.waveSpeed = 0.4f;  w.waveScale = 0.8f;  w.waveHeight = 0.08f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 4.0f;
+            w.enableRefraction = true;  w.distortionStrength = 0.12f;
+            w.caustics = true;  w.causticsScale = 1.2f;  w.causticsSpeed = 0.5f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 1.3f;
+            w.subsurfaceScattering = 0.25f;
+            w.subsurfaceColor = {0.08f, 0.40f, 0.50f};
+            break;
+
+        case WaterBodyType::WetSurface:
+            // Rain-wet ground: thin film, very reflective, dark/glossy
+            w.width = 8.0f;  w.length = 8.0f;  w.gridResolution = 16;
+            w.waterColor   = {0.05f, 0.06f, 0.08f, 0.60f};
+            w.shallowColor = {0.08f, 0.10f, 0.12f, 0.40f};
+            w.roughness = 0.02f;  w.metallic = 0.0f;  w.opacity = 0.55f;
+            w.reflectionStrength = 0.98f;  w.refractionStrength = 0.05f;  w.specularIntensity = 2.0f;
+            w.normalScale = 0.2f;  w.waveSpeed = 0.5f;  w.waveScale = 0.5f;  w.waveHeight = 0.01f;
+            w.enableFoam = false;
+            w.enableDepth = false;
+            w.enableRefraction = false;
+            w.wetness = 0.85f;
+            w.animatePuddle = true;  w.rippleSpeed = 1.0f;  w.rippleScale = 1.5f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            break;
+
+        case WaterBodyType::Puddle:
+            // Small rain puddle: tiny, shallow, rippling
+            w.width = 1.5f;  w.length = 1.5f;  w.gridResolution = 12;
+            w.waterColor   = {0.06f, 0.07f, 0.09f, 0.70f};
+            w.shallowColor = {0.10f, 0.12f, 0.15f, 0.50f};
+            w.roughness = 0.04f;  w.metallic = 0.0f;  w.opacity = 0.65f;
+            w.reflectionStrength = 0.90f;  w.refractionStrength = 0.1f;  w.specularIntensity = 1.8f;
+            w.normalScale = 0.5f;  w.waveSpeed = 1.0f;  w.waveScale = 0.8f;  w.waveHeight = 0.02f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 0.2f;
+            w.enableRefraction = true;  w.distortionStrength = 0.06f;
+            w.wetness = 1.0f;
+            w.puddleSize = 1.5f;  w.puddleDepth = 0.04f;
+            w.animatePuddle = true;  w.rippleSpeed = 2.0f;  w.rippleScale = 1.0f;
+            w.enableWaves = false;
+            w.reflectSkybox = true;  w.receiveEnvironmentLight = true;
+            break;
+
+        case WaterBodyType::FloodWater:
+            // Rising flood: large, murky brown-green, opaque
+            w.width = 150.0f;  w.length = 150.0f;  w.gridResolution = 64;
+            w.waterColor   = {0.15f, 0.14f, 0.05f, 0.95f};
+            w.shallowColor = {0.22f, 0.20f, 0.08f, 0.88f};
+            w.roughness = 0.45f;  w.metallic = 0.0f;  w.opacity = 0.92f;
+            w.reflectionStrength = 0.3f;  w.refractionStrength = 0.1f;  w.specularIntensity = 0.6f;
+            w.normalScale = 1.0f;  w.waveSpeed = 0.8f;  w.waveScale = 3.0f;  w.waveHeight = 0.3f;
+            w.enableFoam = true;
+            w.foamColor = {0.70f, 0.65f, 0.50f, 0.60f};  w.foamScale = 4.0f;  w.foamOpacity = 0.45f;
+            w.enableDepth = true;  w.depthFadeDistance = 1.5f;
+            w.enableRefraction = false;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.subsurfaceScattering = 0.0f;
+            break;
+
+        case WaterBodyType::Underwater:
+            // Underwater volume: large, heavy fog, distortion
+            w.width = 60.0f;  w.length = 60.0f;  w.gridResolution = 16;
+            w.waterColor   = {0.00f, 0.08f, 0.18f, 0.98f};
+            w.shallowColor = {0.02f, 0.12f, 0.22f, 0.95f};
+            w.roughness = 0.8f;  w.metallic = 0.0f;  w.opacity = 0.96f;
+            w.reflectionStrength = 0.1f;  w.refractionStrength = 0.0f;  w.specularIntensity = 0.3f;
+            w.normalScale = 0.5f;  w.waveSpeed = 0.2f;  w.waveScale = 1.0f;  w.waveHeight = 0.0f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 25.0f;
+            w.enableRefraction = false;
+            w.caustics = true;  w.causticsScale = 2.0f;  w.causticsSpeed = 0.5f;
+            w.underwaterFogColor = {0.00f, 0.08f, 0.18f};
+            w.underwaterFogDensity = 1.8f;
+            w.underwaterVisibilityDistance = 18.0f;
+            w.enableUnderwaterDistortion = true;
+            w.underwaterDistortionStrength = 0.8f;
+            w.underwaterDistortionSpeed = 1.2f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 0.4f;
+            w.subsurfaceScattering = 0.0f;
+            break;
+
+        case WaterBodyType::Swamp:
+            // Dark swamp: murky, algae-covered, dense fog
+            w.width = 40.0f;  w.length = 40.0f;  w.gridResolution = 32;
+            w.waterColor   = {0.06f, 0.10f, 0.04f, 0.95f};
+            w.shallowColor = {0.12f, 0.18f, 0.06f, 0.88f};
+            w.roughness = 0.65f;  w.metallic = 0.0f;  w.opacity = 0.92f;
+            w.reflectionStrength = 0.15f;  w.refractionStrength = 0.05f;  w.specularIntensity = 0.4f;
+            w.normalScale = 0.8f;  w.waveSpeed = 0.15f;  w.waveScale = 1.5f;  w.waveHeight = 0.05f;
+            w.enableFoam = false;
+            w.enableDepth = true;  w.depthFadeDistance = 1.0f;
+            w.enableRefraction = false;
+            w.swampDensity = 0.85f;
+            w.swampColor = {0.06f, 0.12f, 0.04f};
+            w.algaeAmount = 0.65f;
+            w.enableWaves = false;
+            w.reflectSkybox = false;  w.receiveEnvironmentLight = true;
+            w.environmentLightIntensity = 0.6f;
+            w.subsurfaceScattering = 0.05f;
+            w.subsurfaceColor = {0.05f, 0.10f, 0.03f};
+            break;
+
+        case WaterBodyType::Custom:
+            w.width = 25.0f; w.length = 25.0f; w.gridResolution = 32;
+            w.waterColor = {0.03f, 0.20f, 0.35f, 0.85f};
+            w.shallowColor = {0.10f, 0.45f, 0.60f, 0.70f};
+            w.roughness = 0.1f; w.metallic = 0.0f; w.opacity = 0.80f;
+            w.reflectionStrength = 0.9f; w.refractionStrength = 0.5f; w.specularIntensity = 1.4f;
+            w.normalScale = 1.0f; w.waveSpeed = 1.0f; w.waveScale = 1.5f; w.waveHeight = 0.5f;
+            w.enableFoam = true; w.foamColor = {1.0f, 1.0f, 1.0f, 0.75f}; w.foamScale = 3.0f; w.foamOpacity = 0.6f;
+            w.depthRange = 10.0f; w.foamDistance = 1.5f; w.foamStrength = 1.0f; w.fresnelStrength = 1.0f;
+            w.specularPower = 128.0f; w.sparklePower = 800.0f;
+            w.simulationEnabled = true; w.waveDamping = 0.985f;
+            break;
+
+        default: break;
+        }
+    }
+
+    GameObject& AddWaterBody(WaterBodyType wbType, glm::vec3 pos, const std::string& name = "", int parentId = -1) {
+        if (onPreChange) onPreChange("Add Water Body");
+        int id = nextId++;
+        std::string finalName = name.empty() ? ("Water_" + std::to_string(id)) : name;
+        objects.emplace_back(id, finalName, PrimitiveType::WaterBody, pos);
+        GameObject& obj = objects.back();
+
+        obj.isWaterBody = true;
+        obj.blendMode = 2; // Translucent
+        obj.twoSided = true;
+
+        // Apply type-specific preset defaults
+        ApplyWaterBodyPreset(obj.water, wbType);
+
+        // Build mesh from preset geometry
+        obj.mesh = GeometryBuilder::CreatePlane(
+            obj.water.width, obj.water.length,
+            obj.water.gridResolution, obj.water.gridResolution);
+        obj.position.y = obj.water.elevation;
+
+        obj.params.width    = obj.water.width;
+        obj.params.depth    = obj.water.length;
+        obj.params.segmentsX = obj.water.gridResolution;
+        obj.params.segmentsZ = obj.water.gridResolution;
+
+        obj.parentId = parentId;
+        if (parentId != -1) {
+            GameObject* parent = FindObject(parentId);
+            if (parent) parent->childIds.push_back(id);
+        }
+
+        selectedId = id;
+        return obj;
+    }
+
 
     // Create a brand-new Light + its actor
     GameObject& AddNewLight(PrimitiveType lightType = PrimitiveType::PointLight, glm::vec3 pos = {0.0f, 2.5f, 0.0f}, int parentId = -1) {
@@ -387,14 +770,20 @@ public:
                 }
 
                 if (obj.light.type == LightType::Directional && obj.light.enabled) {
-                    lightDirection = -obj.light.direction;
-                    lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
-                    lightIntensity = obj.light.intensity;
-                    enableShadows = obj.light.castShadows;
-                    shadowStrength = obj.light.shadowStrength;
-                    shadowBias = obj.light.shadowBias;
-                    shadowResolution = obj.light.shadowResolution;
-                    hasDirectional = true;
+                    if (obj.light.bakeState == Eunoia::LightBakeState::Baked) {
+                        hasDirectional = false;
+                        lightIntensity = 0.0f;
+                        enableShadows = false;
+                    } else {
+                        lightDirection = -obj.light.direction;
+                        lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
+                        lightIntensity = obj.light.intensity;
+                        enableShadows = obj.light.castShadows;
+                        shadowStrength = obj.light.shadowStrength;
+                        shadowBias = obj.light.shadowBias;
+                        shadowResolution = obj.light.shadowResolution;
+                        hasDirectional = true;
+                    }
                 }
                 else if (obj.light.type == LightType::Sky && obj.light.enabled) {
                     glm::vec3 sCol = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
@@ -429,6 +818,8 @@ public:
                         pl.height = obj.light.height;
                         pl.radius = obj.light.radius;
                         pl.twoSided = obj.light.twoSided;
+                        pl.bakeState = obj.light.bakeState;
+                        pl.bakeResolution = obj.light.bakeResolution;
                         pointLights.push_back(pl);
                         obj.lightId = (int)pointLights.size() - 1;
                     }
@@ -825,6 +1216,7 @@ public:
     void Clear() {
         objects.clear();
         pointLights.clear();
+        waterBodies.clear();
         selectedId = -1;
         activeLevelCameraId = -1;
         nextId = 1;
@@ -832,6 +1224,28 @@ public:
         ambientIntensity = 0.0f;
         playModePreObjects.clear();
         playModePreSelectedId = -1;
+        enableSkybox = true;
+        skyboxAssetPath = "";
+        skyboxTexturePath = "";
+        skyboxExposure = 1.0f;
+        skyboxRotation = 0.0f;
+        skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
+        skyboxAmbientContribution = 0.5f;
+        enableSkyboxLighting = false;
+        skyboxLightingIntensity = 1.0f;
+        skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
+        skyboxLightingSpecular = 1.0f;
+        skyboxLightingDiffuse = 1.0f;
+        enablePostProcessing = false;
+        postExposureEV = 0.0f;
+        postExposureMultiplier = 1.0f;
+        postTonemapper = 1;
+        postSaturation = 1.0f;
+        postContrast = 1.0f;
+        postGamma = 1.0f;
+        postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
+        postColorTemperature = 6500.0f;
+        postColorTint = 0.0f;
     }
 
     // Play Mode State & Runtime Lifecycle (dev.md Section 30-36)
@@ -850,10 +1264,34 @@ public:
                 if (!b) continue;
                 auto regIt = allRegistry.find(b->GetClassName());
                 if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                    if (regIt->second.isNative) {
-                        // Native compiled behaviour: retain native instance
-                        b->RefreshPropertiesFromSource();
-                    } else if (b->GetSourceCppPath().empty() || b->GetProperties().empty()) {
+                    bool sourceModifiedAfterBuild = false;
+                    std::error_code ec;
+                    if (std::filesystem::exists(regIt->second.sourceCpp, ec)) {
+                        char exePathBuf[MAX_PATH] = {};
+                        GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+                        if (std::filesystem::exists(exePathBuf, ec)) {
+                            auto cppTime = std::filesystem::last_write_time(regIt->second.sourceCpp, ec);
+                            auto exeTime = std::filesystem::last_write_time(exePathBuf, ec);
+                            if (!ec && cppTime > exeTime) {
+                                sourceModifiedAfterBuild = true;
+                            }
+                        }
+                    }
+
+                    if (regIt->second.isNative && !sourceModifiedAfterBuild) {
+                        // Native compiled behaviour
+                        if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
+                            auto nativeB = regIt->second.factory();
+                            nativeB->SetScene(this);
+                            nativeB->SetOwner(&obj);
+                            nativeB->SetEnabled(b->IsEnabled());
+                            nativeB->CopyPropertiesFrom(*b);
+                            nativeB->ResolveReferences(*this);
+                            b = std::move(nativeB);
+                        } else {
+                            b->RefreshPropertiesFromSource();
+                        }
+                    } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
                         auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
                         dynB->SetScene(this);
                         dynB->SetOwner(&obj);
@@ -899,6 +1337,7 @@ public:
 
     void StopPlayMode() {
         if (!isPlayMode) return;
+        InputSystem::Get().SetCursorLocked(false);
 
         // Cleanup runtime state
         for (auto& obj : objects) {
@@ -1075,7 +1514,7 @@ struct RenderBatch {
 
         // 2. All GameObjects (Rendered with Hardware GPU Shaders & Full 2K Texture Mapping)
         for (const auto& obj : objects) {
-            if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type)) continue;
+            if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
             if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
 
             glm::mat4 model = GetWorldMatrix(obj);
@@ -1095,7 +1534,8 @@ struct RenderBatch {
             uint32_t vertexOffset = (uint32_t)outVertices.size();
             uint32_t indexStart = (uint32_t)outIndices.size();
 
-            for (const auto& mv : obj.mesh.vertices) {
+            for (size_t vi = 0; vi < obj.mesh.vertices.size(); ++vi) {
+                const auto& mv = obj.mesh.vertices[vi];
                 glm::vec4 worldPos = model * glm::vec4(mv.pos, 1.0f);
                 // Task 3 – defense in depth: if the model matrix is corrupted (NaN/Inf),
                 // fall back to local-space position rather than sending NaN to the GPU.
@@ -1112,7 +1552,15 @@ struct RenderBatch {
                 glm::vec3 worldTangent = (tLen > 1e-6f && !std::isnan(tLen)) ? (t / tLen) : glm::vec3(1.0f, 0.0f, 0.0f);
                 glm::vec4 outTangent = glm::vec4(worldTangent, mv.tangent.w);
 
-                outVertices.push_back({ glm::vec3(worldPos), worldNormal, mv.uv, glm::vec3(1.0f, 1.0f, 1.0f), outTangent });
+                glm::vec3 vColor{0.0f, 0.0f, 0.0f};
+                if (Eunoia::LightBakeManager::Get().HasMeshLightmapUV(obj.id)) {
+                    glm::vec2 lmUv = Eunoia::LightBakeManager::Get().GetMeshLightmapUV(obj.id, vi);
+                    vColor = glm::vec3(lmUv.x, lmUv.y, 1.0f);
+                } else if (obj.mobility == Mobility::Static || Eunoia::LightBakeManager::Get().HasStaticBakedLighting(obj.id)) {
+                    vColor = Eunoia::LightBakeManager::Get().GetStaticVertexBakedLight(obj.id, vi);
+                }
+
+                outVertices.push_back({ glm::vec3(worldPos), worldNormal, mv.uv, vColor, outTangent });
             }
 
             for (uint32_t idx : obj.mesh.indices) {
@@ -1189,7 +1637,7 @@ struct RenderBatch {
                 if (len < 1e-4f) return;
                 glm::vec3 side = glm::normalize(glm::cross(dir, glm::vec3(0, 1, 0)));
                 if (glm::length(side) < 1e-3f) side = glm::vec3(1, 0, 0);
-                float halfW = 0.035f;
+                float halfW = 0.0035f;
                 outVertices.push_back({ p0 - side * halfW, glm::vec3(0, 1, 0), glm::vec2(0, 0), frustumColor });
                 outVertices.push_back({ p0 + side * halfW, glm::vec3(0, 1, 0), glm::vec2(1, 0), frustumColor });
                 outVertices.push_back({ p1 + side * halfW, glm::vec3(0, 1, 0), glm::vec2(1, 1), frustumColor });
@@ -1441,7 +1889,7 @@ struct RenderBatch {
         for (const auto& e : edges) {
             glm::vec3 wA = glm::vec3(model * glm::vec4(e.first, 1.0f));
             glm::vec3 wB = glm::vec3(model * glm::vec4(e.second, 1.0f));
-            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 1.25f, outlineColor);
+            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 0.125f, outlineColor);
         }
     }
 

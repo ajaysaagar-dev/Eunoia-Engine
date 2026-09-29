@@ -33,17 +33,17 @@ public:
     bool showClipPlanes        = true;
 
     // Debug rendering primitives (dev.md Section 10)
-    void DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& color, float thickness = 1.0f);
-    void DrawRay(const glm::vec3& origin, const glm::vec3& dir, float length, const glm::vec3& color, float thickness = 1.0f);
-    void DrawArrow(const glm::vec3& start, const glm::vec3& end, const glm::vec3& color, float headSize = 0.35f, float thickness = 1.0f);
-    void DrawCircle(const glm::vec3& center, const glm::vec3& normal, float radius, const glm::vec3& color, int segments = 36, float thickness = 1.0f);
-    void DrawSphere(const glm::vec3& center, float radius, const glm::vec3& color, int segments = 36, float thickness = 1.0f);
-    void DrawCone(const glm::vec3& apex, const glm::vec3& dir, float length, float angleDegrees, const glm::vec3& color, int segments = 24, float thickness = 1.0f);
+    void DrawLine(const glm::vec3& p0, const glm::vec3& p1, const glm::vec3& color, float thickness = 0.1f);
+    void DrawRay(const glm::vec3& origin, const glm::vec3& dir, float length, const glm::vec3& color, float thickness = 0.1f);
+    void DrawArrow(const glm::vec3& start, const glm::vec3& end, const glm::vec3& color, float headSize = 0.35f, float thickness = 0.1f);
+    void DrawCircle(const glm::vec3& center, const glm::vec3& normal, float radius, const glm::vec3& color, int segments = 36, float thickness = 0.1f);
+    void DrawSphere(const glm::vec3& center, float radius, const glm::vec3& color, int segments = 36, float thickness = 0.1f);
+    void DrawCone(const glm::vec3& apex, const glm::vec3& dir, float length, float angleDegrees, const glm::vec3& color, int segments = 24, float thickness = 0.1f);
     void DrawFrustum(const glm::vec3& pos, const glm::vec3& forward, const glm::vec3& up,
                      float fovYDegrees, float aspect, float nearClip, float farClip,
-                     const glm::vec3& color, bool showClipPlanes = true, float thickness = 1.0f);
-    void DrawBox(const glm::vec3& center, const glm::vec3& extents, const glm::mat4& rotation, const glm::vec3& color, float thickness = 1.0f);
-    void DrawRectangle(const glm::vec3& center, const glm::vec3& uAxis, const glm::vec3& vAxis, float halfWidth, float halfHeight, const glm::vec3& color, float thickness = 1.0f);
+                     const glm::vec3& color, bool showClipPlanes = true, float thickness = 0.1f);
+    void DrawBox(const glm::vec3& center, const glm::vec3& extents, const glm::mat4& rotation, const glm::vec3& color, float thickness = 0.1f);
+    void DrawRectangle(const glm::vec3& center, const glm::vec3& uAxis, const glm::vec3& vAxis, float halfWidth, float halfHeight, const glm::vec3& color, float thickness = 0.1f);
 
     // Component-level Gizmo renderers (dev.md Section 2 - 7)
     void DrawPointLight(const GameObject& obj, const glm::mat4& worldMat);
