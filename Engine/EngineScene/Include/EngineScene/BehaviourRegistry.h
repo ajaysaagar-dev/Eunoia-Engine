@@ -43,6 +43,14 @@ public:
         RegisterProperty("Ping Pong", &pingPong, "Movement");
     }
 
+    void ResetToDefaults() override {
+        rotationSpeed = 45.0f;
+        rotationAxis = glm::vec3(0.0f, 1.0f, 0.0f);
+        pingPong = false;
+        RegisterProperties();
+        if (m_scene) ResolveReferences(*m_scene);
+    }
+
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
         auto clone = std::make_unique<RotatorBehaviour>(*this);
         clone->CopyPropertiesFrom(*this);
@@ -72,6 +80,15 @@ public:
         RegisterProperty("Max Intensity", &maxIntensity, "Lighting", 0.0f, 20.0f);
         RegisterProperty("Flicker Frequency", &flickerFrequency, "Lighting", 0.1f, 30.0f);
         RegisterReference("Target Light", &targetLight, ObjectRefType::Light, "References");
+    }
+
+    void ResetToDefaults() override {
+        minIntensity = 0.5f;
+        maxIntensity = 3.5f;
+        flickerFrequency = 8.0f;
+        targetLight = nullptr;
+        RegisterProperties();
+        if (m_scene) ResolveReferences(*m_scene);
     }
 
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
@@ -111,6 +128,16 @@ public:
         RegisterReference("Door Mesh", &DoorMesh, ObjectRefType::Mesh, "References");
     }
 
+    void ResetToDefaults() override {
+        OpenSpeed = 2.5f;
+        RequiredKeys = 1;
+        Locked = false;
+        WarningLight = nullptr;
+        DoorMesh = nullptr;
+        RegisterProperties();
+        if (m_scene) ResolveReferences(*m_scene);
+    }
+
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
         auto clone = std::make_unique<DoorController>(*this);
         clone->CopyPropertiesFrom(*this);
@@ -148,6 +175,16 @@ public:
         RegisterReference("Target Camera", &TargetCamera, ObjectRefType::Camera, "References");
     }
 
+    void ResetToDefaults() override {
+        Health = 100;
+        MoveSpeed = 5.0f;
+        CanAttack = true;
+        PlayerName = "Player";
+        TargetCamera = nullptr;
+        RegisterProperties();
+        if (m_scene) ResolveReferences(*m_scene);
+    }
+
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
         auto clone = std::make_unique<PlayerController>(*this);
         clone->CopyPropertiesFrom(*this);
@@ -182,6 +219,16 @@ public:
         RegisterReference("Target Actor", &TargetActor, ObjectRefType::Actor, "References");
     }
 
+    void ResetToDefaults() override {
+        Health = 100;
+        MoveSpeed = 3.0f;
+        CanAttack = true;
+        EnemyName = "Enemy";
+        TargetActor = nullptr;
+        RegisterProperties();
+        if (m_scene) ResolveReferences(*m_scene);
+    }
+
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
         auto clone = std::make_unique<EnemyController>(*this);
         clone->CopyPropertiesFrom(*this);
@@ -206,15 +253,34 @@ public:
         }
     }
 
+    struct PropertyDefaultValue {
+        BehaviourPropertyType type = BehaviourPropertyType::Float;
+        bool boolVal = false;
+        int intVal = 0;
+        int64_t int64Val = 0;
+        float floatVal = 0.0f;
+        double doubleVal = 0.0;
+        std::string stringVal;
+        glm::vec2 vec2Val{0.0f};
+        glm::vec3 vec3Val{0.0f};
+        glm::vec4 vec4Val{0.0f};
+        int targetId = -1;
+    };
+
     std::unique_ptr<EunoiaBehaviour> Clone() const override {
         auto clone = std::make_unique<DynamicScriptBehaviour>(m_className, m_sourceCppPath);
         clone->m_displayName = m_displayName;
         clone->m_floatStorage = m_floatStorage;
         clone->m_intStorage = m_intStorage;
+        clone->m_int64Storage = m_int64Storage;
         clone->m_boolStorage = m_boolStorage;
         clone->m_stringStorage = m_stringStorage;
+        clone->m_doubleStorage = m_doubleStorage;
+        clone->m_vec2Storage = m_vec2Storage;
         clone->m_vec3Storage = m_vec3Storage;
+        clone->m_vec4Storage = m_vec4Storage;
         clone->m_refStorage = m_refStorage;
+        clone->m_defaultPropertyValues = m_defaultPropertyValues;
         clone->m_sourceTimestamp = m_sourceTimestamp;
         clone->m_hasRotation = m_hasRotation;
         clone->m_rotateAxis = m_rotateAxis;
@@ -237,8 +303,9 @@ public:
     }
 
     void RegisterProperties() override;
-    void ParsePropertiesFromCpp(const std::string& cppPath);
+    void ParsePropertiesFromCpp(const std::string& cppPath, bool preserveExistingValues = true);
     void RefreshPropertiesFromSource() override;
+    void ResetToDefaults() override;
     std::string GetSourceCppPath() const override { return m_sourceCppPath; }
 
     void Start() override;
@@ -247,10 +314,15 @@ public:
     // Stable storage pools for dynamically reflected properties
     std::map<std::string, float> m_floatStorage;
     std::map<std::string, int> m_intStorage;
+    std::map<std::string, int64_t> m_int64Storage;
     std::map<std::string, bool> m_boolStorage;
     std::map<std::string, std::string> m_stringStorage;
+    std::map<std::string, double> m_doubleStorage;
+    std::map<std::string, glm::vec2> m_vec2Storage;
     std::map<std::string, glm::vec3> m_vec3Storage;
+    std::map<std::string, glm::vec4> m_vec4Storage;
     std::map<std::string, void*> m_refStorage;
+    std::map<std::string, PropertyDefaultValue> m_defaultPropertyValues;
 
     // Dynamic runtime script execution state
     bool m_hasRotation = false;

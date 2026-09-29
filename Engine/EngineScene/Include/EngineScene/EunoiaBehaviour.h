@@ -56,11 +56,11 @@ enum class ObjectRefType {
 
 inline const char* ObjectRefTypeToString(ObjectRefType type) {
     switch (type) {
-        case ObjectRefType::Actor:  return "Actor";
+        case ObjectRefType::Actor:  return "GameObject";
         case ObjectRefType::Light:  return "Light";
         case ObjectRefType::Mesh:   return "Mesh";
         case ObjectRefType::Camera: return "Camera";
-        default:                    return "Object";
+        default:                    return "GameObject";
     }
 }
 
@@ -563,6 +563,7 @@ public:
     // Reflection & Properties (dev.md Section 7, 8, 23, 24)
     virtual void RegisterProperties() {}
     virtual void RefreshPropertiesFromSource() {}
+    virtual void ResetToDefaults();
     virtual std::string GetSourceCppPath() const { return ""; }
     std::vector<BehaviourProperty>& GetProperties() { return m_properties; }
     const std::vector<BehaviourProperty>& GetProperties() const { return m_properties; }
@@ -582,7 +583,8 @@ public:
     void RegisterProperty(const std::string& name, glm::vec4* val, const std::string& category = "General");
     void RegisterColor(const std::string& name, glm::vec3* val, const std::string& category = "General");
 
-    // Helper to register scene object references
+    // Helper to register scene object references (objectRefType is optional, defaults to Actor / all GameObjects selectable)
+    void RegisterReference(const std::string& name, void* ptrAddr, const std::string& category = "References");
     void RegisterReference(const std::string& name, void* ptrAddr, ObjectRefType refType, const std::string& category = "References");
 
     // RespectiveObject Accessor functor (dev.md Section 15)
@@ -646,6 +648,12 @@ public:
     TransformVector3 GetForwardVector() const { return Transform.GetForwardVector(); }
     TransformVector3 GetRightVector() const { return Transform.GetRightVector(); }
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
+
+    // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
+    double GetMouseX(bool negate = false) const;
+    double GetMouseY(bool negate = false) const;
+    double GetMouseDeltaX(bool negate = false) const;
+    double GetMouseDeltaY(bool negate = false) const;
 
     // On-screen Print function (prints in game view screen top-left with time)
     template<typename T>

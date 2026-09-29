@@ -725,6 +725,10 @@ void EunoiaBehaviour::RegisterColor(const std::string& name, glm::vec3* val, con
     m_properties.push_back(prop);
 }
 
+void EunoiaBehaviour::RegisterReference(const std::string& name, void* ptrAddr, const std::string& category) {
+    RegisterReference(name, ptrAddr, ObjectRefType::Actor, category);
+}
+
 void EunoiaBehaviour::RegisterReference(const std::string& name, void* ptrAddr, ObjectRefType refType, const std::string& category) {
     BehaviourProperty prop;
     prop.name = name;
@@ -991,9 +995,17 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         if (!targetObj) continue;
 
         if (action.type == DynamicTransformAction::ActionType::TranslateRelative) {
-            Transform.Translate(delta.x, delta.y, delta.z);
+            if (targetObj == m_owner) {
+                Transform.Translate(delta.x, delta.y, delta.z);
+            } else {
+                targetObj->transform.RelativeTranslate(delta.x, delta.y, delta.z);
+            }
         } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
-            Transform.WorldTranslate(delta.x, delta.y, delta.z);
+            if (targetObj == m_owner) {
+                Transform.WorldTranslate(delta.x, delta.y, delta.z);
+            } else {
+                targetObj->transform.WorldTranslate(delta.x, delta.y, delta.z);
+            }
         } else if (action.type == DynamicTransformAction::ActionType::RotateRelative ||
                    action.type == DynamicTransformAction::ActionType::RotateWorld) {
             glm::vec3 cur = targetObj->rotation;
@@ -1015,7 +1027,7 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
 void DynamicScriptBehaviour::RegisterProperties() {
     if (!m_sourceCppPath.empty()) {
-        ParsePropertiesFromCpp(m_sourceCppPath);
+        ParsePropertiesFromCpp(m_sourceCppPath, true);
     } else {
         m_properties.clear();
     }
@@ -1027,11 +1039,11 @@ void DynamicScriptBehaviour::RefreshPropertiesFromSource() {
     if (!std::filesystem::exists(m_sourceCppPath, ec)) return;
     auto lwt = std::filesystem::last_write_time(m_sourceCppPath, ec);
     if (!ec && (lwt > m_sourceTimestamp || m_properties.empty())) {
-        ParsePropertiesFromCpp(m_sourceCppPath);
+        ParsePropertiesFromCpp(m_sourceCppPath, true);
     }
 }
 
-void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) {
+void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, bool preserveExistingValues) {
     m_sourceCppPath = cppPath;
     std::error_code ec;
     if (!std::filesystem::exists(cppPath, ec)) return;
@@ -1068,10 +1080,54 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             if (l.find("void ") != std::string::npos || l.find("override") != std::string::npos) continue;
         }
 
+        // Check pointer declarations (handles "GameObject* Cam", "GameObject *Cam", "Actor *Cam", etc.)
+        static const std::vector<std::pair<std::string, std::string>> ptrTypes = {
+            { "GameObject", "GameObject*" },
+            { "Actor", "GameObject*" },
+            { "Camera", "Camera*" },
+            { "LightComponent", "LightComponent*" },
+            { "PrimitiveMesh", "PrimitiveMesh*" }
+        };
+
+        bool matchedPtr = false;
+        for (const auto& pt : ptrTypes) {
+            if (l.rfind(pt.first, 0) == 0) {
+                size_t afterName = pt.first.length();
+                while (afterName < l.size() && (l[afterName] == ' ' || l[afterName] == '\t')) afterName++;
+                if (afterName < l.size() && l[afterName] == '*') {
+                    matchedPtr = true;
+                    std::string rest = l.substr(afterName + 1);
+                    size_t semi = rest.find(';');
+                    if (semi != std::string::npos) rest = rest.substr(0, semi);
+
+                    size_t eq = rest.find('=');
+                    std::string varName = (eq != std::string::npos) ? rest.substr(0, eq) : rest;
+                    std::string defVal = (eq != std::string::npos) ? rest.substr(eq + 1) : "";
+
+                    size_t vnStart = varName.find_first_not_of(" \t*&");
+                    size_t vnEnd = varName.find_last_not_of(" \t*&");
+                    if (vnStart != std::string::npos && vnEnd != std::string::npos) {
+                        varName = varName.substr(vnStart, vnEnd - vnStart + 1);
+                    }
+
+                    size_t dvStart = defVal.find_first_not_of(" \t");
+                    size_t dvEnd = defVal.find_last_not_of(" \t");
+                    if (dvStart != std::string::npos && dvEnd != std::string::npos) {
+                        defVal = defVal.substr(dvStart, dvEnd - dvStart + 1);
+                    }
+
+                    if (!varName.empty()) {
+                        declaredVars[varName] = { pt.second, defVal };
+                    }
+                    break;
+                }
+            }
+        }
+        if (matchedPtr) continue;
+
         std::vector<std::string> types = {
             "float", "double", "int", "bool", "std::string", "string",
-            "glm::vec3", "Vector3", "glm::vec2", "Vector2",
-            "Camera*", "LightComponent*", "PrimitiveMesh*", "GameObject*"
+            "glm::vec3", "Vector3", "glm::vec2", "Vector2"
         };
 
         for (const auto& t : types) {
@@ -1105,18 +1161,137 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
     }
 
     // 2. Second pass: scan for RegisterProperty(...) and RegisterReference(...)
-    std::unordered_map<std::string, float> existingFloats;
-    for (const auto& pair : m_floatStorage) existingFloats[pair.first] = pair.second;
-    std::unordered_map<std::string, int> existingInts;
-    for (const auto& pair : m_intStorage) existingInts[pair.first] = pair.second;
-    std::unordered_map<std::string, bool> existingBools;
-    for (const auto& pair : m_boolStorage) existingBools[pair.first] = pair.second;
-    std::unordered_map<std::string, std::string> existingStrings;
-    for (const auto& pair : m_stringStorage) existingStrings[pair.first] = pair.second;
-    std::unordered_map<std::string, glm::vec3> existingVec3s;
-    for (const auto& pair : m_vec3Storage) existingVec3s[pair.first] = pair.second;
+    struct SavedValue {
+        BehaviourPropertyType type = BehaviourPropertyType::Float;
+        bool boolVal = false;
+        int intVal = 0;
+        int64_t int64Val = 0;
+        float floatVal = 0.0f;
+        double doubleVal = 0.0;
+        std::string stringVal;
+        glm::vec2 vec2Val{0.0f};
+        glm::vec3 vec3Val{0.0f};
+        glm::vec4 vec4Val{0.0f};
+        int targetId = -1;
+        void* refPtr = nullptr;
+        bool hasValue = false;
+    };
+    std::unordered_map<std::string, SavedValue> savedPropsByName;
+
+    if (preserveExistingValues) {
+        // Snapshot existing live properties
+        for (const auto& p : m_properties) {
+            SavedValue sv;
+            sv.type = p.type;
+            sv.targetId = p.targetId;
+            sv.hasValue = true;
+            if (p.dataPtr) {
+                switch (p.type) {
+                    case BehaviourPropertyType::Bool:
+                        sv.boolVal = *reinterpret_cast<const bool*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Int:
+                        sv.intVal = *reinterpret_cast<const int*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Int64:
+                        sv.int64Val = *reinterpret_cast<const int64_t*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Float:
+                        sv.floatVal = *reinterpret_cast<const float*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Double:
+                        sv.doubleVal = *reinterpret_cast<const double*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::String:
+                        sv.stringVal = *reinterpret_cast<const std::string*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Vec2:
+                        sv.vec2Val = *reinterpret_cast<const glm::vec2*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Vec3:
+                    case BehaviourPropertyType::Color3:
+                        sv.vec3Val = *reinterpret_cast<const glm::vec3*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::Vec4:
+                    case BehaviourPropertyType::Color4:
+                        sv.vec4Val = *reinterpret_cast<const glm::vec4*>(p.dataPtr);
+                        break;
+                    case BehaviourPropertyType::ObjectRef:
+                        sv.refPtr = *reinterpret_cast<void* const*>(p.dataPtr);
+                        break;
+                }
+            }
+            savedPropsByName[p.name] = sv;
+        }
+
+        // Also snapshot from storage maps in case not yet in m_properties
+        for (const auto& pair : m_floatStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.floatVal = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_intStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.intVal = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_int64Storage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.int64Val = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_boolStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.boolVal = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_stringStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.stringVal = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_doubleStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.doubleVal = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_vec2Storage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.vec2Val = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_vec3Storage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.vec3Val = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_vec4Storage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.vec4Val = pair.second;
+            sv.hasValue = true;
+        }
+        for (const auto& pair : m_refStorage) {
+            auto& sv = savedPropsByName[pair.first];
+            sv.refPtr = pair.second;
+            sv.hasValue = true;
+        }
+    }
+
+    auto findSaved = [&](const std::string& name1, const std::string& name2 = "") -> const SavedValue* {
+        if (!preserveExistingValues) return nullptr;
+        if (!name1.empty()) {
+            auto it = savedPropsByName.find(name1);
+            if (it != savedPropsByName.end() && it->second.hasValue) return &it->second;
+        }
+        if (!name2.empty()) {
+            auto it = savedPropsByName.find(name2);
+            if (it != savedPropsByName.end() && it->second.hasValue) return &it->second;
+        }
+        return nullptr;
+    };
 
     m_properties.clear();
+    m_defaultPropertyValues.clear();
     std::unordered_set<std::string> registeredVarNames;
 
     auto trimArg = [](std::string s) -> std::string {
@@ -1196,24 +1371,93 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             if (type == "int" || type == "int32_t" || type == "int64_t" || type == "uint32_t" || type == "size_t") {
                 int defInt = 0;
                 try { if (!defStr.empty()) defInt = std::stoi(defStr); } catch (...) {}
-                if (existingInts.find(propName) != existingInts.end()) defInt = existingInts[propName];
-                m_intStorage[propName] = defInt;
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Int;
+                def.intVal = defInt;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                int actualInt = (sv && sv->hasValue) ? sv->intVal : defInt;
+                m_intStorage[propName] = actualInt;
                 RegisterProperty(propName, &m_intStorage[propName], category, (int)minVal, (int)maxVal);
             } else if (type == "bool") {
                 bool defBool = (defStr == "true" || defStr == "1");
-                if (existingBools.find(propName) != existingBools.end()) defBool = existingBools[propName];
-                m_boolStorage[propName] = defBool;
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Bool;
+                def.boolVal = defBool;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                bool actualBool = (sv && sv->hasValue) ? sv->boolVal : defBool;
+                m_boolStorage[propName] = actualBool;
                 RegisterProperty(propName, &m_boolStorage[propName], category);
             } else if (type == "std::string" || type == "string") {
                 std::string defS = trimArg(defStr);
-                if (existingStrings.find(propName) != existingStrings.end()) defS = existingStrings[propName];
-                m_stringStorage[propName] = defS;
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::String;
+                def.stringVal = defS;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                std::string actualS = (sv && sv->hasValue) ? sv->stringVal : defS;
+                m_stringStorage[propName] = actualS;
                 RegisterProperty(propName, &m_stringStorage[propName], category);
+            } else if (type == "glm::vec2" || type == "Vector2" || type == "vec2") {
+                glm::vec2 defVec2(0.0f);
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Vec2;
+                def.vec2Val = defVec2;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                glm::vec2 actualVec2 = (sv && sv->hasValue) ? sv->vec2Val : defVec2;
+                m_vec2Storage[propName] = actualVec2;
+                RegisterProperty(propName, &m_vec2Storage[propName], category);
             } else if (type == "glm::vec3" || type == "Vector3" || type == "vec3") {
                 glm::vec3 defVec(0.0f);
-                if (existingVec3s.find(propName) != existingVec3s.end()) defVec = existingVec3s[propName];
-                m_vec3Storage[propName] = defVec;
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Vec3;
+                def.vec3Val = defVec;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                glm::vec3 actualVec = (sv && sv->hasValue) ? sv->vec3Val : defVec;
+                m_vec3Storage[propName] = actualVec;
                 RegisterProperty(propName, &m_vec3Storage[propName], category);
+            } else if (type == "glm::vec4" || type == "Vector4" || type == "vec4") {
+                glm::vec4 defVec4(0.0f);
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Vec4;
+                def.vec4Val = defVec4;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                glm::vec4 actualVec4 = (sv && sv->hasValue) ? sv->vec4Val : defVec4;
+                m_vec4Storage[propName] = actualVec4;
+                RegisterProperty(propName, &m_vec4Storage[propName], category);
+            } else if (type == "double") {
+                double defD = 0.0;
+                try {
+                    std::string cleanDef = defStr;
+                    if (!cleanDef.empty() && (cleanDef.back() == 'd' || cleanDef.back() == 'D')) cleanDef.pop_back();
+                    if (!cleanDef.empty()) defD = std::stod(cleanDef);
+                } catch (...) {}
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Double;
+                def.doubleVal = defD;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                double actualD = (sv && sv->hasValue) ? sv->doubleVal : defD;
+                m_doubleStorage[propName] = actualD;
+                RegisterProperty(propName, &m_doubleStorage[propName], category);
             } else {
                 float defF = 0.0f;
                 try {
@@ -1221,14 +1465,21 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                     if (!cleanDef.empty() && (cleanDef.back() == 'f' || cleanDef.back() == 'F')) cleanDef.pop_back();
                     if (!cleanDef.empty()) defF = std::stof(cleanDef);
                 } catch (...) {}
-                if (existingFloats.find(propName) != existingFloats.end()) defF = existingFloats[propName];
-                m_floatStorage[propName] = defF;
+                PropertyDefaultValue def;
+                def.type = BehaviourPropertyType::Float;
+                def.floatVal = defF;
+                m_defaultPropertyValues[propName] = def;
+                if (!varRef.empty()) m_defaultPropertyValues[varRef] = def;
+
+                const SavedValue* sv = findSaved(propName, varRef);
+                float actualF = (sv && sv->hasValue) ? sv->floatVal : defF;
+                m_floatStorage[propName] = actualF;
                 RegisterProperty(propName, &m_floatStorage[propName], category, minVal, maxVal);
 
                 std::string pLower = propName;
                 std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
                 if (pLower.find("speed") != std::string::npos || pLower.find("rot") != std::string::npos) {
-                    m_defaultSpeed = defF;
+                    m_defaultSpeed = actualF;
                 }
             }
         } else if (regRefPos != std::string::npos) {
@@ -1251,20 +1502,79 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
             }
             if (!curArg.empty()) args.push_back(curArg);
 
-            if (args.size() < 3) continue;
+            if (args.size() < 2) continue;
             std::string propName = trimArg(args[0]);
-            std::string refTypeStr = trimArg(args[2]);
-            std::string category = (args.size() >= 4) ? trimArg(args[3]) : "References";
+            std::string refVar = trimArg(args[1]);
+            size_t ampPos = refVar.find('&');
+            if (ampPos != std::string::npos) refVar = refVar.substr(ampPos + 1);
+            size_t arrowPos = refVar.find("->");
+            if (arrowPos != std::string::npos) refVar = refVar.substr(arrowPos + 2);
+            size_t rvStart = refVar.find_first_not_of(" \t");
+            size_t rvEnd = refVar.find_last_not_of(" \t");
+            if (rvStart != std::string::npos && rvEnd != std::string::npos) refVar = refVar.substr(rvStart, rvEnd - rvStart + 1);
 
             registeredVarNames.insert(propName);
+            if (!refVar.empty()) registeredVarNames.insert(refVar);
 
             ObjectRefType refType = ObjectRefType::Actor;
-            if (refTypeStr.find("Light") != std::string::npos) refType = ObjectRefType::Light;
-            else if (refTypeStr.find("Mesh") != std::string::npos) refType = ObjectRefType::Mesh;
-            else if (refTypeStr.find("Camera") != std::string::npos) refType = ObjectRefType::Camera;
+            std::string category = "References";
 
-            m_refStorage[propName] = nullptr;
+            if (args.size() == 2) {
+                // RegisterReference("Name", &var)
+                refType = ObjectRefType::Actor;
+                category = "References";
+            } else if (args.size() == 3) {
+                std::string arg2 = trimArg(args[2]);
+                std::string arg2Lower = arg2;
+                std::transform(arg2Lower.begin(), arg2Lower.end(), arg2Lower.begin(), ::tolower);
+                if (arg2Lower.find("objectreftype") != std::string::npos ||
+                    arg2Lower == "light" || arg2Lower == "mesh" || arg2Lower == "camera" || arg2Lower == "actor" || arg2Lower == "gameobject") {
+                    if (arg2Lower.find("light") != std::string::npos) refType = ObjectRefType::Light;
+                    else if (arg2Lower.find("mesh") != std::string::npos) refType = ObjectRefType::Mesh;
+                    else if (arg2Lower.find("camera") != std::string::npos) refType = ObjectRefType::Camera;
+                    else refType = ObjectRefType::Actor;
+                    category = "References";
+                } else {
+                    // Third argument is category name: RegisterReference("Camera", &Camera, "Looke")
+                    refType = ObjectRefType::Actor;
+                    category = arg2;
+                }
+            } else if (args.size() >= 4) {
+                // RegisterReference("Name", &var, ObjectRefType::X, "Category")
+                std::string arg2 = trimArg(args[2]);
+                std::string arg2Lower = arg2;
+                std::transform(arg2Lower.begin(), arg2Lower.end(), arg2Lower.begin(), ::tolower);
+                if (arg2Lower.find("light") != std::string::npos) refType = ObjectRefType::Light;
+                else if (arg2Lower.find("mesh") != std::string::npos) refType = ObjectRefType::Mesh;
+                else if (arg2Lower.find("camera") != std::string::npos) refType = ObjectRefType::Camera;
+                else refType = ObjectRefType::Actor;
+
+                category = trimArg(args[3]);
+            }
+
+            // If the variable was declared as GameObject*, all GameObjects from this scene are selectable
+            auto itVar = declaredVars.find(refVar);
+            if (itVar != declaredVars.end() && (itVar->second.type == "GameObject*" || itVar->second.type == "Actor*")) {
+                refType = ObjectRefType::Actor;
+            }
+
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::ObjectRef;
+            def.targetId = -1;
+            m_defaultPropertyValues[propName] = def;
+            if (!refVar.empty()) m_defaultPropertyValues[refVar] = def;
+
+            const SavedValue* sv = findSaved(propName, refVar);
+            void* actualPtr = (sv && sv->hasValue) ? sv->refPtr : nullptr;
+            int actualTargetId = (sv && sv->hasValue) ? sv->targetId : -1;
+
+            m_refStorage[propName] = actualPtr;
+            if (!refVar.empty()) m_refStorage[refVar] = actualPtr;
+
             RegisterReference(propName, &m_refStorage[propName], refType, category);
+            if (!m_properties.empty()) {
+                m_properties.back().targetId = actualTargetId;
+            }
         }
     }
 
@@ -1283,35 +1593,123 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                 if (!clean.empty() && (clean.back() == 'f' || clean.back() == 'F')) clean.pop_back();
                 if (!clean.empty()) defF = std::stof(clean);
             } catch (...) {}
-            if (existingFloats.find(varName) != existingFloats.end()) defF = existingFloats[varName];
-            m_floatStorage[varName] = defF;
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Float;
+            def.floatVal = defF;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            float actualF = (sv && sv->hasValue) ? sv->floatVal : defF;
+            m_floatStorage[varName] = actualF;
             RegisterProperty(varName, &m_floatStorage[varName], "General");
             std::string vLower = varName;
             std::transform(vLower.begin(), vLower.end(), vLower.begin(), ::tolower);
             if (vLower.find("speed") != std::string::npos) {
-                m_defaultSpeed = defF;
+                m_defaultSpeed = actualF;
             }
         } else if (type == "bool") {
             bool defB = (defStr == "true" || defStr == "1");
-            if (existingBools.find(varName) != existingBools.end()) defB = existingBools[varName];
-            m_boolStorage[varName] = defB;
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Bool;
+            def.boolVal = defB;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            bool actualB = (sv && sv->hasValue) ? sv->boolVal : defB;
+            m_boolStorage[varName] = actualB;
             RegisterProperty(varName, &m_boolStorage[varName], "General");
-        } else if (type == "int") {
+        } else if (type == "int" || type == "int32_t" || type == "int64_t" || type == "uint32_t" || type == "size_t") {
             int defI = 0;
             try { if (!defStr.empty()) defI = std::stoi(defStr); } catch (...) {}
-            if (existingInts.find(varName) != existingInts.end()) defI = existingInts[varName];
-            m_intStorage[varName] = defI;
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Int;
+            def.intVal = defI;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            int actualI = (sv && sv->hasValue) ? sv->intVal : defI;
+            m_intStorage[varName] = actualI;
             RegisterProperty(varName, &m_intStorage[varName], "General");
+        } else if (type == "double") {
+            double defD = 0.0;
+            try {
+                std::string clean = defStr;
+                if (!clean.empty() && (clean.back() == 'd' || clean.back() == 'D')) clean.pop_back();
+                if (!clean.empty()) defD = std::stod(clean);
+            } catch (...) {}
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Double;
+            def.doubleVal = defD;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            double actualD = (sv && sv->hasValue) ? sv->doubleVal : defD;
+            m_doubleStorage[varName] = actualD;
+            RegisterProperty(varName, &m_doubleStorage[varName], "General");
         } else if (type == "std::string" || type == "string") {
             std::string defS = trimArg(defStr);
-            if (existingStrings.find(varName) != existingStrings.end()) defS = existingStrings[varName];
-            m_stringStorage[varName] = defS;
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::String;
+            def.stringVal = defS;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            std::string actualS = (sv && sv->hasValue) ? sv->stringVal : defS;
+            m_stringStorage[varName] = actualS;
             RegisterProperty(varName, &m_stringStorage[varName], "General");
+        } else if (type == "glm::vec2" || type == "Vector2" || type == "vec2") {
+            glm::vec2 defVec2(0.0f);
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Vec2;
+            def.vec2Val = defVec2;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            glm::vec2 actualVec2 = (sv && sv->hasValue) ? sv->vec2Val : defVec2;
+            m_vec2Storage[varName] = actualVec2;
+            RegisterProperty(varName, &m_vec2Storage[varName], "General");
         } else if (type == "glm::vec3" || type == "Vector3" || type == "vec3") {
             glm::vec3 defVec(0.0f);
-            if (existingVec3s.find(varName) != existingVec3s.end()) defVec = existingVec3s[varName];
-            m_vec3Storage[varName] = defVec;
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Vec3;
+            def.vec3Val = defVec;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            glm::vec3 actualVec = (sv && sv->hasValue) ? sv->vec3Val : defVec;
+            m_vec3Storage[varName] = actualVec;
             RegisterProperty(varName, &m_vec3Storage[varName], "General");
+        } else if (type == "glm::vec4" || type == "Vector4" || type == "vec4") {
+            glm::vec4 defVec4(0.0f);
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::Vec4;
+            def.vec4Val = defVec4;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            glm::vec4 actualVec4 = (sv && sv->hasValue) ? sv->vec4Val : defVec4;
+            m_vec4Storage[varName] = actualVec4;
+            RegisterProperty(varName, &m_vec4Storage[varName], "General");
+        } else if (type == "Camera*" || type == "LightComponent*" || type == "PrimitiveMesh*" || type == "GameObject*") {
+            ObjectRefType refType = ObjectRefType::Actor;
+            if (type == "Camera*") refType = ObjectRefType::Camera;
+            else if (type == "LightComponent*") refType = ObjectRefType::Light;
+            else if (type == "PrimitiveMesh*") refType = ObjectRefType::Mesh;
+
+            PropertyDefaultValue def;
+            def.type = BehaviourPropertyType::ObjectRef;
+            def.targetId = -1;
+            m_defaultPropertyValues[varName] = def;
+
+            const SavedValue* sv = findSaved(varName);
+            void* actualPtr = (sv && sv->hasValue) ? sv->refPtr : nullptr;
+            int actualTargetId = (sv && sv->hasValue) ? sv->targetId : -1;
+
+            m_refStorage[varName] = actualPtr;
+            RegisterReference(varName, &m_refStorage[varName], refType, "References");
+            if (!m_properties.empty()) {
+                m_properties.back().targetId = actualTargetId;
+            }
         }
     }
 
@@ -1668,6 +2066,19 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                               ? DynamicTransformAction::ActionType::TranslateWorld
                               : DynamicTransformAction::ActionType::TranslateRelative;
 
+                size_t arrowPos = l.find("->Transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find("->transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find(".Transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find(".transform.");
+                if (arrowPos != std::string::npos) {
+                    std::string ref = l.substr(0, arrowPos);
+                    size_t rb = ref.find_last_not_of(" \t\r\n;{}()");
+                    if (rb != std::string::npos) {
+                        size_t ra = ref.find_last_of(" \t\r\n;{}()", rb);
+                        action.targetRefName = (ra == std::string::npos) ? ref.substr(0, rb + 1) : ref.substr(ra + 1, rb - ra);
+                    }
+                }
+
                 size_t openP = l.find('(', transPos);
                 size_t closeP = l.rfind(')');
                 if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
@@ -1713,6 +2124,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
                               : DynamicTransformAction::ActionType::RotateRelative;
 
                 size_t arrowPos = l.find("->Transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find("->transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find(".Transform.");
+                if (arrowPos == std::string::npos) arrowPos = l.find(".transform.");
                 if (arrowPos != std::string::npos) {
                     std::string ref = l.substr(0, arrowPos);
                     size_t rb = ref.find_last_not_of(" \t\r\n;{}()");
@@ -1806,6 +2220,69 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath) 
         }
 
     }
+
+    if (m_scene) {
+        ResolveReferences(*m_scene);
+    }
+}
+
+void EunoiaBehaviour::ResetToDefaults() {
+    m_properties.clear();
+    RegisterProperties();
+    if (m_scene) {
+        ResolveReferences(*m_scene);
+    }
+}
+
+void DynamicScriptBehaviour::ResetToDefaults() {
+    if (!m_sourceCppPath.empty()) {
+        ParsePropertiesFromCpp(m_sourceCppPath, false);
+    } else {
+        for (auto& prop : m_properties) {
+            auto it = m_defaultPropertyValues.find(prop.name);
+            if (it == m_defaultPropertyValues.end() || !prop.dataPtr) continue;
+            const auto& def = it->second;
+            switch (prop.type) {
+                case BehaviourPropertyType::Bool:
+                    *reinterpret_cast<bool*>(prop.dataPtr) = def.boolVal;
+                    break;
+                case BehaviourPropertyType::Int:
+                    *reinterpret_cast<int*>(prop.dataPtr) = def.intVal;
+                    break;
+                case BehaviourPropertyType::Int64:
+                    *reinterpret_cast<int64_t*>(prop.dataPtr) = def.int64Val;
+                    break;
+                case BehaviourPropertyType::Float:
+                    *reinterpret_cast<float*>(prop.dataPtr) = def.floatVal;
+                    break;
+                case BehaviourPropertyType::Double:
+                    *reinterpret_cast<double*>(prop.dataPtr) = def.doubleVal;
+                    break;
+                case BehaviourPropertyType::String:
+                    *reinterpret_cast<std::string*>(prop.dataPtr) = def.stringVal;
+                    break;
+                case BehaviourPropertyType::Vec2:
+                    *reinterpret_cast<glm::vec2*>(prop.dataPtr) = def.vec2Val;
+                    break;
+                case BehaviourPropertyType::Vec3:
+                case BehaviourPropertyType::Color3:
+                    *reinterpret_cast<glm::vec3*>(prop.dataPtr) = def.vec3Val;
+                    break;
+                case BehaviourPropertyType::Vec4:
+                case BehaviourPropertyType::Color4:
+                    *reinterpret_cast<glm::vec4*>(prop.dataPtr) = def.vec4Val;
+                    break;
+                case BehaviourPropertyType::ObjectRef:
+                    *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
+                    prop.targetId = -1;
+                    prop.isMissing = false;
+                    break;
+            }
+        }
+        if (m_scene) {
+            ResolveReferences(*m_scene);
+        }
+    }
 }
 
 // ============================================================================
@@ -1846,3 +2323,24 @@ void EunoiaBehaviour::DestroyGameObject(int objectId) {
     m_scene->RemoveObject(objectId);
     AddEngineLog("LogBehaviour", "[Behaviour] DestroyGameObject: removed object ID " + std::to_string(objectId), 0);
 }
+
+// ============================================================================
+// Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
+// ============================================================================
+
+double EunoiaBehaviour::GetMouseX(bool negate) const {
+    return InputSystem::Get().GetMouseX(negate);
+}
+
+double EunoiaBehaviour::GetMouseY(bool negate) const {
+    return InputSystem::Get().GetMouseY(negate);
+}
+
+double EunoiaBehaviour::GetMouseDeltaX(bool negate) const {
+    return InputSystem::Get().GetMouseDeltaX(negate);
+}
+
+double EunoiaBehaviour::GetMouseDeltaY(bool negate) const {
+    return InputSystem::Get().GetMouseDeltaY(negate);
+}
+
