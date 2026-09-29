@@ -71,6 +71,7 @@ public:
     glm::vec2 GetMeshLightmapUV(int objectId, size_t vertexIndex) const;
     bool HasActiveLightmap() const;
     std::string GetActiveLightmapTexturePath() const;
+    uint64_t GetLightmapRevision() const { return m_lightmapRevision; }
 
     // Progress / logging callback
     void SetProgressCallback(std::function<void(const std::string&, float)> cb) { m_progressCb = cb; }
@@ -80,7 +81,13 @@ private:
     ~LightBakeManager() override = default;
 
     // Internal baking routines
+    void GenerateMeshLightmapUvs(
+        const std::vector<BakeStaticMesh>& staticMeshes,
+        RuntimeBakedLightData& outData
+    );
+
     void RaycastShadowsAndIllumination(
+        const Scene& scene,
         const GameObject& lightObj,
         const std::vector<BakeStaticMesh>& staticMeshes,
         RuntimeBakedLightData& outData,
@@ -95,9 +102,10 @@ private:
     std::unordered_map<int, std::vector<glm::vec2>> m_accumulatedMeshLightmapUvs;
     std::string m_activeLightmapPath;
 
-    void RecomputeAccumulatedStaticLighting();
+    void RecomputeAccumulatedStaticLighting(const std::filesystem::path& projectRoot = {});
 
     std::function<void(const std::string&, float)> m_progressCb;
+    uint64_t m_lightmapRevision = 1;
 };
 
 } // namespace Eunoia

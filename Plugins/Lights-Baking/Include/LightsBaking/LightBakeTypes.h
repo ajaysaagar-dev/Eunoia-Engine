@@ -48,6 +48,7 @@ struct BakedLightMetadata {
 struct BakeStaticMesh {
     int objectId = -1;
     std::string name;
+    int primitiveType = 0;
     glm::mat4 worldTransform{1.0f};
     std::vector<glm::vec3> worldVertices;
     std::vector<glm::vec3> worldNormals;
@@ -55,6 +56,7 @@ struct BakeStaticMesh {
     std::vector<uint32_t> indices;
     glm::vec3 aabbMin{1e9f};
     glm::vec3 aabbMax{-1e9f};
+    bool castShadows = true;
 };
 
 struct MeshAtlasRect {

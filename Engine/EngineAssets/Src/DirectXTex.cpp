@@ -639,12 +639,22 @@ bool LoadFromDDSFile(const wchar_t* szFile, TexMetadata& metadata, ScratchImage&
 bool SaveToDDSMemory(const Image* images, size_t nimages, const TexMetadata& metadata, std::vector<uint8_t>& blob) {
     if (!images || nimages == 0 || metadata.width == 0 || metadata.height == 0) return false;
 
-    size_t headerSize = sizeof(uint32_t) + sizeof(DDS_HEADER);
-    bool needDX10 = IsCompressed(metadata.format) &&
-                    (metadata.format == DXGI_FORMAT_BC7_UNORM || metadata.format == DXGI_FORMAT_BC7_UNORM_SRGB ||
-                     metadata.format == DXGI_FORMAT_BC6H_UF16  || metadata.format == DXGI_FORMAT_BC6H_SF16  ||
-                     IsSRGB(metadata.format) || metadata.arraySize > 1);
+    bool needDX10 = false;
+    switch (metadata.format) {
+        case DXGI_FORMAT_BC1_UNORM:
+        case DXGI_FORMAT_BC2_UNORM:
+        case DXGI_FORMAT_BC3_UNORM:
+        case DXGI_FORMAT_BC4_UNORM:
+        case DXGI_FORMAT_BC5_UNORM:
+        case DXGI_FORMAT_R8G8B8A8_UNORM:
+            needDX10 = (IsSRGB(metadata.format) || metadata.arraySize > 1);
+            break;
+        default:
+            needDX10 = true;
+            break;
+    }
 
+    size_t headerSize = sizeof(uint32_t) + sizeof(DDS_HEADER);
     if (needDX10) headerSize += sizeof(DDS_HEADER_DXT10);
 
     size_t totalDataSize = 0;

@@ -79,6 +79,17 @@ public:
         m_resolvedPathCache.clear();
     }
 
+    void InvalidateTexture(const std::string& name) {
+        if (name.empty()) return;
+        std::string resolved = ResolvePath(name);
+        m_resolvedPathCache.erase(name);
+        if (!resolved.empty()) {
+            m_cache.erase(resolved + "@color");
+            m_cache.erase(resolved + "@normal");
+            m_resolvedPathCache.erase(resolved);
+        }
+    }
+
     std::string ResolvePath(const std::string& name) {
         if (name.empty() || name == "none") return "";
         auto itCache = m_resolvedPathCache.find(name);
