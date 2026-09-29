@@ -1,0 +1,11 @@
+{
+    "name": "Visual-Behaviuors",
+    "version": "1.0.0",
+    "description": "Node-graph visual scripting system for Eunoia Behaviour assets (.ebehaviour). Implements a full ImGui-based node canvas with pan, zoom, pins, links, variables, and JSON serialization.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "visual-scripting",
+    "core": false,
+    "dependencies": ["engine", "scene", "Behaviuors-Scripts"],
+    "provides": ["IVisualBehaviuorService"]
+}

@@ -33,6 +33,7 @@
 #include <MeshClusterCulling/MeshClusterCulling.h>
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
+#include <VisualBehaviuors/BehaviourEditorWindow.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -2572,6 +2573,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     // 10. Behaviour Script Change & Compilation Prompt (User Request: ask as compile or later)
     RenderScriptCompileModal(scene);
+
+    // 10b. Visual-Behaviuors Node-Graph Editor Windows (.ebehaviour assets)
+    VisualBehaviuors::BehaviourEditorManager::Get().RenderAll();
 
     // 11. 3D Model Real-Time Detection & Import View ("One by One" wizard)
     if (showModelImportModal) {
@@ -7368,6 +7372,79 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
+                // Visual Behaviour asset creation modal
+                if (showNewVisualBehaviourPopup) {
+                    ImGui::OpenPopup("Create Visual Behaviour##VBModal");
+                    showNewVisualBehaviourPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Visual Behaviour##VBModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Visual Behaviour Name (.ebehaviour):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##VBehNameInput", newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf));
+
+                    std::string inputName = newVisualBehaviourNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "✓ Will create: %s.ebehaviour in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path behDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(behDir, bec);
+
+                        std::filesystem::path vbPath = behDir / (inputName + ".ebehaviour");
+                        // Create a new graph with default event stubs
+                        VisualBehaviuors::RegisterBuiltinNodes();
+                        VisualBehaviuors::BehaviourGraph g;
+                        g.name = inputName;
+                        g.AddNode("Event.BeginPlay", 50.0f, 100.0f);
+                        g.AddNode("Event.Tick",      50.0f, 220.0f);
+                        VisualBehaviuors::SaveGraph(g, vbPath.string());
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path metaPath = behDir / (inputName + ".ebehaviour.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        if (metaFile.is_open()) {
+                            AssetID aid = AssetID::CreateRandom();
+                            std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                                ("/" + inputName) : (targetDir + "/" + inputName);
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Behaviour\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        VisualBehaviuors::BehaviourEditorManager::Get().Open(vbPath.string());
+                        AddLog("LogContent", "Created Visual Behaviour: " + inputName + ".ebehaviour in " + targetDir, 2);
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Two-Pane Content Browser Layout (Left: Virtual Folders, Right: Assets)
                 float leftFolderPaneW = 200.0f;
                 ImGui::BeginChild("CBFolderTreePane", ImVec2(leftFolderPaneW, 0), true);
@@ -7462,7 +7539,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewSkyboxPopup = true;
                             snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                         }
-                        if (ImGui::MenuItem("🧩 New Behaviour")) {
+                        if (ImGui::MenuItem("🧩 New Behaviour Script")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
                             std::string defName = "NewBehaviour";
@@ -7472,6 +7549,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 defName = "NewBehaviour_" + std::to_string(idx);
                             }
                             snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                        }
+                        if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewVisualBehaviourPopup = true;
+                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("📥 Import Model...")) {
@@ -7722,7 +7804,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewSkyboxPopup = true;
                                     snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                                 }
-                                if (ImGui::MenuItem("🧩 New Behaviour")) {
+                                if (ImGui::MenuItem("🧩 New Behaviour Script")) {
                                     popupTargetVirtualDir = subDir;
                                     showNewBehaviourPopup = true;
                                     std::string defName = "NewBehaviour";
@@ -7732,6 +7814,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         defName = "NewBehaviour_" + std::to_string(idx);
                                     }
                                     snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                                }
+                                if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                                    popupTargetVirtualDir = subDir;
+                                    showNewVisualBehaviourPopup = true;
+                                    snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("📥 Import Model...")) {
@@ -7841,8 +7928,17 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     OpenLevelFromPath(scene, fullLevel.string());
                                 } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    LaunchVSCodeWorkspace(fullScript.string());
-                                    OpenScriptInCodeEditor(fullScript.string());
+                                    std::string ext = fullScript.extension().string();
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                    if (ext == ".ebehaviour") {
+                                        // Open in Visual-Behaviuors node-graph editor
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
+                                    } else {
+                                        // .cpp / .h scripts → VS Code
+                                        LaunchVSCodeWorkspace(fullScript.string());
+                                        OpenScriptInCodeEditor(fullScript.string());
+                                    }
                                 } else {
                                     OpenReferenceViewer(meta.id);
                                 }
@@ -7927,10 +8023,19 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             }
 
                             if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
-                                if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    LaunchVSCodeWorkspace(fullScript.string());
-                                    OpenScriptInCodeEditor(fullScript.string());
+                                std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
+                                std::string ext = fullScript.extension().string();
+                                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                if (ext == ".ebehaviour") {
+                                    if (ImGui::MenuItem("🧩 Open in Visual Behaviour Editor")) {
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
+                                    }
+                                } else {
+                                    if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
+                                        LaunchVSCodeWorkspace(fullScript.string());
+                                        OpenScriptInCodeEditor(fullScript.string());
+                                    }
                                 }
                                 ImGui::Separator();
                             }

@@ -472,6 +472,8 @@ public:
     char behaviourSearchBuf[64] = "";
     bool showNewBehaviourPopup = false;
     char newBehaviourNameBuf[64] = "NewBehaviour";
+    bool showNewVisualBehaviourPopup = false;
+    char newVisualBehaviourNameBuf[64] = "NewVisualBehaviour";
     bool IsBehaviourNameAlreadyExists(const std::string& name) const;
 
     // In-Editor Code Editor (dev.md & User Request)
