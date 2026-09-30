@@ -77,6 +77,7 @@ public:
         clone->m_updatePrintMessages = m_updatePrintMessages;
         clone->m_transformActions = m_transformActions;
         clone->m_startLockCursor = m_startLockCursor;
+        clone->m_startUnlockCursor = m_startUnlockCursor;
         clone->RegisterProperties();
         clone->CopyPropertiesFrom(*this);
         clone->Transform.Init(clone.get());
@@ -119,6 +120,7 @@ public:
 
     bool m_hasInput = false;
     bool m_startLockCursor = false;
+    bool m_startUnlockCursor = false;
     std::vector<std::string> m_startPrintMessages;
 
     struct DynamicUpdatePrint {

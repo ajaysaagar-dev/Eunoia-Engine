@@ -793,7 +793,9 @@ void DynamicScriptBehaviour::Start() {
         Print(msg);
         AddEngineLog("LogBehaviour", "[" + m_className + "] " + msg, 0);
     }
-    if (m_startLockCursor) {
+    if (m_startUnlockCursor) {
+        CursorState.UnLocked();
+    } else if (m_startLockCursor) {
         CursorState.Locked();
     }
 }
@@ -1899,7 +1901,11 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         }
 
         if (inStartMethod) {
-            if (l.find("CursorState.Locked") != std::string::npos || l.find("CursorState.Lock") != std::string::npos) {
+            std::string lLower = l;
+            std::transform(lLower.begin(), lLower.end(), lLower.begin(), ::tolower);
+            if (lLower.find("cursorstate.unlocked") != std::string::npos || lLower.find("cursorstate.unlock") != std::string::npos) {
+                m_startUnlockCursor = true;
+            } else if (lLower.find("cursorstate.locked") != std::string::npos || lLower.find("cursorstate.lock") != std::string::npos) {
                 m_startLockCursor = true;
             }
             size_t prPos = l.find("Print(");

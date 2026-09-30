@@ -2296,26 +2296,15 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit) {
     if (isGameOnlyWindow) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
+                          InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                          InputSystem::Get().IsKeyDown(Key::RightControl);
+        if (isCtrlDown && (ImGui::IsKeyPressed(ImGuiKey_Delete) || InputSystem::Get().IsKeyPressed(Key::Delete))) {
             outShouldExit = true;
         }
 
         // Render on-screen prints / HUD in game window
         RenderScreenPrintOverlay(24.0f, 24.0f);
-
-        // Render subtle top-right exit hint
-        ImGuiViewport* vp = ImGui::GetMainViewport();
-        if (vp) {
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 330.0f, vp->WorkPos.y + 16.0f));
-            ImGui::SetNextWindowBgAlpha(0.35f);
-            ImGuiWindowFlags hintFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-            if (ImGui::Begin("##GameWindowHint", nullptr, hintFlags)) {
-                ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.92f, 0.75f), "Game Mode | ESC: Free Cursor | Click: Lock | DEL: Exit");
-            }
-            ImGui::End();
-        }
         return;
     }
 
@@ -2471,11 +2460,15 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
     }
 
-    // Play Mode Presentation & Stop-on-Delete (User Request: ESC does not exit game mode)
+    // Play Mode Presentation & Stop-on-Ctrl+Delete
     if (scene.isPlayMode) {
         isPlayModeActive = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) ||
-            InputSystem::Get().IsKeyPressed(Key::Delete)) {
+        bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
+                          InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                          InputSystem::Get().IsKeyDown(Key::RightControl);
+        bool isDeletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete) ||
+                               InputSystem::Get().IsKeyPressed(Key::Delete);
+        if (isCtrlDown && isDeletePressed) {
             ExitPlayMode(scene, &camera);
             return;
         }
@@ -3204,7 +3197,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("📦 Cook Project Assets")) {
                     OpenCookModal();
                 }
-                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Delete")) {
+                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
                     if (scene.isPlayMode) ExitPlayMode(scene, currentCamera);
                     else EnterPlayMode(scene, currentCamera);
                 }
@@ -3303,7 +3296,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ExitPlayMode(scene, currentCamera);
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isPlayActive ? "Stop Play Mode [Delete]" : "Enter Game Play Mode in editor (Full Screen Fit)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isPlayActive ? "Stop Play Mode [Ctrl+Delete]" : "Enter Game Play Mode in editor (Full Screen Fit)");
             ImGui::PopStyleColor();
 
             if (isPlayActive) {
@@ -3312,7 +3305,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::Button("⏹ Stop")) {
                     ExitPlayMode(scene, currentCamera);
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Delete]");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Ctrl+Delete]");
                 ImGui::PopStyleColor();
             }
 
@@ -9686,8 +9679,8 @@ void EngineUI::EnterPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
     }
 
     isPlayModeActive = true;
-    scene.StartPlayMode();
     CursorState.Locked();
+    scene.StartPlayMode();
     AddLog("LogPlayLevel", "Entered Play Mode in Editor (Full Screen Fit)", 2);
 }
 
