@@ -384,6 +384,16 @@ public:
     bool IsProgressiveLoadingActive() const { return m_progressiveLoader.active; }
     SceneSerializer::ProgressiveSceneLoader m_progressiveLoader;
 
+    struct SaveIndicatorState {
+        bool active = false;
+        bool isSaving = false;
+        bool success = true;
+        std::string filename;
+        float displayTimer = 0.0f;
+    };
+    SaveIndicatorState m_saveIndicator;
+    void RenderSaveIndicator();
+
     bool SaveScene(Scene& scene) { return SaveLevel(scene); }
     bool SaveSceneAs(Scene& scene) { return SaveLevelAs(scene); }
     bool OpenScene(Scene& scene) { return OpenLevel(scene); }

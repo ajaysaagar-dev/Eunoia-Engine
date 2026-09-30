@@ -1556,16 +1556,23 @@ bool EngineUI::SaveLevel(Scene& level) {
         return SaveLevelAs(level);
     }
     std::string filename = std::filesystem::path(currentLevelFilePath).filename().string();
-    StartLoadingTask("Saving Level", "Serializing actors to disk...", 0.1f);
-    if (SceneSerializer::SaveScene(level, currentLevelFilePath, [](float p, const std::string& step, const std::string& detail) {
-        UpdateLoadingTask(p, step, detail);
-    })) {
+    m_saveIndicator.active = true;
+    m_saveIndicator.isSaving = true;
+    m_saveIndicator.success = true;
+    m_saveIndicator.filename = filename;
+    m_saveIndicator.displayTimer = 2.5f;
+
+    if (SceneSerializer::SaveScene(level, currentLevelFilePath)) {
         levelUnsaved = false;
-        FinishLoadingTask("Level saved: " + filename);
+        m_saveIndicator.isSaving = false;
+        m_saveIndicator.success = true;
+        m_saveIndicator.displayTimer = 2.5f;
         AddLog("LogWorld", "Saved Level to: " + currentLevelFilePath, 2);
         return true;
     } else {
-        FinishLoadingTask("Failed to save Level: " + filename, false);
+        m_saveIndicator.isSaving = false;
+        m_saveIndicator.success = false;
+        m_saveIndicator.displayTimer = 3.0f;
         AddLog("LogWorld", "Failed to save Level to: " + currentLevelFilePath, 3);
         return false;
     }
@@ -2529,6 +2536,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
         // Game View occupies the available area; editor UI is hidden
         RenderLoadingModal();
+        RenderSaveIndicator();
         return;
     }
 
@@ -2666,6 +2674,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 10. Futuristic Loading Progress Modal (all loading situations)
     RenderLoadingModal();
     RenderViewportLoadingOverlay();
+    RenderSaveIndicator();
 
     // 11. Project Browser Dialog Window (Startup & On-Demand)
     RenderProjectBrowser(scene, camera);
@@ -9266,6 +9275,95 @@ void EngineUI::RenderViewportLoadingOverlay() {
                           m_progressiveLoader.subDetail.c_str());
     }
 }
+
+void EngineUI::RenderSaveIndicator() {
+    if (!m_saveIndicator.active) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    m_saveIndicator.displayTimer -= dt;
+    if (m_saveIndicator.displayTimer <= 0.0f) {
+        m_saveIndicator.active = false;
+        return;
+    }
+
+    float alpha = 1.0f;
+    if (m_saveIndicator.displayTimer < 0.4f) {
+        alpha = m_saveIndicator.displayTimer / 0.4f;
+    }
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+
+    float margin = uiMargin;
+    float curBottomH = bottomDrawerOpen ? bottomDockHeight : 38.0f;
+    float bottomW = vp->Size.x - 2.0f * margin;
+    float bottomY = vp->Pos.y + vp->Size.y - curBottomH - margin;
+
+    ImVec2 badgeSize(250.0f, 26.0f);
+    ImVec2 badgePos;
+    if (showBottomDrawer) {
+        badgePos = ImVec2(vp->Pos.x + bottomW - badgeSize.x - 14.0f, bottomY + curBottomH - badgeSize.y - 6.0f);
+    } else {
+        badgePos = ImVec2(vp->Pos.x + vp->Size.x - badgeSize.x - 16.0f, vp->Pos.y + vp->Size.y - badgeSize.y - 14.0f);
+    }
+
+    // If background registry sync is also active, offset upwards to avoid overlap
+    if (s_bgSync.isRunning.load()) {
+        badgePos.y -= (badgeSize.y + 6.0f);
+    }
+
+    ImDrawList* fgList = ImGui::GetForegroundDrawList();
+    if (!fgList) return;
+
+    // Drop shadow
+    fgList->AddRectFilled(ImVec2(badgePos.x - 2.0f, badgePos.y - 2.0f),
+                          ImVec2(badgePos.x + badgeSize.x + 2.0f, badgePos.y + badgeSize.y + 3.0f),
+                          IM_COL32(0, 0, 0, (int)(80 * alpha)), 6.0f);
+
+    // Glass backdrop
+    fgList->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y),
+                          IM_COL32(14, 18, 26, (int)(235 * alpha)), 6.0f);
+
+    // Border
+    ImU32 borderColor = m_saveIndicator.isSaving
+        ? IM_COL32(35, 140, 240, (int)(220 * alpha))
+        : (m_saveIndicator.success
+            ? IM_COL32(40, 200, 100, (int)(220 * alpha))
+            : IM_COL32(230, 50, 50, (int)(220 * alpha)));
+    fgList->AddRect(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), borderColor, 6.0f, 0, 1.5f);
+
+    float curTime = (float)ImGui::GetTime();
+
+    if (m_saveIndicator.isSaving) {
+        // Animated pulsing cyan circle
+        float pulse = 4.5f + 1.2f * sinf(curTime * 8.0f);
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), pulse,
+                                IM_COL32(0, 200, 255, (int)(255 * alpha)));
+        fgList->AddCircle(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), pulse + 2.0f,
+                          IM_COL32(0, 150, 255, (int)(110 * alpha)), 16, 1.0f);
+
+        std::string text = "Saving " + m_saveIndicator.filename + "...";
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(210, 235, 255, (int)(245 * alpha)), text.c_str());
+    } else if (m_saveIndicator.success) {
+        // Green check circle
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), 5.5f,
+                                IM_COL32(40, 210, 110, (int)(255 * alpha)));
+
+        std::string text = "Saved " + m_saveIndicator.filename;
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(160, 245, 190, (int)(245 * alpha)), text.c_str());
+    } else {
+        // Red error circle
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), 5.5f,
+                                IM_COL32(230, 50, 50, (int)(255 * alpha)));
+
+        std::string text = "Failed to save: " + m_saveIndicator.filename;
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(255, 160, 160, (int)(245 * alpha)), text.c_str());
+    }
+}
+
 
 
 void EngineUI::RenderReferenceViewer(Scene& scene) {
