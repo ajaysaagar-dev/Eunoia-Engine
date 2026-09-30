@@ -960,7 +960,11 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         for (int i = 0; i < 3; ++i) {
             float val = action.constantDelta[i];
             if (!action.varNames[i].empty()) {
-                if (action.varNames[i] == "$__MouseX") {
+                if (action.varNames[i] == "$__MouseDeltaX") {
+                    val = (float)input.GetMouseDeltaX() * action.varMultiplier[i];
+                } else if (action.varNames[i] == "$__MouseDeltaY") {
+                    val = (float)input.GetMouseDeltaY() * action.varMultiplier[i];
+                } else if (action.varNames[i] == "$__MouseX") {
                     val = (float)input.GetMouseX() * action.varMultiplier[i];
                 } else if (action.varNames[i] == "$__MouseY") {
                     val = (float)input.GetMouseY() * action.varMultiplier[i];
@@ -986,10 +990,25 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         GameObject* targetObj = m_owner;
         if (!action.targetRefName.empty()) {
             auto itRef = m_refStorage.find(action.targetRefName);
+            if (itRef == m_refStorage.end() && (action.targetRefName == "target" || action.targetRefName == "PlayerActor" || action.targetRefName == "player")) {
+                itRef = m_refStorage.find("Player");
+            }
             if (itRef != m_refStorage.end() && itRef->second) {
                 targetObj = reinterpret_cast<GameObject*>(itRef->second);
+            } else if (m_scene && m_owner) {
+                std::string lowerRef = action.targetRefName;
+                std::transform(lowerRef.begin(), lowerRef.end(), lowerRef.begin(), ::tolower);
+                if (lowerRef.find("camera") != std::string::npos || lowerRef.find("cam") != std::string::npos || lowerRef.find("boom") != std::string::npos) {
+                    for (auto& obj : m_scene->objects) {
+                        if (obj.parentId == m_owner->id) {
+                            targetObj = &obj;
+                            break;
+                        }
+                    }
+                }
+                if (!targetObj) targetObj = m_owner;
             } else {
-                targetObj = nullptr;
+                targetObj = m_owner;
             }
         }
         if (!targetObj) continue;
@@ -1009,13 +1028,25 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         } else if (action.type == DynamicTransformAction::ActionType::RotateRelative ||
                    action.type == DynamicTransformAction::ActionType::RotateWorld) {
             glm::vec3 cur = targetObj->rotation;
-            if (action.activeAxis[0]) cur.x = delta.x;
-            if (action.activeAxis[1]) cur.y = delta.y;
-            if (action.activeAxis[2]) cur.z = delta.z;
             bool isCamera = (targetObj->isCamera || targetObj->type == PrimitiveType::Camera);
+            for (int i = 0; i < 3; ++i) {
+                if (!action.activeAxis[i]) continue;
+                bool isDelta = (action.varNames[i] == "$__MouseDeltaX" || action.varNames[i] == "$__MouseDeltaY" || action.useDeltaTime[i]);
+                if (isDelta) {
+                    if (i == 0) cur.x += delta.x;
+                    else if (i == 1) cur.y += delta.y;
+                    else if (i == 2) cur.z += delta.z;
+                } else {
+                    if (i == 0) cur.x = delta.x;
+                    else if (i == 1) cur.y = delta.y;
+                    else if (i == 2) cur.z = delta.z;
+                }
+            }
             if (isCamera) {
                 cur.x = std::clamp(cur.x, -89.0f, 89.0f);
             }
+            while (cur.y >= 360.0f) cur.y -= 360.0f;
+            while (cur.y < 0.0f)    cur.y += 360.0f;
             targetObj->rotation = cur;
         } else if (action.type == DynamicTransformAction::ActionType::LockCursor) {
             CursorState.Locked();
@@ -1767,16 +1798,28 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         }
 
         bool isMouseNegated = false;
-        if (lowerS.find("getmousex") != std::string::npos) {
+        if (lowerS.find("getmousedeltax") != std::string::npos || lowerS.find("getmouseaxisx") != std::string::npos) {
+            outVar = "$__MouseDeltaX";
+            outActive = true;
+            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || s.find('-') != std::string::npos) {
+                isMouseNegated = true;
+            }
+        } else if (lowerS.find("getmousedeltay") != std::string::npos || lowerS.find("getmouseaxisy") != std::string::npos) {
+            outVar = "$__MouseDeltaY";
+            outActive = true;
+            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || s.find('-') != std::string::npos) {
+                isMouseNegated = true;
+            }
+        } else if (lowerS.find("getmousex") != std::string::npos) {
             outVar = "$__MouseX";
             outActive = true;
-            if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos) {
+            if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos || s.find('-') != std::string::npos) {
                 isMouseNegated = true;
             }
         } else if (lowerS.find("getmousey") != std::string::npos) {
             outVar = "$__MouseY";
             outActive = true;
-            if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos) {
+            if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos || s.find('-') != std::string::npos) {
                 isMouseNegated = true;
             }
         }
@@ -1793,7 +1836,26 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             }
         }
 
-        outMul = isMouseNegated ? -1.0f : 1.0f;
+        bool hasMinusBeforeVar = false;
+        if (!outVar.empty()) {
+            size_t varPos = s.find(outVar);
+            if (varPos != std::string::npos) {
+                size_t minusPos = s.rfind('-', varPos);
+                if (minusPos != std::string::npos) {
+                    bool onlyWs = true;
+                    for (size_t k = minusPos + 1; k < varPos; ++k) {
+                        if (!std::isspace(static_cast<unsigned char>(s[k])) && s[k] != '(') {
+                            onlyWs = false;
+                            break;
+                        }
+                    }
+                    if (onlyWs) hasMinusBeforeVar = true;
+                }
+            }
+        }
+
+        float sign = (isMouseNegated ^ hasMinusBeforeVar) ? -1.0f : 1.0f;
+        outMul = sign;
 
         size_t numStart = s.find_first_of("-+0123456789.");
         if (numStart != std::string::npos) {
@@ -1811,7 +1873,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         outConst = val;
                         if (std::abs(val) > 1e-6f) outActive = true;
                     } else {
-                        outMul = val * (isMouseNegated ? -1.0f : 1.0f);
+                        outMul = std::abs(val) * sign * (val < 0.0f ? -1.0f : 1.0f);
                     }
                 }
             } catch (...) {}
@@ -2160,8 +2222,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i], action.scaleVarNames[i], action.activeAxis[i]);
                         }
                         // If mouse Y is in Z slot and X (pitch) is unassigned, map mouse Y to pitch (X)
-                        if (action.varNames[0].empty() && action.varNames[2] == "$__MouseY") {
-                            action.varNames[0] = "$__MouseY";
+                        if (action.varNames[0].empty() && (action.varNames[2] == "$__MouseY" || action.varNames[2] == "$__MouseDeltaY")) {
+                            action.varNames[0] = action.varNames[2];
                             action.varMultiplier[0] = action.varMultiplier[2];
                             action.useDeltaTime[0] = action.useDeltaTime[2];
                             action.scaleVarNames[0] = action.scaleVarNames[2];
@@ -2178,6 +2240,33 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         m_transformActions.push_back(action);
                     }
                 }
+            } else if (l.find("rotation.y") != std::string::npos || l.find("Rotation.y") != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = DynamicTransformAction::ActionType::RotateRelative;
+                action.activeAxis[1] = true;
+                action.varNames[1] = "$__MouseDeltaX";
+                action.varMultiplier[1] = (l.find("-=") != std::string::npos || l.find("- deltaX") != std::string::npos || l.find("-deltaX") != std::string::npos || l.find("- mouseDeltaX") != std::string::npos || l.find("-mouseDeltaX") != std::string::npos) ? -1.0f : 1.0f;
+                for (const auto& v : declaredVars) {
+                    if (l.find(v.first) != std::string::npos) {
+                        action.scaleVarNames[1] = v.first;
+                        break;
+                    }
+                }
+                m_transformActions.push_back(action);
+            } else if (l.find("rotation.x") != std::string::npos || l.find("Rotation.x") != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = DynamicTransformAction::ActionType::RotateRelative;
+                action.targetRefName = "Camera";
+                action.activeAxis[0] = true;
+                action.varNames[0] = "$__MouseDeltaY";
+                action.varMultiplier[0] = (l.find("-=") != std::string::npos || l.find("- deltaY") != std::string::npos || l.find("-deltaY") != std::string::npos || l.find("- mouseDeltaY") != std::string::npos || l.find("-mouseDeltaY") != std::string::npos) ? -1.0f : 1.0f;
+                for (const auto& v : declaredVars) {
+                    if (l.find(v.first) != std::string::npos) {
+                        action.scaleVarNames[0] = v.first;
+                        break;
+                    }
+                }
+                m_transformActions.push_back(action);
             }
 
             // 4. Scan for CursorState.Locked / CursorState.UnLocked
