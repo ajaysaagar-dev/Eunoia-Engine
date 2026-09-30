@@ -380,8 +380,10 @@ public:
     bool SaveLevelAs(Scene& level);                            // Save to new file via dialog
     bool OpenLevel(Scene& level);                              // Open level via file dialog
     bool OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode = false, const std::string& binPath = ""); // Open level directly from disk path
+    void RenderViewportLoadingOverlay();
+    bool IsProgressiveLoadingActive() const { return m_progressiveLoader.active; }
+    SceneSerializer::ProgressiveSceneLoader m_progressiveLoader;
 
-    // Scene Save/Load aliases
     bool SaveScene(Scene& scene) { return SaveLevel(scene); }
     bool SaveSceneAs(Scene& scene) { return SaveLevelAs(scene); }
     bool OpenScene(Scene& scene) { return OpenLevel(scene); }

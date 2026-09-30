@@ -1590,28 +1590,21 @@ bool EngineUI::OpenLevel(Scene& level) {
 bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode, const std::string& binPath) {
     std::string filename = std::filesystem::path(filePath).filename().string();
     if (!isGameMode) {
-        StartLoadingTask("Loading Level", "Opening file: " + filename, 0.05f);
+        currentLevelFilePath = filePath;
+        levelUnsaved = false;
+        m_progressiveLoader.Start(level, filePath, binPath);
+        AddLog("LogWorld", "Opened Level: " + filePath + " (loading incrementally)", 2);
+        return true;
     }
-    bool loaded = SceneSerializer::LoadScene(level, filePath, isGameMode ? nullptr : [](float p, const std::string& step, const std::string& detail) {
-        UpdateLoadingTask(p, step, detail);
-    }, binPath);
 
+    bool loaded = SceneSerializer::LoadScene(level, filePath, nullptr, binPath);
     if (loaded) {
         currentLevelFilePath = filePath;
         levelUnsaved = false;
         Eunoia::LightBakeManager::Get().LoadAllBakesForScene(level, activeProjectRoot);
-        if (!isGameMode) {
-            FinishLoadingTask("Level loaded: " + filename + " (" + std::to_string(level.objects.size()) + " actors)");
-            AddLog("LogWorld", "Opened Level from: " + currentLevelFilePath + " (" + std::to_string(level.objects.size()) + " actors)", 2);
-        }
         return true;
-    } else {
-        if (!isGameMode) {
-            FinishLoadingTask("Failed to open Level: " + filename, false);
-            AddLog("LogWorld", "Failed to open Level: " + filePath, 3);
-        }
-        return false;
     }
+    return false;
 }
 
 std::string EngineUI::ShowSelectFolderDialog(void* owner, const std::string& title) {
@@ -2362,6 +2355,17 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     ImGuizmo::BeginFrame();
 
+    // Step progressive scene loader if active
+    if (m_progressiveLoader.active) {
+        if (!m_progressiveLoader.completed) {
+            m_progressiveLoader.Step(scene, 1);
+            if (m_progressiveLoader.completed) {
+                Eunoia::LightBakeManager::Get().LoadAllBakesForScene(scene, activeProjectRoot);
+                AddLog("LogWorld", "Level loaded: " + m_progressiveLoader.filePath + " (" + std::to_string(scene.objects.size()) + " actors)", 2);
+            }
+        }
+    }
+
     // Flush asynchronous compilation logs
     {
         std::lock_guard<std::mutex> lock(asyncLogMutex);
@@ -2655,10 +2659,13 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 9. Interactive 3D Transform Gizmo
     ImGuiViewport* vp = ImGui::GetMainViewport();
     auto vpRect = GetViewportRect(vp->Size.x, vp->Size.y);
-    RenderGizmo(scene, camera, vpRect.width, vpRect.height);
+    if (!m_progressiveLoader.active || m_progressiveLoader.completed) {
+        RenderGizmo(scene, camera, vpRect.width, vpRect.height);
+    }
 
     // 10. Futuristic Loading Progress Modal (all loading situations)
     RenderLoadingModal();
+    RenderViewportLoadingOverlay();
 
     // 11. Project Browser Dialog Window (Startup & On-Demand)
     RenderProjectBrowser(scene, camera);
@@ -9132,6 +9139,134 @@ void EngineUI::RenderLoadingModal() {
     ImGui::PopStyleColor(2);
     ImGui::PopStyleVar(3);
 }
+
+void EngineUI::RenderViewportLoadingOverlay() {
+    if (!m_progressiveLoader.active) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    float alpha = 1.0f;
+    if (m_progressiveLoader.completed) {
+        m_progressiveLoader.completionTimer -= dt;
+        if (m_progressiveLoader.completionTimer <= 0.0f) {
+            m_progressiveLoader.active = false;
+            return;
+        }
+        if (m_progressiveLoader.completionTimer < 0.35f) {
+            alpha = m_progressiveLoader.completionTimer / 0.35f;
+        }
+    }
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+
+    ViewportRect vpRect = GetViewportRect(vp->Size.x, vp->Size.y);
+    float centerX = vp->Pos.x + vpRect.x + vpRect.width * 0.5f;
+    float centerY = vp->Pos.y + vpRect.y + vpRect.height * 0.5f;
+
+    float cardW = 500.0f;
+    float cardH = 136.0f;
+    ImVec2 cardMin(centerX - cardW * 0.5f, centerY - cardH * 0.5f);
+    ImVec2 cardMax(centerX + cardW * 0.5f, centerY + cardH * 0.5f);
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    if (!drawList) return;
+
+    // Drop shadow
+    drawList->AddRectFilled(ImVec2(cardMin.x - 4.0f, cardMin.y - 4.0f), ImVec2(cardMax.x + 4.0f, cardMax.y + 6.0f),
+                            IM_COL32(0, 0, 0, (int)(110 * alpha)), 14.0f);
+
+    // Glass backdrop
+    drawList->AddRectFilled(cardMin, cardMax,
+                            IM_COL32(11, 14, 20, (int)(235 * alpha)), 12.0f);
+
+    // Border
+    ImU32 borderColor = m_progressiveLoader.hasError
+        ? IM_COL32(235, 65, 65, (int)(230 * alpha))
+        : (m_progressiveLoader.completed
+            ? IM_COL32(40, 210, 110, (int)(230 * alpha))
+            : IM_COL32(35, 155, 255, (int)(220 * alpha)));
+    drawList->AddRect(cardMin, cardMax, borderColor, 12.0f, 0, 2.0f);
+
+    // Header row: Title + Stage badge
+    float curTime = (float)ImGui::GetTime();
+    std::string filename = std::filesystem::path(m_progressiveLoader.filePath).filename().string();
+    std::string headerTitle = "LOADING LEVEL: " + filename;
+
+    drawList->AddText(ImVec2(cardMin.x + 20.0f, cardMin.y + 16.0f),
+                      IM_COL32(245, 248, 255, (int)(255 * alpha)),
+                      headerTitle.c_str());
+
+    // Stage Badge (Pill)
+    std::string badgeStr = "[" + m_progressiveLoader.stageName + "]";
+    ImVec2 badgeSize = ImGui::CalcTextSize(badgeStr.c_str());
+    float badgePadding = 8.0f;
+    ImVec2 badgeMax(cardMax.x - 20.0f, cardMin.y + 16.0f + badgeSize.y + 4.0f);
+    ImVec2 badgeMin(badgeMax.x - badgeSize.x - badgePadding * 2.0f, cardMin.y + 14.0f);
+
+    ImU32 badgeBg = m_progressiveLoader.completed
+        ? IM_COL32(20, 80, 45, (int)(220 * alpha))
+        : IM_COL32(15, 50, 90, (int)(220 * alpha));
+    ImU32 badgeTextCol = m_progressiveLoader.completed
+        ? IM_COL32(60, 235, 120, (int)(255 * alpha))
+        : IM_COL32(70, 195, 255, (int)(255 * alpha));
+
+    drawList->AddRectFilled(badgeMin, badgeMax, badgeBg, 6.0f);
+    drawList->AddText(ImVec2(badgeMin.x + badgePadding, badgeMin.y + 2.0f), badgeTextCol, badgeStr.c_str());
+
+    // Progress bar track
+    float barX = cardMin.x + 20.0f;
+    float barY = cardMin.y + 46.0f;
+    float barW = cardW - 40.0f;
+    float barH = 18.0f;
+
+    drawList->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH),
+                            IM_COL32(20, 25, 36, (int)(255 * alpha)), 6.0f);
+
+    // Progress bar fill
+    float clampedProgress = std::clamp(m_progressiveLoader.progress, 0.0f, 1.0f);
+    float fillW = barW * clampedProgress;
+    if (fillW > 2.0f) {
+        ImU32 fillColLeft = m_progressiveLoader.completed
+            ? IM_COL32(30, 180, 90, (int)(255 * alpha))
+            : IM_COL32(0, 130, 240, (int)(255 * alpha));
+        ImU32 fillColRight = m_progressiveLoader.completed
+            ? IM_COL32(60, 230, 130, (int)(255 * alpha))
+            : IM_COL32(30, 215, 255, (int)(255 * alpha));
+
+        drawList->AddRectFilledMultiColor(ImVec2(barX, barY), ImVec2(barX + fillW, barY + barH),
+                                          fillColLeft, fillColRight, fillColRight, fillColLeft);
+    }
+
+    // Progress percentage text centered on bar
+    char pctBuf[32];
+    snprintf(pctBuf, sizeof(pctBuf), "%.0f%%", clampedProgress * 100.0f);
+    ImVec2 pctSize = ImGui::CalcTextSize(pctBuf);
+    drawList->AddText(ImVec2(barX + (barW - pctSize.x) * 0.5f, barY + (barH - pctSize.y) * 0.5f),
+                      IM_COL32(255, 255, 255, (int)(245 * alpha)), pctBuf);
+
+    // Animated indicator icon / pulse dot
+    ImVec2 dotCenter(cardMin.x + 30.0f, cardMin.y + 86.0f);
+    if (m_progressiveLoader.completed) {
+        drawList->AddCircleFilled(dotCenter, 6.0f, IM_COL32(40, 210, 110, (int)(255 * alpha)));
+    } else {
+        float pulse = 5.0f + 1.5f * sinf(curTime * 6.0f);
+        drawList->AddCircleFilled(dotCenter, pulse, IM_COL32(0, 205, 255, (int)(255 * alpha)));
+        drawList->AddCircle(dotCenter, pulse + 3.0f, IM_COL32(0, 160, 255, (int)(110 * alpha)), 16, 1.5f);
+    }
+
+    // Detail text
+    drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 76.0f),
+                      IM_COL32(215, 230, 248, (int)(255 * alpha)),
+                      m_progressiveLoader.currentDetail.c_str());
+
+    // Sub-detail text
+    if (!m_progressiveLoader.subDetail.empty()) {
+        drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 98.0f),
+                          IM_COL32(130, 145, 165, (int)(230 * alpha)),
+                          m_progressiveLoader.subDetail.c_str());
+    }
+}
+
 
 void EngineUI::RenderReferenceViewer(Scene& scene) {
     ImGui::SetNextWindowSize(ImVec2(800, 520), ImGuiCond_FirstUseEver);
