@@ -2420,7 +2420,24 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             gizmoUseCenter = !gizmoUseCenter;
             AddLog("LogEditor", gizmoUseCenter ? "Gizmo Position: Center (Z)" : "Gizmo Position: Pivot (Z)", 0);
         }
-        if (!s_justExitedPlayMode && ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.selectedId != -1) {
+        static int s_exitPlayModeCooldown = 0;
+        if (s_justExitedPlayMode) {
+            s_exitPlayModeCooldown = 30;
+            s_justExitedPlayMode = false;
+        }
+        if (s_exitPlayModeCooldown > 0) {
+            s_exitPlayModeCooldown--;
+        }
+
+        bool isCtrlDownForDelete = ImGui::GetIO().KeyCtrl ||
+                                   InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                                   InputSystem::Get().IsKeyDown(Key::RightControl) ||
+                                   InputSystem::Get().IsKeyDown(Key::LCtrl) ||
+                                   InputSystem::Get().IsKeyDown(Key::RCtrl) ||
+                                   (m_window && (glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS));
+
+        if (!s_justExitedPlayMode && s_exitPlayModeCooldown == 0 && !isCtrlDownForDelete &&
+            ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.selectedId != -1) {
             GameObject* o = scene.GetSelected();
             if (o) {
                 UndoManager::Get().RecordSnapshot(scene, "Delete Actor: " + o->name);
@@ -2637,7 +2654,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
                     IM_COL32(48, 52, 64, 255), 0.0f, 0, 1.0f);
     }
 
-    s_justExitedPlayMode = false;
 }
 
 void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
