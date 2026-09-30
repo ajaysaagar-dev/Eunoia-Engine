@@ -1371,13 +1371,11 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
     if (shouldCreateNew && !createProjName.empty() && !createParentDir.empty()) {
         std::filesystem::path root = std::filesystem::path(createParentDir) / createProjName;
         std::filesystem::path contentDir = root / "Content";
-        std::filesystem::path materialsDir = contentDir / "Materials";
         std::filesystem::path scenesDir = contentDir / "Scenes";
         std::filesystem::path cookedDir = root / "Cooked";
         std::filesystem::path buildDir = root / "Build";
 
         std::filesystem::create_directories(contentDir, ec);
-        std::filesystem::create_directories(materialsDir, ec);
         std::filesystem::create_directories(scenesDir, ec);
         std::filesystem::create_directories(cookedDir, ec);
         std::filesystem::create_directories(buildDir, ec);
@@ -1404,21 +1402,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             Scene starterScene;
             starterScene.Clear();
             SceneSerializer::SaveScene(starterScene, starterScenePath.string());
-        }
-
-        // Starter material in Content/Materials/Default_Material.emat
-        std::filesystem::path defaultMatPath = materialsDir / "Default_Material.emat";
-        if (!std::filesystem::exists(defaultMatPath, ec)) {
-            MaterialAsset defaultMat;
-            defaultMat.name = "Default_Material";
-            defaultMat.filePath = defaultMatPath.string();
-            defaultMat.baseColor = glm::vec3(0.55f, 0.55f, 0.55f);
-            defaultMat.metallic = 0.0f;
-            defaultMat.roughness = 0.5f;
-            defaultMat.specular = 0.5f;
-            defaultMat.assetId = AssetID::CreateRandom();
-            defaultMat.virtualPath = "/Game/Materials/Default_Material";
-            SaveMaterialFile(defaultMatPath.string(), defaultMat);
         }
 
         // 4. Initial Configs.Editor.econfigs in project root
@@ -1771,31 +1754,14 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     // 1. Create project directories
     // Content browser root is inside project folder called Content
     std::filesystem::path contentDir = root / "Content";
-    std::filesystem::path materialsDir = contentDir / "Materials";
     std::filesystem::path scenesDir = contentDir / "Scenes";
     std::filesystem::path cookedDir = root / "Cooked";
     std::filesystem::path buildDir = root / "Build";
 
     std::filesystem::create_directories(contentDir, ec);
-    std::filesystem::create_directories(materialsDir, ec);
     std::filesystem::create_directories(scenesDir, ec);
     std::filesystem::create_directories(cookedDir, ec);
     std::filesystem::create_directories(buildDir, ec);
-
-    // 2. Starter material in Content/Materials
-    std::filesystem::path defaultMatPath = materialsDir / "Default_Material.emat";
-    if (!std::filesystem::exists(defaultMatPath, ec)) {
-        MaterialAsset defaultMat;
-        defaultMat.name = "Default_Material";
-        defaultMat.filePath = defaultMatPath.string();
-        defaultMat.baseColor = glm::vec3(0.55f, 0.55f, 0.55f);
-        defaultMat.metallic = 0.0f;
-        defaultMat.roughness = 0.5f;
-        defaultMat.specular = 0.5f;
-        defaultMat.assetId = AssetID::CreateRandom();
-        defaultMat.virtualPath = "/Game/Materials/Default_Material";
-        SaveMaterialFile(defaultMatPath.string(), defaultMat);
-    }
 
     // 3. Starter scene in Content/Scenes (completely empty - no objects, no lights)
     std::filesystem::path starterScenePath = scenesDir / "Main.escene";
@@ -3188,14 +3154,14 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         }
                     };
 
-                    // 2. Package game assets and folders: Cooked, Scenes, Levels, Registry, Materials, Models, Behaviours
+                    // 2. Package game assets and folders: Cooked and all Content subdirectories
                     copyDirRecursive(cookedDir, gameBuildDir / "Cooked");
-                    copyDirRecursive(contentRootPath / "Scenes", gameBuildDir / "Scenes");
-                    copyDirRecursive(contentRootPath / "Levels", gameBuildDir / "Levels");
-                    copyDirRecursive(contentRootPath / "Registry", gameBuildDir / "Registry");
-                    copyDirRecursive(contentRootPath / "Materials", gameBuildDir / "Materials");
-                    copyDirRecursive(contentRootPath / "Models", gameBuildDir / "Models");
-                    copyDirRecursive(contentRootPath / "Behaviours", gameBuildDir / "Behaviours");
+                    for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
+                        if (entry.is_directory(ec)) {
+                            copyDirRecursive(entry.path(), gameBuildDir / entry.path().filename());
+                            copyDirRecursive(entry.path(), gameBuildDir / "Content" / entry.path().filename());
+                        }
+                    }
 
                     // 3. Copy project root metadata and asset files (*.emat, *.assetmeta, *.json, etc.)
                     for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
@@ -10094,7 +10060,7 @@ bool EngineUI::OpenModelImportView(const std::string& filePath) {
     std::filesystem::path p(filePath);
     currentModelImport.modelName = p.stem().string();
 
-    std::filesystem::path defaultMatDir = contentRootPath / "Materials";
+    std::filesystem::path defaultMatDir = p.parent_path() / "Materials";
     std::filesystem::create_directories(defaultMatDir, ec);
     currentModelImport.targetFolder = defaultMatDir.string();
 
@@ -10202,10 +10168,17 @@ bool EngineUI::OpenModelImportView(const std::string& filePath) {
 
 void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQueue) {
     std::error_code ec;
-    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (contentRootPath / "Materials").string() : currentModelImport.targetFolder);
+    std::filesystem::path modelPath(currentModelImport.sourceFilePath);
+    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (modelPath.parent_path() / "Materials").string() : currentModelImport.targetFolder);
     std::filesystem::create_directories(matDir, ec);
 
     int matsCreated = 0;
+
+    std::string matVirtualDir = "/Game/Materials";
+    std::filesystem::path relMat = std::filesystem::relative(matDir, contentRootPath, ec);
+    if (!ec && !relMat.empty() && relMat != ".") {
+        matVirtualDir = "/Game/" + relMat.generic_string();
+    }
 
     // 1. Create .emat files and register in AssetRegistry
     for (const auto& pm : currentModelImport.materials) {
@@ -10216,7 +10189,7 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         ma.name = pm.materialName;
         std::filesystem::path matFilePath = matDir / (pm.materialName + ".emat");
         ma.filePath = matFilePath.string();
-        ma.virtualPath = "/Game/Materials/" + pm.materialName;
+        ma.virtualPath = matVirtualDir + "/" + pm.materialName;
         ma.baseColor = pm.baseColor;
         ma.metallic = pm.metallic;
         ma.roughness = pm.roughness;
@@ -10251,7 +10224,12 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         meta.objectName = currentModelImport.modelName;
         meta.type = AssetType::Mesh;
         meta.sourcePath = currentModelImport.sourceFilePath;
-        meta.virtualPath = "/Game/Models/" + currentModelImport.modelName;
+        std::string modelVirtualDir = "/Game/Models";
+        std::filesystem::path relModel = std::filesystem::relative(modelPath.parent_path(), contentRootPath, ec);
+        if (!ec && !relModel.empty() && relModel != ".") {
+            modelVirtualDir = "/Game/" + relModel.generic_string();
+        }
+        meta.virtualPath = modelVirtualDir + "/" + currentModelImport.modelName;
         AssetRegistry::Get().RegisterAsset(meta);
     }
 
@@ -10962,6 +10940,17 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
 
             ImGui::Separator();
+            if (ImGui::Button("➕ Create New Behaviour Script...", ImVec2(240, 0))) {
+                showNewBehaviourPopup = true;
+                std::string defName = "NewBehaviour";
+                int idx = 1;
+                while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
+                defName = "NewBehaviour_" + std::to_string(idx);
+                snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                popupTargetVirtualDir = currentVirtualDir;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(120, 0))) {
                 ImGui::CloseCurrentPopup();
             }

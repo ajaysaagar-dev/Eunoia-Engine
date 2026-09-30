@@ -247,8 +247,10 @@ if !ERRORLEVEL! equ 0 (
     xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Shaders" "%GAME_BUILD_DIR%\Shaders\" >nul 2>&1
     xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Resources" "%GAME_BUILD_DIR%\Resources\" >nul 2>&1
 
-    :: Copy project cooked content, scenes, levels, registry, materials, models, and behaviours
+    :: Copy project cooked content, Content folder, scenes, levels, registry, materials, models, and behaviours
     if exist "%PROJECTS_ROOT%\test\Cooked" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Cooked" "%GAME_BUILD_DIR%\Cooked\" >nul 2>&1
+    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\Content\" >nul 2>&1
+    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Scenes" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Scenes" "%GAME_BUILD_DIR%\Scenes\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Levels" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Levels" "%GAME_BUILD_DIR%\Levels\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Registry" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Registry" "%GAME_BUILD_DIR%\Registry\" >nul 2>&1
