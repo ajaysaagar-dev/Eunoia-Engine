@@ -438,11 +438,39 @@ static void LaunchVSCodeWorkspace(const std::string& filePath) {
         g_pEngineUI->SetupProjectDependencies(targetWorkspace);
     }
 
-    // Launch: code "<targetWorkspace>" "<absFilePath>"
-    std::string cmdParams = "/c code \"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
-    HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", cmdParams.c_str(), NULL, SW_HIDE);
-    if ((INT_PTR)hInst <= 32) {
-        ShellExecuteA(NULL, "open", absFilePath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+    // Candidate direct paths to VS Code
+    std::vector<std::filesystem::path> candidateCodePaths;
+    const char* localApp = getenv("LOCALAPPDATA");
+    if (localApp) {
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd");
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "Code.exe");
+    }
+    const char* progFiles = getenv("ProgramFiles");
+    if (progFiles) {
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "bin" / "code.cmd");
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "Code.exe");
+    }
+
+    bool launchedDirect = false;
+    for (const auto& cp : candidateCodePaths) {
+        std::error_code ec;
+        if (std::filesystem::exists(cp, ec)) {
+            std::string args = "\"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
+            HINSTANCE hInst = ShellExecuteA(NULL, "open", cp.string().c_str(), args.c_str(), NULL, SW_SHOWNORMAL);
+            if ((INT_PTR)hInst > 32) {
+                launchedDirect = true;
+                break;
+            }
+        }
+    }
+
+    if (!launchedDirect) {
+        // Fallback to: code "<targetWorkspace>" "<absFilePath>" via cmd.exe
+        std::string cmdParams = "/c code \"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
+        HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", cmdParams.c_str(), NULL, SW_HIDE);
+        if ((INT_PTR)hInst <= 32) {
+            ShellExecuteA(NULL, "open", absFilePath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
     }
 }
 
@@ -7400,7 +7428,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         AddLog("LogContent", "Created Behaviour asset: " + behName + ".cpp in " + targetDir, 2);
 
                         // Open project as workspace in VS Code and open the script file
-                        LaunchVSCodeWorkspace(cppPath.string());
                         OpenScriptInCodeEditor(cppPath.string());
 
                         popupTargetVirtualDir = "";
@@ -7881,7 +7908,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
                                         AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
                                     } else {
-                                        LaunchVSCodeWorkspace(fullScript.string());
                                         OpenScriptInCodeEditor(fullScript.string());
                                     }
                                 } else {
@@ -8042,8 +8068,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                             AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
                                         }
                                     } else {
-                                        if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
-                                            LaunchVSCodeWorkspace(fullScript.string());
+                                        if (ImGui::MenuItem("💻 Open in VS Code")) {
                                             OpenScriptInCodeEditor(fullScript.string());
                                         }
                                     }
@@ -10716,19 +10741,9 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
 // ============================================================================
 
 void EngineUI::OpenScriptInCodeEditor(const std::string& path) {
-    activeCodeEditorPath = path;
-    activeCodeEditorFilename = std::filesystem::path(path).filename().string();
-    activeCodeEditorContent.clear();
-
-    std::ifstream file(path);
-    if (file.is_open()) {
-        std::stringstream ss;
-        ss << file.rdbuf();
-        activeCodeEditorContent = ss.str();
-    }
-    showCodeEditor = true;
-    codeEditorDirty = false;
-    AddLog("LogContent", "Opened Behaviour script in Code Editor: " + activeCodeEditorFilename, 0);
+    showCodeEditor = false;
+    LaunchVSCodeWorkspace(path);
+    AddLog("LogContent", "Opened Behaviour script in VS Code: " + std::filesystem::path(path).filename().string(), 0);
 }
 
 void EngineUI::RenderCodeEditor() {
@@ -11056,6 +11071,21 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Open in Visual Behaviour Editor: %s", vbi->GetAssetPath().c_str());
+                }
+            } else {
+                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
+                auto regIt = allRegistry.find(b->GetClassName());
+                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
+                    if (ImGui::SmallButton("✏ Edit in VS Code")) {
+                        OpenScriptInCodeEditor(regIt->second.sourceCpp);
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Open script in VS Code: %s", regIt->second.sourceCpp.c_str());
+                    }
                 }
             }
 
