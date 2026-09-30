@@ -1887,32 +1887,48 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         }
     }
 
-    // Load scene: prioritize explicit specificScenePath if provided (fast game launch)
-    bool found = false;
-    if (!specificScenePath.empty() && std::filesystem::exists(specificScenePath, ec)) {
-        found = OpenLevelFromPath(scene, specificScenePath, isGameMode, specificBinPath);
-    } else {
+    // Determine respective scene path to load
+    std::string targetScenePath = specificScenePath;
+    if (targetScenePath.empty()) {
         std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
         if (std::filesystem::exists(mainScene, ec)) {
-            found = OpenLevelFromPath(scene, mainScene.string(), isGameMode, specificBinPath);
+            targetScenePath = mainScene.string();
         } else {
             for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
                 if (entry.is_regular_file(ec)) {
                     std::string ext = entry.path().extension().string();
                     if (ext == ".escene" || ext == ".elevel") {
-                        found = OpenLevelFromPath(scene, entry.path().string(), isGameMode, specificBinPath);
+                        targetScenePath = entry.path().string();
                         break;
                     }
                 }
             }
         }
     }
-    if (!found) {
+
+    if (isGameMode) {
+        // Game mode: load scene immediately (no editor window)
+        bool found = false;
+        if (!targetScenePath.empty() && std::filesystem::exists(targetScenePath, ec)) {
+            found = OpenLevelFromPath(scene, targetScenePath, true, specificBinPath);
+        }
+        if (!found) {
+            scene.Clear();
+            currentLevelFilePath = "";
+        }
+        isInitialSceneLoaded = true;
+        pendingInitialSceneLoad = false;
+    } else {
+        // Editor mode: Open engine editor with no viewport rendered first,
+        // then once open and displayed, load the respective scene/level.
         scene.Clear();
         currentLevelFilePath = "";
-    }
+        pendingScenePath = targetScenePath;
+        pendingBinPath = specificBinPath;
+        pendingInitialSceneLoad = true;
+        isInitialSceneLoaded = false;
+        initialLoadFrameCountdown = 2; // Allow editor window to present initial frame
 
-    if (!isGameMode) {
         camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
         camera.distance = 7.0f;
         camera.yaw = 45.0f;
@@ -1947,6 +1963,32 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     return true;
+}
+
+bool EngineUI::LoadPendingInitialScene(Scene& scene, OrbitCamera& camera, bool isGameMode) {
+    if (!pendingInitialSceneLoad) return false;
+    pendingInitialSceneLoad = false;
+
+    bool found = false;
+    std::error_code ec;
+    if (!pendingScenePath.empty() && std::filesystem::exists(pendingScenePath, ec)) {
+        found = OpenLevelFromPath(scene, pendingScenePath, isGameMode, pendingBinPath);
+        if (found) {
+            AddLog("LogScene", "Loaded respective level: " + pendingScenePath, 2);
+        }
+    }
+    if (!found) {
+        scene.Clear();
+        currentLevelFilePath = "";
+    }
+
+    camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
+    camera.distance = 7.0f;
+    camera.yaw = 45.0f;
+    camera.pitch = 25.0f;
+
+    isInitialSceneLoaded = true;
+    return found;
 }
 
 std::string EngineUI::ShowSaveFileDialog() {

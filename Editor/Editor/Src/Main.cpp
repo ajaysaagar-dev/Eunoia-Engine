@@ -3631,7 +3631,9 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
+	bool canRender3DScene = (g_engineUI.isGameOnlyWindow || g_engineUI.isInitialSceneLoaded);
+
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
 	{
 		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,
@@ -3684,7 +3686,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1.5: Point Light Shadow Cubemap Array Pass (up to 4 lights * 6 faces)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_pointShadowDepthBuffer && g_shadowPipelineState && g_activeShadowPointLights > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_pointShadowDepthBuffer && g_shadowPipelineState && g_activeShadowPointLights > 0)
 	{
 		D3D12_RESOURCE_BARRIER ptBarrier = CreateTransitionBarrier(
 			g_pointShadowDepthBuffer,
@@ -3740,7 +3742,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1.8: Spot & Area Light Shadow 2D Array Pass (up to 4 lights)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_spotShadowDepthBuffer && g_shadowPipelineState && g_activeShadowSpotLights > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_spotShadowDepthBuffer && g_shadowPipelineState && g_activeShadowSpotLights > 0)
 	{
 		D3D12_RESOURCE_BARRIER spotBarrier = CreateTransitionBarrier(
 			g_spotShadowDepthBuffer,
@@ -3869,7 +3871,7 @@ void renderFrame()
 	g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
 	// 1. Draw 3D Scene Primitives with Hardware PBR, Full Texture Resolution & Real-Time Shadows
-	if (!g_deviceLost && g_currentIndexCount > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0)
 	{
 		g_commandList->SetGraphicsRootSignature(g_rootSignature);
 		g_commandList->SetPipelineState(g_pipelineState);
@@ -3961,7 +3963,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	if (canRender3DScene && !g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
 	{
 		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
 		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
@@ -4002,7 +4004,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 2.3: AquaTerrain DX12 Water System (Simulation & Translucent Render)
 	// ----------------------------------------------------
-	if (!g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
+	if (canRender3DScene && !g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
 	{
 		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain GPU Simulation");
 		Eunoia::WaterSystem::Get().Simulate(g_commandList, g_scene);
@@ -4041,7 +4043,7 @@ void renderFrame()
 	// PASS 2.5: Selected Camera Picture-in-Picture (PiP) Hardware Pass
 	// ----------------------------------------------------
 	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
-	if (!g_deviceLost && pipRect.active && g_currentIndexCount > 0 && g_numPureSceneBatches > 0)
+	if (canRender3DScene && !g_deviceLost && pipRect.active && g_currentIndexCount > 0 && g_numPureSceneBatches > 0)
 	{
 		float px = std::max(0.0f, std::min((float)g_currentWidth - 1.0f, pipRect.x));
 		float py = std::max(0.0f, std::min((float)g_currentHeight - 1.0f, pipRect.y));
@@ -4164,7 +4166,7 @@ void renderFrame()
 	// PASS 2.6: Real-Time Anti-Aliasing Resolve Pass (dev.md)
 	// Resolves g_sceneRenderTarget to backbuffer with active AA method
 	// ----------------------------------------------------
-	if (g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
+	if (canRender3DScene && g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
 	{
 		RecordGpuBreadcrumbOp("[AntiAliasing] Resolve Pass");
 
@@ -4248,6 +4250,11 @@ void renderFrame()
 			);
 			g_commandList->ResourceBarrier(1, &toRtBarrier);
 		}
+	}
+	else if (!canRender3DScene && !g_engineUI.isGameOnlyWindow)
+	{
+		const float vpBg[4] = { 0.12f, 0.12f, 0.14f, 1.0f };
+		g_commandList->ClearRenderTargetView(rtvHandle, vpBg, 1, &scissor);
 	}
 
 	// Reset viewport & scissor for ImGui to full window
@@ -5307,6 +5314,20 @@ int main(int argc, char** argv)
 
 		if (deltaTime > 0.1f) deltaTime = 0.1f;
 		ScreenPrint::System::Get().Update(deltaTime);
+
+		// Once the editor window is open and displayed (no viewport rendered initially), load the respective scene/level
+		if (!isGameOnlyMode && g_engineUI.pendingInitialSceneLoad)
+		{
+			if (g_engineUI.initialLoadFrameCountdown > 0)
+			{
+				g_engineUI.initialLoadFrameCountdown--;
+			}
+			else
+			{
+				g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+				updateSceneGeometry();
+			}
+		}
 
 		// Process Fly Mode (Hold RMB + W, S, A, D, E, Q) - Active only in Editor, NEVER in Play Mode
 		if (!g_scene.isPlayMode && s_isRightMouseDown && g_camera.isFlying)

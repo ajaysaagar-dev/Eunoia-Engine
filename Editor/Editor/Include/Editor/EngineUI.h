@@ -495,6 +495,14 @@ public:
 
     bool isGameOnlyWindow = false;
 
+    // Deferred Scene Loading (opens editor window with no viewport, then loads scene once open)
+    bool isInitialSceneLoaded = false;
+    bool pendingInitialSceneLoad = false;
+    std::string pendingScenePath = "";
+    std::string pendingBinPath = "";
+    int initialLoadFrameCountdown = 2;
+    bool LoadPendingInitialScene(Scene& scene, OrbitCamera& camera, bool isGameMode);
+
     // Behaviour Script Watcher & Compilation (User Request: ask compile or later)
     bool showScriptCompileModal = false;
     std::atomic<bool> isCompilingScripts{false};
