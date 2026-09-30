@@ -29,6 +29,18 @@ inline void RegisterBuiltinNodes() {
 
     // ── Events ──────────────────────────────────────────────────────────────
     reg.Register({
+        "Event.Start", "Event Start", "Events",
+        { ExecOut() }
+    });
+    reg.Register({
+        "Event.Update", "Event Update", "Events",
+        { ExecOut(), DataOut("DeltaTime", PinDataType::Float) }
+    });
+    reg.Register({
+        "Event.OnDestroy", "Event OnDestroy", "Events",
+        { ExecOut() }
+    });
+    reg.Register({
         "Event.BeginPlay", "Event BeginPlay", "Events",
         { ExecOut() }
     });
@@ -52,10 +64,14 @@ inline void RegisterBuiltinNodes() {
         { ExecIn(), ExecOut("Then 0"), ExecOut("Then 1"), ExecOut("Then 2") }
     });
 
-    // ── Debug ────────────────────────────────────────────────────────────────
+    // ── Actions / Debug ──────────────────────────────────────────────────────
+    reg.Register({
+        "Debug.Print", "Print", "Debug",
+        { ExecIn(), DataIn("String", PinDataType::String), DataIn("Duration", PinDataType::Float), ExecOut() }
+    });
     reg.Register({
         "Debug.PrintString", "Print String", "Debug",
-        { ExecIn(), DataIn("String", PinDataType::String), ExecOut() }
+        { ExecIn(), DataIn("String", PinDataType::String), DataIn("Duration", PinDataType::Float), ExecOut() }
     });
 
     // ── Math ─────────────────────────────────────────────────────────────────

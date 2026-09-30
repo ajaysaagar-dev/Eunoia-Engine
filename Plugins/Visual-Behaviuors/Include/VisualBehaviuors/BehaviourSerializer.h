@@ -17,22 +17,24 @@ namespace VisualBehaviuors {
 // ─── Pin data type helpers ───────────────────────────────────────────────────
 inline const char* PinDataTypeToStr(PinDataType t) {
     switch (t) {
-        case PinDataType::Exec:    return "Exec";
-        case PinDataType::Bool:    return "Bool";
-        case PinDataType::Int:     return "Int";
-        case PinDataType::Float:   return "Float";
-        case PinDataType::String:  return "String";
-        case PinDataType::Vector3: return "Vector3";
-        default:                   return "Float";
+        case PinDataType::Exec:       return "Exec";
+        case PinDataType::Bool:       return "Bool";
+        case PinDataType::Int:        return "Int";
+        case PinDataType::Float:      return "Float";
+        case PinDataType::String:     return "String";
+        case PinDataType::Vector3:    return "Vector3";
+        case PinDataType::GameObject: return "GameObject";
+        default:                      return "Float";
     }
 }
 
 inline PinDataType PinDataTypeFromStr(const std::string& s) {
-    if (s == "Exec")    return PinDataType::Exec;
-    if (s == "Bool")    return PinDataType::Bool;
-    if (s == "Int")     return PinDataType::Int;
-    if (s == "String")  return PinDataType::String;
-    if (s == "Vector3") return PinDataType::Vector3;
+    if (s == "Exec")       return PinDataType::Exec;
+    if (s == "Bool")       return PinDataType::Bool;
+    if (s == "Int")        return PinDataType::Int;
+    if (s == "String")     return PinDataType::String;
+    if (s == "Vector3")    return PinDataType::Vector3;
+    if (s == "GameObject") return PinDataType::GameObject;
     return PinDataType::Float;
 }
 

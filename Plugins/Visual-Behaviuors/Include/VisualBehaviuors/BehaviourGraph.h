@@ -36,7 +36,8 @@ enum class PinDataType {
     Int,        // cyan
     Float,      // green
     String,     // magenta
-    Vector3     // yellow
+    Vector3,    // yellow
+    GameObject  // orange
 };
 
 enum class PinDirection { Input, Output };
@@ -92,25 +93,39 @@ private:
 // ─────────────────────────────────────────────────────────────────────────────
 // Variable
 // ─────────────────────────────────────────────────────────────────────────────
-enum class VarType { Bool, Int, Float, String, Vector3 };
+enum class VarType { Bool, Int, Float, String, Vector3, GameObject };
 
 inline const char* VarTypeToString(VarType t) {
     switch (t) {
-        case VarType::Bool:    return "Bool";
-        case VarType::Int:     return "Int";
-        case VarType::Float:   return "Float";
-        case VarType::String:  return "String";
-        case VarType::Vector3: return "Vector3";
-        default:               return "Float";
+        case VarType::Bool:       return "Bool";
+        case VarType::Int:        return "Int";
+        case VarType::Float:      return "Float";
+        case VarType::String:     return "String";
+        case VarType::Vector3:    return "Vector3";
+        case VarType::GameObject: return "GameObject";
+        default:                  return "Float";
     }
 }
 
 inline VarType VarTypeFromString(const std::string& s) {
-    if (s == "Bool")    return VarType::Bool;
-    if (s == "Int")     return VarType::Int;
-    if (s == "String")  return VarType::String;
-    if (s == "Vector3") return VarType::Vector3;
+    if (s == "Bool")       return VarType::Bool;
+    if (s == "Int")        return VarType::Int;
+    if (s == "String")     return VarType::String;
+    if (s == "Vector3")    return VarType::Vector3;
+    if (s == "GameObject") return VarType::GameObject;
     return VarType::Float;
+}
+
+inline PinDataType VarTypeToPinDataType(VarType t) {
+    switch (t) {
+        case VarType::Bool:       return PinDataType::Bool;
+        case VarType::Int:        return PinDataType::Int;
+        case VarType::Float:      return PinDataType::Float;
+        case VarType::String:     return PinDataType::String;
+        case VarType::Vector3:    return PinDataType::Vector3;
+        case VarType::GameObject: return PinDataType::GameObject;
+        default:                  return PinDataType::Float;
+    }
 }
 
 struct Variable {
@@ -138,9 +153,10 @@ struct Node {
 
     void RebuildPins(const NodeTypeDef& def) {
         pins.clear();
+        uint32_t idx = 0;
         for (const auto& pd : def.pins) {
             Pin p;
-            p.id        = GenId();
+            p.id        = (id > 0) ? ((id << 16) | (++idx)) : GenId();
             p.ownerNode = id;
             p.name      = pd.name;
             p.kind      = pd.kind;
@@ -231,7 +247,12 @@ struct BehaviourGraph {
         for (const auto& p : tn->pins) if (p.id == toPin)   tp = &p;
         if (!fp || !tp) return LinkResult::TypeMismatch;
         if (fp->direction == tp->direction) return LinkResult::SameDirection;
-        if (fp->dataType != tp->dataType)   return LinkResult::TypeMismatch;
+        bool typeMatch = (fp->dataType == tp->dataType);
+        // Convenience: allow any Data pin to connect to a String input pin (auto-stringification like in Blueprint)
+        if (!typeMatch && fp->kind == PinKind::Data && tp->kind == PinKind::Data && tp->dataType == PinDataType::String) {
+            typeMatch = true;
+        }
+        if (!typeMatch) return LinkResult::TypeMismatch;
         // Exec inputs accept only one link
         if (tp->kind == PinKind::Exec) {
             for (const auto& l : links) if (l.toPin == toPin) return LinkResult::ExecMultiInput;
@@ -310,6 +331,16 @@ struct BehaviourGraph {
 
     Variable* FindVariable(uint64_t vid) {
         for (auto& v : variables) if (v.id == vid) return &v;
+        return nullptr;
+    }
+
+    const Variable* FindVariableByName(const std::string& name) const {
+        for (const auto& v : variables) if (v.name == name) return &v;
+        return nullptr;
+    }
+
+    Variable* FindVariableByName(const std::string& name) {
+        for (auto& v : variables) if (v.name == name) return &v;
         return nullptr;
     }
 
