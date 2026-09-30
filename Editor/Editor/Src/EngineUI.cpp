@@ -6855,7 +6855,7 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
     // 2. Check AssetRegistry
     const auto& assets = AssetRegistry::Get().GetAllAssets();
     for (const auto& pair : assets) {
-        if (pair.second.type == AssetType::Behaviour || pair.second.type == AssetType::Script) {
+        if (pair.second.type == AssetType::Behaviour || pair.second.type == AssetType::Script || pair.second.type == AssetType::VisualBehaviour) {
             std::string objLower = pair.second.objectName;
             std::transform(objLower.begin(), objLower.end(), objLower.begin(), ::tolower);
             if (objLower == nameLower) {
@@ -6875,7 +6875,7 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
                 if (!it->is_directory(ec)) {
                     std::string ext = it->path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".behaviour") {
+                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".behaviour" || ext == ".ebehaviour") {
                         std::string fileStem = it->path().stem().string();
                         std::transform(fileStem.begin(), fileStem.end(), fileStem.begin(), ::tolower);
                         if (fileStem == nameLower) {
@@ -7418,18 +7418,28 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         // Write .assetmeta sidecar
                         std::filesystem::path metaPath = behDir / (inputName + ".ebehaviour.assetmeta");
                         std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
                         if (metaFile.is_open()) {
-                            AssetID aid = AssetID::CreateRandom();
-                            std::string vPath = (targetDir.empty() || targetDir == "/") ?
-                                ("/" + inputName) : (targetDir + "/" + inputName);
                             metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
                                      << "assetId: " << aid.ToString() << "\n"
-                                     << "type: Behaviour\n"
+                                     << "type: Visual Behaviour\n"
                                      << "virtualPath: " << vPath << "\n";
                         }
 #ifdef _WIN32
                         SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
 #endif
+                        // Register in AssetRegistry immediately so it displays without delay
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::VisualBehaviour;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(vbPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".ebehaviour") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
                         TriggerBackgroundRegistrySync(contentRootPath);
                         VisualBehaviuors::BehaviourEditorManager::Get().Open(vbPath.string());
                         AddLog("LogContent", "Created Visual Behaviour: " + inputName + ".ebehaviour in " + targetDir, 2);
@@ -7896,6 +7906,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         else if (meta.type == AssetType::Texture) typeCol = ImVec4(0.40f, 0.90f, 0.50f, 1.0f);
                         else if (meta.type == AssetType::Mesh) typeCol = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
                         else if (meta.type == AssetType::Level) typeCol = ImVec4(0.30f, 0.85f, 0.95f, 1.0f);
+                        else if (meta.type == AssetType::VisualBehaviour) typeCol = ImVec4(0.40f, 0.85f, 1.0f, 1.0f);
+                        else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) typeCol = ImVec4(0.85f, 0.85f, 0.35f, 1.0f);
 
                         ImGui::TextColored(typeCol, "%s %s", GetAssetTypeIcon(meta.type), AssetTypeToString(meta.type));
 
@@ -7926,16 +7938,18 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (meta.type == AssetType::Level) {
                                     std::filesystem::path fullLevel = contentRootPath / meta.sourcePath;
                                     OpenLevelFromPath(scene, fullLevel.string());
+                                } else if (meta.type == AssetType::VisualBehaviour) {
+                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
+                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                    AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
                                 } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
                                     std::string ext = fullScript.extension().string();
                                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                                     if (ext == ".ebehaviour") {
-                                        // Open in Visual-Behaviuors node-graph editor
                                         VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
                                         AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
                                     } else {
-                                        // .cpp / .h scripts → VS Code
                                         LaunchVSCodeWorkspace(fullScript.string());
                                         OpenScriptInCodeEditor(fullScript.string());
                                     }
@@ -8022,12 +8036,19 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 lastSelectedContentItem = itemKey;
                             }
 
-                            if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
+                            if (meta.type == AssetType::VisualBehaviour) {
+                                if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
+                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
+                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                    AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
+                                }
+                                ImGui::Separator();
+                            } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
                                 std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
                                 std::string ext = fullScript.extension().string();
                                 std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                                 if (ext == ".ebehaviour") {
-                                    if (ImGui::MenuItem("🧩 Open in Visual Behaviour Editor")) {
+                                    if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
                                         VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
                                         AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
                                     }
@@ -8177,7 +8198,47 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewSkyboxPopup = true;
                         snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                     }
-                    if (ImGui::MenuItem("🧩 New Behaviour")) {
+                    if (ImGui::BeginMenu("➕ Create")) {
+                        if (ImGui::MenuItem("🎮 Visual Behaviour (.ebehaviour)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewVisualBehaviourPopup = true;
+                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                        }
+                        if (ImGui::MenuItem("🧩 Behaviour Script (.cpp)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewBehaviourPopup = true;
+                            std::string defName = "NewBehaviour";
+                            if (IsBehaviourNameAlreadyExists(defName)) {
+                                int idx = 1;
+                                while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
+                                defName = "NewBehaviour_" + std::to_string(idx);
+                            }
+                            snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                        }
+                        if (ImGui::MenuItem("🎨 Material")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewMaterialPopup = true;
+                            snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
+                        }
+                        if (ImGui::MenuItem("🌌 Skybox")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewSkyboxPopup = true;
+                            snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
+                        }
+                        if (ImGui::MenuItem("📁 Folder")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewFolderPopup = true;
+                            snprintf(newFolderNameBuf, sizeof(newFolderNameBuf), "NewFolder");
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewVisualBehaviourPopup = true;
+                        snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                    }
+                    if (ImGui::MenuItem("🧩 New Behaviour Script")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
                         std::string defName = "NewBehaviour";

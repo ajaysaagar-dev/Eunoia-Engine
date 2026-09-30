@@ -18,6 +18,7 @@ enum class AssetType {
     Particle,
     Script,
     Behaviour,
+    VisualBehaviour,
     Skybox,
     Water,
     Data
@@ -25,23 +26,24 @@ enum class AssetType {
 
 inline const char* AssetTypeToString(AssetType type) {
     switch (type) {
-        case AssetType::Texture:      return "Texture";
-        case AssetType::Material:     return "Material";
-        case AssetType::Mesh:         return "Mesh";
-        case AssetType::SkeletalMesh: return "SkeletalMesh";
-        case AssetType::Animation:    return "Animation";
-        case AssetType::Audio:        return "Audio";
-        case AssetType::Level:        return "Level";
-        case AssetType::Prefab:       return "Prefab";
-        case AssetType::Shader:       return "Shader";
-        case AssetType::Font:         return "Font";
-        case AssetType::Particle:     return "Particle";
-        case AssetType::Script:       return "Script";
-        case AssetType::Behaviour:    return "Behavior Script";
-        case AssetType::Skybox:       return "Skybox";
-        case AssetType::Water:        return "Water Body";
-        case AssetType::Data:         return "Data";
-        default:                      return "Unknown";
+        case AssetType::Texture:         return "Texture";
+        case AssetType::Material:        return "Material";
+        case AssetType::Mesh:            return "Mesh";
+        case AssetType::SkeletalMesh:    return "SkeletalMesh";
+        case AssetType::Animation:       return "Animation";
+        case AssetType::Audio:           return "Audio";
+        case AssetType::Level:           return "Level";
+        case AssetType::Prefab:          return "Prefab";
+        case AssetType::Shader:          return "Shader";
+        case AssetType::Font:            return "Font";
+        case AssetType::Particle:        return "Particle";
+        case AssetType::Script:          return "Script";
+        case AssetType::Behaviour:       return "Behavior Script";
+        case AssetType::VisualBehaviour: return "Visual Behaviour";
+        case AssetType::Skybox:          return "Skybox";
+        case AssetType::Water:           return "Water Body";
+        case AssetType::Data:            return "Data";
+        default:                         return "Unknown";
     }
 }
 
@@ -60,7 +62,8 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "font")         return AssetType::Font;
     if (s == "particle")     return AssetType::Particle;
     if (s == "script")       return AssetType::Script;
-    if (s == "behaviour")    return AssetType::Behaviour;
+    if (s == "visualbehaviour" || s == "visual-behaviour" || s == "visual behaviour" || s == "ebehaviour") return AssetType::VisualBehaviour;
+    if (s == "behaviour" || s == "behaviorscript" || s == "behavior script") return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "water")        return AssetType::Water;
     if (s == "data")         return AssetType::Data;
@@ -102,6 +105,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     if (e == "ttf" || e == "otf") {
         return AssetType::Font;
     }
+    if (e == "ebehaviour" || e == "visualbehaviour") {
+        return AssetType::VisualBehaviour;
+    }
     if (e == "behaviour" || e == "cpp" || e == "h") {
         return AssetType::Behaviour;
     }
@@ -110,21 +116,22 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
 
 inline const char* GetAssetTypeIcon(AssetType type) {
     switch (type) {
-        case AssetType::Texture:      return "🖼";
-        case AssetType::Material:     return "🎨";
-        case AssetType::Mesh:         return "🧊";
-        case AssetType::SkeletalMesh: return "🦴";
-        case AssetType::Animation:    return "🏃";
-        case AssetType::Audio:        return "🔊";
-        case AssetType::Level:        return "🌐";
-        case AssetType::Prefab:       return "📦";
-        case AssetType::Shader:       return "⚡";
-        case AssetType::Font:         return "🔤";
-        case AssetType::Particle:     return "✨";
-        case AssetType::Script:       return "📜";
-        case AssetType::Behaviour:    return "🧩";
-        case AssetType::Skybox:       return "🌌";
-        case AssetType::Data:         return "📊";
-        default:                      return "📄";
+        case AssetType::Texture:         return "🖼";
+        case AssetType::Material:        return "🎨";
+        case AssetType::Mesh:            return "🧊";
+        case AssetType::SkeletalMesh:    return "🦴";
+        case AssetType::Animation:       return "🏃";
+        case AssetType::Audio:           return "🔊";
+        case AssetType::Level:           return "🌐";
+        case AssetType::Prefab:          return "📦";
+        case AssetType::Shader:          return "⚡";
+        case AssetType::Font:            return "🔤";
+        case AssetType::Particle:        return "✨";
+        case AssetType::Script:          return "📜";
+        case AssetType::Behaviour:       return "🧩";
+        case AssetType::VisualBehaviour: return "🎮";
+        case AssetType::Skybox:          return "🌌";
+        case AssetType::Data:            return "📊";
+        default:                         return "📄";
     }
 }
