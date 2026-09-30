@@ -34,6 +34,7 @@
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
 #include <VisualBehaviuors/BehaviourEditorWindow.h>
+#include <VisualBehaviuors/VisualBehaviourInstance.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -10606,14 +10607,23 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, sEc);
                      !sEc && it != std::filesystem::recursive_directory_iterator();
                      it.increment(sEc)) {
-                    if (!it->is_directory(sEc) && it->path().extension() == ".cpp") {
-                        std::string pStr = it->path().string();
-                        std::string pLower = pStr;
-                        std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-                        if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
-                            std::string stem = it->path().stem().string();
-                            if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" && stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
-                                BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
+                    if (!it->is_directory(sEc)) {
+                        if (it->path().extension() == ".cpp") {
+                            std::string pStr = it->path().string();
+                            std::string pLower = pStr;
+                            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                                std::string stem = it->path().stem().string();
+                                if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" && stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
+                                    BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
+                                }
+                            }
+                        } else if (it->path().extension() == ".ebehaviour") {
+                            std::string pStr = it->path().string();
+                            std::string pLower = pStr;
+                            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                                VisualBehaviuors::RegisterVisualBehaviourAsset(it->path().string());
                             }
                         }
                     }
@@ -10634,7 +10644,8 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 }
 
                 matchCount++;
-                std::string itemText = "🧩 " + info.displayName + " (" + info.className + ")";
+                bool isVisual = (info.className.rfind("VisualBehaviour:", 0) == 0);
+                std::string itemText = (isVisual ? "⚡ " : "🧩 ") + info.displayName;
                 if (ImGui::Selectable(itemText.c_str(), false)) {
                     UndoManager::Get().RecordSnapshot(scene, "Add Behaviour: " + info.className);
                     auto newB = BehaviourRegistry::Get().Create(info.className);
@@ -10671,56 +10682,64 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             auto& b = obj->behaviours[i];
             if (!b) continue;
 
-            // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
-            const auto& allRegistry = BehaviourRegistry::Get().GetAll();
-            auto regIt = allRegistry.find(b->GetClassName());
-            if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                bool sourceModifiedAfterBuild = false;
-                std::error_code ec;
-                if (std::filesystem::exists(regIt->second.sourceCpp, ec)) {
-                    char exePathBuf[MAX_PATH] = {};
-                    GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
-                    if (std::filesystem::exists(exePathBuf, ec)) {
-                        auto cppTime = std::filesystem::last_write_time(regIt->second.sourceCpp, ec);
-                        auto exeTime = std::filesystem::last_write_time(exePathBuf, ec);
-                        if (!ec && cppTime > exeTime) {
-                            sourceModifiedAfterBuild = true;
+            // Check if Visual Behaviour instance
+            VisualBehaviuors::VisualBehaviourInstance* vbi = dynamic_cast<VisualBehaviuors::VisualBehaviourInstance*>(b.get());
+            if (vbi) {
+                vbi->SetScene(&scene);
+                vbi->RefreshPropertiesFromSource();
+                vbi->ResolveReferences(scene);
+            } else {
+                // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
+                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
+                auto regIt = allRegistry.find(b->GetClassName());
+                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
+                    bool sourceModifiedAfterBuild = false;
+                    std::error_code ec;
+                    if (std::filesystem::exists(regIt->second.sourceCpp, ec)) {
+                        char exePathBuf[MAX_PATH] = {};
+                        GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
+                        if (std::filesystem::exists(exePathBuf, ec)) {
+                            auto cppTime = std::filesystem::last_write_time(regIt->second.sourceCpp, ec);
+                            auto exeTime = std::filesystem::last_write_time(exePathBuf, ec);
+                            if (!ec && cppTime > exeTime) {
+                                sourceModifiedAfterBuild = true;
+                            }
                         }
                     }
-                }
 
-                if (regIt->second.isNative && !sourceModifiedAfterBuild) {
-                    // Native compiled behaviour
-                    if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
-                        auto nativeB = regIt->second.factory();
-                        nativeB->SetScene(&scene);
-                        nativeB->SetOwner(obj);
-                        nativeB->SetEnabled(b->IsEnabled());
-                        nativeB->CopyPropertiesFrom(*b);
-                        nativeB->ResolveReferences(scene);
-                        b = std::move(nativeB);
+                    if (regIt->second.isNative && !sourceModifiedAfterBuild) {
+                        // Native compiled behaviour
+                        if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
+                            auto nativeB = regIt->second.factory();
+                            nativeB->SetScene(&scene);
+                            nativeB->SetOwner(obj);
+                            nativeB->SetEnabled(b->IsEnabled());
+                            nativeB->CopyPropertiesFrom(*b);
+                            nativeB->ResolveReferences(scene);
+                            b = std::move(nativeB);
+                        } else {
+                            b->SetScene(&scene);
+                            b->RefreshPropertiesFromSource();
+                            b->ResolveReferences(scene);
+                        }
+                    } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
+                        auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
+                        dynB->SetScene(&scene);
+                        dynB->SetOwner(obj);
+                        dynB->SetEnabled(b->IsEnabled());
+                        dynB->CopyPropertiesFrom(*b);
+                        dynB->ResolveReferences(scene);
+                        b = std::move(dynB);
                     } else {
                         b->SetScene(&scene);
                         b->RefreshPropertiesFromSource();
                         b->ResolveReferences(scene);
                     }
-                } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
-                    auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
-                    dynB->SetScene(&scene);
-                    dynB->SetOwner(obj);
-                    dynB->SetEnabled(b->IsEnabled());
-                    dynB->CopyPropertiesFrom(*b);
-                    dynB->ResolveReferences(scene);
-                    b = std::move(dynB);
                 } else {
                     b->SetScene(&scene);
                     b->RefreshPropertiesFromSource();
                     b->ResolveReferences(scene);
                 }
-            } else {
-                b->SetScene(&scene);
-                b->RefreshPropertiesFromSource();
-                b->ResolveReferences(scene);
             }
 
             ImGui::PushID((int)i);
@@ -10744,9 +10763,23 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
             ImGui::SameLine();
 
-            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
+            bool isVisualCard = (vbi != nullptr);
+            ImGui::TextColored(isVisualCard ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f) : ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", b->GetClassName().c_str());
+
+            if (isVisualCard && vbi) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
+                if (ImGui::SmallButton("✏ Edit Graph")) {
+                    VisualBehaviuors::BehaviourEditorManager::Get().Open(vbi->GetAssetPath());
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Open in Visual Behaviour Editor: %s", vbi->GetAssetPath().c_str());
+                }
+            }
 
             // Right-aligned Reset and Remove buttons
             float availW = ImGui::GetContentRegionAvail().x;

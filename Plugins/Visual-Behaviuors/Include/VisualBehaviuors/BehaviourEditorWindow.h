@@ -23,13 +23,14 @@ namespace VisualBehaviuors {
 // ─────────────────────────────────────────────────────────────────────────────
 inline ImU32 PinColor(PinDataType dt) {
     switch (dt) {
-        case PinDataType::Exec:    return IM_COL32(255,255,255,255);
-        case PinDataType::Bool:    return IM_COL32(220, 48, 48,255);
-        case PinDataType::Int:     return IM_COL32( 64,200,220,255);
-        case PinDataType::Float:   return IM_COL32( 60,210, 80,255);
-        case PinDataType::String:  return IM_COL32(200, 80,200,255);
-        case PinDataType::Vector3: return IM_COL32(220,210, 40,255);
-        default:                   return IM_COL32(200,200,200,255);
+        case PinDataType::Exec:       return IM_COL32(255,255,255,255);
+        case PinDataType::Bool:       return IM_COL32(220, 48, 48,255);
+        case PinDataType::Int:        return IM_COL32( 64,200,220,255);
+        case PinDataType::Float:      return IM_COL32( 60,210, 80,255);
+        case PinDataType::String:     return IM_COL32(200, 80,200,255);
+        case PinDataType::Vector3:    return IM_COL32(220,210, 40,255);
+        case PinDataType::GameObject: return IM_COL32(235, 130, 40,255);
+        default:                      return IM_COL32(200,200,200,255);
     }
 }
 
@@ -40,6 +41,7 @@ inline ImU32 CategoryColor(const std::string& cat) {
     if (cat == "Events")    return IM_COL32(130, 20, 20, 230);
     if (cat == "Flow")      return IM_COL32( 20, 60,130, 230);
     if (cat == "Debug")     return IM_COL32( 20,110, 80, 230);
+    if (cat == "Actions")   return IM_COL32( 20,110, 80, 230);
     if (cat == "Math")      return IM_COL32( 60, 20,120, 230);
     if (cat == "Variables") return IM_COL32( 20, 90,130, 230);
     return IM_COL32(50,50,60,230);
@@ -226,9 +228,9 @@ private:
         ImGui::SetNextItemWidth(-1);
         ImGui::InputTextWithHint("##NewVarName", "Variable Name...", newVarName, sizeof(newVarName));
 
-        const char* varTypes[] = { "Bool", "Int", "Float", "String", "Vector3" };
-        ImGui::SetNextItemWidth(100.0f);
-        ImGui::Combo("##NewVarType", &newVarType, varTypes, 5);
+        const char* varTypes[] = { "Bool", "Int", "Float", "String", "Vector3", "GameObject" };
+        ImGui::SetNextItemWidth(110.0f);
+        ImGui::Combo("##NewVarType", &newVarType, varTypes, 6);
         ImGui::SameLine();
         if (ImGui::Button("+ Add Variable", ImVec2(-1, 0))) {
             std::string vn = newVarName;
@@ -260,11 +262,12 @@ private:
 
             // Colored Type Indicator
             ImVec4 typeBadgeCol(0.7f, 0.7f, 0.7f, 1.0f);
-            if (v.type == VarType::Bool)    typeBadgeCol = ImVec4(0.9f, 0.25f, 0.25f, 1.0f);
-            if (v.type == VarType::Int)     typeBadgeCol = ImVec4(0.2f, 0.8f, 0.9f, 1.0f);
-            if (v.type == VarType::Float)   typeBadgeCol = ImVec4(0.25f, 0.85f, 0.35f, 1.0f);
-            if (v.type == VarType::String)  typeBadgeCol = ImVec4(0.85f, 0.35f, 0.85f, 1.0f);
-            if (v.type == VarType::Vector3) typeBadgeCol = ImVec4(0.9f, 0.85f, 0.2f, 1.0f);
+            if (v.type == VarType::Bool)       typeBadgeCol = ImVec4(0.9f, 0.25f, 0.25f, 1.0f);
+            if (v.type == VarType::Int)        typeBadgeCol = ImVec4(0.2f, 0.8f, 0.9f, 1.0f);
+            if (v.type == VarType::Float)      typeBadgeCol = ImVec4(0.25f, 0.85f, 0.35f, 1.0f);
+            if (v.type == VarType::String)     typeBadgeCol = ImVec4(0.85f, 0.35f, 0.85f, 1.0f);
+            if (v.type == VarType::Vector3)    typeBadgeCol = ImVec4(0.9f, 0.85f, 0.2f, 1.0f);
+            if (v.type == VarType::GameObject) typeBadgeCol = ImVec4(0.95f, 0.55f, 0.15f, 1.0f);
 
             ImGui::TextColored(typeBadgeCol, "●");
             ImGui::SameLine();
@@ -327,7 +330,7 @@ private:
                 int curT = (int)sv->type;
                 ImGui::Text("Type:");
                 ImGui::SetNextItemWidth(-1);
-                if (ImGui::Combo("##vbTypeChange", &curT, varTypes, 5)) {
+                if (ImGui::Combo("##vbTypeChange", &curT, varTypes, 6)) {
                     sv->type = (VarType)curT;
                     isDirty = true;
                 }
@@ -374,6 +377,29 @@ private:
                     strncpy(buf, kv.second.c_str(), 255);
                     if (ImGui::InputText(kv.first.c_str(), buf, sizeof(buf)))
                         kv.second = buf, isDirty = true;
+                }
+            }
+            if (selNode->typeId == "Debug.Print" || selNode->typeId == "Debug.PrintString" || selNode->typeId == "Print") {
+                ImGui::Separator();
+                ImGui::TextColored(ImVec4(0.3f, 1.0f, 0.5f, 1.0f), "Print Settings:");
+                char textBuf[256] = {};
+                auto tit = selNode->params.find("text");
+                if (tit == selNode->params.end()) tit = selNode->params.find("String");
+                if (tit != selNode->params.end()) strncpy(textBuf, tit->second.c_str(), 255);
+                ImGui::Text("Print Text:");
+                if (ImGui::InputText("##PrintText", textBuf, sizeof(textBuf))) {
+                    selNode->params["text"] = textBuf;
+                    selNode->params["String"] = textBuf;
+                    isDirty = true;
+                }
+                char durBuf[32] = {};
+                auto dit = selNode->params.find("Duration");
+                if (dit != selNode->params.end()) strncpy(durBuf, dit->second.c_str(), 31);
+                else strncpy(durBuf, "2.5", 31);
+                ImGui::Text("Duration (sec):");
+                if (ImGui::InputText("##PrintDur", durBuf, sizeof(durBuf))) {
+                    selNode->params["Duration"] = durBuf;
+                    isDirty = true;
                 }
             }
             static char commentBuf[256] = {};
@@ -492,7 +518,12 @@ private:
                     ImVec2 dropPos = ScreenToCanvas(cOrigin, ImGui::GetMousePos());
                     NodeId nid = graph.AddNode("Var.Get", dropPos.x, dropPos.y);
                     Node* n = graph.FindNode(nid);
-                    if (n) n->params["varName"] = v->name;
+                    if (n) {
+                        n->params["varName"] = v->name;
+                        for (auto& p : n->pins) {
+                            if (p.kind == PinKind::Data) p.dataType = VarTypeToPinDataType(v->type);
+                        }
+                    }
                     isDirty = true;
                 }
             }
@@ -503,7 +534,12 @@ private:
                     ImVec2 dropPos = ScreenToCanvas(cOrigin, ImGui::GetMousePos());
                     NodeId nid = graph.AddNode("Var.Set", dropPos.x, dropPos.y);
                     Node* n = graph.FindNode(nid);
-                    if (n) n->params["varName"] = v->name;
+                    if (n) {
+                        n->params["varName"] = v->name;
+                        for (auto& p : n->pins) {
+                            if (p.kind == PinKind::Data) p.dataType = VarTypeToPinDataType(v->type);
+                        }
+                    }
                     isDirty = true;
                 }
             }
@@ -573,11 +609,20 @@ private:
     void DrawNode(ImDrawList* dl, ImVec2 origin, Node& n) {
         const NodeTypeDef* def = NodeRegistry::Get().Find(n.typeId);
         std::string displayName = def ? def->displayName : n.typeId;
-        // Override display for variable Get/Set
+        if (n.typeId == "Debug.Print" || n.typeId == "Debug.PrintString" || n.typeId == "Print") {
+            displayName = "Print";
+        }
+        // Override display and data pin type for variable Get/Set
         auto vit = n.params.find("varName");
         if (vit != n.params.end() && !vit->second.empty()) {
             if (n.typeId == "Var.Get") displayName = "Get " + vit->second;
             if (n.typeId == "Var.Set") displayName = "Set " + vit->second;
+            if (const Variable* v = graph.FindVariableByName(vit->second)) {
+                PinDataType pdt = VarTypeToPinDataType(v->type);
+                for (auto& p : n.pins) {
+                    if (p.kind == PinKind::Data) p.dataType = pdt;
+                }
+            }
         }
 
         float headerH = 22.0f * zoom;
