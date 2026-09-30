@@ -3805,7 +3805,14 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
     if (isSelected) {
         ImGui::PopStyleColor(3);
     }
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+
+    // Select only on click-up (mouse release without dragging) to allow drag & drop from hierarchy
+    bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
+    float dragThreshold = ImGui::GetIO().MouseDragThreshold;
+    bool wasDragging = (dragDistSqr >= dragThreshold * dragThreshold) || (ImGui::GetDragDropPayload() != nullptr);
+
+    if (isClickedUp && !wasDragging && !ImGui::IsItemToggledOpen()) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl) {
             if (selectedActorIds.count(obj.id)) {
@@ -4011,7 +4018,12 @@ void EngineUI::RenderOutliner(Scene& scene) {
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
                 }
-                if (ImGui::Selectable(itemLabel, isSelected)) {
+                ImGui::Selectable(itemLabel, isSelected);
+                bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+                float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
+                float dragThreshold = ImGui::GetIO().MouseDragThreshold;
+                bool wasDragging = (dragDistSqr >= dragThreshold * dragThreshold) || (ImGui::GetDragDropPayload() != nullptr);
+                if (isClickedUp && !wasDragging) {
                     ImGuiIO& io = ImGui::GetIO();
                     if (io.KeyCtrl) {
                         if (selectedActorIds.count(obj.id)) {
@@ -4050,6 +4062,12 @@ void EngineUI::RenderOutliner(Scene& scene) {
                         scene.selectedId = obj.id;
                         lastSelectedActorId = obj.id;
                     }
+                }
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                    int actorId = obj.id;
+                    ImGui::SetDragDropPayload("OUTLINER_ACTOR", &actorId, sizeof(int));
+                    ImGui::Text("Reparent %s", obj.name.c_str());
+                    ImGui::EndDragDropSource();
                 }
                 if (isSelected) {
                     ImGui::PopStyleColor(3);
