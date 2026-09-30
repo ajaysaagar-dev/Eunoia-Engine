@@ -187,136 +187,214 @@ public:
 
         ImGui::Separator();
 
-        // ── Main layout: Canvas | Right sidebar ──────────────────────────────
-        float sidebarW   = 240.0f;
-        float canvasW    = ImGui::GetContentRegionAvail().x - sidebarW - 6.0f;
-        float canvasH    = ImGui::GetContentRegionAvail().y;
+        // ── Main layout: Left Sidebar (Variables) | Center (Canvas) | Right Sidebar (Details) ──
+        float leftSidebarW  = 260.0f;
+        float rightSidebarW = 260.0f;
+        float availW        = ImGui::GetContentRegionAvail().x;
+        float canvasW       = std::max(240.0f, availW - leftSidebarW - rightSidebarW - 12.0f);
+        float contentH      = ImGui::GetContentRegionAvail().y;
 
-        // ── Canvas region ─────────────────────────────────────────────────────
-        ImGui::BeginChild("##VBCanvas", {canvasW, canvasH}, false,
+        // ── 1. Left Sidebar: Variables & Creation ─────────────────────────────
+        ImGui::BeginChild("##VBLeftSidebar", ImVec2(leftSidebarW, contentH), true);
+        RenderVariablesSidebar();
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // ── 2. Center: Node Graph Canvas ──────────────────────────────────────
+        ImGui::BeginChild("##VBCanvas", ImVec2(canvasW, contentH), false,
             ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
         RenderCanvas();
         ImGui::EndChild();
 
         ImGui::SameLine();
 
-        // ── Right sidebar ─────────────────────────────────────────────────────
-        ImGui::BeginChild("##VBSidebar", {sidebarW, canvasH}, true);
-        RenderSidebar();
+        // ── 3. Right Sidebar: Properties & Node Inspector ─────────────────────
+        ImGui::BeginChild("##VBRightSidebar", ImVec2(rightSidebarW, contentH), true);
+        RenderPropertiesSidebar();
         ImGui::EndChild();
     }
 
 private:
-    // ── Sidebar (Variables + Properties) ─────────────────────────────────────
-    void RenderSidebar() {
-        if (ImGui::CollapsingHeader("Variables", ImGuiTreeNodeFlags_DefaultOpen)) {
-            // List
-            for (auto& v : graph.variables) {
-                bool isSel = (selectedVarId == v.id);
-                if (ImGui::Selectable(v.name.c_str(), isSel))
-                    selectedVarId = v.id;
-                // Drag into canvas → spawns Get node
-                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                    ImGui::SetDragDropPayload("VB_VAR_GET", &v.id, sizeof(uint64_t));
-                    ImGui::Text("Get %s", v.name.c_str());
-                    ImGui::EndDragDropSource();
-                }
-                // Alt+drag → Set node
-                if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(0) && ImGui::IsKeyDown(ImGuiKey_LeftAlt)) {
-                    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                        ImGui::SetDragDropPayload("VB_VAR_SET", &v.id, sizeof(uint64_t));
-                        ImGui::Text("Set %s", v.name.c_str());
-                        ImGui::EndDragDropSource();
-                    }
-                }
-                ImGui::SameLine();
-                ImGui::TextDisabled("[%s]", VarTypeToString(v.type));
-            }
-            ImGui::Separator();
-            // Add new variable
-            ImGui::SetNextItemWidth(100.0f);
-            ImGui::InputText("##NewVarName", newVarName, sizeof(newVarName));
-            ImGui::SameLine();
-            const char* varTypes[] = {"Bool","Int","Float","String","Vec3"};
-            ImGui::SetNextItemWidth(60.0f);
-            ImGui::Combo("##NewVarType", &newVarType, varTypes, 5);
-            ImGui::SameLine();
-            if (ImGui::SmallButton("+ Var")) {
-                std::string vn = newVarName;
-                if (!vn.empty() && graph.IsVariableNameUnique(vn)) {
-                    graph.AddVariable(vn, (VarType)newVarType);
-                    isDirty = true;
-                }
-            }
-            // Delete selected var
-            if (selectedVarId != 0) {
-                ImGui::SameLine();
-                if (ImGui::SmallButton("✕")) {
-                    graph.RemoveVariable(selectedVarId);
-                    selectedVarId = 0;
-                    isDirty = true;
-                }
-                // Rename
-                Variable* sv = graph.FindVariable(selectedVarId);
-                if (sv) {
-                    static char renBuf[64] = {};
-                    if (ImGui::IsItemActivated()) strncpy(renBuf, sv->name.c_str(), 63);
-                    ImGui::SetNextItemWidth(150.0f);
-                    if (ImGui::InputText("Rename##vbren", renBuf, sizeof(renBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                        if (strlen(renBuf) > 0 && graph.IsVariableNameUnique(renBuf, selectedVarId)) {
-                            graph.RenameVariable(selectedVarId, renBuf);
-                            isDirty = true;
-                        }
-                    }
-                }
+    // ── 1. Left Sidebar: Dedicated Variables Management & Creation ───────────
+    void RenderVariablesSidebar() {
+        ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "VARIABLES");
+        ImGui::Separator();
+
+        // Create New Variable Section
+        ImGui::TextDisabled("Create New Variable:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##NewVarName", "Variable Name...", newVarName, sizeof(newVarName));
+
+        const char* varTypes[] = { "Bool", "Int", "Float", "String", "Vector3" };
+        ImGui::SetNextItemWidth(100.0f);
+        ImGui::Combo("##NewVarType", &newVarType, varTypes, 5);
+        ImGui::SameLine();
+        if (ImGui::Button("+ Add Variable", ImVec2(-1, 0))) {
+            std::string vn = newVarName;
+            while (!vn.empty() && isspace((unsigned char)vn.front())) vn.erase(vn.begin());
+            while (!vn.empty() && isspace((unsigned char)vn.back())) vn.pop_back();
+            if (!vn.empty() && graph.IsVariableNameUnique(vn)) {
+                uint64_t vid = graph.AddVariable(vn, (VarType)newVarType);
+                selectedVarId = vid;
+                selectedNodeForProps = 0;
+                isDirty = true;
+                snprintf(newVarName, sizeof(newVarName), "NewVar_%d", (int)graph.variables.size() + 1);
             }
         }
 
         ImGui::Spacing();
-        if (ImGui::CollapsingHeader("Properties", ImGuiTreeNodeFlags_DefaultOpen)) {
-            // If a node is selected, show its properties
-            Node* selNode = selectedNodeForProps ? graph.FindNode(selectedNodeForProps) : nullptr;
-            Variable* selVar = selectedVarId ? graph.FindVariable(selectedVarId) : nullptr;
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Variables List (%zu)", graph.variables.size());
+        ImGui::Separator();
 
-            if (selNode) {
-                const NodeTypeDef* def = NodeRegistry::Get().Find(selNode->typeId);
-                ImGui::Text("Node: %s", def ? def->displayName.c_str() : selNode->typeId.c_str());
-                ImGui::Text("ID:   %llu", (unsigned long long)selNode->id);
-                ImGui::Text("Category: %s", def ? def->category.c_str() : "-");
+        if (graph.variables.empty()) {
+            ImGui::Spacing();
+            ImGui::TextDisabled("(No variables created yet)");
+        }
+
+        // List
+        for (size_t i = 0; i < graph.variables.size(); ++i) {
+            auto& v = graph.variables[i];
+            ImGui::PushID((int)v.id);
+            bool isSel = (selectedVarId == v.id);
+
+            // Colored Type Indicator
+            ImVec4 typeBadgeCol(0.7f, 0.7f, 0.7f, 1.0f);
+            if (v.type == VarType::Bool)    typeBadgeCol = ImVec4(0.9f, 0.25f, 0.25f, 1.0f);
+            if (v.type == VarType::Int)     typeBadgeCol = ImVec4(0.2f, 0.8f, 0.9f, 1.0f);
+            if (v.type == VarType::Float)   typeBadgeCol = ImVec4(0.25f, 0.85f, 0.35f, 1.0f);
+            if (v.type == VarType::String)  typeBadgeCol = ImVec4(0.85f, 0.35f, 0.85f, 1.0f);
+            if (v.type == VarType::Vector3) typeBadgeCol = ImVec4(0.9f, 0.85f, 0.2f, 1.0f);
+
+            ImGui::TextColored(typeBadgeCol, "●");
+            ImGui::SameLine();
+
+            float itemW = ImGui::GetContentRegionAvail().x - 26.0f;
+            if (ImGui::Selectable(v.name.c_str(), isSel, 0, ImVec2(itemW, 0))) {
+                selectedVarId = v.id;
+                selectedNodeForProps = 0;
+            }
+
+            // Drag into canvas → spawns Get node
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                ImGui::SetDragDropPayload("VB_VAR_GET", &v.id, sizeof(uint64_t));
+                ImGui::Text("Get %s", v.name.c_str());
+                ImGui::EndDragDropSource();
+            }
+            // Alt+drag → Set node
+            if (ImGui::IsItemHovered() && ImGui::IsMouseDragging(0) && ImGui::IsKeyDown(ImGuiKey_LeftAlt)) {
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    ImGui::SetDragDropPayload("VB_VAR_SET", &v.id, sizeof(uint64_t));
+                    ImGui::Text("Set %s", v.name.c_str());
+                    ImGui::EndDragDropSource();
+                }
+            }
+
+            // Delete button
+            ImGui::SameLine();
+            if (ImGui::SmallButton("✕")) {
+                graph.RemoveVariable(v.id);
+                if (selectedVarId == v.id) selectedVarId = 0;
+                isDirty = true;
+                ImGui::PopID();
+                break;
+            }
+
+            ImGui::PopID();
+        }
+
+        // Details of selected variable in left sidebar
+        if (selectedVarId != 0) {
+            Variable* sv = graph.FindVariable(selectedVarId);
+            if (sv) {
+                ImGui::Spacing();
                 ImGui::Separator();
-                ImGui::Text("Position:");
-                ImGui::DragFloat("X##npx", &selNode->posX, 1.0f); isDirty |= ImGui::IsItemDeactivatedAfterEdit();
-                ImGui::DragFloat("Y##npy", &selNode->posY, 1.0f); isDirty |= ImGui::IsItemDeactivatedAfterEdit();
-                if (!selNode->params.empty()) {
-                    ImGui::Separator();
-                    ImGui::Text("Params:");
-                    for (auto& kv : selNode->params) {
-                        char buf[256];
-                        strncpy(buf, kv.second.c_str(), 255);
-                        if (ImGui::InputText(kv.first.c_str(), buf, sizeof(buf)))
-                            kv.second = buf, isDirty = true;
+                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "Variable Details:");
+
+                // Rename
+                static char renBuf[64] = {};
+                if (ImGui::IsItemActivated()) strncpy(renBuf, sv->name.c_str(), 63);
+                ImGui::Text("Name:");
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::InputText("##vbRenInput", renBuf, sizeof(renBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                    if (strlen(renBuf) > 0 && graph.IsVariableNameUnique(renBuf, sv->id)) {
+                        graph.RenameVariable(sv->id, renBuf);
+                        isDirty = true;
                     }
                 }
-                static char commentBuf[256] = {};
-                strncpy(commentBuf, selNode->comment.c_str(), 255);
-                ImGui::Text("Comment:");
-                if (ImGui::InputText("##nodecomment", commentBuf, sizeof(commentBuf)))
-                    selNode->comment = commentBuf, isDirty = true;
-            } else if (selVar) {
-                ImGui::Text("Variable: %s", selVar->name.c_str());
-                ImGui::Text("Type: %s", VarTypeToString(selVar->type));
-                ImGui::Separator();
-                char defBuf[128];
-                strncpy(defBuf, selVar->defaultValue.c_str(), 127);
-                if (ImGui::InputText("Default", defBuf, sizeof(defBuf)))
-                    selVar->defaultValue = defBuf, isDirty = true;
-            } else {
-                ImGui::Text("Behaviour: %s", graph.name.c_str());
-                ImGui::Separator();
-                ImGui::Text("Nodes:     %d", (int)graph.nodes.size());
-                ImGui::Text("Links:     %d", (int)graph.links.size());
-                ImGui::Text("Variables: %d", (int)graph.variables.size());
+
+                // Type changer
+                int curT = (int)sv->type;
+                ImGui::Text("Type:");
+                ImGui::SetNextItemWidth(-1);
+                if (ImGui::Combo("##vbTypeChange", &curT, varTypes, 5)) {
+                    sv->type = (VarType)curT;
+                    isDirty = true;
+                }
+
+                // Default Value
+                ImGui::Text("Default Value:");
+                ImGui::SetNextItemWidth(-1);
+                char defValBuf[128] = {};
+                strncpy(defValBuf, sv->defaultValue.c_str(), 127);
+                if (ImGui::InputText("##vbDefVal", defValBuf, sizeof(defValBuf))) {
+                    sv->defaultValue = defValBuf;
+                    isDirty = true;
+                }
+
+                ImGui::Spacing();
+                ImGui::TextDisabled("💡 Drag into canvas to spawn 'Get'");
+                ImGui::TextDisabled("💡 Alt+Drag to spawn 'Set'");
             }
+        }
+    }
+
+    // ── 3. Right Sidebar: Details & Properties ───────────────────────────────
+    void RenderPropertiesSidebar() {
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "DETAILS");
+        ImGui::Separator();
+
+        Node* selNode = selectedNodeForProps ? graph.FindNode(selectedNodeForProps) : nullptr;
+        Variable* selVar = selectedVarId ? graph.FindVariable(selectedVarId) : nullptr;
+
+        if (selNode) {
+            const NodeTypeDef* def = NodeRegistry::Get().Find(selNode->typeId);
+            ImGui::Text("Node: %s", def ? def->displayName.c_str() : selNode->typeId.c_str());
+            ImGui::Text("ID:   %llu", (unsigned long long)selNode->id);
+            ImGui::Text("Category: %s", def ? def->category.c_str() : "-");
+            ImGui::Separator();
+            ImGui::Text("Position:");
+            ImGui::DragFloat("X##npx", &selNode->posX, 1.0f); isDirty |= ImGui::IsItemDeactivatedAfterEdit();
+            ImGui::DragFloat("Y##npy", &selNode->posY, 1.0f); isDirty |= ImGui::IsItemDeactivatedAfterEdit();
+            if (!selNode->params.empty()) {
+                ImGui::Separator();
+                ImGui::Text("Params:");
+                for (auto& kv : selNode->params) {
+                    char buf[256];
+                    strncpy(buf, kv.second.c_str(), 255);
+                    if (ImGui::InputText(kv.first.c_str(), buf, sizeof(buf)))
+                        kv.second = buf, isDirty = true;
+                }
+            }
+            static char commentBuf[256] = {};
+            strncpy(commentBuf, selNode->comment.c_str(), 255);
+            ImGui::Text("Comment:");
+            if (ImGui::InputText("##nodecomment", commentBuf, sizeof(commentBuf)))
+                selNode->comment = commentBuf, isDirty = true;
+        } else if (selVar) {
+            ImGui::Text("Variable: %s", selVar->name.c_str());
+            ImGui::Text("Type: %s", VarTypeToString(selVar->type));
+            ImGui::Separator();
+            char defBuf[128];
+            strncpy(defBuf, selVar->defaultValue.c_str(), 127);
+            if (ImGui::InputText("Default##props", defBuf, sizeof(defBuf)))
+                selVar->defaultValue = defBuf, isDirty = true;
+        } else {
+            ImGui::Text("Behaviour: %s", graph.name.c_str());
+            ImGui::Separator();
+            ImGui::Text("Nodes:     %d", (int)graph.nodes.size());
+            ImGui::Text("Links:     %d", (int)graph.links.size());
+            ImGui::Text("Variables: %d", (int)graph.variables.size());
         }
     }
 
@@ -894,9 +972,12 @@ public:
     void RenderAll() {
         for (auto& e : editors) {
             if (!e->isOpen) continue;
-            std::string title = "🧩 " + e->graph.name;
+            std::string title = "🎮 Visual Behaviour Editor - " + e->graph.name;
             if (e->isDirty) title += " *";
-            title += "##vb" + e->filePath;
+            title += "###VBWindow_" + e->filePath;
+
+            ImGui::SetNextWindowSize(ImVec2(1280, 750), ImGuiCond_FirstUseEver);
+            ImGui::SetNextWindowPos(ImVec2(80, 60), ImGuiCond_FirstUseEver);
 
             bool stillOpen = true;
             if (ImGui::Begin(title.c_str(), &stillOpen,
