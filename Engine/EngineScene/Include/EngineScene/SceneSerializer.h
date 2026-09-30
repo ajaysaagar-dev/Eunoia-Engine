@@ -1,6 +1,7 @@
 #pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
+#include <VisualBehaviuors/VisualBehaviourInstance.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -340,6 +341,9 @@ public:
                 file << "        {\n";
                 file << "          \"className\": " << QuoteStr(b->GetClassName()) << ",\n";
                 file << "          \"enabled\": " << BoolStr(b->IsEnabled()) << ",\n";
+                if (!b->GetSourceCppPath().empty()) {
+                    file << "          \"assetPath\": " << QuoteStr(b->GetSourceCppPath()) << ",\n";
+                }
                 file << "          \"properties\": [\n";
                 const auto& props = b->GetProperties();
                 for (size_t pi = 0; pi < props.size(); ++pi) {
@@ -1095,7 +1099,16 @@ private:
                         std::string bBlock = behArray.substr(bObjStart, bObjEnd - bObjStart + 1);
                         size_t cnPos = bBlock.find("\"className\"");
                         std::string className = (cnPos != std::string::npos) ? ParseStringAt(bBlock, cnPos, "") : "";
+                        size_t apPos = bBlock.find("\"assetPath\"");
+                        std::string assetPath = (apPos != std::string::npos) ? ParseStringAt(bBlock, apPos, "") : "";
                         if (!className.empty()) {
+                            if (!BehaviourRegistry::Get().Has(className) && !assetPath.empty()) {
+                                if (assetPath.ends_with(".ebehaviour")) {
+                                    VisualBehaviuors::RegisterVisualBehaviourAsset(assetPath);
+                                } else if (assetPath.ends_with(".cpp")) {
+                                    BehaviourRegistry::Get().RegisterScriptFile(className, assetPath);
+                                }
+                            }
                             auto bInst = BehaviourRegistry::Get().Create(className);
                             if (bInst) {
                                 size_t enPos = bBlock.find("\"enabled\"");
