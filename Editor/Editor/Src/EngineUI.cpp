@@ -2481,24 +2481,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
 
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(ImVec2(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.80f);
-        ImGuiWindowFlags playFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-        if (ImGui::Begin("##PlayModeBanner", nullptr, playFlags)) {
-            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ GAME PLAY MODE (FULL SCREEN)");
-            ImGui::SameLine();
-            ImGui::TextDisabled("| Press [DELETE] or click Stop to exit | Press [ESC] to unlock cursor");
-            ImGui::SameLine();
-            if (ImGui::Button("⏹ Stop")) {
-                ExitPlayMode(scene, &camera);
-                ImGui::End();
-                return;
-            }
-        }
-        ImGui::End();
 
         // Game View top-left: Render on-screen Print messages (Print(value, time))
-        RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 54.0f);
+        RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f);
 
         // Game View occupies the available area; editor UI is hidden
         RenderLoadingModal();
