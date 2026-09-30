@@ -131,6 +131,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::Behaviour:       return "🧩";
         case AssetType::VisualBehaviour: return "🎮";
         case AssetType::Skybox:          return "🌌";
+        case AssetType::Water:           return "🌊";
         case AssetType::Data:            return "📊";
         default:                         return "📄";
     }

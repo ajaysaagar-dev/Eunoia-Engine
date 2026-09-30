@@ -7131,8 +7131,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::PopID();
                 }
 
-                // Utilities on right: Import Model, Cook, and Search
-                float rightOffset = 310.0f;
+                // Utilities on right: Import Model, Cook, Zoom Slider, and Search
+                float rightOffset = 400.0f;
                 if (ImGui::GetContentRegionAvail().x > rightOffset) {
                     ImGui::SameLine(ImGui::GetWindowWidth() - rightOffset);
                 } else {
@@ -7150,6 +7150,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     OpenCookModal();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cook & Package Assets (dev.md Section 24, 25)");
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(75.0f);
+                ImGui::SliderFloat("##CBZoom", &contentThumbnailSize, 72.0f, 130.0f, "%.0f px");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Card / Thumbnail Size Scale");
 
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(125.0f);
@@ -7784,479 +7789,518 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     }
                 };
 
-                ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                             ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable |
-                                             ImGuiTableFlags_ScrollY;
+                // Unified Content Item structure for Content View cards
+                struct CBItem {
+                    bool isFolder = false;
+                    std::string subDir;
+                    AssetMetadata meta;
+                    std::string itemKey;
+                    std::string primaryVal;
+                    std::string displayName;
+                };
 
-                if (ImGui::BeginTable("RegistryAssetTable", 5, tableFlags, ImVec2(0, 0))) {
-                    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                    ImGui::TableSetupColumn("Name & Virtual Path", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("AssetID", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-                    ImGui::TableSetupColumn("Deps / Refs", ImGuiTableColumnFlags_WidthFixed, 95.0f);
-                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                    ImGui::TableHeadersRow();
+                std::vector<CBItem> allItems;
 
-                    int rowIndex = 0;
+                if (searchStr.empty()) {
+                    for (const auto& subDir : currentSubdirs) {
+                        CBItem item;
+                        item.isFolder = true;
+                        item.subDir = subDir;
+                        item.itemKey = "DIR:" + subDir;
+                        item.primaryVal = subDir;
+                        item.displayName = AssetPath::GetObjectName(subDir);
+                        allItems.push_back(std::move(item));
+                    }
+                }
 
-                    // 1. Virtual Subdirectories (if no search)
-                    if (searchStr.empty()) {
-                        for (const auto& subDir : currentSubdirs) {
-                            ImGui::TableNextRow();
-                            ImGui::PushID(subDir.c_str());
+                for (const auto& meta : displayAssets) {
+                    std::string sPath = meta.sourcePath;
+                    std::transform(sPath.begin(), sPath.end(), sPath.begin(), ::tolower);
+                    std::string vPath = meta.virtualPath;
+                    std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
+                    std::string oName = meta.objectName;
+                    std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
 
-                            std::string subName = AssetPath::GetObjectName(subDir);
-                            std::string itemKey = "DIR:" + subDir;
-                            bool isFolderSelected = (selectedContentItems.count(itemKey) > 0 || selectedContentItem == subDir);
+                    if (sPath.find(".assetmeta") != std::string::npos ||
+                        sPath.find(".meta") != std::string::npos ||
+                        vPath.find(".assetmeta") != std::string::npos ||
+                        vPath.find(".meta") != std::string::npos ||
+                        oName.find(".assetmeta") != std::string::npos ||
+                        oName.find(".meta") != std::string::npos) {
+                        continue;
+                    }
 
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "📁 Folder");
+                    CBItem item;
+                    item.isFolder = false;
+                    item.meta = meta;
+                    item.itemKey = "ASSET:" + meta.virtualPath;
+                    item.primaryVal = meta.virtualPath;
+                    item.displayName = meta.objectName;
+                    allItems.push_back(std::move(item));
+                }
 
-                            ImGui::TableSetColumnIndex(1);
-                            if (isFolderSelected) {
-                                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.45f, 0.85f, 0.75f));
-                                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
-                                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
-                            }
-                            if (ImGui::Selectable(subName.c_str(), isFolderSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                                HandleItemClick(itemKey, subDir);
-                                if (ImGui::IsMouseDoubleClicked(0)) {
-                                    currentVirtualDir = subDir;
-                                    selectedContentItem = "";
-                                    selectedContentItems.clear();
-                                    lastSelectedContentItem = "";
-                                }
-                            }
-                            if (isFolderSelected) {
-                                ImGui::PopStyleColor(3);
-                            }
+                if (allItems.empty()) {
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.55f, 0.62f, 0.72f, 1.0f), "    (No items found in this directory. Right-click here to create)");
+                } else {
+                    float availWidth = ImGui::GetContentRegionAvail().x;
+                    float cardW = contentThumbnailSize;
+                    if (cardW < 72.0f) cardW = 72.0f;
+                    if (cardW > 160.0f) cardW = 160.0f;
+                    float cardH = cardW * 1.20f;
+                    float spacing = 8.0f;
 
-                            // Drag source for folder row
-                            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                                std::string dragStr = "";
-                                if (selectedContentItems.count(itemKey) > 0 && selectedContentItems.size() > 1) {
-                                    for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
-                                } else {
-                                    dragStr = itemKey + "\n";
-                                }
-                                ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
-                                ImGui::Text("📁 %s", subName.c_str());
-                                ImGui::EndDragDropSource();
-                            }
+                    int itemsPerRow = (int)((availWidth + spacing) / (cardW + spacing));
+                    if (itemsPerRow < 1) itemsPerRow = 1;
 
-                            // Drop target on folder row (drag anything into this folder!)
-                            if (ImGui::BeginDragDropTarget()) {
-                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
-                                    std::string payloadData((const char*)payload->Data);
-                                    std::stringstream pss(payloadData);
-                                    std::string item;
-                                    while (std::getline(pss, item, '\n')) {
-                                        if (item.empty()) continue;
-                                        if (item.rfind("DIR:", 0) == 0) {
-                                            MoveFolderToDirectory(item.substr(4), subDir, contentRootPath);
-                                        } else if (item.rfind("ASSET:", 0) == 0) {
-                                            const AssetMetadata* m = AssetRegistry::Get().FindByPath(item.substr(6));
-                                            if (m) MoveAssetToDirectory(m->id, subDir, contentRootPath);
-                                        }
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                    for (size_t idx = 0; idx < allItems.size(); ++idx) {
+                        const auto& item = allItems[idx];
+                        if (idx > 0 && (idx % itemsPerRow) != 0) {
+                            ImGui::SameLine(0, spacing);
+                        }
+
+                        ImGui::PushID(item.itemKey.c_str());
+
+                        bool isSelected = (selectedContentItems.count(item.itemKey) > 0 || selectedContentItem == item.primaryVal);
+                        ImVec2 cardPos = ImGui::GetCursorScreenPos();
+                        ImVec2 cardSize(cardW, cardH);
+                        ImVec2 pMin = cardPos;
+                        ImVec2 pMax = ImVec2(cardPos.x + cardW, cardPos.y + cardH);
+
+                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+
+                        bool clicked = ImGui::Selectable("##cbCard", isSelected, ImGuiSelectableFlags_AllowDoubleClick, cardSize);
+
+                        ImGui::PopStyleColor(3);
+
+                        bool hovered = ImGui::IsItemHovered();
+
+                        if (clicked) {
+                            HandleItemClick(item.itemKey, item.primaryVal);
+                        }
+
+                        // Double-click action
+                        if (hovered && ImGui::IsMouseDoubleClicked(0)) {
+                            if (item.isFolder) {
+                                currentVirtualDir = item.subDir;
+                                selectedContentItem = "";
+                                selectedContentItems.clear();
+                                lastSelectedContentItem = "";
+                            } else {
+                                if (item.meta.type == AssetType::Material) {
+                                    std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                    OpenMaterialEditor(fullMat.string());
+                                } else if (item.meta.type == AssetType::Skybox) {
+                                    std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                    OpenSkyboxEditor(fullSky.string());
+                                } else if (item.meta.type == AssetType::Water) {
+                                    std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
+                                    OpenWaterEditor(fullWater.string());
+                                } else if (item.meta.type == AssetType::Mesh) {
+                                    std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
+                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
+                                    scene.selectedId = newObj.id;
+                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::Level) {
+                                    std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
+                                    OpenLevelFromPath(scene, fullLevel.string());
+                                } else if (item.meta.type == AssetType::VisualBehaviour) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                    AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    std::string ext = fullScript.extension().string();
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                    if (ext == ".ebehaviour") {
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                    } else {
+                                        LaunchVSCodeWorkspace(fullScript.string());
+                                        OpenScriptInCodeEditor(fullScript.string());
                                     }
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
-                                    std::string idStr((const char*)payload->Data);
-                                    MoveAssetToDirectory(AssetID::FromString(idStr), subDir, contentRootPath);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
+                                } else {
+                                    OpenReferenceViewer(item.meta.id);
                                 }
-                                ImGui::EndDragDropTarget();
+                            }
+                        }
+
+                        // Drag & Drop Source
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                            std::string dragStr = "";
+                            if (selectedContentItems.count(item.itemKey) > 0 && selectedContentItems.size() > 1) {
+                                for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
+                            } else {
+                                dragStr = item.itemKey + "\n";
+                            }
+                            ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
+
+                            if (!item.isFolder) {
+                                std::string idStr = item.meta.id.ToString();
+                                ImGui::SetDragDropPayload("ASSET_ID", idStr.c_str(), idStr.length() + 1);
                             }
 
-                            // Right-click context menu on folder row
-                            if (ImGui::BeginPopupContextItem("FolderRowCtx")) {
+                            if (selectedContentItems.size() > 1 && selectedContentItems.count(item.itemKey)) {
+                                ImGui::Text("📦 Moving %d items", (int)selectedContentItems.size());
+                            } else {
+                                const char* icon = item.isFolder ? "📁" : GetAssetTypeIcon(item.meta.type);
+                                ImGui::Text("%s %s", icon, item.displayName.c_str());
+                            }
+                            if (!item.isFolder) {
+                                if (item.meta.type == AssetType::Mesh) {
+                                    ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "[Drag to Viewport to spawn in Level]");
+                                } else if (item.meta.type == AssetType::Level) {
+                                    ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.95f, 1.0f), "[Drag to Viewport to open Level]");
+                                }
+                            }
+                            ImGui::EndDragDropSource();
+                        }
+
+                        // Drop Target on Folder Cards
+                        if (item.isFolder && ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                                std::string payloadData((const char*)payload->Data);
+                                std::stringstream pss(payloadData);
+                                std::string dragItem;
+                                while (std::getline(pss, dragItem, '\n')) {
+                                    if (dragItem.empty()) continue;
+                                    if (dragItem.rfind("DIR:", 0) == 0) {
+                                        MoveFolderToDirectory(dragItem.substr(4), item.subDir, contentRootPath);
+                                    } else if (dragItem.rfind("ASSET:", 0) == 0) {
+                                        const AssetMetadata* m = AssetRegistry::Get().FindByPath(dragItem.substr(6));
+                                        if (m) MoveAssetToDirectory(m->id, item.subDir, contentRootPath);
+                                    }
+                                }
+                                TriggerBackgroundRegistrySync(contentRootPath);
+                            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
+                                std::string idStr((const char*)payload->Data);
+                                MoveAssetToDirectory(AssetID::FromString(idStr), item.subDir, contentRootPath);
+                                TriggerBackgroundRegistrySync(contentRootPath);
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        // Context Menus
+                        if (item.isFolder) {
+                            if (ImGui::BeginPopupContextItem("FolderCardCtx")) {
                                 if (ImGui::MenuItem("📁 Open Folder")) {
-                                    currentVirtualDir = subDir;
+                                    currentVirtualDir = item.subDir;
                                     selectedContentItem = "";
                                     selectedContentItems.clear();
                                     lastSelectedContentItem = "";
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("➕ New Folder")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewFolderPopup = true;
                                     snprintf(newFolderNameBuf, sizeof(newFolderNameBuf), "NewFolder");
                                 }
                                 if (ImGui::MenuItem("🎨 New Material")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewMaterialPopup = true;
                                     snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                                 }
                                 if (ImGui::MenuItem("🌌 New Skybox")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewSkyboxPopup = true;
                                     snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                                 }
                                 if (ImGui::MenuItem("🧩 New Behaviour Script")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
                                     std::string defName = "NewBehaviour";
                                     if (IsBehaviourNameAlreadyExists(defName)) {
-                                        int idx = 1;
-                                        while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
-                                        defName = "NewBehaviour_" + std::to_string(idx);
+                                        int bIdx = 1;
+                                        while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(bIdx))) bIdx++;
+                                        defName = "NewBehaviour_" + std::to_string(bIdx);
                                     }
                                     snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
                                 }
                                 if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewVisualBehaviourPopup = true;
                                     snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("📥 Import Model...")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     ImportMeshWithSavePrompt(scene);
                                 }
                                 if (ImGui::MenuItem("📂 Show in Explorer")) {
-                                    std::string diskSub = subDir;
+                                    std::string diskSub = item.subDir;
                                     if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
                                     if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
                                     std::filesystem::path folderDisk = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
                                     std::string cmd = "explorer \"" + folderDisk.string() + "\"";
                                     system(cmd.c_str());
                                 }
-                                ImGui::Separator();
-                                if (ImGui::MenuItem("❌ Delete Folder")) {
-                                    std::string diskSub = subDir;
-                                    if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                                    if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                                    std::filesystem::path folderDisk = contentRootPath / diskSub;
-                                    std::error_code delEc;
-                                    std::filesystem::remove_all(folderDisk, delEc);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                }
-                                ImGui::EndPopup();
-                            }
-
-                            if (ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("Virtual Folder: %s\n(Double-click to open | Drag & Drop onto or into other folders)", subDir.c_str());
-                            }
-
-                            ImGui::TableSetColumnIndex(2);
-                            ImGui::TextDisabled("-");
-                            ImGui::TableSetColumnIndex(3);
-                            ImGui::TextDisabled("-");
-                            ImGui::TableSetColumnIndex(4);
-                            ImGui::TextDisabled("Dir");
-
-                            ImGui::PopID();
-                            rowIndex++;
-                        }
-                    }
-
-                    // 2. Assets from AssetRegistry
-                    for (const auto& meta : displayAssets) {
-                        std::string sPath = meta.sourcePath;
-                        std::transform(sPath.begin(), sPath.end(), sPath.begin(), ::tolower);
-                        std::string vPath = meta.virtualPath;
-                        std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
-                        std::string oName = meta.objectName;
-                        std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
-
-                        // Do not show metadata files (.assetmeta, .meta) in Content Browser
-                        if (sPath.find(".assetmeta") != std::string::npos ||
-                            sPath.find(".meta") != std::string::npos ||
-                            vPath.find(".assetmeta") != std::string::npos ||
-                            vPath.find(".meta") != std::string::npos ||
-                            oName.find(".assetmeta") != std::string::npos ||
-                            oName.find(".meta") != std::string::npos) {
-                            continue;
-                        }
-
-                        ImGui::TableNextRow();
-                        ImGui::PushID(meta.id.ToString().c_str());
-
-                        std::string itemKey = "ASSET:" + meta.virtualPath;
-                        bool isAssetSelected = (selectedContentItems.count(itemKey) > 0 || selectedContentItem == meta.virtualPath);
-
-                        // Column 0: Type with icon and color
-                        ImGui::TableSetColumnIndex(0);
-                        ImVec4 typeCol(0.7f, 0.7f, 0.7f, 1.0f);
-                        if (meta.type == AssetType::Material) typeCol = ImVec4(0.35f, 0.85f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Skybox) typeCol = ImVec4(0.85f, 0.45f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Water) typeCol = ImVec4(0.0f, 0.6f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Texture) typeCol = ImVec4(0.40f, 0.90f, 0.50f, 1.0f);
-                        else if (meta.type == AssetType::Mesh) typeCol = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
-                        else if (meta.type == AssetType::Level) typeCol = ImVec4(0.30f, 0.85f, 0.95f, 1.0f);
-                        else if (meta.type == AssetType::VisualBehaviour) typeCol = ImVec4(0.40f, 0.85f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) typeCol = ImVec4(0.85f, 0.85f, 0.35f, 1.0f);
-
-                        ImGui::TextColored(typeCol, "%s %s", GetAssetTypeIcon(meta.type), AssetTypeToString(meta.type));
-
-                        // Column 1: Object Name & Virtual Path
-                        ImGui::TableSetColumnIndex(1);
-                        if (isAssetSelected) {
-                            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.45f, 0.85f, 0.75f));
-                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
-                            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
-                        }
-                        if (ImGui::Selectable(meta.objectName.c_str(), isAssetSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                            HandleItemClick(itemKey, meta.virtualPath);
-                            if (ImGui::IsMouseDoubleClicked(0)) {
-                                if (meta.type == AssetType::Material) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    OpenMaterialEditor(fullMat.string());
-                                } else if (meta.type == AssetType::Skybox) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    OpenSkyboxEditor(fullSky.string());
-                                } else if (meta.type == AssetType::Water) {
-                                    std::filesystem::path fullWater = contentRootPath / meta.sourcePath;
-                                    OpenWaterEditor(fullWater.string());
-                                } else if (meta.type == AssetType::Mesh) {
-                                    std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
-                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
-                                    scene.selectedId = newObj.id;
-                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + meta.objectName, 2);
-                                } else if (meta.type == AssetType::Level) {
-                                    std::filesystem::path fullLevel = contentRootPath / meta.sourcePath;
-                                    OpenLevelFromPath(scene, fullLevel.string());
-                                } else if (meta.type == AssetType::VisualBehaviour) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
-                                    AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
-                                } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    std::string ext = fullScript.extension().string();
-                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                                    if (ext == ".ebehaviour") {
-                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
-                                        AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
-                                    } else {
-                                        LaunchVSCodeWorkspace(fullScript.string());
-                                        OpenScriptInCodeEditor(fullScript.string());
-                                    }
-                                } else {
-                                    OpenReferenceViewer(meta.id);
-                                }
-                            }
-                        }
-                        if (isAssetSelected) {
-                            ImGui::PopStyleColor(3);
-                        }
-
-                        // Drag & Drop Source transferring AssetID and CONTENT_DRAG (supports multi-selection!)
-                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                            std::string dragStr = "";
-                            if (selectedContentItems.count(itemKey) > 0 && selectedContentItems.size() > 1) {
-                                for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
-                            } else {
-                                dragStr = itemKey + "\n";
-                            }
-                            ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
-
-                            std::string idStr = meta.id.ToString();
-                            ImGui::SetDragDropPayload("ASSET_ID", idStr.c_str(), idStr.length() + 1);
-
-                            if (selectedContentItems.size() > 1 && selectedContentItems.count(itemKey)) {
-                                ImGui::Text("📦 Moving %d items", (int)selectedContentItems.size());
-                            } else {
-                                ImGui::Text("%s %s", GetAssetTypeIcon(meta.type), meta.objectName.c_str());
-                            }
-                            if (meta.type == AssetType::Mesh) {
-                                ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "[Drag to Viewport to spawn in Level]");
-                            } else if (meta.type == AssetType::Level) {
-                                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.95f, 1.0f), "[Drag to Viewport to open Level]");
-                            }
-                            ImGui::EndDragDropSource();
-                        }
-
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Object: %s\nVirtual: %s\nAssetID: %s\nDisk: %s\n(Ctrl/Shift to multi-select | Drag & Drop to any folder)",
-                                meta.objectName.c_str(), meta.virtualPath.c_str(), meta.id.ToString().c_str(), meta.sourcePath.c_str());
-                        }
-
-                        // Column 2: AssetID (clickable copy)
-                        ImGui::TableSetColumnIndex(2);
-                        std::string shortId = meta.id.ToString().substr(0, 8) + "...";
-                        if (ImGui::SmallButton(shortId.c_str())) {
-                            ImGui::SetClipboardText(meta.id.ToString().c_str());
-                            AddLog("LogAsset", "Copied AssetID to clipboard: " + meta.id.ToString(), 0);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("AssetID: %s\n(Click to copy to clipboard)", meta.id.ToString().c_str());
-                        }
-
-                        // Column 3: Dependencies & References count
-                        ImGui::TableSetColumnIndex(3);
-                        size_t depCount = meta.dependencies.size();
-                        size_t refCount = AssetRegistry::Get().GetReferences(meta.id).size();
-                        char depRefStr[32];
-                        snprintf(depRefStr, sizeof(depRefStr), "%d d / %d r##dr", (int)depCount, (int)refCount);
-                        if (ImGui::SmallButton(depRefStr)) {
-                            OpenReferenceViewer(meta.id);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%d Dependencies | %d References\n(Click to inspect in Reference Viewer)", (int)depCount, (int)refCount);
-                        }
-
-                        // Column 4: Status (Loaded / Available / Missing)
-                        ImGui::TableSetColumnIndex(4);
-                        if (meta.isMissing) {
-                            ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "Missing");
-                        } else if (AssetManager::Get().IsLoaded(meta.id)) {
-                            ImGui::TextColored(ImVec4(0.3f, 0.95f, 0.4f, 1.0f), "Loaded");
-                        } else {
-                            ImGui::TextDisabled("Ready");
-                        }
-
-                        // Context Menu on Asset Item
-                        if (ImGui::BeginPopupContextItem("AssetRowCtx")) {
-                            if (!selectedContentItems.count(itemKey)) {
-                                selectedContentItems.clear();
-                                selectedContentItems.insert(itemKey);
-                                selectedContentItem = meta.virtualPath;
-                                lastSelectedContentItem = itemKey;
-                            }
-
-                            if (meta.type == AssetType::VisualBehaviour) {
-                                if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
-                                    AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
-                                }
-                                ImGui::Separator();
-                            } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
-                                std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                std::string ext = fullScript.extension().string();
-                                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                                if (ext == ".ebehaviour") {
-                                    if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
-                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
-                                        AddLog("LogContent", "Opened Visual Behaviour: " + meta.objectName, 2);
-                                    }
-                                } else {
-                                    if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
-                                        LaunchVSCodeWorkspace(fullScript.string());
-                                        OpenScriptInCodeEditor(fullScript.string());
-                                    }
-                                }
-                                ImGui::Separator();
-                            }
-                            if (meta.type == AssetType::Material) {
-                                if (ImGui::MenuItem("🎨 Open in Material Editor")) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    OpenMaterialEditor(fullMat.string());
-                                }
-                                if (ImGui::MenuItem("🎯 Apply to Selected Actor")) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    MaterialAsset ma;
-                                    if (LoadMaterialFile(fullMat.string(), ma)) {
-                                        GameObject* sel = scene.GetSelected();
-                                        if (sel) {
-                                            ApplyMaterialToActorAndChildren(scene, sel, ma);
+                                if (item.subDir != "/Game") {
+                                    ImGui::Separator();
+                                    if (ImGui::MenuItem("❌ Delete Folder")) {
+                                        std::string diskSub = item.subDir;
+                                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                                        std::filesystem::path folderDisk = contentRootPath / diskSub;
+                                        std::error_code delEc;
+                                        std::filesystem::remove_all(folderDisk, delEc);
+                                        if (currentVirtualDir == item.subDir || currentVirtualDir.rfind(item.subDir + "/", 0) == 0) {
+                                            currentVirtualDir = AssetPath::GetDirectory(item.subDir);
                                         }
-                                    }
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Skybox) {
-                                if (ImGui::MenuItem("🌌 Open in Skybox Editor")) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    OpenSkyboxEditor(fullSky.string());
-                                }
-                                if (ImGui::MenuItem("🌐 Set as Active World Skybox")) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    SkyboxAsset sky;
-                                    if (LoadSkyboxFile(fullSky.string(), sky)) {
-                                        ApplySkyboxToScene(scene, sky);
-                                    }
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Mesh) {
-                                if (ImGui::MenuItem("🧊 Spawn Mesh in Level")) {
-                                    std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
-                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
-                                    scene.selectedId = newObj.id;
-                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + meta.objectName, 2);
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Level) {
-                                if (ImGui::MenuItem("🌐 Open Level in Viewport")) {
-                                    std::filesystem::path fullLevel = contentRootPath / meta.sourcePath;
-                                    OpenLevelFromPath(scene, fullLevel.string());
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
-                                OpenReferenceViewer(meta.id);
-                            }
-                            if (ImGui::MenuItem("📋 Copy AssetID")) {
-                                ImGui::SetClipboardText(meta.id.ToString().c_str());
-                                AddLog("LogAsset", "Copied AssetID to clipboard: " + meta.id.ToString(), 0);
-                            }
-                            if (ImGui::MenuItem("📋 Copy Virtual Path")) {
-                                ImGui::SetClipboardText(meta.virtualPath.c_str());
-                                AddLog("LogAsset", "Copied Virtual Path to clipboard: " + meta.virtualPath, 0);
-                            }
-                            ImGui::Separator();
-                            if (ImGui::MenuItem("❌ Delete Asset (Safe Check)")) {
-                                if (selectedContentItems.size() > 1 && selectedContentItems.count(itemKey)) {
-                                    std::vector<std::string> toDelete(selectedContentItems.begin(), selectedContentItems.end());
-                                    int delCount = 0;
-                                    for (const auto& delKey : toDelete) {
-                                        if (delKey.rfind("ASSET:", 0) == 0) {
-                                            const AssetMetadata* dMeta = AssetRegistry::Get().FindByPath(delKey.substr(6));
-                                            if (dMeta) {
-                                                auto refs = AssetRegistry::Get().GetReferences(dMeta->id);
-                                                if (refs.empty()) {
-                                                    std::filesystem::path fullDisk = contentRootPath / dMeta->sourcePath;
-                                                    std::filesystem::remove(fullDisk, ec);
-                                                    std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
-                                                    AssetRegistry::Get().UnregisterAsset(dMeta->id);
-                                                    delCount++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    selectedContentItems.clear();
-                                    selectedContentItem = "";
-                                    AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets", 1);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                } else {
-                                    auto refs = AssetRegistry::Get().GetReferences(meta.id);
-                                    if (!refs.empty()) {
-                                        AddLog("LogAsset", "Cannot delete '" + meta.objectName + "': referenced by " + std::to_string(refs.size()) + " assets! Inspect in Reference Viewer.", 3);
-                                        OpenReferenceViewer(meta.id);
-                                    } else {
-                                        std::filesystem::path fullDisk = contentRootPath / meta.sourcePath;
-                                        std::filesystem::remove(fullDisk, ec);
-                                        std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
-                                        AssetRegistry::Get().UnregisterAsset(meta.id);
-                                        selectedContentItems.erase(itemKey);
-                                        if (selectedContentItem == meta.virtualPath) selectedContentItem = "";
-                                        AddLog("LogAsset", "Deleted asset: " + meta.objectName, 1);
                                         TriggerBackgroundRegistrySync(contentRootPath);
                                     }
                                 }
+                                ImGui::EndPopup();
                             }
-                            ImGui::EndPopup();
+                        } else {
+                            if (ImGui::BeginPopupContextItem("AssetCardCtx")) {
+                                if (!selectedContentItems.count(item.itemKey)) {
+                                    selectedContentItems.clear();
+                                    selectedContentItems.insert(item.itemKey);
+                                    selectedContentItem = item.meta.virtualPath;
+                                    lastSelectedContentItem = item.itemKey;
+                                }
+
+                                if (item.meta.type == AssetType::VisualBehaviour) {
+                                    if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
+                                        std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                    }
+                                    ImGui::Separator();
+                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    std::string ext = fullScript.extension().string();
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                    if (ext == ".ebehaviour") {
+                                        if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
+                                            VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                            AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                        }
+                                    } else {
+                                        if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
+                                            LaunchVSCodeWorkspace(fullScript.string());
+                                            OpenScriptInCodeEditor(fullScript.string());
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Material) {
+                                    if (ImGui::MenuItem("🎨 Open in Material Editor")) {
+                                        std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                        OpenMaterialEditor(fullMat.string());
+                                    }
+                                    if (ImGui::MenuItem("🎯 Apply to Selected Actor")) {
+                                        std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                        MaterialAsset ma;
+                                        if (LoadMaterialFile(fullMat.string(), ma)) {
+                                            GameObject* sel = scene.GetSelected();
+                                            if (sel) {
+                                                ApplyMaterialToActorAndChildren(scene, sel, ma);
+                                            }
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Skybox) {
+                                    if (ImGui::MenuItem("🌌 Open in Skybox Editor")) {
+                                        std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                        OpenSkyboxEditor(fullSky.string());
+                                    }
+                                    if (ImGui::MenuItem("🌐 Set as Active World Skybox")) {
+                                        std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                        SkyboxAsset sky;
+                                        if (LoadSkyboxFile(fullSky.string(), sky)) {
+                                            ApplySkyboxToScene(scene, sky);
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Water) {
+                                    if (ImGui::MenuItem("🌊 Open in Water Editor")) {
+                                        std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
+                                        OpenWaterEditor(fullWater.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Mesh) {
+                                    if (ImGui::MenuItem("🧊 Spawn Mesh in Level")) {
+                                        std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
+                                        GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
+                                        scene.selectedId = newObj.id;
+                                        AddLog("LogMesh", "Spawned 3D Mesh in level: " + item.meta.objectName, 2);
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Level) {
+                                    if (ImGui::MenuItem("🌐 Open Level in Viewport")) {
+                                        std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
+                                        OpenLevelFromPath(scene, fullLevel.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+
+                                if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
+                                    OpenReferenceViewer(item.meta.id);
+                                }
+                                if (ImGui::MenuItem("📋 Copy AssetID")) {
+                                    ImGui::SetClipboardText(item.meta.id.ToString().c_str());
+                                    AddLog("LogAsset", "Copied AssetID to clipboard: " + item.meta.id.ToString(), 0);
+                                }
+                                if (ImGui::MenuItem("📋 Copy Virtual Path")) {
+                                    ImGui::SetClipboardText(item.meta.virtualPath.c_str());
+                                    AddLog("LogAsset", "Copied Virtual Path to clipboard: " + item.meta.virtualPath, 0);
+                                }
+                                ImGui::Separator();
+                                if (ImGui::MenuItem("❌ Delete Asset (Safe Check)")) {
+                                    if (selectedContentItems.size() > 1 && selectedContentItems.count(item.itemKey)) {
+                                        std::vector<std::string> toDelete(selectedContentItems.begin(), selectedContentItems.end());
+                                        int delCount = 0;
+                                        for (const auto& delKey : toDelete) {
+                                            if (delKey.rfind("ASSET:", 0) == 0) {
+                                                const AssetMetadata* dMeta = AssetRegistry::Get().FindByPath(delKey.substr(6));
+                                                if (dMeta) {
+                                                    auto refs = AssetRegistry::Get().GetReferences(dMeta->id);
+                                                    if (refs.empty()) {
+                                                        std::filesystem::path fullDisk = contentRootPath / dMeta->sourcePath;
+                                                        std::filesystem::remove(fullDisk, ec);
+                                                        std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+                                                        AssetRegistry::Get().UnregisterAsset(dMeta->id);
+                                                        delCount++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        selectedContentItems.clear();
+                                        selectedContentItem = "";
+                                        AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets", 1);
+                                        TriggerBackgroundRegistrySync(contentRootPath);
+                                    } else {
+                                        auto refs = AssetRegistry::Get().GetReferences(item.meta.id);
+                                        if (!refs.empty()) {
+                                            AddLog("LogAsset", "Cannot delete '" + item.meta.objectName + "': referenced by " + std::to_string(refs.size()) + " assets! Inspect in Reference Viewer.", 3);
+                                            OpenReferenceViewer(item.meta.id);
+                                        } else {
+                                            std::filesystem::path fullDisk = contentRootPath / item.meta.sourcePath;
+                                            std::filesystem::remove(fullDisk, ec);
+                                            std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+                                            AssetRegistry::Get().UnregisterAsset(item.meta.id);
+                                            selectedContentItems.erase(item.itemKey);
+                                            if (selectedContentItem == item.meta.virtualPath) selectedContentItem = "";
+                                            AddLog("LogAsset", "Deleted asset: " + item.meta.objectName, 1);
+                                            TriggerBackgroundRegistrySync(contentRootPath);
+                                        }
+                                    }
+                                }
+                                ImGui::EndPopup();
+                            }
                         }
 
+                        // Tooltip
+                        if (hovered) {
+                            if (item.isFolder) {
+                                ImGui::SetTooltip("📁 Folder: %s\n(Double-click to open | Drag & Drop items here)", item.subDir.c_str());
+                            } else {
+                                size_t depCount = item.meta.dependencies.size();
+                                size_t refCount = AssetRegistry::Get().GetReferences(item.meta.id).size();
+                                const char* statusStr = item.meta.isMissing ? "Missing" : (AssetManager::Get().IsLoaded(item.meta.id) ? "Loaded" : "Ready");
+                                ImGui::SetTooltip("Object: %s\nType: %s\nVirtual: %s\nAssetID: %s\nDisk: %s\nDeps: %d | Refs: %d | Status: %s\n(Double-click to open | Drag & Drop to viewport/folder)",
+                                    item.meta.objectName.c_str(), AssetTypeToString(item.meta.type), item.meta.virtualPath.c_str(), item.meta.id.ToString().c_str(), item.meta.sourcePath.c_str(), (int)depCount, (int)refCount, statusStr);
+                            }
+                        }
+
+                        // Drawing Card Visuals with drawList
+                        // 1. Outer Box & Selection Glow
+                        ImU32 bgCol = isSelected ? IM_COL32(20, 60, 115, 235)
+                                                 : (hovered ? IM_COL32(35, 43, 58, 240)
+                                                            : IM_COL32(23, 27, 36, 215));
+                        ImU32 borderCol = isSelected ? IM_COL32(40, 160, 255, 255)
+                                                     : (hovered ? IM_COL32(80, 145, 235, 200)
+                                                                : IM_COL32(46, 52, 68, 150));
+                        float borderThick = isSelected ? 2.0f : 1.0f;
+
+                        drawList->AddRectFilled(pMin, pMax, bgCol, 5.0f);
+                        drawList->AddRect(pMin, pMax, borderCol, 5.0f, 0, borderThick);
+
+                        // 2. Thumbnail Slot
+                        float thumbPad = 5.0f;
+                        float thumbH = cardW * 0.62f;
+                        ImVec2 tMin(pMin.x + thumbPad, pMin.y + thumbPad);
+                        ImVec2 tMax(pMax.x - thumbPad, pMin.y + thumbPad + thumbH);
+                        drawList->AddRectFilled(tMin, tMax, IM_COL32(13, 16, 22, 255), 4.0f);
+                        drawList->AddRect(tMin, tMax, IM_COL32(36, 42, 54, 180), 4.0f, 0, 1.0f);
+
+                        // Determine Icon and Accent Color
+                        const char* iconStr = "📄";
+                        ImU32 accentCol = IM_COL32(135, 150, 170, 255);
+                        const char* typeStr = "Unknown";
+
+                        if (item.isFolder) {
+                            iconStr = "📁";
+                            accentCol = IM_COL32(235, 185, 45, 255);
+                            typeStr = "Folder";
+                        } else {
+                            typeStr = AssetTypeToString(item.meta.type);
+                            iconStr = GetAssetTypeIcon(item.meta.type);
+                            switch (item.meta.type) {
+                                case AssetType::Material:        accentCol = IM_COL32(50, 210, 160, 255); break;
+                                case AssetType::Mesh:            accentCol = IM_COL32(40, 180, 245, 255); break;
+                                case AssetType::Skybox:          accentCol = IM_COL32(175, 95, 245, 255); break;
+                                case AssetType::Water:           accentCol = IM_COL32(0, 160, 255, 255); break;
+                                case AssetType::Texture:         accentCol = IM_COL32(225, 65, 85, 255); break;
+                                case AssetType::VisualBehaviour: accentCol = IM_COL32(245, 170, 40, 255); break;
+                                case AssetType::Behaviour:
+                                case AssetType::Script:          accentCol = IM_COL32(230, 145, 30, 255); break;
+                                case AssetType::Level:           accentCol = IM_COL32(50, 225, 125, 255); break;
+                                default:                         accentCol = IM_COL32(135, 150, 170, 255); break;
+                            }
+                        }
+
+                        // Center Icon
+                        ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
+                        ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
+                                       tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
+                        drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+
+                        // Unreal-Engine Signature Accent Stripe
+                        drawList->AddRectFilled(ImVec2(tMin.x + 1.0f, tMax.y - 3.5f),
+                                                ImVec2(tMax.x - 1.0f, tMax.y - 1.0f),
+                                                accentCol, 2.0f);
+
+                        // 3. Type Label Pill
+                        float typeY = tMax.y + 3.0f;
+                        std::string truncType = typeStr;
+                        float maxLabelW = cardW - 10.0f;
+                        if (ImGui::CalcTextSize(truncType.c_str()).x > maxLabelW) {
+                            while (!truncType.empty() && ImGui::CalcTextSize((truncType + "..").c_str()).x > maxLabelW) {
+                                truncType.pop_back();
+                            }
+                            truncType += "..";
+                        }
+                        drawList->AddText(ImVec2(pMin.x + 5.0f, typeY), IM_COL32(130, 148, 170, 220), truncType.c_str());
+
+                        // 4. Object Name Label
+                        float nameY = typeY + 13.0f;
+                        std::string truncName = item.displayName;
+                        if (ImGui::CalcTextSize(truncName.c_str()).x > maxLabelW) {
+                            while (!truncName.empty() && ImGui::CalcTextSize((truncName + "...").c_str()).x > maxLabelW) {
+                                truncName.pop_back();
+                            }
+                            truncName += "...";
+                        }
+                        ImU32 textCol = isSelected ? IM_COL32(255, 255, 255, 255)
+                                                   : (hovered ? IM_COL32(235, 242, 255, 255)
+                                                              : IM_COL32(210, 220, 235, 240));
+                        drawList->AddText(ImVec2(pMin.x + 5.0f, nameY), textCol, truncName.c_str());
+
                         ImGui::PopID();
-                        rowIndex++;
                     }
-
-                    if (rowIndex == 0) {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::TextDisabled("-");
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::TextDisabled("(No assets found in this virtual directory. Right-click here to create)");
-                    }
-
-                    ImGui::EndTable();
                 }
+
 
                 // Right click context menu on empty space of current directory
                 if (ImGui::BeginPopupContextWindow("CBBackgroundContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {

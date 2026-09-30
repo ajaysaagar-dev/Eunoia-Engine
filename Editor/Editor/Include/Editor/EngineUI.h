@@ -248,6 +248,7 @@ public:
     std::filesystem::path contentRootPath;
     std::filesystem::path currentContentPath;
     char contentBrowserSearch[64] = "";
+    float contentThumbnailSize = 96.0f;
     std::string selectedContentItem = "";
     std::unordered_set<std::string> selectedContentItems;
     std::string lastSelectedContentItem = "";
