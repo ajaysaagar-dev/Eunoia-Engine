@@ -209,7 +209,7 @@ public:
     using AntiAliasingInfo = Eunoia::AntiAliasingInfo;
 
     AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::TAA;
-    TextureQuality currentTextureQuality = TextureQuality::Ultra;
+    TextureQuality currentTextureQuality = TextureQuality::None;
     void ApplyTextureQuality(TextureQuality quality);
     void RenderQualitySettings();
     static const std::vector<AntiAliasingInfo>& GetAntiAliasingMethods();

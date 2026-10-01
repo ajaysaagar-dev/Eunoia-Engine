@@ -617,7 +617,7 @@ void EngineUI::LoadEditorConfig() {
                 }
             } else if (key == "TextureQuality" || key == "textureQuality") {
                 int tq = (int)fVal;
-                if (tq >= 0 && tq <= 4) {
+                if (tq >= 0 && tq <= 5) {
                     currentTextureQuality = (TextureQuality)tq;
                     TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
                 }
@@ -3027,6 +3027,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         const char* res;
                     };
                     static const TQEntry tqEntries[] = {
+                        { TextureQuality::None,   "None",   "Native Quality" },
                         { TextureQuality::Low,    "Low",    "256 x 256" },
                         { TextureQuality::Medium, "Medium", "512 x 512" },
                         { TextureQuality::High,   "High",   "1024 x 1024" },
@@ -3074,6 +3075,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             const char* res;
                         };
                         static const TQEntry tqEntries[] = {
+                            { TextureQuality::None,   "None",   "Native Quality" },
                             { TextureQuality::Low,    "Low",    "256 x 256" },
                             { TextureQuality::Medium, "Medium", "512 x 512" },
                             { TextureQuality::High,   "High",   "1024 x 1024" },
@@ -9222,6 +9224,7 @@ void EngineUI::RenderQualitySettings() {
                 const char* res;
             };
             static const TQEntry tqEntries[] = {
+                { TextureQuality::None,   "None",   "Native Quality" },
                 { TextureQuality::Low,    "Low",    "256 x 256" },
                 { TextureQuality::Medium, "Medium", "512 x 512" },
                 { TextureQuality::High,   "High",   "1024 x 1024" },
@@ -9239,7 +9242,11 @@ void EngineUI::RenderQualitySettings() {
                     AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
                 }
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Max Texture Resolution: %s\nNative resolutions <= %s remain unscaled (full native detail).\nResolutions > %s are clamped via D3D12 Sampler Feedback / MinLODClamp.", entry.res, entry.res, entry.res);
+                    if (entry.quality == TextureQuality::None) {
+                        ImGui::SetTooltip("Native Realtime Quality (Unconstrained)\nAll textures render at their full native resolution with no LOD clamp.");
+                    } else {
+                        ImGui::SetTooltip("Max Texture Resolution: %s\nNative resolutions <= %s remain unscaled (full native detail).\nResolutions > %s are clamped via D3D12 Sampler Feedback / MinLODClamp.", entry.res, entry.res, entry.res);
+                    }
                 }
             }
         }

@@ -52,41 +52,48 @@ struct CachedTexture {
 };
 
 enum class TextureQuality : int {
-    Low = 0,     // 256
-    Medium = 1,  // 512
-    High = 2,    // 1024
-    Ultra = 3,   // 2048
-    Max = 4      // 4096
+    None = 0,    // Native (unconstrained realtime resolution)
+    Low = 1,     // 256
+    Medium = 2,  // 512
+    High = 3,    // 1024
+    Ultra = 4,   // 2048
+    Max = 5      // 4096
 };
 
 inline int GetMaxResolutionForQuality(TextureQuality quality) {
     switch (quality) {
+        case TextureQuality::None:   return 0; // 0 = unconstrained native quality
         case TextureQuality::Low:    return 256;
         case TextureQuality::Medium: return 512;
         case TextureQuality::High:   return 1024;
         case TextureQuality::Ultra:  return 2048;
         case TextureQuality::Max:    return 4096;
-        default: return 2048;
+        default: return 0;
     }
 }
 
 inline const char* GetTextureQualityName(TextureQuality quality) {
     switch (quality) {
+        case TextureQuality::None:   return "None (Native)";
         case TextureQuality::Low:    return "Low (256)";
         case TextureQuality::Medium: return "Medium (512)";
         case TextureQuality::High:   return "High (1024)";
         case TextureQuality::Ultra:  return "Ultra (2048)";
         case TextureQuality::Max:    return "Max (4096)";
-        default: return "Ultra (2048)";
+        default: return "None (Native)";
     }
 }
 
 // Calculates D3D12 ResourceMinLODClamp for Shader Resource Views.
+// If maxAllowedResolution <= 0 (TextureQuality::None), returns 0.0f (uses full native realtime quality).
 // If texture's native resolution is <= maxAllowedResolution (e.g. 2K texture when setting is 4K), returns 0.0f (uses full native resolution).
 // If texture's native resolution is > maxAllowedResolution (e.g. 4K texture when setting is 2K), clamps to the appropriate mip level.
 inline float CalculateTextureMinLOD(int nativeWidth, int nativeHeight, int maxAllowedResolution) {
+    if (maxAllowedResolution <= 0) {
+        return 0.0f; // None: unconstrained full realtime quality
+    }
     int maxDim = std::max(nativeWidth, nativeHeight);
-    if (maxDim <= maxAllowedResolution || maxDim <= 0 || maxAllowedResolution <= 0) {
+    if (maxDim <= maxAllowedResolution || maxDim <= 0) {
         return 0.0f;
     }
     float ratio = (float)maxDim / (float)maxAllowedResolution;
@@ -101,14 +108,14 @@ private:
     std::unordered_map<std::string, CachedTexture> m_cache;
     std::unordered_map<std::string, std::string> m_resolvedPathCache;
     std::filesystem::path m_projectRoot;
-    TextureQuality m_textureQuality = TextureQuality::Ultra;
-    int m_maxTextureResolution = 2048;
+    TextureQuality m_textureQuality = TextureQuality::None;
+    int m_maxTextureResolution = 0;
     std::unordered_map<std::string, TextureQualityCallback> m_qualityCallbacks;
 
     TextureManager() {
         m_projectRoot = "C:\\Projects\\Eunoia-Engine\\Projects\\test";
-        m_textureQuality = TextureQuality::Ultra;
-        m_maxTextureResolution = 2048;
+        m_textureQuality = TextureQuality::None;
+        m_maxTextureResolution = 0;
     }
 
 public:
