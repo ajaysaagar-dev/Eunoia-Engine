@@ -479,6 +479,11 @@ public:
     void OpenWaterEditor(const std::string& path);
     void ApplyWaterToGameObject(Scene& scene, GameObject* obj, const WaterAsset& wa);
 
+    // UI Editor & Asset File I/O
+    bool showNewUIPopup = false;
+    char newUINameBuf[64] = "UI_NewInterface";
+    void OpenUIEditor(const std::string& path);
+
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;
@@ -552,6 +557,16 @@ public:
     uint64_t cameraIconGpuHandle = 0;
     uint64_t engineIconGpuHandle = 0;
 
+    // Content Browser Icons (from Resources/Icons/Content Browser/*.png)
+    uint64_t cbFolderIconGpuHandle = 0;
+    uint64_t cb3dIconGpuHandle = 0;
+    uint64_t cbMaterialIconGpuHandle = 0;
+    uint64_t cbSkyboxIconGpuHandle = 0;
+    uint64_t cbTextureIconGpuHandle = 0;
+    uint64_t cbLevelIconGpuHandle = 0;
+    uint64_t cbBehaviourIconGpuHandle = 0;
+    uint64_t cbVisualBehaviourIconGpuHandle = 0;
+
     uint64_t GetLightIconGpuHandle(LightType type) const {
         switch (type) {
             case LightType::Directional: return directionalLightIconGpuHandle ? directionalLightIconGpuHandle : lightIconGpuHandle;
@@ -560,6 +575,21 @@ public:
             case LightType::Area:        return areaLightIconGpuHandle ? areaLightIconGpuHandle : lightIconGpuHandle;
             case LightType::Sky:         return skyLightIconGpuHandle ? skyLightIconGpuHandle : lightIconGpuHandle;
             default:                     return lightIconGpuHandle;
+        }
+    }
+
+    uint64_t GetContentBrowserAssetIcon(AssetType type) const {
+        switch (type) {
+            case AssetType::Mesh:            return cb3dIconGpuHandle;
+            case AssetType::Material:        return cbMaterialIconGpuHandle;
+            case AssetType::Skybox:          return cbSkyboxIconGpuHandle;
+            case AssetType::Texture:         return cbTextureIconGpuHandle;
+            case AssetType::Level:           return cbLevelIconGpuHandle;
+            case AssetType::Behaviour:
+            case AssetType::Script:          return cbBehaviourIconGpuHandle;
+            case AssetType::VisualBehaviour: return cbVisualBehaviourIconGpuHandle ? cbVisualBehaviourIconGpuHandle : cbBehaviourIconGpuHandle;
+            case AssetType::UserInterface:   return cbMaterialIconGpuHandle ? cbMaterialIconGpuHandle : cbBehaviourIconGpuHandle;
+            default:                         return 0;
         }
     }
 

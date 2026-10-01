@@ -2,6 +2,7 @@
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
+#include <EngineCore/EngineLogger.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -11,8 +12,12 @@
 #include <iostream>
 #include <cmath>
 #include <filesystem>
-
 #include <functional>
+#include <thread>
+#include <mutex>
+#include <deque>
+#include <atomic>
+#include <chrono>
 
 // ============================================================================
 // SceneSerializer — JSON-based Scene Save/Load System
@@ -369,7 +374,8 @@ public:
                         file << "              \"value\": [" << v.x << ", " << v.y << ", " << v.z << "]\n";
                     } else if (p.type == BehaviourPropertyType::ObjectRef) {
                         file << "              \"targetId\": " << p.targetId << ",\n";
-                        file << "              \"refType\": " << (int)p.refType << "\n";
+                        file << "              \"refType\": " << (int)p.refType << ",\n";
+                        file << "              \"assetPath\": " << QuoteStr(p.assetPath) << "\n";
                     } else {
                         file << "              \"value\": 0\n";
                     }
@@ -1218,6 +1224,8 @@ public:
                                         } else if (prop.type == BehaviourPropertyType::ObjectRef) {
                                             size_t tidPos = pItem.find("\"targetId\"");
                                             if (tidPos != std::string::npos) prop.targetId = ParseIntAt(pItem, tidPos, -1);
+                                            size_t apPos = pItem.find("\"assetPath\"");
+                                            if (apPos != std::string::npos) prop.assetPath = ParseStringAt(pItem, apPos);
                                         }
                                     }
                                 }
@@ -1400,24 +1408,45 @@ public:
     };
 
     struct ProgressiveSceneLoader {
-        bool active = false;
-        ProgressiveLoadStage stage = ProgressiveLoadStage::Idle;
+        std::atomic<bool> active{false};
+        std::atomic<ProgressiveLoadStage> stage{ProgressiveLoadStage::Idle};
         std::string filePath;
         std::string binPath;
         std::string content;
-        std::unordered_map<int, PrimitiveMesh> fastMeshes;
-        std::vector<std::string> actorBlocks;
-        size_t currentActorIndex = 0;
-        size_t totalActors = 0;
-        float progress = 0.0f;
+        float completionTimer = 0.0f;
+        std::atomic<bool> completed{false};
+        std::atomic<bool> hasError{false};
+        std::atomic<bool> cancelRequested{false};
+        std::atomic<uint64_t> currentSessionId{0};
+        std::atomic<float> progress{0.0f};
+
+        std::mutex stateMutex;
         std::string stageName;
         std::string currentDetail;
         std::string subDetail;
-        float completionTimer = 0.0f;
-        bool completed = false;
-        bool hasError = false;
+        std::deque<GameObject> stagedActors;
+        std::atomic<bool> bgParseDone{false};
+        std::atomic<bool> envParsed{false};
+        std::chrono::high_resolution_clock::time_point startTime;
+
+        std::thread workerThread;
+
+        ~ProgressiveSceneLoader() {
+            Cancel();
+        }
+
+        void Cancel() {
+            cancelRequested = true;
+            if (workerThread.joinable()) {
+                workerThread.join();
+            }
+        }
 
         void Start(Scene& scene, const std::string& levelPath, const std::string& binaryPath = "") {
+            Cancel();
+            cancelRequested = false;
+            uint64_t session = ++currentSessionId;
+
             filePath = levelPath;
             binPath = binaryPath;
             if (binPath.empty()) {
@@ -1428,124 +1457,165 @@ public:
                 }
             }
 
-            std::ifstream file(filePath);
-            if (!file.is_open()) {
-                active = true;
-                completed = true;
-                hasError = true;
-                stage = ProgressiveLoadStage::Completed;
-                stageName = "Error";
-                currentDetail = "Failed to open level file: " + filePath;
-                subDetail = "";
-                progress = 1.0f;
-                completionTimer = 2.5f;
-                return;
-            }
-
-            std::stringstream ss;
-            ss << file.rdbuf();
-            file.close();
-            content = ss.str();
-
             // Clear the scene first
             scene.objects.clear();
             scene.pointLights.clear();
             scene.selectedId = -1;
 
-            fastMeshes = SceneSerializer::LoadFastMeshMap(binPath);
-            actorBlocks = SceneSerializer::ExtractActorBlocks(content);
-            currentActorIndex = 0;
-            totalActors = actorBlocks.size();
-
             active = true;
             completed = false;
             hasError = false;
+            bgParseDone = false;
+            envParsed = false;
             completionTimer = 0.8f;
             stage = ProgressiveLoadStage::Skybox;
-            stageName = "Skybox";
-            currentDetail = "Loading skybox and atmosphere...";
-            subDetail = std::filesystem::path(filePath).filename().string();
-            progress = 0.12f;
-        }
+            progress = 0.05f;
+            startTime = std::chrono::high_resolution_clock::now();
 
-        bool Step(Scene& scene, size_t actorsPerStep = 1) {
-            if (!active || completed) return false;
+            {
+                std::lock_guard<std::mutex> lock(stateMutex);
+                stageName = "Initializing";
+                currentDetail = "Reading level file...";
+                subDetail = std::filesystem::path(filePath).filename().string();
+                stagedActors.clear();
+            }
 
-            switch (stage) {
-                case ProgressiveLoadStage::Skybox: {
-                    SceneSerializer::ParseSkyboxAndEnvironment(content, scene);
-                    stage = ProgressiveLoadStage::Lights;
-                    stageName = "Lights";
-                    currentDetail = "Configuring lighting & shadows...";
-                    subDetail = "Sun & point light sources";
-                    progress = 0.25f;
-                    return true;
-                }
-                case ProgressiveLoadStage::Lights: {
-                    SceneSerializer::ParseLights(content, scene);
-                    stage = ProgressiveLoadStage::Meshes;
-                    stageName = "Meshes";
-                    if (totalActors > 0) {
-                        currentDetail = "Loading meshes (0/" + std::to_string(totalActors) + ")...";
-                        subDetail = "Preparing actor geometry";
-                    } else {
-                        currentDetail = "No meshes in level";
+            EngineLogger::Get().LogAction("LEVEL_LOAD_START", filePath, "Asynchronous background level loading initiated");
+
+            workerThread = std::thread([this, session, levelPath, binaryPathCopy = binPath]() {
+                std::ifstream file(levelPath);
+                if (!file.is_open()) {
+                    if (session != currentSessionId.load() || cancelRequested.load()) return;
+                    hasError = true;
+                    completed = true;
+                    stage = ProgressiveLoadStage::Completed;
+                    {
+                        std::lock_guard<std::mutex> lock(stateMutex);
+                        stageName = "Error";
+                        currentDetail = "Failed to open level file: " + levelPath;
                         subDetail = "";
                     }
-                    progress = 0.35f;
-                    return true;
-                }
-                case ProgressiveLoadStage::Meshes: {
-                    if (currentActorIndex < totalActors) {
-                        size_t count = 0;
-                        while (currentActorIndex < totalActors && count < actorsPerStep) {
-                            GameObject obj = SceneSerializer::ParseSingleActor(actorBlocks[currentActorIndex], fastMeshes);
-                            currentDetail = "Loading mesh: " + obj.name + " (" + std::to_string(currentActorIndex + 1) + "/" + std::to_string(totalActors) + ")";
-                            subDetail = obj.isImportedMesh ? ("Model: " + std::filesystem::path(obj.meshFilePath).filename().string()) : (std::string("Type: ") + GetPrimitiveTypeName(obj.type));
-                            scene.objects.push_back(std::move(obj));
-                            currentActorIndex++;
-                            count++;
-                        }
-                        float meshRatio = (float)currentActorIndex / (float)(totalActors > 0 ? totalActors : 1);
-                        progress = 0.35f + meshRatio * 0.52f; // 35% -> 87%
-                        return true;
-                    } else {
-                        stage = ProgressiveLoadStage::PostProcessing;
-                        stageName = "Post-Processing";
-                        currentDetail = "Applying tonemapping & post-processing...";
-                        subDetail = "Color grading and camera setup";
-                        progress = 0.90f;
-                        return true;
-                    }
-                }
-                case ProgressiveLoadStage::PostProcessing: {
-                    SceneSerializer::ParsePostProcessing(content, scene);
-                    SceneSerializer::ParseMetadata(content, scene);
-                    stage = ProgressiveLoadStage::Finalize;
-                    stageName = "Finalize";
-                    currentDetail = "Finalizing hierarchy and references...";
-                    subDetail = "";
-                    progress = 0.97f;
-                    return true;
-                }
-                case ProgressiveLoadStage::Finalize: {
-                    SceneSerializer::FinalizeActors(scene);
-                    if (!scene.objects.empty()) {
-                        scene.selectedId = scene.objects.front().id;
-                    }
-                    stage = ProgressiveLoadStage::Completed;
-                    stageName = "Ready";
-                    currentDetail = "Level loaded successfully (" + std::to_string(scene.objects.size()) + " actors)";
-                    subDetail = std::filesystem::path(filePath).filename().string();
                     progress = 1.0f;
-                    completed = true;
-                    completionTimer = 0.8f;
-                    return false;
+                    completionTimer = 2.5f;
+                    return;
                 }
-                case ProgressiveLoadStage::Completed:
-                default:
-                    return false;
+
+                std::stringstream ss;
+                ss << file.rdbuf();
+                file.close();
+                std::string fileContent = ss.str();
+
+                if (session != currentSessionId.load() || cancelRequested.load()) return;
+
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    content = fileContent;
+                }
+
+                auto fastMeshes = SceneSerializer::LoadFastMeshMap(binaryPathCopy);
+                if (session != currentSessionId.load() || cancelRequested.load()) return;
+
+                auto blocks = SceneSerializer::ExtractActorBlocks(fileContent);
+                if (session != currentSessionId.load() || cancelRequested.load()) return;
+
+                size_t total = blocks.size();
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    stageName = "Meshes";
+                    currentDetail = "Loading " + std::to_string(total) + " actors...";
+                    progress = 0.25f;
+                }
+
+                for (size_t i = 0; i < blocks.size(); ++i) {
+                    if (session != currentSessionId.load() || cancelRequested.load()) return;
+
+                    GameObject obj = SceneSerializer::ParseSingleActor(blocks[i], fastMeshes);
+
+                    {
+                        std::lock_guard<std::mutex> lock(stateMutex);
+                        currentDetail = "Loading mesh: " + obj.name + " (" + std::to_string(i + 1) + "/" + std::to_string(total) + ")";
+                        subDetail = obj.isImportedMesh ? ("Model: " + std::filesystem::path(obj.meshFilePath).filename().string()) : (std::string("Type: ") + GetPrimitiveTypeName(obj.type));
+                        progress = 0.25f + 0.65f * ((float)(i + 1) / (float)(total > 0 ? total : 1));
+                        stagedActors.push_back(std::move(obj));
+                    }
+                }
+
+                if (session != currentSessionId.load() || cancelRequested.load()) return;
+                bgParseDone = true;
+            });
+        }
+
+        bool Step(Scene& scene, size_t actorsPerStep = 6) {
+            if (!active.load() || completed.load()) return false;
+
+            // Apply environment and skybox once content is ready
+            if (!envParsed.load()) {
+                std::string contentCopy;
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    contentCopy = content;
+                }
+                if (!contentCopy.empty()) {
+                    SceneSerializer::ParseSkyboxAndEnvironment(contentCopy, scene);
+                    SceneSerializer::ParseLights(contentCopy, scene);
+                    SceneSerializer::ParsePostProcessing(contentCopy, scene);
+                    SceneSerializer::ParseMetadata(contentCopy, scene);
+                    envParsed = true;
+                    stage = ProgressiveLoadStage::Meshes;
+                }
             }
+
+            // Transfer batch of parsed actors from background queue to main scene
+            std::vector<GameObject> toAdd;
+            {
+                std::lock_guard<std::mutex> lock(stateMutex);
+                size_t count = 0;
+                while (!stagedActors.empty() && count < actorsPerStep) {
+                    toAdd.push_back(std::move(stagedActors.front()));
+                    stagedActors.pop_front();
+                    count++;
+                }
+            }
+
+            for (auto& obj : toAdd) {
+                scene.objects.push_back(std::move(obj));
+            }
+
+            bool isAllTransferred = false;
+            {
+                std::lock_guard<std::mutex> lock(stateMutex);
+                isAllTransferred = bgParseDone.load() && stagedActors.empty();
+            }
+
+            if (isAllTransferred && !completed.load()) {
+                if (workerThread.joinable()) {
+                    workerThread.join();
+                }
+
+                SceneSerializer::FinalizeActors(scene);
+                if (!scene.objects.empty()) {
+                    scene.selectedId = scene.objects.front().id;
+                }
+
+                auto endTime = std::chrono::high_resolution_clock::now();
+                float elapsedSec = std::chrono::duration<float>(endTime - startTime).count();
+
+                stage = ProgressiveLoadStage::Completed;
+                {
+                    std::lock_guard<std::mutex> lock(stateMutex);
+                    stageName = "Ready";
+                    currentDetail = "Level loaded (" + std::to_string(scene.objects.size()) + " actors in " + std::to_string(elapsedSec) + "s)";
+                    subDetail = std::filesystem::path(filePath).filename().string();
+                }
+                progress = 1.0f;
+                completed = true;
+                completionTimer = 0.8f;
+
+                EngineLogger::Get().LogAction("LEVEL_LOAD_COMPLETE", filePath, "Loaded " + std::to_string(scene.objects.size()) + " actors in " + std::to_string(elapsedSec) + "s");
+                return false;
+            }
+
+            return true;
         }
     };
 

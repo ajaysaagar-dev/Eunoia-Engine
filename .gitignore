@@ -342,9 +342,13 @@ ASALocalRun/
 
 # MFractors (Xamarin productivity tool) working folder 
 .mfractor/
-tools/
+tools/*
+!tools/EunoiaBuildTool/
+tools/EunoiaBuildTool/bin/
+tools/EunoiaBuildTool/obj/
 deps/
 *.exe
 imgui.ini
 run_stdout.txt
 run_stderr.txt
+

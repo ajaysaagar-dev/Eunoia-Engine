@@ -35,6 +35,8 @@
 #include <LightsBaking/LightBakeManager.h>
 #include <VisualBehaviuors/BehaviourEditorWindow.h>
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
+#include <UISystem/UIEditorWindow.h>
+#include <UISystem/UISystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -2352,7 +2354,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // Step progressive scene loader if active
     if (m_progressiveLoader.active) {
         if (!m_progressiveLoader.completed) {
-            m_progressiveLoader.Step(scene, 1);
+            m_progressiveLoader.Step(scene, 6);
             if (m_progressiveLoader.completed) {
                 Eunoia::LightBakeManager::Get().LoadAllBakesForScene(scene, activeProjectRoot);
                 AddLog("LogWorld", "Level loaded: " + m_progressiveLoader.filePath + " (" + std::to_string(scene.objects.size()) + " actors)", 2);
@@ -2524,6 +2526,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
 
+        // Render Active Runtime UIs added via UISystem.Add(UI)
+        EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(mainVp->WorkPos.x, mainVp->WorkPos.y), glm::vec2(mainVp->WorkSize.x, mainVp->WorkSize.y));
+
         // Game View top-left: Render on-screen Print messages (Print(value, time))
         RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f);
 
@@ -2624,6 +2629,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     // 10b. Visual-Behaviuors Node-Graph Editor Windows (.ebehaviour assets)
     VisualBehaviuors::BehaviourEditorManager::Get().RenderAll();
+
+    // 10c. UI-System Visual Canvas Designer Windows (.eui assets)
+    EunoiaUI::UIEditorManager::Get().RenderAll();
 
     // 11. 3D Model Real-Time Detection & Import View ("One by One" wizard)
     if (showModelImportModal) {
@@ -6509,6 +6517,11 @@ void EngineUI::OpenSkyboxEditor(const std::string& path) {
     }
 }
 
+void EngineUI::OpenUIEditor(const std::string& path) {
+    EunoiaUI::UIEditorManager::Get().Open(path);
+    AddLog("LogContent", "Opened UI Editor for: " + path, 0);
+}
+
 void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
     scene.enableSkybox = skybox.enableSkybox;
     scene.skyboxAssetPath = skybox.filePath;
@@ -7510,6 +7523,83 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
+                // User Interface asset creation modal
+                if (showNewUIPopup) {
+                    ImGui::OpenPopup("Create User Interface##UIModal");
+                    showNewUIPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create User Interface##UIModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter User Interface Name (.eui):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##UINameInput", newUINameBuf, sizeof(newUINameBuf));
+
+                    std::string inputName = newUINameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "✓ Will create: %s.eui in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path uiDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(uiDir, bec);
+
+                        std::filesystem::path euiPath = uiDir / (inputName + ".eui");
+                        EunoiaUI::UISystemManager::Get().CreateNewUI(inputName, euiPath.string());
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path metaPath = uiDir / (inputName + ".eui.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: User Interface\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        // Register in AssetRegistry immediately
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::UserInterface;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(euiPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".eui") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenUIEditor(euiPath.string());
+                        AddLog("LogContent", "Created User Interface: " + inputName + ".eui in " + targetDir, 2);
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Two-Pane Content Browser Layout (Left: Virtual Folders, Right: Assets)
                 float leftFolderPaneW = 200.0f;
                 ImGui::BeginChild("CBFolderTreePane", ImVec2(leftFolderPaneW, 0), true);
@@ -7619,6 +7709,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             popupTargetVirtualDir = vDir;
                             showNewVisualBehaviourPopup = true;
                             snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                        }
+                        if (ImGui::MenuItem("🎨 New User Interface")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewUIPopup = true;
+                            snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("📥 Import Model...")) {
@@ -7874,6 +7969,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (item.meta.type == AssetType::Water) {
                                     std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
                                     OpenWaterEditor(fullWater.string());
+                                } else if (item.meta.type == AssetType::UserInterface) {
+                                    std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
+                                    OpenUIEditor(fullUI.string());
+                                    AddLog("LogContent", "Opened User Interface: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::Mesh) {
                                     std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
                                     GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
@@ -7998,6 +8097,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewVisualBehaviourPopup = true;
                                     snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                                 }
+                                if (ImGui::MenuItem("🎨 New User Interface")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewUIPopup = true;
+                                    snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("📥 Import Model...")) {
                                     popupTargetVirtualDir = item.subDir;
@@ -8095,6 +8199,13 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("🌊 Open in Water Editor")) {
                                         std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
                                         OpenWaterEditor(fullWater.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::UserInterface) {
+                                    if (ImGui::MenuItem("🎨 Open in UI Editor")) {
+                                        std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
+                                        OpenUIEditor(fullUI.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -8205,17 +8316,20 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         drawList->AddRectFilled(tMin, tMax, IM_COL32(13, 16, 22, 255), 4.0f);
                         drawList->AddRect(tMin, tMax, IM_COL32(36, 42, 54, 180), 4.0f, 0, 1.0f);
 
-                        // Determine Icon and Accent Color
+                        // Determine Icon, GPU Texture Handle, and Accent Color
+                        uint64_t iconGpuHandle = 0;
                         const char* iconStr = "📄";
                         ImU32 accentCol = IM_COL32(135, 150, 170, 255);
                         const char* typeStr = "Unknown";
 
                         if (item.isFolder) {
+                            iconGpuHandle = cbFolderIconGpuHandle;
                             iconStr = "📁";
                             accentCol = IM_COL32(235, 185, 45, 255);
                             typeStr = "Folder";
                         } else {
                             typeStr = AssetTypeToString(item.meta.type);
+                            iconGpuHandle = GetContentBrowserAssetIcon(item.meta.type);
                             iconStr = GetAssetTypeIcon(item.meta.type);
                             switch (item.meta.type) {
                                 case AssetType::Material:        accentCol = IM_COL32(50, 210, 160, 255); break;
@@ -8231,11 +8345,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             }
                         }
 
-                        // Center Icon
-                        ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
-                        ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
-                                       tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
-                        drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+                        // Center Icon (GPU texture or fallback glyph)
+                        if (iconGpuHandle != 0) {
+                            float maxIconDim = std::min(tMax.x - tMin.x - 10.0f, tMax.y - tMin.y - 10.0f);
+                            float iconDim = std::clamp(maxIconDim, 24.0f, 44.0f);
+                            float iconCenterX = tMin.x + (tMax.x - tMin.x) * 0.5f;
+                            float iconCenterY = tMin.y + (tMax.y - tMin.y) * 0.5f - 1.0f;
+                            ImVec2 imgMin(iconCenterX - iconDim * 0.5f, iconCenterY - iconDim * 0.5f);
+                            ImVec2 imgMax(iconCenterX + iconDim * 0.5f, iconCenterY + iconDim * 0.5f);
+                            drawList->AddImage((ImTextureID)iconGpuHandle, imgMin, imgMax);
+                        } else {
+                            ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
+                            ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
+                                           tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
+                            drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+                        }
 
                         // Unreal-Engine Signature Accent Stripe
                         drawList->AddRectFilled(ImVec2(tMin.x + 1.0f, tMax.y - 3.5f),
@@ -8290,7 +8414,17 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewSkyboxPopup = true;
                         snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                     }
+                    if (ImGui::MenuItem("🎨 New User Interface")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewUIPopup = true;
+                        snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                    }
                     if (ImGui::BeginMenu("➕ Create")) {
+                        if (ImGui::MenuItem("🎨 User Interface (.eui)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewUIPopup = true;
+                            snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                        }
                         if (ImGui::MenuItem("🎮 Visual Behaviour (.ebehaviour)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewVisualBehaviourPopup = true;
@@ -9216,12 +9350,22 @@ void EngineUI::RenderViewportLoadingOverlay() {
     std::string filename = std::filesystem::path(m_progressiveLoader.filePath).filename().string();
     std::string headerTitle = "LOADING LEVEL: " + filename;
 
+    std::string stageName;
+    std::string currentDetail;
+    std::string subDetail;
+    {
+        std::lock_guard<std::mutex> lock(m_progressiveLoader.stateMutex);
+        stageName = m_progressiveLoader.stageName;
+        currentDetail = m_progressiveLoader.currentDetail;
+        subDetail = m_progressiveLoader.subDetail;
+    }
+
     drawList->AddText(ImVec2(cardMin.x + 20.0f, cardMin.y + 16.0f),
                       IM_COL32(245, 248, 255, (int)(255 * alpha)),
                       headerTitle.c_str());
 
     // Stage Badge (Pill)
-    std::string badgeStr = "[" + m_progressiveLoader.stageName + "]";
+    std::string badgeStr = "[" + stageName + "]";
     ImVec2 badgeSize = ImGui::CalcTextSize(badgeStr.c_str());
     float badgePadding = 8.0f;
     ImVec2 badgeMax(cardMax.x - 20.0f, cardMin.y + 16.0f + badgeSize.y + 4.0f);
@@ -9247,7 +9391,7 @@ void EngineUI::RenderViewportLoadingOverlay() {
                             IM_COL32(20, 25, 36, (int)(255 * alpha)), 6.0f);
 
     // Progress bar fill
-    float clampedProgress = std::clamp(m_progressiveLoader.progress, 0.0f, 1.0f);
+    float clampedProgress = std::clamp(m_progressiveLoader.progress.load(), 0.0f, 1.0f);
     float fillW = barW * clampedProgress;
     if (fillW > 2.0f) {
         ImU32 fillColLeft = m_progressiveLoader.completed
@@ -9281,13 +9425,13 @@ void EngineUI::RenderViewportLoadingOverlay() {
     // Detail text
     drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 76.0f),
                       IM_COL32(215, 230, 248, (int)(255 * alpha)),
-                      m_progressiveLoader.currentDetail.c_str());
+                      currentDetail.c_str());
 
     // Sub-detail text
-    if (!m_progressiveLoader.subDetail.empty()) {
+    if (!subDetail.empty()) {
         drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 98.0f),
                           IM_COL32(130, 145, 165, (int)(230 * alpha)),
-                          m_progressiveLoader.subDetail.c_str());
+                          subDetail.c_str());
     }
 }
 
@@ -9715,6 +9859,7 @@ void EngineUI::ExitPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
     if (!scene.isPlayMode) return;
 
     scene.StopPlayMode();
+    EunoiaUI::UISystemManager::Get().RemoveAll();
     isPlayModeActive = false;
     CursorState.UnLocked();
     InputSystem::Get().SetCursorLocked(false);
@@ -11161,6 +11306,93 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                         break;
                     }
                     case BehaviourPropertyType::ObjectRef: {
+                        if (prop.refType == ObjectRefType::UserInterface) {
+                            ImGui::Text("%s", prop.displayName.c_str());
+
+                            std::string preview = "None (Select User Interface)";
+                            if (!prop.assetPath.empty()) {
+                                std::filesystem::path p(prop.assetPath);
+                                preview = p.stem().string();
+                            }
+
+                            if (prop.isMissing) {
+                                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
+                            }
+
+                            if (ImGui::BeginCombo("##UIAssetCombo", preview.c_str())) {
+                                if (ImGui::Selectable("(None)", prop.assetPath.empty())) {
+                                    UndoManager::Get().RecordSnapshot(scene, "Clear UI Reference: " + prop.name);
+                                    prop.assetPath = "";
+                                    b->ResolveReferences(scene);
+                                }
+                                ImGui::Separator();
+
+                                // Scan project content directory for all .eui files
+                                if (!contentRootPath.empty() && std::filesystem::exists(contentRootPath)) {
+                                    std::error_code rec;
+                                    for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, rec);
+                                         it != std::filesystem::recursive_directory_iterator(); it.increment(rec)) {
+                                        if (rec) break;
+                                        if (it->is_regular_file() && it->path().extension() == ".eui") {
+                                            std::string uiPath = it->path().string();
+                                            std::string uiStem = it->path().stem().string();
+                                            bool isSel = (prop.assetPath == uiPath);
+                                            if (ImGui::Selectable(uiStem.c_str(), isSel)) {
+                                                UndoManager::Get().RecordSnapshot(scene, "Assign UI: " + prop.name);
+                                                prop.assetPath = uiPath;
+                                                b->ResolveReferences(scene);
+                                            }
+                                        }
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (prop.isMissing) {
+                                ImGui::PopStyleColor();
+                            }
+
+                            // Accept Drag & Drop from Content Browser onto this field
+                            if (ImGui::BeginDragDropTarget()) {
+                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                                    std::string payloadStr((const char*)payload->Data, payload->DataSize);
+                                    std::stringstream pss(payloadStr);
+                                    std::string dragItem;
+                                    while (std::getline(pss, dragItem, '\n')) {
+                                        if (dragItem.rfind("ASSET:", 0) == 0) {
+                                            std::string srcRel = dragItem.substr(6);
+                                            if (srcRel.find(".eui") != std::string::npos) {
+                                                std::filesystem::path fullDisk = contentRootPath / srcRel;
+                                                UndoManager::Get().RecordSnapshot(scene, "Drop UI Reference: " + prop.name);
+                                                prop.assetPath = fullDisk.string();
+                                                b->ResolveReferences(scene);
+                                                AddLog("LogBehaviour", "Assigned UI " + fullDisk.stem().string() + " to " + prop.displayName, 2);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
+                                    if (payload->DataSize == sizeof(AssetID)) {
+                                        AssetID aid = *(const AssetID*)payload->Data;
+                                        const AssetMetadata* meta = AssetRegistry::Get().Find(aid);
+                                        if (meta && meta->type == AssetType::UserInterface) {
+                                            std::filesystem::path fullDisk = contentRootPath / meta->sourcePath;
+                                            UndoManager::Get().RecordSnapshot(scene, "Drop UI Reference: " + prop.name);
+                                            prop.assetPath = fullDisk.string();
+                                            b->ResolveReferences(scene);
+                                            AddLog("LogBehaviour", "Assigned UI " + meta->objectName + " to " + prop.displayName, 2);
+                                        }
+                                    }
+                                }
+                                ImGui::EndDragDropTarget();
+                            }
+
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Select User Interface asset (.eui) or drag & drop from Content Browser onto this field.");
+                            }
+                            break;
+                        }
+
                         // Object Reference with Typed Dropdown and Drag & Drop (dev.md Section 9, 10, 11, 12, 13)
                         ImGui::Text("%s", prop.displayName.c_str());
 

@@ -21,6 +21,8 @@ enum class AssetType {
     VisualBehaviour,
     Skybox,
     Water,
+    UserInterface,
+    UI = UserInterface,
     Data
 };
 
@@ -42,6 +44,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::VisualBehaviour: return "Visual Behaviour";
         case AssetType::Skybox:          return "Skybox";
         case AssetType::Water:           return "Water Body";
+        case AssetType::UserInterface:   return "User Interface";
         case AssetType::Data:            return "Data";
         default:                         return "Unknown";
     }
@@ -66,6 +69,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "behaviour" || s == "behaviorscript" || s == "behavior script") return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "water")        return AssetType::Water;
+    if (s == "userinterface" || s == "user_interface" || s == "user interface" || s == "ui" || s == "eui") return AssetType::UserInterface;
     if (s == "data")         return AssetType::Data;
     return AssetType::Unknown;
 }
@@ -86,6 +90,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "water") {
         return AssetType::Water;
+    }
+    if (e == "eui" || e == "ui") {
+        return AssetType::UserInterface;
     }
     if (e == "obj" || e == "fbx" || e == "gltf" || e == "glb") {
         return AssetType::Mesh;
@@ -132,6 +139,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::VisualBehaviour: return "🎮";
         case AssetType::Skybox:          return "🌌";
         case AssetType::Water:           return "🌊";
+        case AssetType::UserInterface:   return "🖥";
         case AssetType::Data:            return "📊";
         default:                         return "📄";
     }

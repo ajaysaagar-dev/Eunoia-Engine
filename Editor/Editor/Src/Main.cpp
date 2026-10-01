@@ -43,6 +43,7 @@
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <MeshClusterCulling/MeshClusterCulling.h>
+#include <Editor/StartupSplash.h>
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
 #include <Graphics/GraphicsSystem.h>
@@ -1672,28 +1673,56 @@ int initD3D12(HWND hwnd)
 		return EXIT_FAILURE;
 	}
 
-	// 2. Select Hardware Adapter (Prefer High Performance / Discrete GPU)
+	// 2. Select Hardware Adapter (Prefer High Performance / Discrete GPU via IDXGIFactory6)
 	IDXGIAdapter1* adapter = nullptr;
-	for (UINT i = 0; g_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
+	IDXGIFactory6* factory6 = nullptr;
+	if (SUCCEEDED(g_dxgiFactory->QueryInterface(IID_PPV_ARGS(&factory6))))
 	{
-		DXGI_ADAPTER_DESC1 desc;
-		adapter->GetDesc1(&desc);
-		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+		for (UINT i = 0; SUCCEEDED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter))); ++i)
 		{
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				adapter = nullptr;
+				continue;
+			}
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] High Performance D3D12 GPU Selected: " << descStr << std::endl;
+				break;
+			}
 			adapter->Release();
-			continue;
+			adapter = nullptr;
 		}
+		factory6->Release();
+	}
 
-		char descStr[128];
-		WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
-		std::cout << "DirectX 12 Adapter " << i << " : " << descStr << std::endl;
-
-		if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+	if (!adapter)
+	{
+		for (UINT i = 0; g_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
 		{
-			break;
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				continue;
+			}
+
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] Direct3D 12 Adapter: " << descStr << std::endl;
+				break;
+			}
+			adapter->Release();
+			adapter = nullptr;
 		}
-		adapter->Release();
-		adapter = nullptr;
 	}
 
 	// 3. Create Device
@@ -1730,6 +1759,8 @@ int initD3D12(HWND hwnd)
 	g_commandQueue->SetName(L"g_commandQueue");
 
 	// 5. Create SwapChain
+	g_dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
 	swapChainDesc.BufferCount = FRAME_COUNT;
 	swapChainDesc.Width = (UINT)g_currentWidth;
@@ -4887,6 +4918,23 @@ bool RecoverD3D12Device(HWND hwnd)
 	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
 
+	DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+	g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+	DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+	g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+	DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+	g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+	DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+	g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+	DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+	g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+	DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+	g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+	DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+	g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+	DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+	g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+
 	// 5. Pre-upload textures & rebuild scene geometry
 	PreRenderUploadTextures();
 	updateSceneGeometry();
@@ -5082,11 +5130,19 @@ int main(int argc, char** argv)
 		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
 	}
 
+	if (!isGameOnlyMode) {
+		StartupSplash::Get().Show("Resources/Icons/eunoia.png");
+		StartupSplash::Get().PumpEvents();
+		EngineLogger::Get().LogAction("STARTUP_STAGE", "StartupSplash", "Startup splash window displayed");
+	}
+
 	// 2. Create main window (D3D12, NO_API)
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	if (isGameOnlyMode) {
 		glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+	} else {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Hidden during initialization behind splash!
 	}
 
 	std::string winTitle = isGameOnlyMode ? (selectedProjectPath.filename().string() + " - Game Mode") : "Eunoia-Editor";
@@ -5094,6 +5150,7 @@ int main(int argc, char** argv)
 	if (!g_window)
 	{
 		std::cerr << "Failed to create GLFW window!" << std::endl;
+		StartupSplash::Get().Close();
 		glfwTerminate();
 		return -1;
 	}
@@ -5125,8 +5182,10 @@ int main(int argc, char** argv)
 	}
 #endif
 
-	ShowWindow(hwnd, SW_SHOW);
-	UpdateWindow(hwnd);
+	if (isGameOnlyMode) {
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
+	}
 
 	int fbWidth = 0, fbHeight = 0;
 	glfwGetFramebufferSize(g_window, &fbWidth, &fbHeight);
@@ -5142,24 +5201,36 @@ int main(int argc, char** argv)
 	glfwSetScrollCallback(g_window, scrollCallback);
 	glfwSetDropCallback(g_window, dropCallback);
 
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "PlatformWindow", "Main window created");
+
 	// 2. Initialize DirectX 12
 	if (initD3D12(hwnd) != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 initialization failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "DX12Device", "DirectX 12 device and queues initialized");
 
 	if (createShadersAndPipeline() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 pipeline creation failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "ShadersPipeline", "Shaders and pipeline states compiled");
 
 	if (createDynamicBuffers() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 buffer creation failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "DynamicBuffers", "Dynamic buffers allocated");
 
 	// 3. Initialize Dear ImGui for DirectX 12
 	IMGUI_CHECKVERSION();
@@ -5240,11 +5311,72 @@ int main(int argc, char** argv)
 		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
 		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+
+		DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+		g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+		DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+		g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+		DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+		g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+		DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+		g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+		DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+		g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+		DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+		g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+		DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+		g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+		DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+		g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
 	}
+
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "Resources", "Fallback textures and icons loaded");
+
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
 	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
 
-	updateSceneGeometry();
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "EngineUI", "Engine UI and Asset Registry initialized");
+
+	if (!isGameOnlyMode) {
+		if (g_engineUI.pendingInitialSceneLoad) {
+			StartupSplash::Get().UpdateProgress(0.15f, "Preparing project level...");
+			g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+		}
+
+		// Keep splash visible until scene is completely loaded with all objects, lights, skyboxes
+		while (g_engineUI.IsProgressiveLoadingActive()) {
+			StartupSplash::Get().PumpEvents();
+
+			if (!g_engineUI.m_progressiveLoader.completed) {
+				g_engineUI.m_progressiveLoader.Step(g_scene, 8);
+				float p = g_engineUI.m_progressiveLoader.progress.load();
+				std::string detail;
+				{
+					std::lock_guard<std::mutex> lock(g_engineUI.m_progressiveLoader.stateMutex);
+					detail = g_engineUI.m_progressiveLoader.currentDetail;
+				}
+				StartupSplash::Get().UpdateProgress(p, detail.empty() ? "Loading objects, lights & skyboxes..." : detail);
+			} else {
+				break;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(4));
+		}
+
+		updateSceneGeometry();
+		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+		StartupSplash::Get().PumpEvents();
+		std::this_thread::sleep_for(std::chrono::milliseconds(120));
+
+		StartupSplash::Get().Close();
+		ShowWindow(hwnd, SW_MAXIMIZE);
+		glfwShowWindow(g_window);
+		UpdateWindow(hwnd);
+		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Scene completely loaded — Editor opened maximized");
+	} else {
+		updateSceneGeometry();
+	}
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;

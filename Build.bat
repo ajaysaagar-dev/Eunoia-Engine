@@ -3,293 +3,68 @@ setlocal enabledelayedexpansion
 set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
-:: Build directories: Build\Engine for engine, Build subfolders as needed, and Projects\<Game>\Build for games
-set "BUILD_ROOT=%PROJECT_DIR%\Build"
-set "OUTPUT_DIR=%BUILD_ROOT%\Engine"
-set "INTERMEDIATES_DIR=%BUILD_ROOT%\Intermediates"
-set "TESTS_BUILD_DIR=%BUILD_ROOT%\Tests"
-set "RUNTIME_BUILD_DIR=%BUILD_ROOT%\Runtime"
-if exist "%PROJECT_DIR%\..\Projects" (
-    set "PROJECTS_ROOT=%PROJECT_DIR%\..\Projects"
+:: ============================================================================
+:: Eunoia Engine .NET Build Driver
+:: Automatically compiles and launches the .NET EunoiaBuildTool
+:: ============================================================================
+
+set "BUILD_TOOL_DIR=%PROJECT_DIR%\tools\EunoiaBuildTool"
+set "BUILD_TOOL_EXE=%BUILD_TOOL_DIR%\bin\EunoiaBuilder.exe"
+set "BUILD_TOOL_DLL=%BUILD_TOOL_DIR%\bin\Release\netcoreapp3.0\EunoiaBuilder.dll"
+set "BUILD_TOOL_SRC=%BUILD_TOOL_DIR%\Program.cs"
+
+:: Ensure output directory for tool exists
+if not exist "%BUILD_TOOL_DIR%\bin" mkdir "%BUILD_TOOL_DIR%\bin"
+
+:: 1. Check if dotnet is available
+set "DOTNET_CMD="
+where dotnet >nul 2>&1
+if !ERRORLEVEL! equ 0 set "DOTNET_CMD=dotnet"
+
+:: 2. Check for .NET Framework CSC compiler
+set "CSC_CMD="
+if exist "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" (
+    set "CSC_CMD=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+) else if exist "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" (
+    set "CSC_CMD=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
 ) else (
-    set "PROJECTS_ROOT=%PROJECT_DIR%\Projects"
-)
-set "GAME_BUILD_DIR=%PROJECTS_ROOT%\test\Build"
-
-if not exist "%BUILD_ROOT%" mkdir "%BUILD_ROOT%"
-if not exist "%OUTPUT_DIR%" mkdir "%OUTPUT_DIR%"
-if not exist "%INTERMEDIATES_DIR%" mkdir "%INTERMEDIATES_DIR%"
-if not exist "%TESTS_BUILD_DIR%" mkdir "%TESTS_BUILD_DIR%"
-if not exist "%RUNTIME_BUILD_DIR%" mkdir "%RUNTIME_BUILD_DIR%"
-if not exist "%PROJECTS_ROOT%" mkdir "%PROJECTS_ROOT%"
-if not exist "%GAME_BUILD_DIR%" mkdir "%GAME_BUILD_DIR%"
-
-:: Toolchain detection (CMake -> MSVC / Ninja / MSBuild / w64devkit)
-set "CMAKE_EXE=%PROJECT_DIR%\tools\w64devkit\bin\cmake.exe"
-if not exist "%CMAKE_EXE%" (
-    where cmake >nul 2>&1
-    if !ERRORLEVEL! equ 0 set "CMAKE_EXE=cmake"
-)
-set "NINJA_EXE=%PROJECT_DIR%\tools\w64devkit\bin\ninja.exe"
-if not exist "%NINJA_EXE%" (
-    where ninja >nul 2>&1
-    if !ERRORLEVEL! equ 0 set "NINJA_EXE=ninja"
+    where csc >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "CSC_CMD=csc"
 )
 
-set "COMPILER=%PROJECT_DIR%\tools\w64devkit\bin\g++.exe"
-if not exist "%COMPILER%" (
-    where g++ >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        set "COMPILER=g++"
-    ) else (
-        where cl >nul 2>&1
-        if !ERRORLEVEL! equ 0 (
-            set "COMPILER=cl"
-        ) else (
-            echo [ERROR] C++ compiler not found!
-        )
+:: Compile .NET build tool if binary is missing or source is newer
+set "NEED_COMPILE=0"
+if not exist "%BUILD_TOOL_EXE%" (
+    if not exist "%BUILD_TOOL_DLL%" set "NEED_COMPILE=1"
+)
+
+if "!NEED_COMPILE!"=="1" (
+    if defined CSC_CMD (
+        "%CSC_CMD%" /nologo /o /t:exe /out:"%BUILD_TOOL_EXE%" "%BUILD_TOOL_SRC%" >nul 2>&1
+    ) else if defined DOTNET_CMD (
+        "%DOTNET_CMD%" build "%BUILD_TOOL_DIR%\EunoiaBuildTool.csproj" -c Release >nul 2>&1
     )
 )
 
-set "WINDRES=%PROJECT_DIR%\tools\w64devkit\bin\windres.exe"
-if not exist "%WINDRES%" (
-    where windres >nul 2>&1
-    if !ERRORLEVEL! equ 0 (
-        set "WINDRES=windres"
-    ) else (
-        set "WINDRES="
-    )
-)
-
-set "RES_OBJ="
-if defined WINDRES (
-    if exist "%WINDRES%" (
-        echo [INFO] Compiling Windows application icon resource...
-        "%WINDRES%" -I"%PROJECT_DIR%" -i "%PROJECT_DIR%\Editor\Editor\Src\Eunoia.rc" -O coff -o "%INTERMEDIATES_DIR%\Eunoia.res.o"
-        if exist "%INTERMEDIATES_DIR%\Eunoia.res.o" (
-            set "RES_OBJ=%INTERMEDIATES_DIR%\Eunoia.res.o"
-        )
-    )
-)
-
-:: Find user behaviour scripts across projects under Projects/*/Content
-set "PROJECT_USER_SCRIPTS="
-if exist "%PROJECTS_ROOT%" (
-    for /d %%p in ("%PROJECTS_ROOT%\*") do (
-        if exist "%%p\Content" (
-            pushd "%%p\Content"
-            for /r %%s in (*.cpp) do (
-                set "s_path=%%s"
-                echo "!s_path!" | findstr /i "\.assetmeta \.meta" >nul 2>&1
-                if !ERRORLEVEL! neq 0 (
-                    set "PROJECT_USER_SCRIPTS=!PROJECT_USER_SCRIPTS! "%%s""
-                    echo [INFO] Found project behaviour script: %%~nxs
-                )
-            )
-            popd
-        )
-    )
-)
-
-:: Terminate running editor to prevent file lock
-taskkill /F /IM Eunoia-Editor.exe >nul 2>&1
-
-echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DIR%...
-"%COMPILER%" -std=c++20 -O2 ^
-    "-I%PROJECT_DIR%\Engine\EngineCore\Include" ^
-    "-I%PROJECT_DIR%\Engine\EnginePlatform\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineRHI\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineRenderer\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineScene\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineAssets\Include" ^
-    "-I%PROJECT_DIR%\Engine\EunoiaPluginCore\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Include" ^
-    "-I%PROJECT_DIR%\Plugins\water\include" ^
-    "-I%PROJECT_DIR%\Plugins\skybox\include" ^
-    "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
-    "-I%PROJECT_DIR%\Editor\Editor\Include" ^
-    "-I%PROJECT_DIR%\deps\tinyobj" ^
-    "-I%PROJECT_DIR%\deps\cgltf" ^
-    "-I%PROJECT_DIR%\deps\ufbx" ^
-    "-I%PROJECT_DIR%\deps\imgui" ^
-    "-I%PROJECT_DIR%\deps\imgui\backends" ^
-    "-I%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\include" ^
-    "-I%PROJECT_DIR%\deps\glm" ^
-    "-I%PROJECT_DIR%\deps\json" ^
-    "-I%PROJECT_DIR%" ^
-    "%PROJECT_DIR%\deps\ufbx\ufbx.c" ^
-    "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\MeshClusterBuilder.cpp" ^
-    "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\MeshClusterCulling.cpp" ^
-    "%PROJECT_DIR%\Plugins\Mesh-Cluster-Culling\Source\HiZManager.cpp" ^
-    "%PROJECT_DIR%\Plugins\water\src\WaterSystem.cpp" ^
-    "%PROJECT_DIR%\Plugins\water\src\WaterPlugin.cpp" ^
-    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightBakeManager.cpp" ^
-    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightsBakingPlugin.cpp" ^
-    "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsSystem.cpp" ^
-    "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsPlugin.cpp" ^
-    "%PROJECT_DIR%\Plugins\Visual-Behaviuors\Source\VisualBehaviuorsPlugin.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTexD3D12.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetRegistry.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetManager.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineScene\Src\EunoiaBehaviour.cpp" ^
-    "%PROJECT_DIR%\Engine\EnginePlatform\Src\Window.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\Device.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\SwapChain.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\CommandContext.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\DescriptorAllocator.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\Fence.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\PipelineState.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRHI\Src\UploadHeap.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineRenderer\Src\SceneRenderer.cpp" ^
-    "%PROJECT_DIR%\Editor\Editor\Src\Main.cpp" ^
-    "%PROJECT_DIR%\Editor\Editor\Src\EngineUI.cpp" ^
-    "%PROJECT_DIR%\Editor\Editor\Src\EditorGizmoSystem.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\imgui.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\imgui_draw.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\imgui_tables.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\imgui_widgets.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\backends\imgui_impl_glfw.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\backends\imgui_impl_dx12.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\backends\imgui_impl_opengl3.cpp" ^
-    "%PROJECT_DIR%\deps\imgui\ImGuizmo.cpp" ^
-    !PROJECT_USER_SCRIPTS! ^
-    "-L%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64" ^
-    -lglfw3 -ld3d12 -ldxgi -ld3dcompiler -lgdi32 -limm32 -lcomdlg32 -lshell32 -lole32 -lopengl32 -ldwmapi ^
-    !RES_OBJ! ^
-    -o "%OUTPUT_DIR%\Eunoia-Editor.exe"
-
-if !ERRORLEVEL! neq 0 (
-    echo [ERROR] Engine build failed.
+:: Run .NET Build Tool
+if exist "%BUILD_TOOL_EXE%" (
+    "%BUILD_TOOL_EXE%" %*
+    exit /b !ERRORLEVEL!
+) else if exist "%BUILD_TOOL_DLL%" (
+    "%DOTNET_CMD%" "%BUILD_TOOL_DLL%" %*
+    exit /b !ERRORLEVEL!
+) else if defined DOTNET_CMD (
+    "%DOTNET_CMD%" run --project "%BUILD_TOOL_DIR%\EunoiaBuildTool.csproj" -c Release -- %*
     exit /b !ERRORLEVEL!
 )
 
-echo [SUCCESS] Eunoia-Editor.exe built successfully in %OUTPUT_DIR%.
+:: Fallback if no .NET runtime is installed on system
+echo [WARNING] .NET not found. Falling back to native batch compilation...
+set "COMPILER=%PROJECT_DIR%\tools\w64devkit\bin\g++.exe"
+if not exist "%COMPILER%" set "COMPILER=g++"
 
-echo [INFO] Packaging binaries, code, headers, and assets into %OUTPUT_DIR%...
-
-:: Copy external DLLs if present
-if exist "%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64\glfw3.dll" (
-    copy /y "%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64\glfw3.dll" "%OUTPUT_DIR%\" >nul 2>&1
-)
-if exist "%PROJECT_DIR%\Plugins\primitives\primitives.dll" (
-    copy /y "%PROJECT_DIR%\Plugins\primitives\primitives.dll" "%OUTPUT_DIR%\" >nul 2>&1
-)
-
-:: Copy resources and shaders
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Resources" "%OUTPUT_DIR%\Resources\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Shaders" "%OUTPUT_DIR%\Shaders\" >nul 2>&1
-
-:: Copy engine modular architecture, editor, and runtime
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Engine" "%OUTPUT_DIR%\Engine\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Editor" "%OUTPUT_DIR%\Editor\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Runtime" "%OUTPUT_DIR%\Runtime\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Docs" "%OUTPUT_DIR%\Docs\" >nul 2>&1
-
-:: Copy plugins and sample projects
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Plugins" "%OUTPUT_DIR%\Plugins\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Projects" "%OUTPUT_DIR%\Projects\" >nul 2>&1
-
-:: Copy dependencies and toolchain needed for project compiling and IntelliSense
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\deps" "%OUTPUT_DIR%\deps\" >nul 2>&1
-xcopy /s /e /y /d /q /i "%PROJECT_DIR%\tools" "%OUTPUT_DIR%\tools\" >nul 2>&1
-
-:: Generate run script inside Build\Engine
-(
-echo @echo off
-echo cd /d "%%~dp0"
-echo echo [INFO] Starting Eunoia-Editor [DirectX 12]...
-echo start "" "Eunoia-Editor.exe"
-) > "%OUTPUT_DIR%\Run.bat"
-
-echo [SUCCESS] Complete game engine distribution packaged into: %OUTPUT_DIR%
-echo [INFO] Contents of %OUTPUT_DIR%:
-dir /b "%OUTPUT_DIR%"
-
-:: ─────────────────────────────────────────────────────────────────────────────
-:: Build Standalone Game Runtime into the respective game project's Build folder
-:: ─────────────────────────────────────────────────────────────────────────────
-echo.
-echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
 "%COMPILER%" -std=c++20 -O2 ^
     "-I%PROJECT_DIR%\Engine\EngineCore\Include" ^
-    "-I%PROJECT_DIR%\Engine\EnginePlatform\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineScene\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineAssets\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineRHI\Include" ^
-    "-I%PROJECT_DIR%\Engine\EngineRenderer\Include" ^
-    "-I%PROJECT_DIR%\Engine\EunoiaPluginCore\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
-    "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
-    "-I%PROJECT_DIR%\deps\tinyobj" ^
-    "-I%PROJECT_DIR%\deps\cgltf" ^
-    "-I%PROJECT_DIR%\deps\ufbx" ^
-    "-I%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\include" ^
-    "-I%PROJECT_DIR%\deps\glm" ^
-    "-I%PROJECT_DIR%\deps\json" ^
-    "-I%PROJECT_DIR%" ^
-    "%PROJECT_DIR%\deps\ufbx\ufbx.c" ^
-    "%PROJECT_DIR%\Engine\EnginePlatform\Src\Window.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineScene\Src\EunoiaBehaviour.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetRegistry.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetManager.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
-    "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
-    "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightBakeManager.cpp" ^
-    "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsSystem.cpp" ^
-    "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsPlugin.cpp" ^
-    "%PROJECT_DIR%\Runtime\Src\Main.cpp" ^
-    !PROJECT_USER_SCRIPTS! ^
-    "-L%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64" ^
-    -lglfw3 -lgdi32 -lole32 -lshell32 ^
-    !RES_OBJ! ^
-    -o "%GAME_BUILD_DIR%\test.exe"
-
-if !ERRORLEVEL! equ 0 (
-    :: Copy external runtime DLLs
-    if exist "%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64\glfw3.dll" (
-        copy /y "%PROJECT_DIR%\deps\glfw-3.5.1.bin.WIN64\lib-mingw-w64\glfw3.dll" "%GAME_BUILD_DIR%\" >nul 2>&1
-    )
-    if exist "%PROJECT_DIR%\Plugins\primitives\primitives.dll" (
-        copy /y "%PROJECT_DIR%\Plugins\primitives\primitives.dll" "%GAME_BUILD_DIR%\" >nul 2>&1
-    )
-
-    :: Copy engine shaders and resources needed by standalone game
-    xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Shaders" "%GAME_BUILD_DIR%\Shaders\" >nul 2>&1
-    xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Resources" "%GAME_BUILD_DIR%\Resources\" >nul 2>&1
-
-    :: Copy project cooked content, Content folder, scenes, levels, registry, materials, models, and behaviours
-    if exist "%PROJECTS_ROOT%\test\Cooked" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Cooked" "%GAME_BUILD_DIR%\Cooked\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\Content\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Scenes" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Scenes" "%GAME_BUILD_DIR%\Scenes\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Levels" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Levels" "%GAME_BUILD_DIR%\Levels\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Registry" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Registry" "%GAME_BUILD_DIR%\Registry\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Materials" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Materials" "%GAME_BUILD_DIR%\Materials\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Models" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Models" "%GAME_BUILD_DIR%\Models\" >nul 2>&1
-    if exist "%PROJECTS_ROOT%\test\Behaviours" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Behaviours" "%GAME_BUILD_DIR%\Behaviours\" >nul 2>&1
-
-    :: Copy project root files (*.emat, *.assetmeta, *.json, *.cpp)
-    copy /y "%PROJECTS_ROOT%\test\*.emat" "%GAME_BUILD_DIR%\" >nul 2>&1
-    copy /y "%PROJECTS_ROOT%\test\*.assetmeta" "%GAME_BUILD_DIR%\" >nul 2>&1
-    copy /y "%PROJECTS_ROOT%\test\*.json" "%GAME_BUILD_DIR%\" >nul 2>&1
-    copy /y "%PROJECTS_ROOT%\test\*.cpp" "%GAME_BUILD_DIR%\" >nul 2>&1
-
-    (
-    echo @echo off
-    echo cd /d "%%~dp0"
-    echo echo [INFO] Starting test game...
-    echo start "" "test.exe"
-    ) > "%GAME_BUILD_DIR%\Run.bat"
-    echo [SUCCESS] Game built and packaged successfully into %GAME_BUILD_DIR%.
-    echo [INFO] Contents of %GAME_BUILD_DIR%:
-    dir /b "%GAME_BUILD_DIR%"
-) else (
-    echo [WARNING] Game build encountered an issue.
-)
+    "-I%PROJECT_DIR%\Editor\Editor\Include" ^
+    -o "%PROJECT_DIR%\Build\Engine\Eunoia-Editor.exe"
+exit /b %ERRORLEVEL%

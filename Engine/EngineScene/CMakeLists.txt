@@ -9,6 +9,8 @@ target_include_directories(EngineScene PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
     $<INSTALL_INTERFACE:Include>
     ${EUNOIA_DEPS}/glm
+    ${EUNOIA_DEPS}/json
+    ${EUNOIA_ROOT}/Plugins/UI-System/Include
 )
 
 target_link_libraries(EngineScene PUBLIC

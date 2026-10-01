@@ -746,6 +746,17 @@ void EunoiaBehaviour::ResolveReferences(Scene& scene) {
     for (auto& prop : m_properties) {
         if (prop.type != BehaviourPropertyType::ObjectRef || !prop.dataPtr) continue;
 
+        if (prop.refType == ObjectRefType::UserInterface) {
+            if (!prop.assetPath.empty()) {
+                *reinterpret_cast<UserInterface**>(prop.dataPtr) = EunoiaUI::UISystemManager::Get().GetOrLoadUI(prop.assetPath);
+                prop.isMissing = (*reinterpret_cast<void**>(prop.dataPtr) == nullptr);
+            } else {
+                *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
+                prop.isMissing = false;
+            }
+            continue;
+        }
+
         if (prop.targetId == -1) {
             *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
             prop.isMissing = false;
@@ -1131,7 +1142,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             { "LightComponent", "LightComponent*" },
             { "Light", "LightComponent*" },
             { "PrimitiveMesh", "PrimitiveMesh*" },
-            { "Mesh", "PrimitiveMesh*" }
+            { "Mesh", "PrimitiveMesh*" },
+            { "UserInterface", "UserInterface*" }
         };
 
         bool matchedPtr = false;
@@ -1221,6 +1233,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         glm::vec3 vec3Val{0.0f};
         glm::vec4 vec4Val{0.0f};
         int targetId = -1;
+        std::string assetPath;
         void* refPtr = nullptr;
         bool hasValue = false;
     };
@@ -1232,6 +1245,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             SavedValue sv;
             sv.type = p.type;
             sv.targetId = p.targetId;
+            sv.assetPath = p.assetPath;
             sv.hasValue = true;
             if (p.dataPtr) {
                 switch (p.type) {
@@ -1739,11 +1753,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             m_vec4Storage[varName] = actualVec4;
             RegisterProperty(varName, &m_vec4Storage[varName], "General");
         } else if (type == "Camera*" || type == "LightComponent*" || type == "Light*" ||
-                   type == "PrimitiveMesh*" || type == "Mesh*" || type == "GameObject*" || type == "Actor*") {
+                   type == "PrimitiveMesh*" || type == "Mesh*" || type == "GameObject*" || type == "Actor*" ||
+                   type == "UserInterface*") {
             ObjectRefType refType = ObjectRefType::Actor;
             if (type == "Camera*") refType = ObjectRefType::Camera;
             else if (type == "LightComponent*" || type == "Light*") refType = ObjectRefType::Light;
             else if (type == "PrimitiveMesh*" || type == "Mesh*") refType = ObjectRefType::Mesh;
+            else if (type == "UserInterface*") refType = ObjectRefType::UserInterface;
 
             PropertyDefaultValue def;
             def.type = BehaviourPropertyType::ObjectRef;
@@ -1753,11 +1769,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             const SavedValue* sv = findSaved(varName);
             void* actualPtr = (sv && sv->hasValue) ? sv->refPtr : nullptr;
             int actualTargetId = (sv && sv->hasValue) ? sv->targetId : -1;
+            std::string actualAssetPath = (sv && sv->hasValue) ? sv->assetPath : "";
 
             m_refStorage[varName] = actualPtr;
             RegisterReference(varName, &m_refStorage[varName], refType, "References");
             if (!m_properties.empty()) {
                 m_properties.back().targetId = actualTargetId;
+                m_properties.back().assetPath = actualAssetPath;
             }
         }
     }
