@@ -1008,12 +1008,16 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     }
     file.close();
 
-    // 1. First pass: find declared member variables and their types & defaults
+    // 1. First pass: find declared public member variables and their types & defaults
     struct VarDecl {
         std::string type;
         std::string defaultVal;
     };
     std::unordered_map<std::string, VarDecl> declaredVars;
+
+    int braceDepth = 0;
+    bool inClass = false;
+    bool inPublic = false;
 
     for (const auto& rawLine : lines) {
         std::string l = rawLine;
@@ -1021,13 +1025,79 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         if (start == std::string::npos) continue;
         l = l.substr(start);
 
-        // Ignore comments
-        if (l.rfind("//", 0) == 0 || l.rfind("/*", 0) == 0 || l.rfind("*", 0) == 0) continue;
-
-        // Ignore methods
-        if (l.find("(") != std::string::npos && l.find(")") != std::string::npos) {
-            if (l.find("void ") != std::string::npos || l.find("override") != std::string::npos) continue;
+        // Strip single-line comments
+        size_t commentPos = l.find("//");
+        if (commentPos != std::string::npos) {
+            l = l.substr(0, commentPos);
         }
+        size_t endTrim = l.find_last_not_of(" \t\r\n");
+        if (endTrim == std::string::npos) continue;
+        l = l.substr(0, endTrim + 1);
+
+        // Ignore block comments
+        if (l.rfind("/*", 0) == 0 || l.rfind("*", 0) == 0) continue;
+
+        // Detect class / struct definition
+        if (!inClass) {
+            if (l.find("class ") != std::string::npos || l.find("struct ") != std::string::npos) {
+                if (l.find(';') == std::string::npos || l.find('{') != std::string::npos) {
+                    inClass = true;
+                    inPublic = (l.find("struct ") != std::string::npos);
+                }
+            }
+        }
+
+        // Count braces on this line (excluding string literals)
+        int openBracesOnLine = 0;
+        int closeBracesOnLine = 0;
+        bool inStr = false;
+        for (char c : l) {
+            if (c == '"') inStr = !inStr;
+            if (!inStr) {
+                if (c == '{') openBracesOnLine++;
+                else if (c == '}') closeBracesOnLine++;
+            }
+        }
+
+        int effectiveDepth = braceDepth;
+
+        // Check for access specifiers at class scope
+        if (effectiveDepth == 1 || (effectiveDepth == 0 && inClass && openBracesOnLine > 0)) {
+            if (l == "public:" || l.rfind("public:", 0) == 0) {
+                inPublic = true;
+                braceDepth += openBracesOnLine - closeBracesOnLine;
+                continue;
+            } else if (l == "private:" || l.rfind("private:", 0) == 0 ||
+                       l == "protected:" || l.rfind("protected:", 0) == 0) {
+                inPublic = false;
+                braceDepth += openBracesOnLine - closeBracesOnLine;
+                continue;
+            }
+        }
+
+        bool isClassPublic = (effectiveDepth == 1 && inClass && inPublic);
+
+        braceDepth += openBracesOnLine - closeBracesOnLine;
+        if (braceDepth <= 0) {
+            braceDepth = 0;
+            inClass = false;
+            inPublic = false;
+        }
+
+        if (!isClassPublic) continue;
+
+        // Skip destructors and methods
+        if (l.find('~') != std::string::npos) continue;
+        size_t openParen = l.find('(');
+        if (openParen != std::string::npos) {
+            size_t eqPos = l.find('=');
+            if (eqPos == std::string::npos || openParen < eqPos ||
+                l.find("override") != std::string::npos || l.find("void ") != std::string::npos ||
+                l.find("virtual ") != std::string::npos) {
+                continue;
+            }
+        }
+        if (l.find(';') == std::string::npos) continue;
 
         // Check pointer declarations (handles "GameObject* Cam", "GameObject *Cam", "Actor *Cam", etc.)
         static const std::vector<std::pair<std::string, std::string>> ptrTypes = {
@@ -1035,7 +1105,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             { "Actor", "GameObject*" },
             { "Camera", "Camera*" },
             { "LightComponent", "LightComponent*" },
-            { "PrimitiveMesh", "PrimitiveMesh*" }
+            { "Light", "LightComponent*" },
+            { "PrimitiveMesh", "PrimitiveMesh*" },
+            { "Mesh", "PrimitiveMesh*" }
         };
 
         bool matchedPtr = false;
@@ -1074,9 +1146,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         }
         if (matchedPtr) continue;
 
-        std::vector<std::string> types = {
+        static const std::vector<std::string> types = {
             "float", "double", "int", "bool", "std::string", "string",
-            "glm::vec3", "Vector3", "glm::vec2", "Vector2"
+            "glm::vec4", "Vector4", "vec4",
+            "glm::vec3", "Vector3", "vec3",
+            "glm::vec2", "Vector2", "vec2",
+            "int32_t", "int64_t", "uint32_t", "size_t", "unsigned int"
         };
 
         for (const auto& t : types) {
@@ -1639,11 +1714,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             glm::vec4 actualVec4 = (sv && sv->hasValue) ? sv->vec4Val : defVec4;
             m_vec4Storage[varName] = actualVec4;
             RegisterProperty(varName, &m_vec4Storage[varName], "General");
-        } else if (type == "Camera*" || type == "LightComponent*" || type == "PrimitiveMesh*" || type == "GameObject*") {
+        } else if (type == "Camera*" || type == "LightComponent*" || type == "Light*" ||
+                   type == "PrimitiveMesh*" || type == "Mesh*" || type == "GameObject*" || type == "Actor*") {
             ObjectRefType refType = ObjectRefType::Actor;
             if (type == "Camera*") refType = ObjectRefType::Camera;
-            else if (type == "LightComponent*") refType = ObjectRefType::Light;
-            else if (type == "PrimitiveMesh*") refType = ObjectRefType::Mesh;
+            else if (type == "LightComponent*" || type == "Light*") refType = ObjectRefType::Light;
+            else if (type == "PrimitiveMesh*" || type == "Mesh*") refType = ObjectRefType::Mesh;
 
             PropertyDefaultValue def;
             def.type = BehaviourPropertyType::ObjectRef;
