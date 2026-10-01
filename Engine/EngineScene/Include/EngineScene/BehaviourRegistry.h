@@ -198,9 +198,15 @@ public:
 
     void RegisterScriptFile(const std::string& scriptName, const std::string& cppPath) {
         auto it = m_registry.find(scriptName);
-        if (it != m_registry.end() && it->second.isNative) {
-            // Already natively compiled into binary: retain factory, only record source path
+        if (it != m_registry.end()) {
             it->second.sourceCpp = cppPath;
+            it->second.factory = [scriptName, cppPath]() -> std::unique_ptr<EunoiaBehaviour> {
+                auto b = std::make_unique<DynamicScriptBehaviour>(scriptName, cppPath);
+                b->SetClassName(scriptName);
+                b->SetDisplayName(scriptName);
+                b->ParsePropertiesFromCpp(cppPath);
+                return b;
+            };
             return;
         }
 
