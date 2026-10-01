@@ -248,6 +248,7 @@ public:
     std::filesystem::path contentRootPath;
     std::filesystem::path currentContentPath;
     char contentBrowserSearch[64] = "";
+    float contentThumbnailSize = 96.0f;
     std::string selectedContentItem = "";
     std::unordered_set<std::string> selectedContentItems;
     std::string lastSelectedContentItem = "";
@@ -380,8 +381,20 @@ public:
     bool SaveLevelAs(Scene& level);                            // Save to new file via dialog
     bool OpenLevel(Scene& level);                              // Open level via file dialog
     bool OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode = false, const std::string& binPath = ""); // Open level directly from disk path
+    void RenderViewportLoadingOverlay();
+    bool IsProgressiveLoadingActive() const { return m_progressiveLoader.active; }
+    SceneSerializer::ProgressiveSceneLoader m_progressiveLoader;
 
-    // Scene Save/Load aliases
+    struct SaveIndicatorState {
+        bool active = false;
+        bool isSaving = false;
+        bool success = true;
+        std::string filename;
+        float displayTimer = 0.0f;
+    };
+    SaveIndicatorState m_saveIndicator;
+    void RenderSaveIndicator();
+
     bool SaveScene(Scene& scene) { return SaveLevel(scene); }
     bool SaveSceneAs(Scene& scene) { return SaveLevelAs(scene); }
     bool OpenScene(Scene& scene) { return OpenLevel(scene); }
@@ -472,6 +485,8 @@ public:
     char behaviourSearchBuf[64] = "";
     bool showNewBehaviourPopup = false;
     char newBehaviourNameBuf[64] = "NewBehaviour";
+    bool showNewVisualBehaviourPopup = false;
+    char newVisualBehaviourNameBuf[64] = "NewVisualBehaviour";
     bool IsBehaviourNameAlreadyExists(const std::string& name) const;
 
     // In-Editor Code Editor (dev.md & User Request)
@@ -492,6 +507,14 @@ public:
     void RenderScreenPrintOverlay(float startX, float startY);
 
     bool isGameOnlyWindow = false;
+
+    // Deferred Scene Loading (opens editor window with no viewport, then loads scene once open)
+    bool isInitialSceneLoaded = false;
+    bool pendingInitialSceneLoad = false;
+    std::string pendingScenePath = "";
+    std::string pendingBinPath = "";
+    int initialLoadFrameCountdown = 2;
+    bool LoadPendingInitialScene(Scene& scene, OrbitCamera& camera, bool isGameMode);
 
     // Behaviour Script Watcher & Compilation (User Request: ask compile or later)
     bool showScriptCompileModal = false;

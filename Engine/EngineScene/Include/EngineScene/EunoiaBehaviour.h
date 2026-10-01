@@ -508,7 +508,7 @@ public:
     void SetDisplayName(const std::string& name) { m_displayName = name; }
 
     // Cloning support for deep copying scene snapshots (Undo/Redo & PlayMode)
-    virtual std::unique_ptr<EunoiaBehaviour> Clone() const = 0;
+    virtual std::unique_ptr<EunoiaBehaviour> Clone() const { return nullptr; }
 
     // Copies registered properties and target references from another behaviour instance of the same type
     void CopyPropertiesFrom(const EunoiaBehaviour& other) {

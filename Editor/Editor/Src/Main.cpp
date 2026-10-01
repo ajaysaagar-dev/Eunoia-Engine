@@ -3631,7 +3631,9 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
+	bool canRender3DScene = (g_engineUI.isGameOnlyWindow || g_engineUI.isInitialSceneLoaded);
+
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
 	{
 		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,
@@ -3684,7 +3686,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1.5: Point Light Shadow Cubemap Array Pass (up to 4 lights * 6 faces)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_pointShadowDepthBuffer && g_shadowPipelineState && g_activeShadowPointLights > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_pointShadowDepthBuffer && g_shadowPipelineState && g_activeShadowPointLights > 0)
 	{
 		D3D12_RESOURCE_BARRIER ptBarrier = CreateTransitionBarrier(
 			g_pointShadowDepthBuffer,
@@ -3740,7 +3742,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 1.8: Spot & Area Light Shadow 2D Array Pass (up to 4 lights)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_currentIndexCount > 0 && g_spotShadowDepthBuffer && g_shadowPipelineState && g_activeShadowSpotLights > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0 && g_spotShadowDepthBuffer && g_shadowPipelineState && g_activeShadowSpotLights > 0)
 	{
 		D3D12_RESOURCE_BARRIER spotBarrier = CreateTransitionBarrier(
 			g_spotShadowDepthBuffer,
@@ -3869,7 +3871,7 @@ void renderFrame()
 	g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
 
 	// 1. Draw 3D Scene Primitives with Hardware PBR, Full Texture Resolution & Real-Time Shadows
-	if (!g_deviceLost && g_currentIndexCount > 0)
+	if (canRender3DScene && !g_deviceLost && g_currentIndexCount > 0)
 	{
 		g_commandList->SetGraphicsRootSignature(g_rootSignature);
 		g_commandList->SetPipelineState(g_pipelineState);
@@ -3961,7 +3963,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
 	// ----------------------------------------------------
-	if (!g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	if (canRender3DScene && !g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
 	{
 		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
 		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
@@ -4002,7 +4004,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 2.3: AquaTerrain DX12 Water System (Simulation & Translucent Render)
 	// ----------------------------------------------------
-	if (!g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
+	if (canRender3DScene && !g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
 	{
 		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain GPU Simulation");
 		Eunoia::WaterSystem::Get().Simulate(g_commandList, g_scene);
@@ -4041,7 +4043,7 @@ void renderFrame()
 	// PASS 2.5: Selected Camera Picture-in-Picture (PiP) Hardware Pass
 	// ----------------------------------------------------
 	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
-	if (!g_deviceLost && pipRect.active && g_currentIndexCount > 0 && g_numPureSceneBatches > 0)
+	if (canRender3DScene && !g_deviceLost && pipRect.active && g_currentIndexCount > 0 && g_numPureSceneBatches > 0)
 	{
 		float px = std::max(0.0f, std::min((float)g_currentWidth - 1.0f, pipRect.x));
 		float py = std::max(0.0f, std::min((float)g_currentHeight - 1.0f, pipRect.y));
@@ -4164,7 +4166,7 @@ void renderFrame()
 	// PASS 2.6: Real-Time Anti-Aliasing Resolve Pass (dev.md)
 	// Resolves g_sceneRenderTarget to backbuffer with active AA method
 	// ----------------------------------------------------
-	if (g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
+	if (canRender3DScene && g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
 	{
 		RecordGpuBreadcrumbOp("[AntiAliasing] Resolve Pass");
 
@@ -4248,6 +4250,11 @@ void renderFrame()
 			);
 			g_commandList->ResourceBarrier(1, &toRtBarrier);
 		}
+	}
+	else if (!canRender3DScene && !g_engineUI.isGameOnlyWindow)
+	{
+		const float vpBg[4] = { 0.12f, 0.12f, 0.14f, 1.0f };
+		g_commandList->ClearRenderTargetView(rtvHandle, vpBg, 1, &scissor);
 	}
 
 	// Reset viewport & scissor for ImGui to full window
@@ -4569,25 +4576,9 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 {
 	if (g_scene.isPlayMode)
 	{
-		ImGuiIO& io = ImGui::GetIO();
-		if (button == GLFW_MOUSE_BUTTON_LEFT)
-		{
-			s_isLeftMouseDown = (action == GLFW_PRESS);
-			// User Request: when click on the game play mode screen than again lock automatically
-			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
-			{
-				CursorState.Locked();
-			}
-		}
+		if (button == GLFW_MOUSE_BUTTON_LEFT) s_isLeftMouseDown = (action == GLFW_PRESS);
 		else if (button == GLFW_MOUSE_BUTTON_MIDDLE) s_isMiddleMouseDown = (action == GLFW_PRESS);
-		else if (button == GLFW_MOUSE_BUTTON_RIGHT)
-		{
-			s_isRightMouseDown = (action == GLFW_PRESS);
-			if (action == GLFW_PRESS && !InputSystem::Get().IsCursorLocked() && !io.WantCaptureMouse)
-			{
-				CursorState.Locked();
-			}
-		}
+		else if (button == GLFW_MOUSE_BUTTON_RIGHT) s_isRightMouseDown = (action == GLFW_PRESS);
 		return;
 	}
 
@@ -4639,7 +4630,14 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 		{
 			s_isRightMouseDown = false;
 			g_camera.isFlying = false;
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			if (!InputSystem::Get().IsCursorLocked())
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			}
+			else
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			}
 			InputSystem::Get().ResetMouseDelta();
 		}
 	}
@@ -4651,6 +4649,15 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 	double deltaY = ypos - s_lastMouseY;
 	s_lastMouseX = xpos;
 	s_lastMouseY = ypos;
+
+	if (InputSystem::Get().IsCursorLocked())
+	{
+		ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+		if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+		{
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		}
+	}
 
 	if (g_scene.isPlayMode)
 	{
@@ -5308,6 +5315,20 @@ int main(int argc, char** argv)
 		if (deltaTime > 0.1f) deltaTime = 0.1f;
 		ScreenPrint::System::Get().Update(deltaTime);
 
+		// Once the editor window is open and displayed (no viewport rendered initially), load the respective scene/level
+		if (!isGameOnlyMode && g_engineUI.pendingInitialSceneLoad)
+		{
+			if (g_engineUI.initialLoadFrameCountdown > 0)
+			{
+				g_engineUI.initialLoadFrameCountdown--;
+			}
+			else
+			{
+				g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+				updateSceneGeometry();
+			}
+		}
+
 		// Process Fly Mode (Hold RMB + W, S, A, D, E, Q) - Active only in Editor, NEVER in Play Mode
 		if (!g_scene.isPlayMode && s_isRightMouseDown && g_camera.isFlying)
 		{
@@ -5338,24 +5359,17 @@ int main(int argc, char** argv)
 			}
 		}
 
-		// Game Mode ESC & Exit listener (for both standalone game and in-editor Play Mode)
+		// Game Mode Exit listener (Ctrl + Delete closes standalone game or exits in-editor Play Mode)
 		if (isGameOnlyMode || g_scene.isPlayMode)
 		{
-			static bool s_escWasPressed = false;
-			bool escNow = InputSystem::Get().IsKeyDown(Key::Escape) || (glfwGetKey(g_window, GLFW_KEY_ESCAPE) == GLFW_PRESS);
-			if (escNow && !s_escWasPressed)
-			{
-				// User Request: in the game mode when press esc dont close the game play mode instead do nothing
-				// and if mouse cursor state is locked then make it unlocked when press esc
-				if (InputSystem::Get().IsCursorLocked())
-				{
-					CursorState.UnLocked();
-				}
-			}
-			s_escWasPressed = escNow;
-
-			// Delete key closes the standalone game mode window or exits in-editor play mode
-			if (InputSystem::Get().IsKeyPressed(Key::Delete) || glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS)
+			bool isCtrlDown = (glfwGetKey(g_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+			                   glfwGetKey(g_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
+			                   InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+			                   InputSystem::Get().IsKeyDown(Key::RightControl) ||
+			                   ImGui::GetIO().KeyCtrl);
+			bool isDeletePressed = (InputSystem::Get().IsKeyPressed(Key::Delete) ||
+			                        glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS);
+			if (isCtrlDown && isDeletePressed)
 			{
 				CursorState.UnLocked();
 				if (isGameOnlyMode)
@@ -5365,16 +5379,6 @@ int main(int argc, char** argv)
 				else if (g_scene.isPlayMode)
 				{
 					g_engineUI.ExitPlayMode(g_scene, &g_camera);
-				}
-			}
-
-			// User Request: when click on the game play mode screen than again lock automatically
-			if (!InputSystem::Get().IsCursorLocked() && !ImGui::GetIO().WantCaptureMouse)
-			{
-				if (glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS ||
-				    glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS)
-				{
-					CursorState.Locked();
 				}
 			}
 		}
@@ -5400,6 +5404,19 @@ int main(int argc, char** argv)
 		ImGui_ImplDX12_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
+
+		if (InputSystem::Get().IsCursorLocked())
+		{
+			ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+			if (glfwGetInputMode(g_window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+			{
+				glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				if (glfwRawMouseMotionSupported())
+				{
+					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+				}
+			}
+		}
 
 		// Render Unreal Engine 5 Editor UI & 3D Gizmos
 		bool shouldExit = false;

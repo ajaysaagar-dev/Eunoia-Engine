@@ -33,6 +33,8 @@
 #include <MeshClusterCulling/MeshClusterCulling.h>
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
+#include <VisualBehaviuors/BehaviourEditorWindow.h>
+#include <VisualBehaviuors/VisualBehaviourInstance.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -436,11 +438,39 @@ static void LaunchVSCodeWorkspace(const std::string& filePath) {
         g_pEngineUI->SetupProjectDependencies(targetWorkspace);
     }
 
-    // Launch: code "<targetWorkspace>" "<absFilePath>"
-    std::string cmdParams = "/c code \"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
-    HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", cmdParams.c_str(), NULL, SW_HIDE);
-    if ((INT_PTR)hInst <= 32) {
-        ShellExecuteA(NULL, "open", absFilePath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+    // Candidate direct paths to VS Code
+    std::vector<std::filesystem::path> candidateCodePaths;
+    const char* localApp = getenv("LOCALAPPDATA");
+    if (localApp) {
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd");
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "Code.exe");
+    }
+    const char* progFiles = getenv("ProgramFiles");
+    if (progFiles) {
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "bin" / "code.cmd");
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "Code.exe");
+    }
+
+    bool launchedDirect = false;
+    for (const auto& cp : candidateCodePaths) {
+        std::error_code ec;
+        if (std::filesystem::exists(cp, ec)) {
+            std::string args = "\"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
+            HINSTANCE hInst = ShellExecuteA(NULL, "open", cp.string().c_str(), args.c_str(), NULL, SW_SHOWNORMAL);
+            if ((INT_PTR)hInst > 32) {
+                launchedDirect = true;
+                break;
+            }
+        }
+    }
+
+    if (!launchedDirect) {
+        // Fallback to: code "<targetWorkspace>" "<absFilePath>" via cmd.exe
+        std::string cmdParams = "/c code \"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
+        HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", cmdParams.c_str(), NULL, SW_HIDE);
+        if ((INT_PTR)hInst <= 32) {
+            ShellExecuteA(NULL, "open", absFilePath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
     }
 }
 
@@ -1369,13 +1399,11 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
     if (shouldCreateNew && !createProjName.empty() && !createParentDir.empty()) {
         std::filesystem::path root = std::filesystem::path(createParentDir) / createProjName;
         std::filesystem::path contentDir = root / "Content";
-        std::filesystem::path materialsDir = contentDir / "Materials";
         std::filesystem::path scenesDir = contentDir / "Scenes";
         std::filesystem::path cookedDir = root / "Cooked";
         std::filesystem::path buildDir = root / "Build";
 
         std::filesystem::create_directories(contentDir, ec);
-        std::filesystem::create_directories(materialsDir, ec);
         std::filesystem::create_directories(scenesDir, ec);
         std::filesystem::create_directories(cookedDir, ec);
         std::filesystem::create_directories(buildDir, ec);
@@ -1402,21 +1430,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             Scene starterScene;
             starterScene.Clear();
             SceneSerializer::SaveScene(starterScene, starterScenePath.string());
-        }
-
-        // Starter material in Content/Materials/Default_Material.emat
-        std::filesystem::path defaultMatPath = materialsDir / "Default_Material.emat";
-        if (!std::filesystem::exists(defaultMatPath, ec)) {
-            MaterialAsset defaultMat;
-            defaultMat.name = "Default_Material";
-            defaultMat.filePath = defaultMatPath.string();
-            defaultMat.baseColor = glm::vec3(0.55f, 0.55f, 0.55f);
-            defaultMat.metallic = 0.0f;
-            defaultMat.roughness = 0.5f;
-            defaultMat.specular = 0.5f;
-            defaultMat.assetId = AssetID::CreateRandom();
-            defaultMat.virtualPath = "/Game/Materials/Default_Material";
-            SaveMaterialFile(defaultMatPath.string(), defaultMat);
         }
 
         // 4. Initial Configs.Editor.econfigs in project root
@@ -1554,16 +1567,23 @@ bool EngineUI::SaveLevel(Scene& level) {
         return SaveLevelAs(level);
     }
     std::string filename = std::filesystem::path(currentLevelFilePath).filename().string();
-    StartLoadingTask("Saving Level", "Serializing actors to disk...", 0.1f);
-    if (SceneSerializer::SaveScene(level, currentLevelFilePath, [](float p, const std::string& step, const std::string& detail) {
-        UpdateLoadingTask(p, step, detail);
-    })) {
+    m_saveIndicator.active = true;
+    m_saveIndicator.isSaving = true;
+    m_saveIndicator.success = true;
+    m_saveIndicator.filename = filename;
+    m_saveIndicator.displayTimer = 2.5f;
+
+    if (SceneSerializer::SaveScene(level, currentLevelFilePath)) {
         levelUnsaved = false;
-        FinishLoadingTask("Level saved: " + filename);
+        m_saveIndicator.isSaving = false;
+        m_saveIndicator.success = true;
+        m_saveIndicator.displayTimer = 2.5f;
         AddLog("LogWorld", "Saved Level to: " + currentLevelFilePath, 2);
         return true;
     } else {
-        FinishLoadingTask("Failed to save Level: " + filename, false);
+        m_saveIndicator.isSaving = false;
+        m_saveIndicator.success = false;
+        m_saveIndicator.displayTimer = 3.0f;
         AddLog("LogWorld", "Failed to save Level to: " + currentLevelFilePath, 3);
         return false;
     }
@@ -1588,28 +1608,21 @@ bool EngineUI::OpenLevel(Scene& level) {
 bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode, const std::string& binPath) {
     std::string filename = std::filesystem::path(filePath).filename().string();
     if (!isGameMode) {
-        StartLoadingTask("Loading Level", "Opening file: " + filename, 0.05f);
+        currentLevelFilePath = filePath;
+        levelUnsaved = false;
+        m_progressiveLoader.Start(level, filePath, binPath);
+        AddLog("LogWorld", "Opened Level: " + filePath + " (loading incrementally)", 2);
+        return true;
     }
-    bool loaded = SceneSerializer::LoadScene(level, filePath, isGameMode ? nullptr : [](float p, const std::string& step, const std::string& detail) {
-        UpdateLoadingTask(p, step, detail);
-    }, binPath);
 
+    bool loaded = SceneSerializer::LoadScene(level, filePath, nullptr, binPath);
     if (loaded) {
         currentLevelFilePath = filePath;
         levelUnsaved = false;
         Eunoia::LightBakeManager::Get().LoadAllBakesForScene(level, activeProjectRoot);
-        if (!isGameMode) {
-            FinishLoadingTask("Level loaded: " + filename + " (" + std::to_string(level.objects.size()) + " actors)");
-            AddLog("LogWorld", "Opened Level from: " + currentLevelFilePath + " (" + std::to_string(level.objects.size()) + " actors)", 2);
-        }
         return true;
-    } else {
-        if (!isGameMode) {
-            FinishLoadingTask("Failed to open Level: " + filename, false);
-            AddLog("LogWorld", "Failed to open Level: " + filePath, 3);
-        }
-        return false;
     }
+    return false;
 }
 
 std::string EngineUI::ShowSelectFolderDialog(void* owner, const std::string& title) {
@@ -1769,31 +1782,14 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     // 1. Create project directories
     // Content browser root is inside project folder called Content
     std::filesystem::path contentDir = root / "Content";
-    std::filesystem::path materialsDir = contentDir / "Materials";
     std::filesystem::path scenesDir = contentDir / "Scenes";
     std::filesystem::path cookedDir = root / "Cooked";
     std::filesystem::path buildDir = root / "Build";
 
     std::filesystem::create_directories(contentDir, ec);
-    std::filesystem::create_directories(materialsDir, ec);
     std::filesystem::create_directories(scenesDir, ec);
     std::filesystem::create_directories(cookedDir, ec);
     std::filesystem::create_directories(buildDir, ec);
-
-    // 2. Starter material in Content/Materials
-    std::filesystem::path defaultMatPath = materialsDir / "Default_Material.emat";
-    if (!std::filesystem::exists(defaultMatPath, ec)) {
-        MaterialAsset defaultMat;
-        defaultMat.name = "Default_Material";
-        defaultMat.filePath = defaultMatPath.string();
-        defaultMat.baseColor = glm::vec3(0.55f, 0.55f, 0.55f);
-        defaultMat.metallic = 0.0f;
-        defaultMat.roughness = 0.5f;
-        defaultMat.specular = 0.5f;
-        defaultMat.assetId = AssetID::CreateRandom();
-        defaultMat.virtualPath = "/Game/Materials/Default_Material";
-        SaveMaterialFile(defaultMatPath.string(), defaultMat);
-    }
 
     // 3. Starter scene in Content/Scenes (completely empty - no objects, no lights)
     std::filesystem::path starterScenePath = scenesDir / "Main.escene";
@@ -1886,32 +1882,48 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         }
     }
 
-    // Load scene: prioritize explicit specificScenePath if provided (fast game launch)
-    bool found = false;
-    if (!specificScenePath.empty() && std::filesystem::exists(specificScenePath, ec)) {
-        found = OpenLevelFromPath(scene, specificScenePath, isGameMode, specificBinPath);
-    } else {
+    // Determine respective scene path to load
+    std::string targetScenePath = specificScenePath;
+    if (targetScenePath.empty()) {
         std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
         if (std::filesystem::exists(mainScene, ec)) {
-            found = OpenLevelFromPath(scene, mainScene.string(), isGameMode, specificBinPath);
+            targetScenePath = mainScene.string();
         } else {
             for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
                 if (entry.is_regular_file(ec)) {
                     std::string ext = entry.path().extension().string();
                     if (ext == ".escene" || ext == ".elevel") {
-                        found = OpenLevelFromPath(scene, entry.path().string(), isGameMode, specificBinPath);
+                        targetScenePath = entry.path().string();
                         break;
                     }
                 }
             }
         }
     }
-    if (!found) {
+
+    if (isGameMode) {
+        // Game mode: load scene immediately (no editor window)
+        bool found = false;
+        if (!targetScenePath.empty() && std::filesystem::exists(targetScenePath, ec)) {
+            found = OpenLevelFromPath(scene, targetScenePath, true, specificBinPath);
+        }
+        if (!found) {
+            scene.Clear();
+            currentLevelFilePath = "";
+        }
+        isInitialSceneLoaded = true;
+        pendingInitialSceneLoad = false;
+    } else {
+        // Editor mode: Open engine editor with no viewport rendered first,
+        // then once open and displayed, load the respective scene/level.
         scene.Clear();
         currentLevelFilePath = "";
-    }
+        pendingScenePath = targetScenePath;
+        pendingBinPath = specificBinPath;
+        pendingInitialSceneLoad = true;
+        isInitialSceneLoaded = false;
+        initialLoadFrameCountdown = 2; // Allow editor window to present initial frame
 
-    if (!isGameMode) {
         camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
         camera.distance = 7.0f;
         camera.yaw = 45.0f;
@@ -1946,6 +1958,32 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     return true;
+}
+
+bool EngineUI::LoadPendingInitialScene(Scene& scene, OrbitCamera& camera, bool isGameMode) {
+    if (!pendingInitialSceneLoad) return false;
+    pendingInitialSceneLoad = false;
+
+    bool found = false;
+    std::error_code ec;
+    if (!pendingScenePath.empty() && std::filesystem::exists(pendingScenePath, ec)) {
+        found = OpenLevelFromPath(scene, pendingScenePath, isGameMode, pendingBinPath);
+        if (found) {
+            AddLog("LogScene", "Loaded respective level: " + pendingScenePath, 2);
+        }
+    }
+    if (!found) {
+        scene.Clear();
+        currentLevelFilePath = "";
+    }
+
+    camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
+    camera.distance = 7.0f;
+    camera.yaw = 45.0f;
+    camera.pitch = 25.0f;
+
+    isInitialSceneLoaded = true;
+    return found;
 }
 
 std::string EngineUI::ShowSaveFileDialog() {
@@ -2285,27 +2323,20 @@ void EngineUI::SetupTheme() {
 }
 
 void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit) {
+    if (InputSystem::Get().IsCursorLocked()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    }
+
     if (isGameOnlyWindow) {
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete)) {
+        bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
+                          InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                          InputSystem::Get().IsKeyDown(Key::RightControl);
+        if (isCtrlDown && (ImGui::IsKeyPressed(ImGuiKey_Delete) || InputSystem::Get().IsKeyPressed(Key::Delete))) {
             outShouldExit = true;
         }
 
         // Render on-screen prints / HUD in game window
         RenderScreenPrintOverlay(24.0f, 24.0f);
-
-        // Render subtle top-right exit hint
-        ImGuiViewport* vp = ImGui::GetMainViewport();
-        if (vp) {
-            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 330.0f, vp->WorkPos.y + 16.0f));
-            ImGui::SetNextWindowBgAlpha(0.35f);
-            ImGuiWindowFlags hintFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
-                                         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                         ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoMove;
-            if (ImGui::Begin("##GameWindowHint", nullptr, hintFlags)) {
-                ImGui::TextColored(ImVec4(0.85f, 0.88f, 0.92f, 0.75f), "Game Mode | ESC: Free Cursor | Click: Lock | DEL: Exit");
-            }
-            ImGui::End();
-        }
         return;
     }
 
@@ -2317,6 +2348,17 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     ImGuizmo::BeginFrame();
+
+    // Step progressive scene loader if active
+    if (m_progressiveLoader.active) {
+        if (!m_progressiveLoader.completed) {
+            m_progressiveLoader.Step(scene, 1);
+            if (m_progressiveLoader.completed) {
+                Eunoia::LightBakeManager::Get().LoadAllBakesForScene(scene, activeProjectRoot);
+                AddLog("LogWorld", "Level loaded: " + m_progressiveLoader.filePath + " (" + std::to_string(scene.objects.size()) + " actors)", 2);
+            }
+        }
+    }
 
     // Flush asynchronous compilation logs
     {
@@ -2410,7 +2452,24 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             gizmoUseCenter = !gizmoUseCenter;
             AddLog("LogEditor", gizmoUseCenter ? "Gizmo Position: Center (Z)" : "Gizmo Position: Pivot (Z)", 0);
         }
-        if (!s_justExitedPlayMode && ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.selectedId != -1) {
+        static int s_exitPlayModeCooldown = 0;
+        if (s_justExitedPlayMode) {
+            s_exitPlayModeCooldown = 30;
+            s_justExitedPlayMode = false;
+        }
+        if (s_exitPlayModeCooldown > 0) {
+            s_exitPlayModeCooldown--;
+        }
+
+        bool isCtrlDownForDelete = ImGui::GetIO().KeyCtrl ||
+                                   InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                                   InputSystem::Get().IsKeyDown(Key::RightControl) ||
+                                   InputSystem::Get().IsKeyDown(Key::LCtrl) ||
+                                   InputSystem::Get().IsKeyDown(Key::RCtrl) ||
+                                   (m_window && (glfwGetKey(m_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS || glfwGetKey(m_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS));
+
+        if (!s_justExitedPlayMode && s_exitPlayModeCooldown == 0 && !isCtrlDownForDelete &&
+            ImGui::IsKeyPressed(ImGuiKey_Delete) && scene.selectedId != -1) {
             GameObject* o = scene.GetSelected();
             if (o) {
                 UndoManager::Get().RecordSnapshot(scene, "Delete Actor: " + o->name);
@@ -2450,37 +2509,27 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
     }
 
-    // Play Mode Presentation & Stop-on-Delete (User Request: ESC does not exit game mode)
+    // Play Mode Presentation & Stop-on-Ctrl+Delete
     if (scene.isPlayMode) {
         isPlayModeActive = true;
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete) ||
-            InputSystem::Get().IsKeyPressed(Key::Delete)) {
+        bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
+                          InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+                          InputSystem::Get().IsKeyDown(Key::RightControl);
+        bool isDeletePressed = ImGui::IsKeyPressed(ImGuiKey_Delete) ||
+                               InputSystem::Get().IsKeyPressed(Key::Delete);
+        if (isCtrlDown && isDeletePressed) {
             ExitPlayMode(scene, &camera);
             return;
         }
 
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(ImVec2(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.80f);
-        ImGuiWindowFlags playFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing | ImGuiWindowFlags_NoNav;
-        if (ImGui::Begin("##PlayModeBanner", nullptr, playFlags)) {
-            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ GAME PLAY MODE (FULL SCREEN)");
-            ImGui::SameLine();
-            ImGui::TextDisabled("| Press [DELETE] or click Stop to exit | Press [ESC] to unlock cursor");
-            ImGui::SameLine();
-            if (ImGui::Button("⏹ Stop")) {
-                ExitPlayMode(scene, &camera);
-                ImGui::End();
-                return;
-            }
-        }
-        ImGui::End();
 
         // Game View top-left: Render on-screen Print messages (Print(value, time))
-        RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 54.0f);
+        RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f);
 
         // Game View occupies the available area; editor UI is hidden
         RenderLoadingModal();
+        RenderSaveIndicator();
         return;
     }
 
@@ -2573,6 +2622,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 10. Behaviour Script Change & Compilation Prompt (User Request: ask as compile or later)
     RenderScriptCompileModal(scene);
 
+    // 10b. Visual-Behaviuors Node-Graph Editor Windows (.ebehaviour assets)
+    VisualBehaviuors::BehaviourEditorManager::Get().RenderAll();
+
     // 11. 3D Model Real-Time Detection & Import View ("One by One" wizard)
     if (showModelImportModal) {
         RenderModelImportModal(scene, camera);
@@ -2608,10 +2660,14 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 9. Interactive 3D Transform Gizmo
     ImGuiViewport* vp = ImGui::GetMainViewport();
     auto vpRect = GetViewportRect(vp->Size.x, vp->Size.y);
-    RenderGizmo(scene, camera, vpRect.width, vpRect.height);
+    if (!m_progressiveLoader.active || m_progressiveLoader.completed) {
+        RenderGizmo(scene, camera, vpRect.width, vpRect.height);
+    }
 
     // 10. Futuristic Loading Progress Modal (all loading situations)
     RenderLoadingModal();
+    RenderViewportLoadingOverlay();
+    RenderSaveIndicator();
 
     // 11. Project Browser Dialog Window (Startup & On-Demand)
     RenderProjectBrowser(scene, camera);
@@ -2630,7 +2686,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
                     IM_COL32(48, 52, 64, 255), 0.0f, 0, 1.0f);
     }
 
-    s_justExitedPlayMode = false;
 }
 
 void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
@@ -3125,14 +3180,14 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         }
                     };
 
-                    // 2. Package game assets and folders: Cooked, Scenes, Levels, Registry, Materials, Models, Behaviours
+                    // 2. Package game assets and folders: Cooked and all Content subdirectories
                     copyDirRecursive(cookedDir, gameBuildDir / "Cooked");
-                    copyDirRecursive(contentRootPath / "Scenes", gameBuildDir / "Scenes");
-                    copyDirRecursive(contentRootPath / "Levels", gameBuildDir / "Levels");
-                    copyDirRecursive(contentRootPath / "Registry", gameBuildDir / "Registry");
-                    copyDirRecursive(contentRootPath / "Materials", gameBuildDir / "Materials");
-                    copyDirRecursive(contentRootPath / "Models", gameBuildDir / "Models");
-                    copyDirRecursive(contentRootPath / "Behaviours", gameBuildDir / "Behaviours");
+                    for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
+                        if (entry.is_directory(ec)) {
+                            copyDirRecursive(entry.path(), gameBuildDir / entry.path().filename());
+                            copyDirRecursive(entry.path(), gameBuildDir / "Content" / entry.path().filename());
+                        }
+                    }
 
                     // 3. Copy project root metadata and asset files (*.emat, *.assetmeta, *.json, etc.)
                     for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
@@ -3190,7 +3245,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("📦 Cook Project Assets")) {
                     OpenCookModal();
                 }
-                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Delete")) {
+                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
                     if (scene.isPlayMode) ExitPlayMode(scene, currentCamera);
                     else EnterPlayMode(scene, currentCamera);
                 }
@@ -3289,7 +3344,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ExitPlayMode(scene, currentCamera);
                 }
             }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isPlayActive ? "Stop Play Mode [Delete]" : "Enter Game Play Mode in editor (Full Screen Fit)");
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(isPlayActive ? "Stop Play Mode [Ctrl+Delete]" : "Enter Game Play Mode in editor (Full Screen Fit)");
             ImGui::PopStyleColor();
 
             if (isPlayActive) {
@@ -3298,7 +3353,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::Button("⏹ Stop")) {
                     ExitPlayMode(scene, currentCamera);
                 }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Delete]");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Ctrl+Delete]");
                 ImGui::PopStyleColor();
             }
 
@@ -3758,7 +3813,14 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
     if (isSelected) {
         ImGui::PopStyleColor(3);
     }
-    if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen()) {
+
+    // Select only on click-up (mouse release without dragging) to allow drag & drop from hierarchy
+    bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+    float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
+    float dragThreshold = ImGui::GetIO().MouseDragThreshold;
+    bool wasDragging = (dragDistSqr >= dragThreshold * dragThreshold) || (ImGui::GetDragDropPayload() != nullptr);
+
+    if (isClickedUp && !wasDragging && !ImGui::IsItemToggledOpen()) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl) {
             if (selectedActorIds.count(obj.id)) {
@@ -3964,7 +4026,12 @@ void EngineUI::RenderOutliner(Scene& scene) {
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
                 }
-                if (ImGui::Selectable(itemLabel, isSelected)) {
+                ImGui::Selectable(itemLabel, isSelected);
+                bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
+                float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
+                float dragThreshold = ImGui::GetIO().MouseDragThreshold;
+                bool wasDragging = (dragDistSqr >= dragThreshold * dragThreshold) || (ImGui::GetDragDropPayload() != nullptr);
+                if (isClickedUp && !wasDragging) {
                     ImGuiIO& io = ImGui::GetIO();
                     if (io.KeyCtrl) {
                         if (selectedActorIds.count(obj.id)) {
@@ -4003,6 +4070,12 @@ void EngineUI::RenderOutliner(Scene& scene) {
                         scene.selectedId = obj.id;
                         lastSelectedActorId = obj.id;
                     }
+                }
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                    int actorId = obj.id;
+                    ImGui::SetDragDropPayload("OUTLINER_ACTOR", &actorId, sizeof(int));
+                    ImGui::Text("Reparent %s", obj.name.c_str());
+                    ImGui::EndDragDropSource();
                 }
                 if (isSelected) {
                     ImGui::PopStyleColor(3);
@@ -6851,7 +6924,7 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
     // 2. Check AssetRegistry
     const auto& assets = AssetRegistry::Get().GetAllAssets();
     for (const auto& pair : assets) {
-        if (pair.second.type == AssetType::Behaviour || pair.second.type == AssetType::Script) {
+        if (pair.second.type == AssetType::Behaviour || pair.second.type == AssetType::Script || pair.second.type == AssetType::VisualBehaviour) {
             std::string objLower = pair.second.objectName;
             std::transform(objLower.begin(), objLower.end(), objLower.begin(), ::tolower);
             if (objLower == nameLower) {
@@ -6871,7 +6944,7 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
                 if (!it->is_directory(ec)) {
                     std::string ext = it->path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".behaviour") {
+                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".behaviour" || ext == ".ebehaviour") {
                         std::string fileStem = it->path().stem().string();
                         std::transform(fileStem.begin(), fileStem.end(), fileStem.begin(), ::tolower);
                         if (fileStem == nameLower) {
@@ -7050,8 +7123,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::PopID();
                 }
 
-                // Utilities on right: Import Model, Cook, and Search
-                float rightOffset = 310.0f;
+                // Utilities on right: Import Model, Cook, Zoom Slider, and Search
+                float rightOffset = 400.0f;
                 if (ImGui::GetContentRegionAvail().x > rightOffset) {
                     ImGui::SameLine(ImGui::GetWindowWidth() - rightOffset);
                 } else {
@@ -7069,6 +7142,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     OpenCookModal();
                 }
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cook & Package Assets (dev.md Section 24, 25)");
+
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(75.0f);
+                ImGui::SliderFloat("##CBZoom", &contentThumbnailSize, 72.0f, 130.0f, "%.0f px");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Card / Thumbnail Size Scale");
 
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(125.0f);
@@ -7281,26 +7359,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "// ============================================================================\n"
                                 << "class " << behName << " : public EunoiaBehaviour {\n"
                                 << "public:\n"
-                                << "    " << behName << "() {\n"
-                                << "        m_className   = \"" << behName << "\";\n"
-                                << "        m_displayName = \"" << behName << "\";\n"
-                                << "        RegisterProperties();\n"
-                                << "    }\n\n"
-                                << "    // ------------------------------------------------------------------------\n"
-                                << "    // Property Registration (Exposed in Editor Details Panel)\n"
-                                << "    // ------------------------------------------------------------------------\n"
-                                << "    void RegisterProperties() override {\n"
-                                << "        m_properties.clear();\n"
-                                << "        // RegisterProperty(\"Property Name\", &variable, \"Category\");\n"
-                                << "    }\n\n"
-                                << "    // ------------------------------------------------------------------------\n"
-                                << "    // Deep copy support for Play Mode and Undo / Redo\n"
-                                << "    // ------------------------------------------------------------------------\n"
-                                << "    std::unique_ptr<EunoiaBehaviour> Clone() const override {\n"
-                                << "        auto clone = std::make_unique<" << behName << ">(*this);\n"
-                                << "        clone->CopyPropertiesFrom(*this);\n"
-                                << "        return clone;\n"
-                                << "    }\n\n"
+                                << "    // Public variables are automatically registered as editable properties\n"
+                                << "    float Speed = 5.0f;\n\n"
                                 << "    // ------------------------------------------------------------------------\n"
                                 << "    // Lifecycle Methods\n"
                                 << "    // ------------------------------------------------------------------------\n"
@@ -7330,7 +7390,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "    }\n\n"
                                 << "};\n\n"
                                 << "// Register behaviour with the engine's BehaviourRegistry\n"
-                                << "REGISTER_BEHAVIOUR(" << behName << ", \"" << behName << "\")\n";
+                                << "REGISTER_BEHAVIOUR(" << behName << ")\n";
                         }
 
                         std::ofstream metaFile(metaPath);
@@ -7354,8 +7414,90 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         AddLog("LogContent", "Created Behaviour asset: " + behName + ".cpp in " + targetDir, 2);
 
                         // Open project as workspace in VS Code and open the script file
-                        LaunchVSCodeWorkspace(cppPath.string());
                         OpenScriptInCodeEditor(cppPath.string());
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Visual Behaviour asset creation modal
+                if (showNewVisualBehaviourPopup) {
+                    ImGui::OpenPopup("Create Visual Behaviour##VBModal");
+                    showNewVisualBehaviourPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Visual Behaviour##VBModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Visual Behaviour Name (.ebehaviour):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##VBehNameInput", newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf));
+
+                    std::string inputName = newVisualBehaviourNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "✓ Will create: %s.ebehaviour in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path behDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(behDir, bec);
+
+                        std::filesystem::path vbPath = behDir / (inputName + ".ebehaviour");
+                        // Create a new graph with default event stubs
+                        VisualBehaviuors::RegisterBuiltinNodes();
+                        VisualBehaviuors::BehaviourGraph g;
+                        g.name = inputName;
+                        g.AddNode("Event.BeginPlay", 50.0f, 100.0f);
+                        g.AddNode("Event.Tick",      50.0f, 220.0f);
+                        VisualBehaviuors::SaveGraph(g, vbPath.string());
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path metaPath = behDir / (inputName + ".ebehaviour.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Visual Behaviour\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        // Register in AssetRegistry immediately so it displays without delay
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::VisualBehaviour;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(vbPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".ebehaviour") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        VisualBehaviuors::BehaviourEditorManager::Get().Open(vbPath.string());
+                        AddLog("LogContent", "Created Visual Behaviour: " + inputName + ".ebehaviour in " + targetDir, 2);
 
                         popupTargetVirtualDir = "";
                         ImGui::CloseCurrentPopup();
@@ -7462,7 +7604,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewSkyboxPopup = true;
                             snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                         }
-                        if (ImGui::MenuItem("🧩 New Behaviour")) {
+                        if (ImGui::MenuItem("🧩 New Behaviour Script")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
                             std::string defName = "NewBehaviour";
@@ -7472,6 +7614,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 defName = "NewBehaviour_" + std::to_string(idx);
                             }
                             snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                        }
+                        if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewVisualBehaviourPopup = true;
+                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("📥 Import Model...")) {
@@ -7615,445 +7762,516 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     }
                 };
 
-                ImGuiTableFlags tableFlags = ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV |
-                                             ImGuiTableFlags_BordersOuter | ImGuiTableFlags_Resizable |
-                                             ImGuiTableFlags_ScrollY;
+                // Unified Content Item structure for Content View cards
+                struct CBItem {
+                    bool isFolder = false;
+                    std::string subDir;
+                    AssetMetadata meta;
+                    std::string itemKey;
+                    std::string primaryVal;
+                    std::string displayName;
+                };
 
-                if (ImGui::BeginTable("RegistryAssetTable", 5, tableFlags, ImVec2(0, 0))) {
-                    ImGui::TableSetupColumn("Type", ImGuiTableColumnFlags_WidthFixed, 110.0f);
-                    ImGui::TableSetupColumn("Name & Virtual Path", ImGuiTableColumnFlags_WidthStretch);
-                    ImGui::TableSetupColumn("AssetID", ImGuiTableColumnFlags_WidthFixed, 130.0f);
-                    ImGui::TableSetupColumn("Deps / Refs", ImGuiTableColumnFlags_WidthFixed, 95.0f);
-                    ImGui::TableSetupColumn("Status", ImGuiTableColumnFlags_WidthFixed, 75.0f);
-                    ImGui::TableHeadersRow();
+                std::vector<CBItem> allItems;
 
-                    int rowIndex = 0;
+                if (searchStr.empty()) {
+                    for (const auto& subDir : currentSubdirs) {
+                        CBItem item;
+                        item.isFolder = true;
+                        item.subDir = subDir;
+                        item.itemKey = "DIR:" + subDir;
+                        item.primaryVal = subDir;
+                        item.displayName = AssetPath::GetObjectName(subDir);
+                        allItems.push_back(std::move(item));
+                    }
+                }
 
-                    // 1. Virtual Subdirectories (if no search)
-                    if (searchStr.empty()) {
-                        for (const auto& subDir : currentSubdirs) {
-                            ImGui::TableNextRow();
-                            ImGui::PushID(subDir.c_str());
+                for (const auto& meta : displayAssets) {
+                    std::string sPath = meta.sourcePath;
+                    std::transform(sPath.begin(), sPath.end(), sPath.begin(), ::tolower);
+                    std::string vPath = meta.virtualPath;
+                    std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
+                    std::string oName = meta.objectName;
+                    std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
 
-                            std::string subName = AssetPath::GetObjectName(subDir);
-                            std::string itemKey = "DIR:" + subDir;
-                            bool isFolderSelected = (selectedContentItems.count(itemKey) > 0 || selectedContentItem == subDir);
+                    if (sPath.find(".assetmeta") != std::string::npos ||
+                        sPath.find(".meta") != std::string::npos ||
+                        vPath.find(".assetmeta") != std::string::npos ||
+                        vPath.find(".meta") != std::string::npos ||
+                        oName.find(".assetmeta") != std::string::npos ||
+                        oName.find(".meta") != std::string::npos) {
+                        continue;
+                    }
 
-                            ImGui::TableSetColumnIndex(0);
-                            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.35f, 1.0f), "📁 Folder");
+                    CBItem item;
+                    item.isFolder = false;
+                    item.meta = meta;
+                    item.itemKey = "ASSET:" + meta.virtualPath;
+                    item.primaryVal = meta.virtualPath;
+                    item.displayName = meta.objectName;
+                    allItems.push_back(std::move(item));
+                }
 
-                            ImGui::TableSetColumnIndex(1);
-                            if (isFolderSelected) {
-                                ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.45f, 0.85f, 0.75f));
-                                ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
-                                ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
-                            }
-                            if (ImGui::Selectable(subName.c_str(), isFolderSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                                HandleItemClick(itemKey, subDir);
-                                if (ImGui::IsMouseDoubleClicked(0)) {
-                                    currentVirtualDir = subDir;
-                                    selectedContentItem = "";
-                                    selectedContentItems.clear();
-                                    lastSelectedContentItem = "";
-                                }
-                            }
-                            if (isFolderSelected) {
-                                ImGui::PopStyleColor(3);
-                            }
+                if (allItems.empty()) {
+                    ImGui::Spacing();
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.55f, 0.62f, 0.72f, 1.0f), "    (No items found in this directory. Right-click here to create)");
+                } else {
+                    float availWidth = ImGui::GetContentRegionAvail().x;
+                    float cardW = contentThumbnailSize;
+                    if (cardW < 72.0f) cardW = 72.0f;
+                    if (cardW > 160.0f) cardW = 160.0f;
+                    float cardH = cardW * 1.20f;
+                    float spacing = 8.0f;
 
-                            // Drag source for folder row
-                            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                                std::string dragStr = "";
-                                if (selectedContentItems.count(itemKey) > 0 && selectedContentItems.size() > 1) {
-                                    for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
-                                } else {
-                                    dragStr = itemKey + "\n";
-                                }
-                                ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
-                                ImGui::Text("📁 %s", subName.c_str());
-                                ImGui::EndDragDropSource();
-                            }
+                    int itemsPerRow = (int)((availWidth + spacing) / (cardW + spacing));
+                    if (itemsPerRow < 1) itemsPerRow = 1;
 
-                            // Drop target on folder row (drag anything into this folder!)
-                            if (ImGui::BeginDragDropTarget()) {
-                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
-                                    std::string payloadData((const char*)payload->Data);
-                                    std::stringstream pss(payloadData);
-                                    std::string item;
-                                    while (std::getline(pss, item, '\n')) {
-                                        if (item.empty()) continue;
-                                        if (item.rfind("DIR:", 0) == 0) {
-                                            MoveFolderToDirectory(item.substr(4), subDir, contentRootPath);
-                                        } else if (item.rfind("ASSET:", 0) == 0) {
-                                            const AssetMetadata* m = AssetRegistry::Get().FindByPath(item.substr(6));
-                                            if (m) MoveAssetToDirectory(m->id, subDir, contentRootPath);
-                                        }
+                    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+                    for (size_t idx = 0; idx < allItems.size(); ++idx) {
+                        const auto& item = allItems[idx];
+                        if (idx > 0 && (idx % itemsPerRow) != 0) {
+                            ImGui::SameLine(0, spacing);
+                        }
+
+                        ImGui::PushID(item.itemKey.c_str());
+
+                        bool isSelected = (selectedContentItems.count(item.itemKey) > 0 || selectedContentItem == item.primaryVal);
+                        ImVec2 cardPos = ImGui::GetCursorScreenPos();
+                        ImVec2 cardSize(cardW, cardH);
+                        ImVec2 pMin = cardPos;
+                        ImVec2 pMax = ImVec2(cardPos.x + cardW, cardPos.y + cardH);
+
+                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0, 0, 0, 0));
+                        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0, 0, 0, 0));
+
+                        bool clicked = ImGui::Selectable("##cbCard", isSelected, ImGuiSelectableFlags_AllowDoubleClick, cardSize);
+
+                        ImGui::PopStyleColor(3);
+
+                        bool hovered = ImGui::IsItemHovered();
+
+                        if (clicked) {
+                            HandleItemClick(item.itemKey, item.primaryVal);
+                        }
+
+                        // Double-click action
+                        if (hovered && ImGui::IsMouseDoubleClicked(0)) {
+                            if (item.isFolder) {
+                                currentVirtualDir = item.subDir;
+                                selectedContentItem = "";
+                                selectedContentItems.clear();
+                                lastSelectedContentItem = "";
+                            } else {
+                                if (item.meta.type == AssetType::Material) {
+                                    std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                    OpenMaterialEditor(fullMat.string());
+                                } else if (item.meta.type == AssetType::Skybox) {
+                                    std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                    OpenSkyboxEditor(fullSky.string());
+                                } else if (item.meta.type == AssetType::Water) {
+                                    std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
+                                    OpenWaterEditor(fullWater.string());
+                                } else if (item.meta.type == AssetType::Mesh) {
+                                    std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
+                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
+                                    scene.selectedId = newObj.id;
+                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::Level) {
+                                    std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
+                                    OpenLevelFromPath(scene, fullLevel.string());
+                                } else if (item.meta.type == AssetType::VisualBehaviour) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                    AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    std::string ext = fullScript.extension().string();
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                    if (ext == ".ebehaviour") {
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                    } else {
+                                        OpenScriptInCodeEditor(fullScript.string());
                                     }
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
-                                    std::string idStr((const char*)payload->Data);
-                                    MoveAssetToDirectory(AssetID::FromString(idStr), subDir, contentRootPath);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
+                                } else {
+                                    OpenReferenceViewer(item.meta.id);
                                 }
-                                ImGui::EndDragDropTarget();
+                            }
+                        }
+
+                        // Drag & Drop Source
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                            std::string dragStr = "";
+                            if (selectedContentItems.count(item.itemKey) > 0 && selectedContentItems.size() > 1) {
+                                for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
+                            } else {
+                                dragStr = item.itemKey + "\n";
+                            }
+                            ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
+
+                            if (!item.isFolder) {
+                                std::string idStr = item.meta.id.ToString();
+                                ImGui::SetDragDropPayload("ASSET_ID", idStr.c_str(), idStr.length() + 1);
                             }
 
-                            // Right-click context menu on folder row
-                            if (ImGui::BeginPopupContextItem("FolderRowCtx")) {
+                            if (selectedContentItems.size() > 1 && selectedContentItems.count(item.itemKey)) {
+                                ImGui::Text("📦 Moving %d items", (int)selectedContentItems.size());
+                            } else {
+                                const char* icon = item.isFolder ? "📁" : GetAssetTypeIcon(item.meta.type);
+                                ImGui::Text("%s %s", icon, item.displayName.c_str());
+                            }
+                            if (!item.isFolder) {
+                                if (item.meta.type == AssetType::Mesh) {
+                                    ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "[Drag to Viewport to spawn in Level]");
+                                } else if (item.meta.type == AssetType::Level) {
+                                    ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.95f, 1.0f), "[Drag to Viewport to open Level]");
+                                }
+                            }
+                            ImGui::EndDragDropSource();
+                        }
+
+                        // Drop Target on Folder Cards
+                        if (item.isFolder && ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                                std::string payloadData((const char*)payload->Data);
+                                std::stringstream pss(payloadData);
+                                std::string dragItem;
+                                while (std::getline(pss, dragItem, '\n')) {
+                                    if (dragItem.empty()) continue;
+                                    if (dragItem.rfind("DIR:", 0) == 0) {
+                                        MoveFolderToDirectory(dragItem.substr(4), item.subDir, contentRootPath);
+                                    } else if (dragItem.rfind("ASSET:", 0) == 0) {
+                                        const AssetMetadata* m = AssetRegistry::Get().FindByPath(dragItem.substr(6));
+                                        if (m) MoveAssetToDirectory(m->id, item.subDir, contentRootPath);
+                                    }
+                                }
+                                TriggerBackgroundRegistrySync(contentRootPath);
+                            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
+                                std::string idStr((const char*)payload->Data);
+                                MoveAssetToDirectory(AssetID::FromString(idStr), item.subDir, contentRootPath);
+                                TriggerBackgroundRegistrySync(contentRootPath);
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        // Context Menus
+                        if (item.isFolder) {
+                            if (ImGui::BeginPopupContextItem("FolderCardCtx")) {
                                 if (ImGui::MenuItem("📁 Open Folder")) {
-                                    currentVirtualDir = subDir;
+                                    currentVirtualDir = item.subDir;
                                     selectedContentItem = "";
                                     selectedContentItems.clear();
                                     lastSelectedContentItem = "";
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("➕ New Folder")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewFolderPopup = true;
                                     snprintf(newFolderNameBuf, sizeof(newFolderNameBuf), "NewFolder");
                                 }
                                 if (ImGui::MenuItem("🎨 New Material")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewMaterialPopup = true;
                                     snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                                 }
                                 if (ImGui::MenuItem("🌌 New Skybox")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewSkyboxPopup = true;
                                     snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                                 }
-                                if (ImGui::MenuItem("🧩 New Behaviour")) {
-                                    popupTargetVirtualDir = subDir;
+                                if (ImGui::MenuItem("🧩 New Behaviour Script")) {
+                                    popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
                                     std::string defName = "NewBehaviour";
                                     if (IsBehaviourNameAlreadyExists(defName)) {
-                                        int idx = 1;
-                                        while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
-                                        defName = "NewBehaviour_" + std::to_string(idx);
+                                        int bIdx = 1;
+                                        while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(bIdx))) bIdx++;
+                                        defName = "NewBehaviour_" + std::to_string(bIdx);
                                     }
                                     snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
                                 }
+                                if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewVisualBehaviourPopup = true;
+                                    snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("📥 Import Model...")) {
-                                    popupTargetVirtualDir = subDir;
+                                    popupTargetVirtualDir = item.subDir;
                                     ImportMeshWithSavePrompt(scene);
                                 }
                                 if (ImGui::MenuItem("📂 Show in Explorer")) {
-                                    std::string diskSub = subDir;
+                                    std::string diskSub = item.subDir;
                                     if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
                                     if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
                                     std::filesystem::path folderDisk = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
                                     std::string cmd = "explorer \"" + folderDisk.string() + "\"";
                                     system(cmd.c_str());
                                 }
-                                ImGui::Separator();
-                                if (ImGui::MenuItem("❌ Delete Folder")) {
-                                    std::string diskSub = subDir;
-                                    if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                                    if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                                    std::filesystem::path folderDisk = contentRootPath / diskSub;
-                                    std::error_code delEc;
-                                    std::filesystem::remove_all(folderDisk, delEc);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                }
-                                ImGui::EndPopup();
-                            }
-
-                            if (ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("Virtual Folder: %s\n(Double-click to open | Drag & Drop onto or into other folders)", subDir.c_str());
-                            }
-
-                            ImGui::TableSetColumnIndex(2);
-                            ImGui::TextDisabled("-");
-                            ImGui::TableSetColumnIndex(3);
-                            ImGui::TextDisabled("-");
-                            ImGui::TableSetColumnIndex(4);
-                            ImGui::TextDisabled("Dir");
-
-                            ImGui::PopID();
-                            rowIndex++;
-                        }
-                    }
-
-                    // 2. Assets from AssetRegistry
-                    for (const auto& meta : displayAssets) {
-                        std::string sPath = meta.sourcePath;
-                        std::transform(sPath.begin(), sPath.end(), sPath.begin(), ::tolower);
-                        std::string vPath = meta.virtualPath;
-                        std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
-                        std::string oName = meta.objectName;
-                        std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
-
-                        // Do not show metadata files (.assetmeta, .meta) in Content Browser
-                        if (sPath.find(".assetmeta") != std::string::npos ||
-                            sPath.find(".meta") != std::string::npos ||
-                            vPath.find(".assetmeta") != std::string::npos ||
-                            vPath.find(".meta") != std::string::npos ||
-                            oName.find(".assetmeta") != std::string::npos ||
-                            oName.find(".meta") != std::string::npos) {
-                            continue;
-                        }
-
-                        ImGui::TableNextRow();
-                        ImGui::PushID(meta.id.ToString().c_str());
-
-                        std::string itemKey = "ASSET:" + meta.virtualPath;
-                        bool isAssetSelected = (selectedContentItems.count(itemKey) > 0 || selectedContentItem == meta.virtualPath);
-
-                        // Column 0: Type with icon and color
-                        ImGui::TableSetColumnIndex(0);
-                        ImVec4 typeCol(0.7f, 0.7f, 0.7f, 1.0f);
-                        if (meta.type == AssetType::Material) typeCol = ImVec4(0.35f, 0.85f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Skybox) typeCol = ImVec4(0.85f, 0.45f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Water) typeCol = ImVec4(0.0f, 0.6f, 1.0f, 1.0f);
-                        else if (meta.type == AssetType::Texture) typeCol = ImVec4(0.40f, 0.90f, 0.50f, 1.0f);
-                        else if (meta.type == AssetType::Mesh) typeCol = ImVec4(0.95f, 0.65f, 0.25f, 1.0f);
-                        else if (meta.type == AssetType::Level) typeCol = ImVec4(0.30f, 0.85f, 0.95f, 1.0f);
-
-                        ImGui::TextColored(typeCol, "%s %s", GetAssetTypeIcon(meta.type), AssetTypeToString(meta.type));
-
-                        // Column 1: Object Name & Virtual Path
-                        ImGui::TableSetColumnIndex(1);
-                        if (isAssetSelected) {
-                            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.45f, 0.85f, 0.75f));
-                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
-                            ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
-                        }
-                        if (ImGui::Selectable(meta.objectName.c_str(), isAssetSelected, ImGuiSelectableFlags_SpanAllColumns | ImGuiSelectableFlags_AllowDoubleClick)) {
-                            HandleItemClick(itemKey, meta.virtualPath);
-                            if (ImGui::IsMouseDoubleClicked(0)) {
-                                if (meta.type == AssetType::Material) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    OpenMaterialEditor(fullMat.string());
-                                } else if (meta.type == AssetType::Skybox) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    OpenSkyboxEditor(fullSky.string());
-                                } else if (meta.type == AssetType::Water) {
-                                    std::filesystem::path fullWater = contentRootPath / meta.sourcePath;
-                                    OpenWaterEditor(fullWater.string());
-                                } else if (meta.type == AssetType::Mesh) {
-                                    std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
-                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
-                                    scene.selectedId = newObj.id;
-                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + meta.objectName, 2);
-                                } else if (meta.type == AssetType::Level) {
-                                    std::filesystem::path fullLevel = contentRootPath / meta.sourcePath;
-                                    OpenLevelFromPath(scene, fullLevel.string());
-                                } else if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    LaunchVSCodeWorkspace(fullScript.string());
-                                    OpenScriptInCodeEditor(fullScript.string());
-                                } else {
-                                    OpenReferenceViewer(meta.id);
-                                }
-                            }
-                        }
-                        if (isAssetSelected) {
-                            ImGui::PopStyleColor(3);
-                        }
-
-                        // Drag & Drop Source transferring AssetID and CONTENT_DRAG (supports multi-selection!)
-                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                            std::string dragStr = "";
-                            if (selectedContentItems.count(itemKey) > 0 && selectedContentItems.size() > 1) {
-                                for (const auto& selKey : selectedContentItems) dragStr += selKey + "\n";
-                            } else {
-                                dragStr = itemKey + "\n";
-                            }
-                            ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
-
-                            std::string idStr = meta.id.ToString();
-                            ImGui::SetDragDropPayload("ASSET_ID", idStr.c_str(), idStr.length() + 1);
-
-                            if (selectedContentItems.size() > 1 && selectedContentItems.count(itemKey)) {
-                                ImGui::Text("📦 Moving %d items", (int)selectedContentItems.size());
-                            } else {
-                                ImGui::Text("%s %s", GetAssetTypeIcon(meta.type), meta.objectName.c_str());
-                            }
-                            if (meta.type == AssetType::Mesh) {
-                                ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "[Drag to Viewport to spawn in Level]");
-                            } else if (meta.type == AssetType::Level) {
-                                ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.95f, 1.0f), "[Drag to Viewport to open Level]");
-                            }
-                            ImGui::EndDragDropSource();
-                        }
-
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Object: %s\nVirtual: %s\nAssetID: %s\nDisk: %s\n(Ctrl/Shift to multi-select | Drag & Drop to any folder)",
-                                meta.objectName.c_str(), meta.virtualPath.c_str(), meta.id.ToString().c_str(), meta.sourcePath.c_str());
-                        }
-
-                        // Column 2: AssetID (clickable copy)
-                        ImGui::TableSetColumnIndex(2);
-                        std::string shortId = meta.id.ToString().substr(0, 8) + "...";
-                        if (ImGui::SmallButton(shortId.c_str())) {
-                            ImGui::SetClipboardText(meta.id.ToString().c_str());
-                            AddLog("LogAsset", "Copied AssetID to clipboard: " + meta.id.ToString(), 0);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("AssetID: %s\n(Click to copy to clipboard)", meta.id.ToString().c_str());
-                        }
-
-                        // Column 3: Dependencies & References count
-                        ImGui::TableSetColumnIndex(3);
-                        size_t depCount = meta.dependencies.size();
-                        size_t refCount = AssetRegistry::Get().GetReferences(meta.id).size();
-                        char depRefStr[32];
-                        snprintf(depRefStr, sizeof(depRefStr), "%d d / %d r##dr", (int)depCount, (int)refCount);
-                        if (ImGui::SmallButton(depRefStr)) {
-                            OpenReferenceViewer(meta.id);
-                        }
-                        if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("%d Dependencies | %d References\n(Click to inspect in Reference Viewer)", (int)depCount, (int)refCount);
-                        }
-
-                        // Column 4: Status (Loaded / Available / Missing)
-                        ImGui::TableSetColumnIndex(4);
-                        if (meta.isMissing) {
-                            ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "Missing");
-                        } else if (AssetManager::Get().IsLoaded(meta.id)) {
-                            ImGui::TextColored(ImVec4(0.3f, 0.95f, 0.4f, 1.0f), "Loaded");
-                        } else {
-                            ImGui::TextDisabled("Ready");
-                        }
-
-                        // Context Menu on Asset Item
-                        if (ImGui::BeginPopupContextItem("AssetRowCtx")) {
-                            if (!selectedContentItems.count(itemKey)) {
-                                selectedContentItems.clear();
-                                selectedContentItems.insert(itemKey);
-                                selectedContentItem = meta.virtualPath;
-                                lastSelectedContentItem = itemKey;
-                            }
-
-                            if (meta.type == AssetType::Behaviour || meta.type == AssetType::Script) {
-                                if (ImGui::MenuItem("💻 Open in Code Editor (VS Code)")) {
-                                    std::filesystem::path fullScript = contentRootPath / meta.sourcePath;
-                                    LaunchVSCodeWorkspace(fullScript.string());
-                                    OpenScriptInCodeEditor(fullScript.string());
-                                }
-                                ImGui::Separator();
-                            }
-                            if (meta.type == AssetType::Material) {
-                                if (ImGui::MenuItem("🎨 Open in Material Editor")) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    OpenMaterialEditor(fullMat.string());
-                                }
-                                if (ImGui::MenuItem("🎯 Apply to Selected Actor")) {
-                                    std::filesystem::path fullMat = contentRootPath / meta.sourcePath;
-                                    MaterialAsset ma;
-                                    if (LoadMaterialFile(fullMat.string(), ma)) {
-                                        GameObject* sel = scene.GetSelected();
-                                        if (sel) {
-                                            ApplyMaterialToActorAndChildren(scene, sel, ma);
+                                if (item.subDir != "/Game") {
+                                    ImGui::Separator();
+                                    if (ImGui::MenuItem("❌ Delete Folder")) {
+                                        std::string diskSub = item.subDir;
+                                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                                        std::filesystem::path folderDisk = contentRootPath / diskSub;
+                                        std::error_code delEc;
+                                        std::filesystem::remove_all(folderDisk, delEc);
+                                        if (currentVirtualDir == item.subDir || currentVirtualDir.rfind(item.subDir + "/", 0) == 0) {
+                                            currentVirtualDir = AssetPath::GetDirectory(item.subDir);
                                         }
-                                    }
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Skybox) {
-                                if (ImGui::MenuItem("🌌 Open in Skybox Editor")) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    OpenSkyboxEditor(fullSky.string());
-                                }
-                                if (ImGui::MenuItem("🌐 Set as Active World Skybox")) {
-                                    std::filesystem::path fullSky = contentRootPath / meta.sourcePath;
-                                    SkyboxAsset sky;
-                                    if (LoadSkyboxFile(fullSky.string(), sky)) {
-                                        ApplySkyboxToScene(scene, sky);
-                                    }
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Mesh) {
-                                if (ImGui::MenuItem("🧊 Spawn Mesh in Level")) {
-                                    std::filesystem::path fullMesh = contentRootPath / meta.sourcePath;
-                                    GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
-                                    scene.selectedId = newObj.id;
-                                    AddLog("LogMesh", "Spawned 3D Mesh in level: " + meta.objectName, 2);
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (meta.type == AssetType::Level) {
-                                if (ImGui::MenuItem("🌐 Open Level in Viewport")) {
-                                    std::filesystem::path fullLevel = contentRootPath / meta.sourcePath;
-                                    OpenLevelFromPath(scene, fullLevel.string());
-                                }
-                                ImGui::Separator();
-                            }
-
-                            if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
-                                OpenReferenceViewer(meta.id);
-                            }
-                            if (ImGui::MenuItem("📋 Copy AssetID")) {
-                                ImGui::SetClipboardText(meta.id.ToString().c_str());
-                                AddLog("LogAsset", "Copied AssetID to clipboard: " + meta.id.ToString(), 0);
-                            }
-                            if (ImGui::MenuItem("📋 Copy Virtual Path")) {
-                                ImGui::SetClipboardText(meta.virtualPath.c_str());
-                                AddLog("LogAsset", "Copied Virtual Path to clipboard: " + meta.virtualPath, 0);
-                            }
-                            ImGui::Separator();
-                            if (ImGui::MenuItem("❌ Delete Asset (Safe Check)")) {
-                                if (selectedContentItems.size() > 1 && selectedContentItems.count(itemKey)) {
-                                    std::vector<std::string> toDelete(selectedContentItems.begin(), selectedContentItems.end());
-                                    int delCount = 0;
-                                    for (const auto& delKey : toDelete) {
-                                        if (delKey.rfind("ASSET:", 0) == 0) {
-                                            const AssetMetadata* dMeta = AssetRegistry::Get().FindByPath(delKey.substr(6));
-                                            if (dMeta) {
-                                                auto refs = AssetRegistry::Get().GetReferences(dMeta->id);
-                                                if (refs.empty()) {
-                                                    std::filesystem::path fullDisk = contentRootPath / dMeta->sourcePath;
-                                                    std::filesystem::remove(fullDisk, ec);
-                                                    std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
-                                                    AssetRegistry::Get().UnregisterAsset(dMeta->id);
-                                                    delCount++;
-                                                }
-                                            }
-                                        }
-                                    }
-                                    selectedContentItems.clear();
-                                    selectedContentItem = "";
-                                    AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets", 1);
-                                    TriggerBackgroundRegistrySync(contentRootPath);
-                                } else {
-                                    auto refs = AssetRegistry::Get().GetReferences(meta.id);
-                                    if (!refs.empty()) {
-                                        AddLog("LogAsset", "Cannot delete '" + meta.objectName + "': referenced by " + std::to_string(refs.size()) + " assets! Inspect in Reference Viewer.", 3);
-                                        OpenReferenceViewer(meta.id);
-                                    } else {
-                                        std::filesystem::path fullDisk = contentRootPath / meta.sourcePath;
-                                        std::filesystem::remove(fullDisk, ec);
-                                        std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
-                                        AssetRegistry::Get().UnregisterAsset(meta.id);
-                                        selectedContentItems.erase(itemKey);
-                                        if (selectedContentItem == meta.virtualPath) selectedContentItem = "";
-                                        AddLog("LogAsset", "Deleted asset: " + meta.objectName, 1);
                                         TriggerBackgroundRegistrySync(contentRootPath);
                                     }
                                 }
+                                ImGui::EndPopup();
                             }
-                            ImGui::EndPopup();
+                        } else {
+                            if (ImGui::BeginPopupContextItem("AssetCardCtx")) {
+                                if (!selectedContentItems.count(item.itemKey)) {
+                                    selectedContentItems.clear();
+                                    selectedContentItems.insert(item.itemKey);
+                                    selectedContentItem = item.meta.virtualPath;
+                                    lastSelectedContentItem = item.itemKey;
+                                }
+
+                                if (item.meta.type == AssetType::VisualBehaviour) {
+                                    if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
+                                        std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                        VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                        AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                    }
+                                    ImGui::Separator();
+                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                    std::string ext = fullScript.extension().string();
+                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                    if (ext == ".ebehaviour") {
+                                        if (ImGui::MenuItem("🎮 Open in Visual Behaviour Editor")) {
+                                            VisualBehaviuors::BehaviourEditorManager::Get().Open(fullScript.string());
+                                            AddLog("LogContent", "Opened Visual Behaviour: " + item.meta.objectName, 2);
+                                        }
+                                    } else {
+                                        if (ImGui::MenuItem("💻 Open in VS Code")) {
+                                            OpenScriptInCodeEditor(fullScript.string());
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Material) {
+                                    if (ImGui::MenuItem("🎨 Open in Material Editor")) {
+                                        std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                        OpenMaterialEditor(fullMat.string());
+                                    }
+                                    if (ImGui::MenuItem("🎯 Apply to Selected Actor")) {
+                                        std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                        MaterialAsset ma;
+                                        if (LoadMaterialFile(fullMat.string(), ma)) {
+                                            GameObject* sel = scene.GetSelected();
+                                            if (sel) {
+                                                ApplyMaterialToActorAndChildren(scene, sel, ma);
+                                            }
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Skybox) {
+                                    if (ImGui::MenuItem("🌌 Open in Skybox Editor")) {
+                                        std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                        OpenSkyboxEditor(fullSky.string());
+                                    }
+                                    if (ImGui::MenuItem("🌐 Set as Active World Skybox")) {
+                                        std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
+                                        SkyboxAsset sky;
+                                        if (LoadSkyboxFile(fullSky.string(), sky)) {
+                                            ApplySkyboxToScene(scene, sky);
+                                        }
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Water) {
+                                    if (ImGui::MenuItem("🌊 Open in Water Editor")) {
+                                        std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
+                                        OpenWaterEditor(fullWater.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Mesh) {
+                                    if (ImGui::MenuItem("🧊 Spawn Mesh in Level")) {
+                                        std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
+                                        GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
+                                        scene.selectedId = newObj.id;
+                                        AddLog("LogMesh", "Spawned 3D Mesh in level: " + item.meta.objectName, 2);
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Level) {
+                                    if (ImGui::MenuItem("🌐 Open Level in Viewport")) {
+                                        std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
+                                        OpenLevelFromPath(scene, fullLevel.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+
+                                if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
+                                    OpenReferenceViewer(item.meta.id);
+                                }
+                                if (ImGui::MenuItem("📋 Copy AssetID")) {
+                                    ImGui::SetClipboardText(item.meta.id.ToString().c_str());
+                                    AddLog("LogAsset", "Copied AssetID to clipboard: " + item.meta.id.ToString(), 0);
+                                }
+                                if (ImGui::MenuItem("📋 Copy Virtual Path")) {
+                                    ImGui::SetClipboardText(item.meta.virtualPath.c_str());
+                                    AddLog("LogAsset", "Copied Virtual Path to clipboard: " + item.meta.virtualPath, 0);
+                                }
+                                ImGui::Separator();
+                                if (ImGui::MenuItem("❌ Delete Asset (Safe Check)")) {
+                                    if (selectedContentItems.size() > 1 && selectedContentItems.count(item.itemKey)) {
+                                        std::vector<std::string> toDelete(selectedContentItems.begin(), selectedContentItems.end());
+                                        int delCount = 0;
+                                        for (const auto& delKey : toDelete) {
+                                            if (delKey.rfind("ASSET:", 0) == 0) {
+                                                const AssetMetadata* dMeta = AssetRegistry::Get().FindByPath(delKey.substr(6));
+                                                if (dMeta) {
+                                                    auto refs = AssetRegistry::Get().GetReferences(dMeta->id);
+                                                    if (refs.empty()) {
+                                                        std::filesystem::path fullDisk = contentRootPath / dMeta->sourcePath;
+                                                        std::filesystem::remove(fullDisk, ec);
+                                                        std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+                                                        AssetRegistry::Get().UnregisterAsset(dMeta->id);
+                                                        delCount++;
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        selectedContentItems.clear();
+                                        selectedContentItem = "";
+                                        AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets", 1);
+                                        TriggerBackgroundRegistrySync(contentRootPath);
+                                    } else {
+                                        auto refs = AssetRegistry::Get().GetReferences(item.meta.id);
+                                        if (!refs.empty()) {
+                                            AddLog("LogAsset", "Cannot delete '" + item.meta.objectName + "': referenced by " + std::to_string(refs.size()) + " assets! Inspect in Reference Viewer.", 3);
+                                            OpenReferenceViewer(item.meta.id);
+                                        } else {
+                                            std::filesystem::path fullDisk = contentRootPath / item.meta.sourcePath;
+                                            std::filesystem::remove(fullDisk, ec);
+                                            std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+                                            AssetRegistry::Get().UnregisterAsset(item.meta.id);
+                                            selectedContentItems.erase(item.itemKey);
+                                            if (selectedContentItem == item.meta.virtualPath) selectedContentItem = "";
+                                            AddLog("LogAsset", "Deleted asset: " + item.meta.objectName, 1);
+                                            TriggerBackgroundRegistrySync(contentRootPath);
+                                        }
+                                    }
+                                }
+                                ImGui::EndPopup();
+                            }
                         }
 
+                        // Tooltip
+                        if (hovered) {
+                            if (item.isFolder) {
+                                ImGui::SetTooltip("📁 Folder: %s\n(Double-click to open | Drag & Drop items here)", item.subDir.c_str());
+                            } else {
+                                size_t depCount = item.meta.dependencies.size();
+                                size_t refCount = AssetRegistry::Get().GetReferences(item.meta.id).size();
+                                const char* statusStr = item.meta.isMissing ? "Missing" : (AssetManager::Get().IsLoaded(item.meta.id) ? "Loaded" : "Ready");
+                                ImGui::SetTooltip("Object: %s\nType: %s\nVirtual: %s\nAssetID: %s\nDisk: %s\nDeps: %d | Refs: %d | Status: %s\n(Double-click to open | Drag & Drop to viewport/folder)",
+                                    item.meta.objectName.c_str(), AssetTypeToString(item.meta.type), item.meta.virtualPath.c_str(), item.meta.id.ToString().c_str(), item.meta.sourcePath.c_str(), (int)depCount, (int)refCount, statusStr);
+                            }
+                        }
+
+                        // Drawing Card Visuals with drawList
+                        // 1. Outer Box & Selection Glow
+                        ImU32 bgCol = isSelected ? IM_COL32(20, 60, 115, 235)
+                                                 : (hovered ? IM_COL32(35, 43, 58, 240)
+                                                            : IM_COL32(23, 27, 36, 215));
+                        ImU32 borderCol = isSelected ? IM_COL32(40, 160, 255, 255)
+                                                     : (hovered ? IM_COL32(80, 145, 235, 200)
+                                                                : IM_COL32(46, 52, 68, 150));
+                        float borderThick = isSelected ? 2.0f : 1.0f;
+
+                        drawList->AddRectFilled(pMin, pMax, bgCol, 5.0f);
+                        drawList->AddRect(pMin, pMax, borderCol, 5.0f, 0, borderThick);
+
+                        // 2. Thumbnail Slot
+                        float thumbPad = 5.0f;
+                        float thumbH = cardW * 0.62f;
+                        ImVec2 tMin(pMin.x + thumbPad, pMin.y + thumbPad);
+                        ImVec2 tMax(pMax.x - thumbPad, pMin.y + thumbPad + thumbH);
+                        drawList->AddRectFilled(tMin, tMax, IM_COL32(13, 16, 22, 255), 4.0f);
+                        drawList->AddRect(tMin, tMax, IM_COL32(36, 42, 54, 180), 4.0f, 0, 1.0f);
+
+                        // Determine Icon and Accent Color
+                        const char* iconStr = "📄";
+                        ImU32 accentCol = IM_COL32(135, 150, 170, 255);
+                        const char* typeStr = "Unknown";
+
+                        if (item.isFolder) {
+                            iconStr = "📁";
+                            accentCol = IM_COL32(235, 185, 45, 255);
+                            typeStr = "Folder";
+                        } else {
+                            typeStr = AssetTypeToString(item.meta.type);
+                            iconStr = GetAssetTypeIcon(item.meta.type);
+                            switch (item.meta.type) {
+                                case AssetType::Material:        accentCol = IM_COL32(50, 210, 160, 255); break;
+                                case AssetType::Mesh:            accentCol = IM_COL32(40, 180, 245, 255); break;
+                                case AssetType::Skybox:          accentCol = IM_COL32(175, 95, 245, 255); break;
+                                case AssetType::Water:           accentCol = IM_COL32(0, 160, 255, 255); break;
+                                case AssetType::Texture:         accentCol = IM_COL32(225, 65, 85, 255); break;
+                                case AssetType::VisualBehaviour: accentCol = IM_COL32(245, 170, 40, 255); break;
+                                case AssetType::Behaviour:
+                                case AssetType::Script:          accentCol = IM_COL32(230, 145, 30, 255); break;
+                                case AssetType::Level:           accentCol = IM_COL32(50, 225, 125, 255); break;
+                                default:                         accentCol = IM_COL32(135, 150, 170, 255); break;
+                            }
+                        }
+
+                        // Center Icon
+                        ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
+                        ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
+                                       tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
+                        drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+
+                        // Unreal-Engine Signature Accent Stripe
+                        drawList->AddRectFilled(ImVec2(tMin.x + 1.0f, tMax.y - 3.5f),
+                                                ImVec2(tMax.x - 1.0f, tMax.y - 1.0f),
+                                                accentCol, 2.0f);
+
+                        // 3. Type Label Pill
+                        float typeY = tMax.y + 3.0f;
+                        std::string truncType = typeStr;
+                        float maxLabelW = cardW - 10.0f;
+                        if (ImGui::CalcTextSize(truncType.c_str()).x > maxLabelW) {
+                            while (!truncType.empty() && ImGui::CalcTextSize((truncType + "..").c_str()).x > maxLabelW) {
+                                truncType.pop_back();
+                            }
+                            truncType += "..";
+                        }
+                        drawList->AddText(ImVec2(pMin.x + 5.0f, typeY), IM_COL32(130, 148, 170, 220), truncType.c_str());
+
+                        // 4. Object Name Label
+                        float nameY = typeY + 13.0f;
+                        std::string truncName = item.displayName;
+                        if (ImGui::CalcTextSize(truncName.c_str()).x > maxLabelW) {
+                            while (!truncName.empty() && ImGui::CalcTextSize((truncName + "...").c_str()).x > maxLabelW) {
+                                truncName.pop_back();
+                            }
+                            truncName += "...";
+                        }
+                        ImU32 textCol = isSelected ? IM_COL32(255, 255, 255, 255)
+                                                   : (hovered ? IM_COL32(235, 242, 255, 255)
+                                                              : IM_COL32(210, 220, 235, 240));
+                        drawList->AddText(ImVec2(pMin.x + 5.0f, nameY), textCol, truncName.c_str());
+
                         ImGui::PopID();
-                        rowIndex++;
                     }
-
-                    if (rowIndex == 0) {
-                        ImGui::TableNextRow();
-                        ImGui::TableSetColumnIndex(0);
-                        ImGui::TextDisabled("-");
-                        ImGui::TableSetColumnIndex(1);
-                        ImGui::TextDisabled("(No assets found in this virtual directory. Right-click here to create)");
-                    }
-
-                    ImGui::EndTable();
                 }
+
 
                 // Right click context menu on empty space of current directory
                 if (ImGui::BeginPopupContextWindow("CBBackgroundContext", ImGuiPopupFlags_MouseButtonRight | ImGuiPopupFlags_NoOpenOverItems)) {
@@ -8072,7 +8290,47 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewSkyboxPopup = true;
                         snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                     }
-                    if (ImGui::MenuItem("🧩 New Behaviour")) {
+                    if (ImGui::BeginMenu("➕ Create")) {
+                        if (ImGui::MenuItem("🎮 Visual Behaviour (.ebehaviour)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewVisualBehaviourPopup = true;
+                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                        }
+                        if (ImGui::MenuItem("🧩 Behaviour Script (.cpp)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewBehaviourPopup = true;
+                            std::string defName = "NewBehaviour";
+                            if (IsBehaviourNameAlreadyExists(defName)) {
+                                int idx = 1;
+                                while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
+                                defName = "NewBehaviour_" + std::to_string(idx);
+                            }
+                            snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                        }
+                        if (ImGui::MenuItem("🎨 Material")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewMaterialPopup = true;
+                            snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
+                        }
+                        if (ImGui::MenuItem("🌌 Skybox")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewSkyboxPopup = true;
+                            snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
+                        }
+                        if (ImGui::MenuItem("📁 Folder")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewFolderPopup = true;
+                            snprintf(newFolderNameBuf, sizeof(newFolderNameBuf), "NewFolder");
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("🎮 New Visual Behaviour")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewVisualBehaviourPopup = true;
+                        snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
+                    }
+                    if (ImGui::MenuItem("🧩 New Behaviour Script")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
                         std::string defName = "NewBehaviour";
@@ -8906,6 +9164,223 @@ void EngineUI::RenderLoadingModal() {
     ImGui::PopStyleVar(3);
 }
 
+void EngineUI::RenderViewportLoadingOverlay() {
+    if (!m_progressiveLoader.active) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    float alpha = 1.0f;
+    if (m_progressiveLoader.completed) {
+        m_progressiveLoader.completionTimer -= dt;
+        if (m_progressiveLoader.completionTimer <= 0.0f) {
+            m_progressiveLoader.active = false;
+            return;
+        }
+        if (m_progressiveLoader.completionTimer < 0.35f) {
+            alpha = m_progressiveLoader.completionTimer / 0.35f;
+        }
+    }
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+
+    ViewportRect vpRect = GetViewportRect(vp->Size.x, vp->Size.y);
+    float centerX = vp->Pos.x + vpRect.x + vpRect.width * 0.5f;
+    float centerY = vp->Pos.y + vpRect.y + vpRect.height * 0.5f;
+
+    float cardW = 500.0f;
+    float cardH = 136.0f;
+    ImVec2 cardMin(centerX - cardW * 0.5f, centerY - cardH * 0.5f);
+    ImVec2 cardMax(centerX + cardW * 0.5f, centerY + cardH * 0.5f);
+
+    ImDrawList* drawList = ImGui::GetForegroundDrawList();
+    if (!drawList) return;
+
+    // Drop shadow
+    drawList->AddRectFilled(ImVec2(cardMin.x - 4.0f, cardMin.y - 4.0f), ImVec2(cardMax.x + 4.0f, cardMax.y + 6.0f),
+                            IM_COL32(0, 0, 0, (int)(110 * alpha)), 14.0f);
+
+    // Glass backdrop
+    drawList->AddRectFilled(cardMin, cardMax,
+                            IM_COL32(11, 14, 20, (int)(235 * alpha)), 12.0f);
+
+    // Border
+    ImU32 borderColor = m_progressiveLoader.hasError
+        ? IM_COL32(235, 65, 65, (int)(230 * alpha))
+        : (m_progressiveLoader.completed
+            ? IM_COL32(40, 210, 110, (int)(230 * alpha))
+            : IM_COL32(35, 155, 255, (int)(220 * alpha)));
+    drawList->AddRect(cardMin, cardMax, borderColor, 12.0f, 0, 2.0f);
+
+    // Header row: Title + Stage badge
+    float curTime = (float)ImGui::GetTime();
+    std::string filename = std::filesystem::path(m_progressiveLoader.filePath).filename().string();
+    std::string headerTitle = "LOADING LEVEL: " + filename;
+
+    drawList->AddText(ImVec2(cardMin.x + 20.0f, cardMin.y + 16.0f),
+                      IM_COL32(245, 248, 255, (int)(255 * alpha)),
+                      headerTitle.c_str());
+
+    // Stage Badge (Pill)
+    std::string badgeStr = "[" + m_progressiveLoader.stageName + "]";
+    ImVec2 badgeSize = ImGui::CalcTextSize(badgeStr.c_str());
+    float badgePadding = 8.0f;
+    ImVec2 badgeMax(cardMax.x - 20.0f, cardMin.y + 16.0f + badgeSize.y + 4.0f);
+    ImVec2 badgeMin(badgeMax.x - badgeSize.x - badgePadding * 2.0f, cardMin.y + 14.0f);
+
+    ImU32 badgeBg = m_progressiveLoader.completed
+        ? IM_COL32(20, 80, 45, (int)(220 * alpha))
+        : IM_COL32(15, 50, 90, (int)(220 * alpha));
+    ImU32 badgeTextCol = m_progressiveLoader.completed
+        ? IM_COL32(60, 235, 120, (int)(255 * alpha))
+        : IM_COL32(70, 195, 255, (int)(255 * alpha));
+
+    drawList->AddRectFilled(badgeMin, badgeMax, badgeBg, 6.0f);
+    drawList->AddText(ImVec2(badgeMin.x + badgePadding, badgeMin.y + 2.0f), badgeTextCol, badgeStr.c_str());
+
+    // Progress bar track
+    float barX = cardMin.x + 20.0f;
+    float barY = cardMin.y + 46.0f;
+    float barW = cardW - 40.0f;
+    float barH = 18.0f;
+
+    drawList->AddRectFilled(ImVec2(barX, barY), ImVec2(barX + barW, barY + barH),
+                            IM_COL32(20, 25, 36, (int)(255 * alpha)), 6.0f);
+
+    // Progress bar fill
+    float clampedProgress = std::clamp(m_progressiveLoader.progress, 0.0f, 1.0f);
+    float fillW = barW * clampedProgress;
+    if (fillW > 2.0f) {
+        ImU32 fillColLeft = m_progressiveLoader.completed
+            ? IM_COL32(30, 180, 90, (int)(255 * alpha))
+            : IM_COL32(0, 130, 240, (int)(255 * alpha));
+        ImU32 fillColRight = m_progressiveLoader.completed
+            ? IM_COL32(60, 230, 130, (int)(255 * alpha))
+            : IM_COL32(30, 215, 255, (int)(255 * alpha));
+
+        drawList->AddRectFilledMultiColor(ImVec2(barX, barY), ImVec2(barX + fillW, barY + barH),
+                                          fillColLeft, fillColRight, fillColRight, fillColLeft);
+    }
+
+    // Progress percentage text centered on bar
+    char pctBuf[32];
+    snprintf(pctBuf, sizeof(pctBuf), "%.0f%%", clampedProgress * 100.0f);
+    ImVec2 pctSize = ImGui::CalcTextSize(pctBuf);
+    drawList->AddText(ImVec2(barX + (barW - pctSize.x) * 0.5f, barY + (barH - pctSize.y) * 0.5f),
+                      IM_COL32(255, 255, 255, (int)(245 * alpha)), pctBuf);
+
+    // Animated indicator icon / pulse dot
+    ImVec2 dotCenter(cardMin.x + 30.0f, cardMin.y + 86.0f);
+    if (m_progressiveLoader.completed) {
+        drawList->AddCircleFilled(dotCenter, 6.0f, IM_COL32(40, 210, 110, (int)(255 * alpha)));
+    } else {
+        float pulse = 5.0f + 1.5f * sinf(curTime * 6.0f);
+        drawList->AddCircleFilled(dotCenter, pulse, IM_COL32(0, 205, 255, (int)(255 * alpha)));
+        drawList->AddCircle(dotCenter, pulse + 3.0f, IM_COL32(0, 160, 255, (int)(110 * alpha)), 16, 1.5f);
+    }
+
+    // Detail text
+    drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 76.0f),
+                      IM_COL32(215, 230, 248, (int)(255 * alpha)),
+                      m_progressiveLoader.currentDetail.c_str());
+
+    // Sub-detail text
+    if (!m_progressiveLoader.subDetail.empty()) {
+        drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 98.0f),
+                          IM_COL32(130, 145, 165, (int)(230 * alpha)),
+                          m_progressiveLoader.subDetail.c_str());
+    }
+}
+
+void EngineUI::RenderSaveIndicator() {
+    if (!m_saveIndicator.active) return;
+
+    float dt = ImGui::GetIO().DeltaTime;
+    m_saveIndicator.displayTimer -= dt;
+    if (m_saveIndicator.displayTimer <= 0.0f) {
+        m_saveIndicator.active = false;
+        return;
+    }
+
+    float alpha = 1.0f;
+    if (m_saveIndicator.displayTimer < 0.4f) {
+        alpha = m_saveIndicator.displayTimer / 0.4f;
+    }
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp) return;
+
+    float margin = uiMargin;
+    float curBottomH = bottomDrawerOpen ? bottomDockHeight : 38.0f;
+    float bottomW = vp->Size.x - 2.0f * margin;
+    float bottomY = vp->Pos.y + vp->Size.y - curBottomH - margin;
+
+    ImVec2 badgeSize(250.0f, 26.0f);
+    ImVec2 badgePos;
+    if (showBottomDrawer) {
+        badgePos = ImVec2(vp->Pos.x + bottomW - badgeSize.x - 14.0f, bottomY + curBottomH - badgeSize.y - 6.0f);
+    } else {
+        badgePos = ImVec2(vp->Pos.x + vp->Size.x - badgeSize.x - 16.0f, vp->Pos.y + vp->Size.y - badgeSize.y - 14.0f);
+    }
+
+    // If background registry sync is also active, offset upwards to avoid overlap
+    if (s_bgSync.isRunning.load()) {
+        badgePos.y -= (badgeSize.y + 6.0f);
+    }
+
+    ImDrawList* fgList = ImGui::GetForegroundDrawList();
+    if (!fgList) return;
+
+    // Drop shadow
+    fgList->AddRectFilled(ImVec2(badgePos.x - 2.0f, badgePos.y - 2.0f),
+                          ImVec2(badgePos.x + badgeSize.x + 2.0f, badgePos.y + badgeSize.y + 3.0f),
+                          IM_COL32(0, 0, 0, (int)(80 * alpha)), 6.0f);
+
+    // Glass backdrop
+    fgList->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y),
+                          IM_COL32(14, 18, 26, (int)(235 * alpha)), 6.0f);
+
+    // Border
+    ImU32 borderColor = m_saveIndicator.isSaving
+        ? IM_COL32(35, 140, 240, (int)(220 * alpha))
+        : (m_saveIndicator.success
+            ? IM_COL32(40, 200, 100, (int)(220 * alpha))
+            : IM_COL32(230, 50, 50, (int)(220 * alpha)));
+    fgList->AddRect(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), borderColor, 6.0f, 0, 1.5f);
+
+    float curTime = (float)ImGui::GetTime();
+
+    if (m_saveIndicator.isSaving) {
+        // Animated pulsing cyan circle
+        float pulse = 4.5f + 1.2f * sinf(curTime * 8.0f);
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), pulse,
+                                IM_COL32(0, 200, 255, (int)(255 * alpha)));
+        fgList->AddCircle(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), pulse + 2.0f,
+                          IM_COL32(0, 150, 255, (int)(110 * alpha)), 16, 1.0f);
+
+        std::string text = "Saving " + m_saveIndicator.filename + "...";
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(210, 235, 255, (int)(245 * alpha)), text.c_str());
+    } else if (m_saveIndicator.success) {
+        // Green check circle
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), 5.5f,
+                                IM_COL32(40, 210, 110, (int)(255 * alpha)));
+
+        std::string text = "Saved " + m_saveIndicator.filename;
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(160, 245, 190, (int)(245 * alpha)), text.c_str());
+    } else {
+        // Red error circle
+        fgList->AddCircleFilled(ImVec2(badgePos.x + 15.0f, badgePos.y + 13.0f), 5.5f,
+                                IM_COL32(230, 50, 50, (int)(255 * alpha)));
+
+        std::string text = "Failed to save: " + m_saveIndicator.filename;
+        fgList->AddText(ImVec2(badgePos.x + 28.0f, badgePos.y + 5.0f),
+                        IM_COL32(255, 160, 160, (int)(245 * alpha)), text.c_str());
+    }
+}
+
+
+
 void EngineUI::RenderReferenceViewer(Scene& scene) {
     ImGui::SetNextWindowSize(ImVec2(800, 520), ImGuiCond_FirstUseEver);
     if (!ImGui::Begin("Asset Reference Viewer (dev.md Section 33)", &showReferenceViewer)) {
@@ -9231,8 +9706,8 @@ void EngineUI::EnterPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
     }
 
     isPlayModeActive = true;
-    scene.StartPlayMode();
     CursorState.Locked();
+    scene.StartPlayMode();
     AddLog("LogPlayLevel", "Entered Play Mode in Editor (Full Screen Fit)", 2);
 }
 
@@ -9590,7 +10065,7 @@ bool EngineUI::OpenModelImportView(const std::string& filePath) {
     std::filesystem::path p(filePath);
     currentModelImport.modelName = p.stem().string();
 
-    std::filesystem::path defaultMatDir = contentRootPath / "Materials";
+    std::filesystem::path defaultMatDir = p.parent_path() / "Materials";
     std::filesystem::create_directories(defaultMatDir, ec);
     currentModelImport.targetFolder = defaultMatDir.string();
 
@@ -9698,10 +10173,17 @@ bool EngineUI::OpenModelImportView(const std::string& filePath) {
 
 void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQueue) {
     std::error_code ec;
-    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (contentRootPath / "Materials").string() : currentModelImport.targetFolder);
+    std::filesystem::path modelPath(currentModelImport.sourceFilePath);
+    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (modelPath.parent_path() / "Materials").string() : currentModelImport.targetFolder);
     std::filesystem::create_directories(matDir, ec);
 
     int matsCreated = 0;
+
+    std::string matVirtualDir = "/Game/Materials";
+    std::filesystem::path relMat = std::filesystem::relative(matDir, contentRootPath, ec);
+    if (!ec && !relMat.empty() && relMat != ".") {
+        matVirtualDir = "/Game/" + relMat.generic_string();
+    }
 
     // 1. Create .emat files and register in AssetRegistry
     for (const auto& pm : currentModelImport.materials) {
@@ -9712,7 +10194,7 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         ma.name = pm.materialName;
         std::filesystem::path matFilePath = matDir / (pm.materialName + ".emat");
         ma.filePath = matFilePath.string();
-        ma.virtualPath = "/Game/Materials/" + pm.materialName;
+        ma.virtualPath = matVirtualDir + "/" + pm.materialName;
         ma.baseColor = pm.baseColor;
         ma.metallic = pm.metallic;
         ma.roughness = pm.roughness;
@@ -9747,7 +10229,12 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         meta.objectName = currentModelImport.modelName;
         meta.type = AssetType::Mesh;
         meta.sourcePath = currentModelImport.sourceFilePath;
-        meta.virtualPath = "/Game/Models/" + currentModelImport.modelName;
+        std::string modelVirtualDir = "/Game/Models";
+        std::filesystem::path relModel = std::filesystem::relative(modelPath.parent_path(), contentRootPath, ec);
+        if (!ec && !relModel.empty() && relModel != ".") {
+            modelVirtualDir = "/Game/" + relModel.generic_string();
+        }
+        meta.virtualPath = modelVirtualDir + "/" + currentModelImport.modelName;
         AssetRegistry::Get().RegisterAsset(meta);
     }
 
@@ -10240,19 +10727,9 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
 // ============================================================================
 
 void EngineUI::OpenScriptInCodeEditor(const std::string& path) {
-    activeCodeEditorPath = path;
-    activeCodeEditorFilename = std::filesystem::path(path).filename().string();
-    activeCodeEditorContent.clear();
-
-    std::ifstream file(path);
-    if (file.is_open()) {
-        std::stringstream ss;
-        ss << file.rdbuf();
-        activeCodeEditorContent = ss.str();
-    }
-    showCodeEditor = true;
-    codeEditorDirty = false;
-    AddLog("LogContent", "Opened Behaviour script in Code Editor: " + activeCodeEditorFilename, 0);
+    showCodeEditor = false;
+    LaunchVSCodeWorkspace(path);
+    AddLog("LogContent", "Opened Behaviour script in VS Code: " + std::filesystem::path(path).filename().string(), 0);
 }
 
 void EngineUI::RenderCodeEditor() {
@@ -10398,14 +10875,23 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, sEc);
                      !sEc && it != std::filesystem::recursive_directory_iterator();
                      it.increment(sEc)) {
-                    if (!it->is_directory(sEc) && it->path().extension() == ".cpp") {
-                        std::string pStr = it->path().string();
-                        std::string pLower = pStr;
-                        std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-                        if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
-                            std::string stem = it->path().stem().string();
-                            if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" && stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
-                                BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
+                    if (!it->is_directory(sEc)) {
+                        if (it->path().extension() == ".cpp") {
+                            std::string pStr = it->path().string();
+                            std::string pLower = pStr;
+                            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                                std::string stem = it->path().stem().string();
+                                if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" && stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
+                                    BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
+                                }
+                            }
+                        } else if (it->path().extension() == ".ebehaviour") {
+                            std::string pStr = it->path().string();
+                            std::string pLower = pStr;
+                            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                                VisualBehaviuors::RegisterVisualBehaviourAsset(it->path().string());
                             }
                         }
                     }
@@ -10426,7 +10912,8 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 }
 
                 matchCount++;
-                std::string itemText = "🧩 " + info.displayName + " (" + info.className + ")";
+                bool isVisual = (info.className.rfind("VisualBehaviour:", 0) == 0);
+                std::string itemText = (isVisual ? "⚡ " : "🧩 ") + info.displayName;
                 if (ImGui::Selectable(itemText.c_str(), false)) {
                     UndoManager::Get().RecordSnapshot(scene, "Add Behaviour: " + info.className);
                     auto newB = BehaviourRegistry::Get().Create(info.className);
@@ -10448,6 +10935,17 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
 
             ImGui::Separator();
+            if (ImGui::Button("➕ Create New Behaviour Script...", ImVec2(240, 0))) {
+                showNewBehaviourPopup = true;
+                std::string defName = "NewBehaviour";
+                int idx = 1;
+                while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(idx))) idx++;
+                defName = "NewBehaviour_" + std::to_string(idx);
+                snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                popupTargetVirtualDir = currentVirtualDir;
+                ImGui::CloseCurrentPopup();
+            }
+            ImGui::SameLine();
             if (ImGui::Button("Cancel", ImVec2(120, 0))) {
                 ImGui::CloseCurrentPopup();
             }
@@ -10463,56 +10961,35 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             auto& b = obj->behaviours[i];
             if (!b) continue;
 
-            // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
-            const auto& allRegistry = BehaviourRegistry::Get().GetAll();
-            auto regIt = allRegistry.find(b->GetClassName());
-            if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                bool sourceModifiedAfterBuild = false;
-                std::error_code ec;
-                if (std::filesystem::exists(regIt->second.sourceCpp, ec)) {
-                    char exePathBuf[MAX_PATH] = {};
-                    GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
-                    if (std::filesystem::exists(exePathBuf, ec)) {
-                        auto cppTime = std::filesystem::last_write_time(regIt->second.sourceCpp, ec);
-                        auto exeTime = std::filesystem::last_write_time(exePathBuf, ec);
-                        if (!ec && cppTime > exeTime) {
-                            sourceModifiedAfterBuild = true;
-                        }
-                    }
-                }
-
-                if (regIt->second.isNative && !sourceModifiedAfterBuild) {
-                    // Native compiled behaviour
-                    if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) != nullptr && regIt->second.factory) {
-                        auto nativeB = regIt->second.factory();
-                        nativeB->SetScene(&scene);
-                        nativeB->SetOwner(obj);
-                        nativeB->SetEnabled(b->IsEnabled());
-                        nativeB->CopyPropertiesFrom(*b);
-                        nativeB->ResolveReferences(scene);
-                        b = std::move(nativeB);
+            // Check if Visual Behaviour instance
+            VisualBehaviuors::VisualBehaviourInstance* vbi = dynamic_cast<VisualBehaviuors::VisualBehaviourInstance*>(b.get());
+            if (vbi) {
+                vbi->SetScene(&scene);
+                vbi->RefreshPropertiesFromSource();
+                vbi->ResolveReferences(scene);
+            } else {
+                // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
+                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
+                auto regIt = allRegistry.find(b->GetClassName());
+                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
+                    if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
+                        auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
+                        dynB->SetScene(&scene);
+                        dynB->SetOwner(obj);
+                        dynB->SetEnabled(b->IsEnabled());
+                        dynB->CopyPropertiesFrom(*b);
+                        dynB->ResolveReferences(scene);
+                        b = std::move(dynB);
                     } else {
                         b->SetScene(&scene);
                         b->RefreshPropertiesFromSource();
                         b->ResolveReferences(scene);
                     }
-                } else if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
-                    auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
-                    dynB->SetScene(&scene);
-                    dynB->SetOwner(obj);
-                    dynB->SetEnabled(b->IsEnabled());
-                    dynB->CopyPropertiesFrom(*b);
-                    dynB->ResolveReferences(scene);
-                    b = std::move(dynB);
                 } else {
                     b->SetScene(&scene);
                     b->RefreshPropertiesFromSource();
                     b->ResolveReferences(scene);
                 }
-            } else {
-                b->SetScene(&scene);
-                b->RefreshPropertiesFromSource();
-                b->ResolveReferences(scene);
             }
 
             ImGui::PushID((int)i);
@@ -10536,9 +11013,38 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
             ImGui::SameLine();
 
-            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
+            bool isVisualCard = (vbi != nullptr);
+            ImGui::TextColored(isVisualCard ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f) : ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", b->GetClassName().c_str());
+
+            if (isVisualCard && vbi) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
+                if (ImGui::SmallButton("✏ Edit Graph")) {
+                    VisualBehaviuors::BehaviourEditorManager::Get().Open(vbi->GetAssetPath());
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Open in Visual Behaviour Editor: %s", vbi->GetAssetPath().c_str());
+                }
+            } else {
+                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
+                auto regIt = allRegistry.find(b->GetClassName());
+                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
+                    if (ImGui::SmallButton("✏ Edit in VS Code")) {
+                        OpenScriptInCodeEditor(regIt->second.sourceCpp);
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Open script in VS Code: %s", regIt->second.sourceCpp.c_str());
+                    }
+                }
+            }
 
             // Right-aligned Reset and Remove buttons
             float availW = ImGui::GetContentRegionAvail().x;

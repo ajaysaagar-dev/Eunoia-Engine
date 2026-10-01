@@ -426,6 +426,9 @@ bool AssetRegistry::Load(const std::filesystem::path& registryFilePath) {
             }
         } else if (inAsset && line.find('}') != std::string::npos) {
             if (cur.id.IsValid()) {
+                if (cur.sourcePath.find(".ebehaviour") != std::string::npos) {
+                    cur.type = AssetType::VisualBehaviour;
+                }
                 RegisterAsset(cur);
             }
             inAsset = false;

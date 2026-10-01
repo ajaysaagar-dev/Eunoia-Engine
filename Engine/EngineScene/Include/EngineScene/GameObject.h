@@ -8,6 +8,7 @@
 #include <EngineAssets/AssetSystem.h>
 #include <EngineScene/TransformTypes.h>
 #include <EngineScene/EunoiaBehaviour.h>
+#include <EngineScene/BehaviourRegistry.h>
 #include <LightsBaking/LightBakeTypes.h>
 
 enum class LightType {
@@ -651,14 +652,76 @@ struct GameObject {
     }
 
     GameObject(GameObject&& other) noexcept : Transform(this) {
-        CopyFrom(other);
+        MoveFrom(std::move(other));
     }
 
     GameObject& operator=(GameObject&& other) noexcept {
         if (this != &other) {
-            CopyFrom(other);
+            MoveFrom(std::move(other));
         }
         return *this;
+    }
+
+    void MoveFrom(GameObject&& other) noexcept {
+        id = other.id;
+        name = std::move(other.name);
+        type = other.type;
+        mobility = other.mobility;
+        position = other.position;
+        rotation = other.rotation;
+        scale = other.scale;
+        color = other.color;
+        baseColorTexture = std::move(other.baseColorTexture);
+        normalTexture = std::move(other.normalTexture);
+        roughnessTexture = std::move(other.roughnessTexture);
+        metallicTexture = std::move(other.metallicTexture);
+        aoTexture = std::move(other.aoTexture);
+        emissionTexture = std::move(other.emissionTexture);
+        opacityTexture = std::move(other.opacityTexture);
+        materialName = std::move(other.materialName);
+        metallic = other.metallic;
+        roughness = other.roughness;
+        normalStrength = other.normalStrength;
+        specular = other.specular;
+        emissiveColor = other.emissiveColor;
+        emissiveIntensity = other.emissiveIntensity;
+        opacity = other.opacity;
+        opacityMaskClipValue = other.opacityMaskClipValue;
+        shadingModel = other.shadingModel;
+        blendMode = other.blendMode;
+        twoSided = other.twoSided;
+        castShadows = other.castShadows;
+        receiveShadows = other.receiveShadows;
+        meshClusterCulling = other.meshClusterCulling;
+        uvScale = other.uvScale;
+        normalMapYFlip = other.normalMapYFlip;
+        metallicChannel = other.metallicChannel;
+        roughnessChannel = other.roughnessChannel;
+        aoChannel = other.aoChannel;
+        materialDebugMode = other.materialDebugMode;
+        visible = other.visible;
+        autoRotate = other.autoRotate;
+        autoRotateSpeed = other.autoRotateSpeed;
+        meshFilePath = std::move(other.meshFilePath);
+        isImportedMesh = other.isImportedMesh;
+        submeshIndex = other.submeshIndex;
+        parentId = other.parentId;
+        childIds = std::move(other.childIds);
+        isLight = other.isLight;
+        lightId = other.lightId;
+        light = other.light;
+        isCamera = other.isCamera;
+        camera = other.camera;
+        isWaterBody = other.isWaterBody;
+        water = other.water;
+        params = other.params;
+        mesh = std::move(other.mesh);
+        scene = other.scene;
+        Transform.gameObject = this;
+        behaviours = std::move(other.behaviours);
+        for (auto& b : behaviours) {
+            if (b) b->SetOwner(this);
+        }
     }
 
     void CopyFrom(const GameObject& other) {
@@ -721,8 +784,18 @@ struct GameObject {
         for (const auto& b : other.behaviours) {
             if (b) {
                 auto clone = b->Clone();
-                clone->SetOwner(this);
-                behaviours.push_back(std::move(clone));
+                if (clone) {
+                    clone->SetOwner(this);
+                    behaviours.push_back(std::move(clone));
+                } else {
+                    auto bInst = BehaviourRegistry::Get().Create(b->GetClassName());
+                    if (bInst) {
+                        bInst->SetOwner(this);
+                        bInst->CopyPropertiesFrom(*b);
+                        bInst->SetEnabled(b->IsEnabled());
+                        behaviours.push_back(std::move(bInst));
+                    }
+                }
             }
         }
     }

@@ -45,6 +45,9 @@ namespace Key {
     constexpr int RShift = GLFW_KEY_RIGHT_SHIFT;
     constexpr int LCtrl = GLFW_KEY_LEFT_CONTROL;
     constexpr int RCtrl = GLFW_KEY_RIGHT_CONTROL;
+    constexpr int LeftControl = GLFW_KEY_LEFT_CONTROL;
+    constexpr int RightControl = GLFW_KEY_RIGHT_CONTROL;
+    constexpr int Control = GLFW_KEY_LEFT_CONTROL;
     constexpr int LAlt = GLFW_KEY_LEFT_ALT;
     constexpr int RAlt = GLFW_KEY_RIGHT_ALT;
     constexpr int Left = GLFW_KEY_LEFT;

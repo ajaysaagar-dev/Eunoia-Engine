@@ -24,13 +24,30 @@ if not exist "%RUNTIME_BUILD_DIR%" mkdir "%RUNTIME_BUILD_DIR%"
 if not exist "%PROJECTS_ROOT%" mkdir "%PROJECTS_ROOT%"
 if not exist "%GAME_BUILD_DIR%" mkdir "%GAME_BUILD_DIR%"
 
+:: Toolchain detection (CMake -> MSVC / Ninja / MSBuild / w64devkit)
+set "CMAKE_EXE=%PROJECT_DIR%\tools\w64devkit\bin\cmake.exe"
+if not exist "%CMAKE_EXE%" (
+    where cmake >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "CMAKE_EXE=cmake"
+)
+set "NINJA_EXE=%PROJECT_DIR%\tools\w64devkit\bin\ninja.exe"
+if not exist "%NINJA_EXE%" (
+    where ninja >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "NINJA_EXE=ninja"
+)
+
 set "COMPILER=%PROJECT_DIR%\tools\w64devkit\bin\g++.exe"
 if not exist "%COMPILER%" (
     where g++ >nul 2>&1
     if !ERRORLEVEL! equ 0 (
         set "COMPILER=g++"
     ) else (
-        echo [ERROR] C++ compiler not found!
+        where cl >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            set "COMPILER=cl"
+        ) else (
+            echo [ERROR] C++ compiler not found!
+        )
     )
 )
 
@@ -91,6 +108,7 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "-I%PROJECT_DIR%\Plugins\skybox\include" ^
     "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
+    "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
     "-I%PROJECT_DIR%\Editor\Editor\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
@@ -111,6 +129,7 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "%PROJECT_DIR%\Plugins\Lights-Baking\Source\LightsBakingPlugin.cpp" ^
     "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsSystem.cpp" ^
     "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsPlugin.cpp" ^
+    "%PROJECT_DIR%\Plugins\Visual-Behaviuors\Source\VisualBehaviuorsPlugin.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
@@ -206,6 +225,7 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "-I%PROJECT_DIR%\Engine\EunoiaPluginCore\Include" ^
     "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
+    "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
     "-I%PROJECT_DIR%\deps\ufbx" ^
@@ -244,8 +264,10 @@ if !ERRORLEVEL! equ 0 (
     xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Shaders" "%GAME_BUILD_DIR%\Shaders\" >nul 2>&1
     xcopy /s /e /y /d /q /i "%PROJECT_DIR%\Resources" "%GAME_BUILD_DIR%\Resources\" >nul 2>&1
 
-    :: Copy project cooked content, scenes, levels, registry, materials, models, and behaviours
+    :: Copy project cooked content, Content folder, scenes, levels, registry, materials, models, and behaviours
     if exist "%PROJECTS_ROOT%\test\Cooked" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Cooked" "%GAME_BUILD_DIR%\Cooked\" >nul 2>&1
+    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\Content\" >nul 2>&1
+    if exist "%PROJECTS_ROOT%\test\Content" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Content" "%GAME_BUILD_DIR%\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Scenes" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Scenes" "%GAME_BUILD_DIR%\Scenes\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Levels" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Levels" "%GAME_BUILD_DIR%\Levels\" >nul 2>&1
     if exist "%PROJECTS_ROOT%\test\Registry" xcopy /s /e /y /d /q /i "%PROJECTS_ROOT%\test\Registry" "%GAME_BUILD_DIR%\Registry\" >nul 2>&1
