@@ -246,6 +246,224 @@ static bool MoveFolderToDirectory(const std::string& srcVirtualDir, const std::s
     return true;
 }
 
+void EngineUI::OpenRenameAssetModal(const AssetID& id, const std::string& currentName, const std::string& virtualPath) {
+    renameTargetAssetId = id;
+    renameTargetAssetName = currentName;
+    renameTargetAssetVirtualPath = virtualPath;
+    snprintf(renameItemNameBuf, sizeof(renameItemNameBuf), "%s", currentName.c_str());
+    showRenameAssetPopup = true;
+    renameFocusInput = true;
+}
+
+void EngineUI::OpenRenameFolderModal(const std::string& virtualDir) {
+    if (virtualDir == "/Game" || virtualDir.empty()) return;
+    renameTargetVirtualDir = virtualDir;
+    std::string dirName = AssetPath::GetObjectName(virtualDir);
+    snprintf(renameItemNameBuf, sizeof(renameItemNameBuf), "%s", dirName.c_str());
+    showRenameFolderPopup = true;
+    renameFocusInput = true;
+}
+
+bool EngineUI::RenameContentAsset(const AssetID& id, const std::string& newName) {
+    std::string cleanNewName = newName;
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.front())) cleanNewName.erase(cleanNewName.begin());
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.back())) cleanNewName.pop_back();
+    if (cleanNewName.empty()) return false;
+
+    const AssetMetadata* meta = AssetRegistry::Get().FindById(id);
+    if (!meta) return false;
+    if (meta->objectName == cleanNewName) return true;
+
+    std::filesystem::path srcDisk = contentRootPath / meta->sourcePath;
+    std::string ext = srcDisk.extension().string();
+
+    // Strip trailing extension if user typed it
+    if (cleanNewName.size() > ext.size() &&
+        cleanNewName.compare(cleanNewName.size() - ext.size(), ext.size(), ext) == 0) {
+        cleanNewName = cleanNewName.substr(0, cleanNewName.size() - ext.size());
+    }
+
+    std::string newFileName = cleanNewName + ext;
+    std::filesystem::path dstDisk = srcDisk.parent_path() / newFileName;
+
+    std::error_code ec;
+    if (std::filesystem::exists(dstDisk, ec)) {
+        AddLog("LogContent", "Cannot rename asset: '" + newFileName + "' already exists!", 3);
+        return false;
+    }
+
+    if (std::filesystem::exists(srcDisk, ec)) {
+        std::filesystem::rename(srcDisk, dstDisk, ec);
+        if (ec) {
+            ec.clear();
+            std::filesystem::copy_file(srcDisk, dstDisk, std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec) std::filesystem::remove(srcDisk, ec);
+            else {
+                AddLog("LogContent", "Failed to rename file on disk: " + srcDisk.string(), 3);
+                return false;
+            }
+        }
+    }
+
+    // Rename sidecar files (.assetmeta, .meta)
+    std::vector<std::string> sidecarExts = { ".assetmeta", ".meta" };
+    for (const auto& scExt : sidecarExts) {
+        std::filesystem::path srcMeta = srcDisk.string() + scExt;
+        std::filesystem::path dstMeta = dstDisk.string() + scExt;
+        if (std::filesystem::exists(srcMeta, ec)) {
+            ec.clear();
+            std::filesystem::rename(srcMeta, dstMeta, ec);
+        }
+    }
+
+    std::string oldVirtual = meta->virtualPath;
+    std::string parentVirtual = AssetPath::GetDirectory(oldVirtual);
+    std::string newVirtual = AssetPath::Combine(parentVirtual, cleanNewName);
+
+    // Update active editors if currently editing this file
+    if (activeMaterial.filePath == srcDisk.string()) {
+        activeMaterial.filePath = dstDisk.string();
+        activeMaterial.name = cleanNewName;
+        activeMaterial.virtualPath = newVirtual;
+    }
+    if (activeSkybox.filePath == srcDisk.string()) {
+        activeSkybox.filePath = dstDisk.string();
+        activeSkybox.name = cleanNewName;
+        activeSkybox.virtualPath = newVirtual;
+    }
+    if (activeWater.filePath == srcDisk.string()) {
+        activeWater.filePath = dstDisk.string();
+        activeWater.name = cleanNewName;
+        activeWater.virtualPath = newVirtual;
+    }
+
+    // Update asset internal metadata files
+    if (meta->type == AssetType::Material) {
+        MaterialAsset ma;
+        if (LoadMaterialFile(dstDisk.string(), ma)) {
+            ma.name = cleanNewName;
+            ma.virtualPath = newVirtual;
+            ma.filePath = dstDisk.string();
+            SaveMaterialFile(dstDisk.string(), ma);
+        }
+    } else if (meta->type == AssetType::Skybox) {
+        SkyboxAsset sky;
+        if (LoadSkyboxFile(dstDisk.string(), sky)) {
+            sky.name = cleanNewName;
+            sky.virtualPath = newVirtual;
+            sky.filePath = dstDisk.string();
+            SaveSkyboxFile(dstDisk.string(), sky);
+        }
+    } else if (meta->type == AssetType::Water) {
+        WaterAsset water;
+        if (LoadWaterFile(dstDisk.string(), water)) {
+            water.name = cleanNewName;
+            water.virtualPath = newVirtual;
+            water.filePath = dstDisk.string();
+            SaveWaterFile(dstDisk.string(), water);
+        }
+    } else if (meta->type == AssetType::VisualBehaviour) {
+        VisualBehaviuors::BehaviourGraph g;
+        if (VisualBehaviuors::LoadGraph(g, dstDisk.string())) {
+            g.name = cleanNewName;
+            VisualBehaviuors::SaveGraph(g, dstDisk.string());
+        }
+    } else if (meta->type == AssetType::Behaviour || meta->type == AssetType::Script) {
+        std::string scriptExt = dstDisk.extension().string();
+        std::transform(scriptExt.begin(), scriptExt.end(), scriptExt.begin(), ::tolower);
+        if (scriptExt == ".cpp") {
+            BehaviourRegistry::Get().RegisterScriptFile(cleanNewName, dstDisk.string());
+        }
+    }
+
+    // Update Asset Registry
+    std::filesystem::path newRel = std::filesystem::relative(dstDisk, contentRootPath, ec);
+    AssetRegistry::Get().RenameAsset(id, cleanNewName);
+    AssetMetadata* updated = AssetRegistry::Get().FindById(id);
+    if (updated) {
+        if (!ec) updated->sourcePath = newRel.generic_string();
+        updated->virtualPath = newVirtual;
+        updated->objectName = cleanNewName;
+    }
+
+    // Update selection states
+    if (selectedContentItem == oldVirtual) {
+        selectedContentItem = newVirtual;
+    }
+    if (selectedContentItems.count("ASSET:" + oldVirtual)) {
+        selectedContentItems.erase("ASSET:" + oldVirtual);
+        selectedContentItems.insert("ASSET:" + newVirtual);
+    }
+    if (lastSelectedContentItem == "ASSET:" + oldVirtual) {
+        lastSelectedContentItem = "ASSET:" + newVirtual;
+    }
+
+    TriggerBackgroundRegistrySync(contentRootPath);
+    AddLog("LogContent", "Renamed asset from '" + meta->objectName + "' to '" + cleanNewName + "'", 2);
+    return true;
+}
+
+bool EngineUI::RenameContentFolder(const std::string& srcVirtualDir, const std::string& newFolderName) {
+    std::string cleanNewName = newFolderName;
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.front())) cleanNewName.erase(cleanNewName.begin());
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.back())) cleanNewName.pop_back();
+
+    if (srcVirtualDir == "/Game" || srcVirtualDir.empty() || cleanNewName.empty()) return false;
+    std::string oldFolderName = AssetPath::GetObjectName(srcVirtualDir);
+    if (oldFolderName == cleanNewName) return true;
+
+    std::string srcSub = srcVirtualDir;
+    if (srcSub.rfind("/Game", 0) == 0) srcSub = srcSub.substr(5);
+    if (!srcSub.empty() && srcSub[0] == '/') srcSub.erase(0, 1);
+    std::filesystem::path srcDiskDir = srcSub.empty() ? contentRootPath : (contentRootPath / srcSub);
+
+    std::filesystem::path dstDiskDir = srcDiskDir.parent_path() / cleanNewName;
+
+    std::error_code ec;
+    if (std::filesystem::exists(dstDiskDir, ec)) {
+        AddLog("LogContent", "Cannot rename folder: '" + cleanNewName + "' already exists!", 3);
+        return false;
+    }
+
+    if (!std::filesystem::exists(srcDiskDir, ec)) return false;
+
+    std::filesystem::rename(srcDiskDir, dstDiskDir, ec);
+    if (ec) {
+        ec.clear();
+        std::filesystem::copy(srcDiskDir, dstDiskDir, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) std::filesystem::remove_all(srcDiskDir, ec);
+        else {
+            AddLog("LogContent", "Failed to rename folder on disk: " + srcDiskDir.string(), 3);
+            return false;
+        }
+    }
+
+    std::string parentVirtual = AssetPath::GetDirectory(srcVirtualDir);
+    std::string newVirtualDir = AssetPath::Combine(parentVirtual, cleanNewName);
+
+    // Update currentVirtualDir if it was inside or equal to srcVirtualDir
+    if (currentVirtualDir == srcVirtualDir) {
+        currentVirtualDir = newVirtualDir;
+    } else if (currentVirtualDir.rfind(srcVirtualDir + "/", 0) == 0) {
+        currentVirtualDir = newVirtualDir + currentVirtualDir.substr(srcVirtualDir.length());
+    }
+
+    if (selectedContentItem == srcVirtualDir) {
+        selectedContentItem = newVirtualDir;
+    }
+    if (selectedContentItems.count("DIR:" + srcVirtualDir)) {
+        selectedContentItems.erase("DIR:" + srcVirtualDir);
+        selectedContentItems.insert("DIR:" + newVirtualDir);
+    }
+    if (lastSelectedContentItem == "DIR:" + srcVirtualDir) {
+        lastSelectedContentItem = "DIR:" + newVirtualDir;
+    }
+
+    TriggerBackgroundRegistrySync(contentRootPath);
+    AddLog("LogContent", "Renamed folder from '" + oldFolderName + "' to '" + cleanNewName + "'", 2);
+    return true;
+}
+
 static std::filesystem::path FindEngineSourceRoot() {
     std::error_code ec;
     std::vector<std::filesystem::path> candidates = {
@@ -7251,6 +7469,106 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                 ImGui::Separator();
 
+                // Modals for Renaming Asset / Folder
+                if (showRenameAssetPopup) {
+                    ImGui::OpenPopup("Rename Asset##Modal");
+                    showRenameAssetPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Rename Asset##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    const AssetMetadata* rMeta = AssetRegistry::Get().FindById(renameTargetAssetId);
+                    std::string curName = rMeta ? rMeta->objectName : renameTargetAssetName;
+                    std::string curType = rMeta ? AssetTypeToString(rMeta->type) : "Asset";
+
+                    ImGui::Text("Renaming %s: %s", curType.c_str(), curName.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter new name:");
+                    ImGui::SetNextItemWidth(300.0f);
+                    if (renameFocusInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        renameFocusInput = false;
+                    }
+                    ImGui::InputText("##RenameAssetInput", renameItemNameBuf, sizeof(renameItemNameBuf));
+
+                    std::string inputName = renameItemNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool hasInvalidChar = (inputName.find('/') != std::string::npos || inputName.find('\\') != std::string::npos ||
+                                           inputName.find(':') != std::string::npos || inputName.find('*') != std::string::npos ||
+                                           inputName.find('?') != std::string::npos || inputName.find('\"') != std::string::npos ||
+                                           inputName.find('<') != std::string::npos || inputName.find('>') != std::string::npos ||
+                                           inputName.find('|') != std::string::npos);
+
+                    bool isValid = !inputName.empty() && !hasInvalidChar;
+                    if (hasInvalidChar) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "⚠️ Name contains invalid filename characters (/ \\ : * ? \" < > |)");
+                    }
+
+                    ImGui::Spacing();
+                    if (!isValid) ImGui::BeginDisabled();
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    bool okClicked = ImGui::Button("Rename", ImVec2(120, 0));
+                    if (!isValid) ImGui::EndDisabled();
+
+                    if (isValid && (okClicked || enterPressed)) {
+                        RenameContentAsset(renameTargetAssetId, inputName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (showRenameFolderPopup) {
+                    ImGui::OpenPopup("Rename Folder##Modal");
+                    showRenameFolderPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Rename Folder##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string oldDirName = AssetPath::GetObjectName(renameTargetVirtualDir);
+                    ImGui::Text("Renaming virtual folder: %s", renameTargetVirtualDir.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter new folder name:");
+                    ImGui::SetNextItemWidth(300.0f);
+                    if (renameFocusInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        renameFocusInput = false;
+                    }
+                    ImGui::InputText("##RenameFolderInput", renameItemNameBuf, sizeof(renameItemNameBuf));
+
+                    std::string inputName = renameItemNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool hasInvalidChar = (inputName.find('/') != std::string::npos || inputName.find('\\') != std::string::npos ||
+                                           inputName.find(':') != std::string::npos || inputName.find('*') != std::string::npos ||
+                                           inputName.find('?') != std::string::npos || inputName.find('\"') != std::string::npos ||
+                                           inputName.find('<') != std::string::npos || inputName.find('>') != std::string::npos ||
+                                           inputName.find('|') != std::string::npos);
+
+                    bool isValid = !inputName.empty() && !hasInvalidChar && renameTargetVirtualDir != "/Game";
+                    if (hasInvalidChar) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "⚠️ Name contains invalid folder characters (/ \\ : * ? \" < > |)");
+                    }
+
+                    ImGui::Spacing();
+                    if (!isValid) ImGui::BeginDisabled();
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    bool okClicked = ImGui::Button("Rename", ImVec2(120, 0));
+                    if (!isValid) ImGui::EndDisabled();
+
+                    if (isValid && (okClicked || enterPressed)) {
+                        RenameContentFolder(renameTargetVirtualDir, inputName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Modals for creating Folder / Material / Skybox / Behaviour
                 if (showNewFolderPopup) {
                     ImGui::OpenPopup("Create Folder##Modal");
@@ -7762,6 +8080,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             selectedContentItems.clear();
                             lastSelectedContentItem = "";
                         }
+                        if (vDir != "/Game") {
+                            if (ImGui::MenuItem("✏️ Rename Folder...", "F2")) {
+                                OpenRenameFolderModal(vDir);
+                            }
+                        }
                         ImGui::Separator();
                         if (ImGui::MenuItem("➕ New Folder")) {
                             popupTargetVirtualDir = vDir;
@@ -8149,6 +8472,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     selectedContentItems.clear();
                                     lastSelectedContentItem = "";
                                 }
+                                if (item.subDir != "/Game") {
+                                    if (ImGui::MenuItem("✏️ Rename Folder...", "F2")) {
+                                        OpenRenameFolderModal(item.subDir);
+                                    }
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("➕ New Folder")) {
                                     popupTargetVirtualDir = item.subDir;
@@ -8310,6 +8638,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     ImGui::Separator();
                                 }
 
+                                if (ImGui::MenuItem("✏️ Rename...", "F2")) {
+                                    OpenRenameAssetModal(item.meta.id, item.meta.objectName, item.meta.virtualPath);
+                                }
                                 if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
                                     OpenReferenceViewer(item.meta.id);
                                 }
@@ -8603,6 +8934,22 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         TriggerBackgroundRegistrySync(contentRootPath);
                     }
                     ImGui::EndDragDropTarget();
+                }
+
+                // F2 Keyboard shortcut to rename currently selected item in Content Browser
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_F2)) {
+                    if (!selectedContentItem.empty()) {
+                        if (selectedContentItem.rfind("DIR:", 0) == 0) {
+                            OpenRenameFolderModal(selectedContentItem.substr(4));
+                        } else {
+                            std::string pathQuery = selectedContentItem;
+                            if (pathQuery.rfind("ASSET:", 0) == 0) pathQuery = pathQuery.substr(6);
+                            const AssetMetadata* m = AssetRegistry::Get().FindByPath(pathQuery);
+                            if (m) {
+                                OpenRenameAssetModal(m->id, m->objectName, m->virtualPath);
+                            }
+                        }
+                    }
                 }
 
                 ImGui::EndChild();

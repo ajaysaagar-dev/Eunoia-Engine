@@ -263,6 +263,21 @@ public:
     bool showNewMaterialPopup = false;
     char newMaterialNameBuf[64] = "M_NewMaterial";
 
+    // Item / Folder Renaming State & Methods
+    bool showRenameAssetPopup = false;
+    AssetID renameTargetAssetId;
+    std::string renameTargetAssetName = "";
+    std::string renameTargetAssetVirtualPath = "";
+    bool showRenameFolderPopup = false;
+    std::string renameTargetVirtualDir = "";
+    char renameItemNameBuf[128] = "";
+    bool renameFocusInput = false;
+
+    void OpenRenameAssetModal(const AssetID& id, const std::string& currentName, const std::string& virtualPath);
+    void OpenRenameFolderModal(const std::string& virtualDir);
+    bool RenameContentAsset(const AssetID& id, const std::string& newName);
+    bool RenameContentFolder(const std::string& srcVirtualDir, const std::string& newFolderName);
+
     // Material Editor Window
     bool showMaterialEditor = false;
     MaterialAsset activeMaterial;
