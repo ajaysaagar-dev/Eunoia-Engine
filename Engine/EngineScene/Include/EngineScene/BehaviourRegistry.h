@@ -185,7 +185,7 @@ public:
         info.factory = [className, displayName]() -> std::unique_ptr<EunoiaBehaviour> {
             auto b = std::make_unique<T>();
             b->SetClassName(className);
-            if (!displayName.empty()) b->SetDisplayName(displayName);
+            b->SetDisplayName(displayName.empty() ? className : displayName);
             b->RegisterProperties();
             return b;
         };
@@ -252,10 +252,13 @@ private:
     std::unordered_map<std::string, BehaviourClassInfo> m_registry;
 };
 
-#define REGISTER_BEHAVIOUR(ClassName, DisplayName) \
+#define REGISTER_BEHAVIOUR(ClassName, ...) \
     struct ClassName##_AutoRegister { \
         ClassName##_AutoRegister() { \
-            BehaviourRegistry::Get().Register<ClassName>(#ClassName, DisplayName); \
+            std::string dName = #ClassName; \
+            const char* explicitName = "" __VA_ARGS__; \
+            if (explicitName && explicitName[0] != '\0') dName = explicitName; \
+            BehaviourRegistry::Get().Register<ClassName>(#ClassName, dName); \
         } \
     }; \
     static ClassName##_AutoRegister s_register_##ClassName;

@@ -1043,6 +1043,23 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 if (l.find(';') == std::string::npos || l.find('{') != std::string::npos) {
                     inClass = true;
                     inPublic = (l.find("struct ") != std::string::npos);
+
+                    size_t cPos = l.find("class ");
+                    size_t sPos = l.find("struct ");
+                    size_t kwPos = (cPos != std::string::npos) ? cPos + 6 : ((sPos != std::string::npos) ? sPos + 7 : std::string::npos);
+                    if (kwPos != std::string::npos) {
+                        size_t nameStart = l.find_first_not_of(" \t", kwPos);
+                        if (nameStart != std::string::npos) {
+                            size_t nameEnd = l.find_first_of(" \t:{;", nameStart);
+                            std::string parsedClassName = (nameEnd != std::string::npos) ? l.substr(nameStart, nameEnd - nameStart) : l.substr(nameStart);
+                            if (!parsedClassName.empty() && (m_className.empty() || m_className == "CustomBehaviour")) {
+                                m_className = parsedClassName;
+                                if (m_displayName.empty() || m_displayName == "CustomBehaviour") {
+                                    m_displayName = parsedClassName;
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

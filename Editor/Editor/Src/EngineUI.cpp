@@ -7357,10 +7357,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "public:\n"
                                 << "    // Public variables are automatically registered as editable properties\n"
                                 << "    float Speed = 5.0f;\n\n"
-                                << "    " << behName << "() {\n"
-                                << "        m_className   = \"" << behName << "\";\n"
-                                << "        m_displayName = \"" << behName << "\";\n"
-                                << "    }\n\n"
                                 << "    // ------------------------------------------------------------------------\n"
                                 << "    // Lifecycle Methods\n"
                                 << "    // ------------------------------------------------------------------------\n"
@@ -7390,7 +7386,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "    }\n\n"
                                 << "};\n\n"
                                 << "// Register behaviour with the engine's BehaviourRegistry\n"
-                                << "REGISTER_BEHAVIOUR(" << behName << ", \"" << behName << "\")\n";
+                                << "REGISTER_BEHAVIOUR(" << behName << ")\n";
                         }
 
                         std::ofstream metaFile(metaPath);
