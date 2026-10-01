@@ -24,13 +24,30 @@ if not exist "%RUNTIME_BUILD_DIR%" mkdir "%RUNTIME_BUILD_DIR%"
 if not exist "%PROJECTS_ROOT%" mkdir "%PROJECTS_ROOT%"
 if not exist "%GAME_BUILD_DIR%" mkdir "%GAME_BUILD_DIR%"
 
+:: Toolchain detection (CMake -> MSVC / Ninja / MSBuild / w64devkit)
+set "CMAKE_EXE=%PROJECT_DIR%\tools\w64devkit\bin\cmake.exe"
+if not exist "%CMAKE_EXE%" (
+    where cmake >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "CMAKE_EXE=cmake"
+)
+set "NINJA_EXE=%PROJECT_DIR%\tools\w64devkit\bin\ninja.exe"
+if not exist "%NINJA_EXE%" (
+    where ninja >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "NINJA_EXE=ninja"
+)
+
 set "COMPILER=%PROJECT_DIR%\tools\w64devkit\bin\g++.exe"
 if not exist "%COMPILER%" (
     where g++ >nul 2>&1
     if !ERRORLEVEL! equ 0 (
         set "COMPILER=g++"
     ) else (
-        echo [ERROR] C++ compiler not found!
+        where cl >nul 2>&1
+        if !ERRORLEVEL! equ 0 (
+            set "COMPILER=cl"
+        ) else (
+            echo [ERROR] C++ compiler not found!
+        )
     )
 )
 
