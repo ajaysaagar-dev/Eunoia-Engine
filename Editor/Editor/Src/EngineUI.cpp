@@ -2597,6 +2597,7 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::ApplyUIScale(float scale) {
     uiScale = std::clamp(scale, 0.25f, 2.50f);
+    topBarHeight = 68.0f * uiScale;
     SetupTheme();
 }
 
@@ -2979,7 +2980,7 @@ void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShou
 
 void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float titleBarH = 32.0f;
+    float titleBarH = 32.0f * uiScale;
     float topBarW = vp->Size.x;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y), ImGuiCond_Always);
@@ -3011,12 +3012,12 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         }
 #endif
 
-        // Vertically center content in 32px title bar
-        ImGui::SetCursorPosY(5.0f);
+        // Vertically center content in title bar
+        ImGui::SetCursorPosY(std::max(2.0f, 5.0f * uiScale));
 
         // 1. Engine Logo & Brand Badge
         if (engineIconGpuHandle) {
-            ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(18.0f, 18.0f));
+            ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(18.0f * uiScale, 18.0f * uiScale));
             ImGui::SameLine(0.0f, 6.0f);
         }
         ImGui::TextColored(ImVec4(0.12f, 0.72f, 1.00f, 1.0f), "[Eunoia]");
@@ -3044,25 +3045,29 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         }
 
         // 4. Custom Window Frame Control Buttons (Minimize, Maximize/Restore, Close)
-        float btnAreaW = 138.0f;
+        float btnAreaW = 138.0f * uiScale;
         float btnY = vp->Pos.y;
         float btnH = titleBarH;
+        float btnW = btnAreaW / 3.0f;
+
+        bool isTitleBarHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+        bool anyItemActive = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered();
 
         // Button bounding boxes
         ImVec2 minMin(vp->Pos.x + topBarW - btnAreaW, btnY);
-        ImVec2 minMax(minMin.x + 44.0f, btnY + btnH);
-        bool minHovered = (mousePos.x >= minMin.x && mousePos.x < minMax.x &&
+        ImVec2 minMax(minMin.x + btnW, btnY + btnH);
+        bool minHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= minMin.x && mousePos.x < minMax.x &&
                            mousePos.y >= minMin.y && mousePos.y < minMax.y);
 
-        ImVec2 maxMin(minMin.x + 44.0f, btnY);
-        ImVec2 maxMax(maxMin.x + 44.0f, btnY + btnH);
-        bool maxHovered = (mousePos.x >= maxMin.x && mousePos.x < maxMax.x &&
+        ImVec2 maxMin(minMin.x + btnW, btnY);
+        ImVec2 maxMax(maxMin.x + btnW, btnY + btnH);
+        bool maxHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= maxMin.x && mousePos.x < maxMax.x &&
                            mousePos.y >= maxMin.y && mousePos.y < maxMax.y);
 
-        ImVec2 clsMin(maxMin.x + 44.0f, btnY);
-        ImVec2 clsMax(clsMin.x + 50.0f, btnY + btnH);
-        bool clsHovered = (mousePos.x >= clsMin.x && mousePos.x < clsMax.x &&
-                           mousePos.y >= clsMin.y && mousePos.y < clsMax.y);
+        ImVec2 clsMin(maxMin.x + btnW, btnY);
+        ImVec2 clsMax(vp->Pos.x + topBarW, btnY + btnH);
+        bool clsHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= clsMin.x && mousePos.x <= clsMax.x &&
+                           mousePos.y >= clsMin.y && mousePos.y <= clsMax.y);
 
         bool anyBtnHovered = minHovered || maxHovered || clsHovered;
 
@@ -3072,7 +3077,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         }
         float minCx = (minMin.x + minMax.x) * 0.5f;
         float minCy = (minMin.y + minMax.y) * 0.5f;
-        dl->AddLine(ImVec2(minCx - 5.0f, minCy), ImVec2(minCx + 5.0f, minCy), IM_COL32(210, 215, 225, 255), 1.5f);
+        dl->AddLine(ImVec2(minCx - 5.0f * uiScale, minCy), ImVec2(minCx + 5.0f * uiScale, minCy), IM_COL32(210, 215, 225, 255), 1.5f * uiScale);
 
         if (minHovered && mouseClicked) {
             if (m_window) {
@@ -3088,13 +3093,13 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         float maxCy = (maxMin.y + maxMax.y) * 0.5f;
         if (isMaximized) {
             // Overlapping boxes (Restore icon)
-            dl->AddRect(ImVec2(maxCx - 3.0f, maxCy - 6.0f), ImVec2(maxCx + 5.0f, maxCy + 2.0f), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f);
+            dl->AddRect(ImVec2(maxCx - 3.0f * uiScale, maxCy - 6.0f * uiScale), ImVec2(maxCx + 5.0f * uiScale, maxCy + 2.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f * uiScale);
             ImU32 fillCol = maxHovered ? (mouseDown ? IM_COL32(40, 44, 55, 255) : IM_COL32(55, 60, 75, 200)) : IM_COL32(17, 18, 23, 255);
-            dl->AddRectFilled(ImVec2(maxCx - 5.0f, maxCy - 3.0f), ImVec2(maxCx + 3.0f, maxCy + 5.0f), fillCol);
-            dl->AddRect(ImVec2(maxCx - 5.0f, maxCy - 3.0f), ImVec2(maxCx + 3.0f, maxCy + 5.0f), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f);
+            dl->AddRectFilled(ImVec2(maxCx - 5.0f * uiScale, maxCy - 3.0f * uiScale), ImVec2(maxCx + 3.0f * uiScale, maxCy + 5.0f * uiScale), fillCol);
+            dl->AddRect(ImVec2(maxCx - 5.0f * uiScale, maxCy - 3.0f * uiScale), ImVec2(maxCx + 3.0f * uiScale, maxCy + 5.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f * uiScale);
         } else {
             // Single square box (Maximize icon)
-            dl->AddRect(ImVec2(maxCx - 5.0f, maxCy - 5.0f), ImVec2(maxCx + 5.0f, maxCy + 5.0f), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.5f);
+            dl->AddRect(ImVec2(maxCx - 5.0f * uiScale, maxCy - 5.0f * uiScale), ImVec2(maxCx + 5.0f * uiScale, maxCy + 5.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.5f * uiScale);
         }
 
         if (maxHovered && mouseClicked) {
@@ -3118,8 +3123,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         float clsCx = (clsMin.x + clsMax.x) * 0.5f;
         float clsCy = (clsMin.y + clsMax.y) * 0.5f;
         ImU32 crossColor = clsHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(210, 215, 225, 255);
-        dl->AddLine(ImVec2(clsCx - 5.0f, clsCy - 5.0f), ImVec2(clsCx + 5.0f, clsCy + 5.0f), crossColor, 1.5f);
-        dl->AddLine(ImVec2(clsCx + 5.0f, clsCy - 5.0f), ImVec2(clsCx - 5.0f, clsCy + 5.0f), crossColor, 1.5f);
+        dl->AddLine(ImVec2(clsCx - 5.0f * uiScale, clsCy - 5.0f * uiScale), ImVec2(clsCx + 5.0f * uiScale, clsCy + 5.0f * uiScale), crossColor, 1.5f * uiScale);
+        dl->AddLine(ImVec2(clsCx + 5.0f * uiScale, clsCy - 5.0f * uiScale), ImVec2(clsCx - 5.0f * uiScale, clsCy + 5.0f * uiScale), crossColor, 1.5f * uiScale);
 
         if (clsHovered && mouseClicked) {
             outShouldExit = true;
@@ -3127,8 +3132,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 
         // --- Window Dragging & Double-Click Maximize ---
 #ifdef _WIN32
-        bool titleBarHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
-        if (titleBarHovered && !anyBtnHovered && !ImGui::IsAnyItemHovered() && !ImGui::IsAnyItemActive()) {
+        bool titleBarHovered = isTitleBarHovered;
+        if (titleBarHovered && !anyBtnHovered && !anyItemActive) {
             if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                 if (hwnd) {
                     if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
@@ -3157,7 +3162,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float topBarW = vp->Size.x;
-    float titleBarH = 32.0f;
+    float titleBarH = 32.0f * uiScale;
     float menuBarH = topBarHeight - titleBarH;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + titleBarH), ImGuiCond_Always);
