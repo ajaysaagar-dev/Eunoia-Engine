@@ -5480,58 +5480,76 @@ int main(int argc, char** argv)
 	ImGui_ImplDX12_Init(&init_info);
 	logStartupStage("ImGuiFonts", "Dear ImGui and fonts initialized");
 
-	InitFallbackTextures();
-	InitLightmapSrvSlot();
+	try {
+		InitFallbackTextures();
+		logStartupStage("FallbackTextures", "Fallback textures initialized");
+	} catch (const std::exception& e) {
+		std::cerr << "[STARTUP] InitFallbackTextures exception: " << e.what() << std::endl;
+	}
+
+	try {
+		InitLightmapSrvSlot();
+	} catch (...) {}
+
 	TextureManager::Get().RegisterQualityChangedCallback("D3D12Renderer", [](TextureQuality /*q*/, int /*maxRes*/) {
 		ReloadAllGpuTextures();
 	});
+
 	if (!isGameOnlyMode) {
-		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
-		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
+		try {
+			DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
+			g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
-		g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
+			DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
+			g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
-		g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
+			DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
+			g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
-		g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
+			DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
+			g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
-		g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
+			DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
+			g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
-		g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
+			DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
+			g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
 
-		DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
-		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
-		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
-		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+			DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
+			g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
+			DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
+			g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
 
-		DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
-		g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
-		DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
-		g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
-		DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
-		g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
-		DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
-		g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
-		DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
-		g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
-		DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
-		g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
-		DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
-		g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
-		DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
-		g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+			DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+			g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+			DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+			g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+			DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+			g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+			DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+			g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+			DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+			g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+			DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+			g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+			DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+			g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+			DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+			g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+		} catch (const std::exception& e) {
+			std::cerr << "[STARTUP] Icon loading exception: " << e.what() << std::endl;
+		}
 	}
 
 	StartupSplash::Get().PumpEvents();
 	logStartupStage("Resources", "Fallback textures and icons loaded");
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
-	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
+	try {
+		g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
+	} catch (const std::exception& e) {
+		std::cerr << "[STARTUP] InitWithProject exception: " << e.what() << std::endl;
+	}
 
 	StartupSplash::Get().PumpEvents();
 	logStartupStage("EngineUI", "Engine UI and Asset Registry initialized");

@@ -233,20 +233,24 @@ public:
             result = (m_projectRoot / "Materials" / "textures" / name).string();
         }
         // 4. Under Materials/
-        else if (std::filesystem::exists(m_projectRoot / "Materials" / name, ec)) {
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / "Materials" / name, ec)) {
             result = (m_projectRoot / "Materials" / name).string();
         }
-        // 5. Recursive search matching filename
-        else {
-            std::string targetFilename = std::filesystem::path(name).filename().string();
-            auto options = std::filesystem::directory_options::skip_permission_denied;
-            for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
-                 !ec && it != std::filesystem::recursive_directory_iterator();
-                 it.increment(ec)) {
-                if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
-                    result = it->path().string();
-                    break;
+        // 5. Recursive search matching filename inside project root
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot, ec) && std::filesystem::is_directory(m_projectRoot, ec)) {
+            try {
+                std::string targetFilename = std::filesystem::path(name).filename().string();
+                auto options = std::filesystem::directory_options::skip_permission_denied;
+                for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
+                     !ec && it != std::filesystem::recursive_directory_iterator();
+                     it.increment(ec)) {
+                    if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
+                        result = it->path().string();
+                        break;
+                    }
                 }
+            } catch (...) {
+                // Ignore filesystem exceptions
             }
         }
 
