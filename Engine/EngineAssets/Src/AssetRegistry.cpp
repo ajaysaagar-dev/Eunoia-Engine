@@ -570,3 +570,59 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
         onProgress(1.0f, "Asset Registry synchronized (" + std::to_string(m_assetsByID.size()) + " assets)", regPath.string());
     }
 }
+
+void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
+    std::error_code ec;
+    if (!std::filesystem::exists(projectRoot, ec)) return;
+    m_projectRoot = projectRoot;
+
+    bool hasChanges = false;
+    auto options = std::filesystem::directory_options::skip_permission_denied;
+
+    for (auto it = std::filesystem::recursive_directory_iterator(projectRoot, options, ec);
+         !ec && it != std::filesystem::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (!it->is_directory(ec)) {
+            std::string filename = it->path().filename().string();
+            std::string fLower = filename;
+            std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
+            if (fLower.find(".assetmeta") != std::string::npos ||
+                fLower.find(".meta") != std::string::npos ||
+                fLower.find("assetregistry.json") != std::string::npos) {
+                continue;
+            }
+
+            std::string ext = it->path().extension().string();
+            AssetType type = DetectAssetTypeFromExtension(ext);
+            if (type == AssetType::Unknown) continue;
+
+            uint64_t fileSize = (uint64_t)std::filesystem::file_size(it->path(), ec);
+            auto ftime = std::filesystem::last_write_time(it->path(), ec);
+            uint64_t fileTimestamp = (uint64_t)ftime.time_since_epoch().count();
+
+            std::string virtualPath = AssetPath::FromDiskPath(projectRoot, it->path());
+            AssetMetadata* existing = FindByPath(virtualPath);
+
+            if (!existing || existing->sourceSize != fileSize || existing->sourceTimestamp != fileTimestamp) {
+                AssetMetadata meta;
+                meta.type = type;
+                meta.objectName = it->path().stem().string();
+
+                std::filesystem::path rel = std::filesystem::relative(it->path(), projectRoot, ec);
+                meta.sourcePath = ec ? filename : rel.generic_string();
+                meta.virtualPath = virtualPath;
+                meta.sourceSize = fileSize;
+                meta.sourceTimestamp = fileTimestamp;
+
+                ReadOrGenerateSidecar(it->path(), meta);
+                RegisterAsset(meta);
+                hasChanges = true;
+            }
+        }
+    }
+
+    if (hasChanges) {
+        std::filesystem::path regPath = projectRoot / "Registry" / "AssetRegistry.json";
+        Save(regPath);
+    }
+}

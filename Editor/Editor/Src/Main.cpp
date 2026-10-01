@@ -1885,9 +1885,13 @@ static HRESULT CompileOrLoadCachedShader(
 		return E_INVALIDARG;
 	}
 
-	// Compute a hash of source + entryPoint + profile to detect any changes
+	// Compute a stable FNV-1a 64-bit hash of source + entryPoint + profile
 	std::string key = std::string(entryPoint) + "_" + targetProfile + "_" + hlslSource;
-	size_t hashVal = std::hash<std::string>{}(key);
+	uint64_t hashVal = 14695981039346656037ull;
+	for (char c : key) {
+		hashVal ^= (uint8_t)c;
+		hashVal *= 1099511628211ull;
+	}
 	char hexHash[32];
 	snprintf(hexHash, sizeof(hexHash), "%016llx", (unsigned long long)hashVal);
 
@@ -5130,10 +5134,21 @@ int main(int argc, char** argv)
 		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
 	}
 
+	auto startupStart = std::chrono::high_resolution_clock::now();
+	auto stageStart = startupStart;
+	auto logStartupStage = [&](const std::string& stageName, const std::string& desc) {
+		auto now = std::chrono::high_resolution_clock::now();
+		auto stageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - stageStart).count();
+		auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startupStart).count();
+		stageStart = now;
+		std::string msg = desc + " (+" + std::to_string(stageMs) + "ms, total " + std::to_string(totalMs) + "ms)";
+		EngineLogger::Get().LogAction("STARTUP_STAGE", stageName, msg);
+	};
+
 	if (!isGameOnlyMode) {
 		StartupSplash::Get().Show("Resources/Icons/eunoia.png");
 		StartupSplash::Get().PumpEvents();
-		EngineLogger::Get().LogAction("STARTUP_STAGE", "StartupSplash", "Startup splash window displayed");
+		logStartupStage("StartupSplash", "Startup splash window displayed");
 	}
 
 	// 2. Create main window (D3D12, NO_API)
@@ -5202,7 +5217,7 @@ int main(int argc, char** argv)
 	glfwSetDropCallback(g_window, dropCallback);
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "PlatformWindow", "Main window created");
+	logStartupStage("PlatformWindow", "Main window created");
 
 	// 2. Initialize DirectX 12
 	if (initD3D12(hwnd) != EXIT_SUCCESS)
@@ -5212,7 +5227,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "DX12Device", "DirectX 12 device and queues initialized");
+	logStartupStage("DX12Device", "DirectX 12 device and queues initialized");
 
 	if (createShadersAndPipeline() != EXIT_SUCCESS)
 	{
@@ -5221,7 +5236,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "ShadersPipeline", "Shaders and pipeline states compiled");
+	logStartupStage("ShadersPipeline", "Shaders and pipeline states compiled / cached");
 
 	if (createDynamicBuffers() != EXIT_SUCCESS)
 	{
@@ -5230,7 +5245,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "DynamicBuffers", "Dynamic buffers allocated");
+	logStartupStage("DynamicBuffers", "Dynamic buffers allocated");
 
 	// 3. Initialize Dear ImGui for DirectX 12
 	IMGUI_CHECKVERSION();
@@ -5257,7 +5272,11 @@ int main(int argc, char** argv)
 		symbolConfig.OversampleH = 1;
 		symbolConfig.OversampleV = 1;
 		static const ImWchar symbolRanges[] = {
-			0x2000, 0x2BFF, // General Punctuation, Arrows, Mathematical & Geometric Shapes, Miscellaneous Symbols
+			0x2022, 0x2022, // Bullet
+			0x2190, 0x21FF, // Arrows
+			0x25A0, 0x25FF, // Geometric Shapes
+			0x2600, 0x26FF, // Miscellaneous Symbols
+			0x2700, 0x27BF, // Dingbats
 			0,
 		};
 		io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", 18.0f, &symbolConfig, symbolRanges);
@@ -5285,6 +5304,7 @@ int main(int argc, char** argv)
 	init_info.SrvDescriptorFreeFn  = ImGui_SrvFree;
 
 	ImGui_ImplDX12_Init(&init_info);
+	logStartupStage("ImGuiFonts", "Dear ImGui and fonts initialized");
 
 	InitFallbackTextures();
 	InitLightmapSrvSlot();
@@ -5331,13 +5351,13 @@ int main(int argc, char** argv)
 	}
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "Resources", "Fallback textures and icons loaded");
+	logStartupStage("Resources", "Fallback textures and icons loaded");
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
 	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "EngineUI", "Engine UI and Asset Registry initialized");
+	logStartupStage("EngineUI", "Engine UI and Asset Registry initialized");
 
 	if (!isGameOnlyMode) {
 		if (g_engineUI.pendingInitialSceneLoad) {
@@ -5363,12 +5383,41 @@ int main(int argc, char** argv)
 
 		updateSceneGeometry();
 		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+		logStartupStage("ScenePreload", "Scene and actors loaded");
+
+		// Warm up GPU pipelines and render targets behind splash before revealing window to prevent blank frame
+		for (int warmup = 0; warmup < 2; ++warmup)
+		{
+			InputSystem::Get().BeginFrame();
+			glfwPollEvents();
+			InputSystem::Get().Update(g_window);
+
+			ImGui_ImplDX12_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
+
+			bool warmupExit = false;
+			g_engineUI.Render(g_scene, g_camera, 60.0f, 16.6f, g_currentVertexCount, g_currentIndexCount, warmupExit);
+
+			ImGui::Render();
+
+			if (g_fence && g_fenceValues[g_frameIndex] > 0 && g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
+			{
+				SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "Warmup frame fence sync");
+			}
+
+			updateSceneGeometry();
+			updateConstantBuffer();
+			PreRenderUploadTextures();
+			renderFrame();
+		}
+		logStartupStage("WarmupFrames", "Warm-up frames presented behind splash");
 
 		StartupSplash::Get().Close();
 		ShowWindow(hwnd, SW_MAXIMIZE);
 		glfwShowWindow(g_window);
 		UpdateWindow(hwnd);
-		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Scene completely loaded — Editor opened maximized");
+		logStartupStage("EditorWindow", "Editor window opened maximized — startup complete");
 	} else {
 		updateSceneGeometry();
 	}

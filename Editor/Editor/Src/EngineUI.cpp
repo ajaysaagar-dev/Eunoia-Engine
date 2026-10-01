@@ -1050,8 +1050,8 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
 
     // Load font
     ImFontConfig fontConfig;
-    fontConfig.OversampleH = 2;
-    fontConfig.OversampleV = 2;
+    fontConfig.OversampleH = 1;
+    fontConfig.OversampleV = 1;
     ImFont* mainFont = nullptr;
     if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
         mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
@@ -1865,60 +1865,49 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     currentVirtualDir = "/Game";
     selectedContentItem = "";
 
-    // Re-initialize subsystems with new content root
+    // Re-initialize subsystems with new content root (loads cached AssetRegistry.json in ~1ms)
     TextureManager::Get().SetProjectRoot(contentRootPath);
     AssetManager::Get().Initialize(contentRootPath);
-    if (!isGameMode) {
-        AssetRegistry::Get().ScanDirectory(contentRootPath);
-    }
 
-    // Scan and register existing 3D models so they don't trigger import popups on open (skip in game mode)
+    // Single unified recursive directory walk for models, behaviour scripts, and scene discovery
     if (!isGameMode) {
         knownModelFiles.clear();
         pendingModelImportQueue.clear();
         showModelImportModal = false;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (!entry.is_directory(ec)) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
-                    knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
-                }
-            }
-        }
     }
 
-    // Scan and register all behaviour scripts in Content before loading the scene
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-        if (!entry.is_directory(ec) && entry.path().extension() == ".cpp") {
-            std::string pStr = entry.path().string();
-            std::string pLower = pStr;
-            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
-                std::string stem = entry.path().stem().string();
-                if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" &&
-                    stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
-                    BehaviourRegistry::Get().RegisterScriptFile(stem, pStr);
-                }
-            }
-        }
-    }
-
-    // Determine respective scene path to load
     std::string targetScenePath = specificScenePath;
-    if (targetScenePath.empty()) {
-        std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-        if (std::filesystem::exists(mainScene, ec)) {
-            targetScenePath = mainScene.string();
-        } else {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-                if (entry.is_regular_file(ec)) {
-                    std::string ext = entry.path().extension().string();
-                    if (ext == ".escene" || ext == ".elevel") {
-                        targetScenePath = entry.path().string();
-                        break;
+    std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
+    if (targetScenePath.empty() && std::filesystem::exists(mainScene, ec)) {
+        targetScenePath = mainScene.string();
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (!entry.is_directory(ec)) {
+            std::string ext = entry.path().extension().string();
+            std::string extLower = ext;
+            std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+
+            // 1. Known 3D model formats
+            if (!isGameMode && (extLower == ".fbx" || extLower == ".glb" || extLower == ".gltf" || extLower == ".obj")) {
+                knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+            }
+            // 2. Gameplay behaviour scripts
+            else if (extLower == ".cpp") {
+                std::string pStr = entry.path().string();
+                std::string pLower = pStr;
+                std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                    std::string stem = entry.path().stem().string();
+                    if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" &&
+                        stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
+                        BehaviourRegistry::Get().RegisterScriptFile(stem, pStr);
                     }
                 }
+            }
+            // 3. Respective scene discovery if not already specified
+            else if (targetScenePath.empty() && (extLower == ".escene" || extLower == ".elevel")) {
+                targetScenePath = entry.path().string();
             }
         }
     }
