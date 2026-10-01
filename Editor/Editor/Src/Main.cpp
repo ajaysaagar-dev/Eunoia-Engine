@@ -5382,8 +5382,13 @@ int main(int argc, char** argv)
 		}
 
 		updateSceneGeometry();
-		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
-		logStartupStage("ScenePreload", "Scene and actors loaded");
+		if (g_scene.objects.empty()) {
+			StartupSplash::Get().UpdateProgress(1.0f, "Empty level ready.");
+			logStartupStage("ScenePreload", "Empty level initialized");
+		} else {
+			StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+			logStartupStage("ScenePreload", "Scene and actors loaded");
+		}
 
 		// Warm up GPU pipelines and render targets behind splash before revealing window to prevent blank frame
 		for (int warmup = 0; warmup < 2; ++warmup)

@@ -1877,9 +1877,11 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     std::string targetScenePath = specificScenePath;
-    std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-    if (targetScenePath.empty() && std::filesystem::exists(mainScene, ec)) {
-        targetScenePath = mainScene.string();
+    if (isGameMode) {
+        std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
+        if (targetScenePath.empty() && std::filesystem::exists(mainScene, ec)) {
+            targetScenePath = mainScene.string();
+        }
     }
 
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
@@ -1905,8 +1907,8 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
                     }
                 }
             }
-            // 3. Respective scene discovery if not already specified
-            else if (targetScenePath.empty() && (extLower == ".escene" || extLower == ".elevel")) {
+            // 3. Respective scene discovery if in game mode and not already specified
+            else if (isGameMode && targetScenePath.empty() && (extLower == ".escene" || extLower == ".elevel")) {
                 targetScenePath = entry.path().string();
             }
         }
@@ -1925,15 +1927,15 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         isInitialSceneLoaded = true;
         pendingInitialSceneLoad = false;
     } else {
-        // Editor mode: Open engine editor with no viewport rendered first,
-        // then once open and displayed, load the respective scene/level.
+        // Editor mode: Always open non-saved empty level on startup
         scene.Clear();
         currentLevelFilePath = "";
-        pendingScenePath = targetScenePath;
-        pendingBinPath = specificBinPath;
-        pendingInitialSceneLoad = true;
-        isInitialSceneLoaded = false;
-        initialLoadFrameCountdown = 2; // Allow editor window to present initial frame
+        levelUnsaved = false;
+        pendingScenePath = "";
+        pendingBinPath = "";
+        pendingInitialSceneLoad = false;
+        isInitialSceneLoaded = true;
+        initialLoadFrameCountdown = 0;
 
         camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
         camera.distance = 7.0f;
