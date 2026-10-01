@@ -537,6 +537,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
 
     std::filesystem::path depEngineDir = depDir / "Engine";
     std::filesystem::path depDepsDir = depDir / "deps";
+    std::filesystem::path depPluginsDir = depDir / "Plugins";
 
     // 1. Copy Engine Include headers
     std::vector<std::string> engineModules = {
@@ -546,7 +547,22 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     for (const auto& mod : engineModules) {
         std::filesystem::path srcInc = engineRoot / "Engine" / mod / "Include";
         std::filesystem::path dstInc = depEngineDir / mod / "Include";
-        if (std::filesystem::exists(srcInc, ec) && !std::filesystem::exists(dstInc, ec)) {
+        if (std::filesystem::exists(srcInc, ec)) {
+            CopyHeadersRecursive(srcInc, dstInc);
+        }
+    }
+
+    // 1b. Copy Plugins Include headers (UI-System, etc.)
+    std::vector<std::string> pluginModules = {
+        "UI-System", "Mesh-Cluster-Culling", "water", "skybox"
+    };
+    for (const auto& plug : pluginModules) {
+        std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
+        if (!std::filesystem::exists(srcInc, ec)) {
+            srcInc = engineRoot / "Plugins" / plug / "include";
+        }
+        std::filesystem::path dstInc = depPluginsDir / plug / "Include";
+        if (std::filesystem::exists(srcInc, ec)) {
             CopyHeadersRecursive(srcInc, dstInc);
         }
     }
@@ -554,25 +570,25 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     // 2. Copy third-party headers (GLFW, GLM, JSON, ImGui)
     std::filesystem::path glfwSrc = engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "include";
     std::filesystem::path glfwDst = depDepsDir / "glfw-3.5.1.bin.WIN64" / "include";
-    if (std::filesystem::exists(glfwSrc, ec) && !std::filesystem::exists(glfwDst, ec)) {
+    if (std::filesystem::exists(glfwSrc, ec)) {
         CopyHeadersRecursive(glfwSrc, glfwDst);
     }
 
     std::filesystem::path glmSrc = engineRoot / "deps" / "glm";
     std::filesystem::path glmDst = depDepsDir / "glm";
-    if (std::filesystem::exists(glmSrc, ec) && !std::filesystem::exists(glmDst, ec)) {
+    if (std::filesystem::exists(glmSrc, ec)) {
         CopyHeadersRecursive(glmSrc, glmDst);
     }
 
     std::filesystem::path jsonSrc = engineRoot / "deps" / "json";
     std::filesystem::path jsonDst = depDepsDir / "json";
-    if (std::filesystem::exists(jsonSrc, ec) && !std::filesystem::exists(jsonDst, ec)) {
+    if (std::filesystem::exists(jsonSrc, ec)) {
         CopyHeadersRecursive(jsonSrc, jsonDst);
     }
 
     std::filesystem::path imguiSrc = engineRoot / "deps" / "imgui";
     std::filesystem::path imguiDst = depDepsDir / "imgui";
-    if (std::filesystem::exists(imguiSrc, ec) && !std::filesystem::exists(imguiDst, ec)) {
+    if (std::filesystem::exists(imguiSrc, ec)) {
         CopyHeadersRecursive(imguiSrc, imguiDst);
     }
 
@@ -600,6 +616,8 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "        \"${workspaceFolder}/Dependencies/Engine/EngineScene/Include\",\n"
            << "        \"${workspaceFolder}/Dependencies/Engine/EngineAssets/Include\",\n"
            << "        \"${workspaceFolder}/Dependencies/Engine/EunoiaPluginCore/Include\",\n"
+           << "        \"${workspaceFolder}/Dependencies/Plugins/UI-System/Include\",\n"
+           << "        \"${workspaceFolder}/Dependencies/Plugins/**\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/glfw-3.5.1.bin.WIN64/include\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/glm\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/json\",\n"
@@ -611,6 +629,8 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "        \"" << engStr << "/Engine/EngineScene/Include\",\n"
            << "        \"" << engStr << "/Engine/EngineAssets/Include\",\n"
            << "        \"" << engStr << "/Engine/EunoiaPluginCore/Include\",\n"
+           << "        \"" << engStr << "/Plugins/UI-System/Include\",\n"
+           << "        \"" << engStr << "/Plugins/**\",\n"
            << "        \"" << engStr << "/deps/glfw-3.5.1.bin.WIN64/include\",\n"
            << "        \"" << engStr << "/deps/glm\",\n"
            << "        \"" << engStr << "/deps/json\",\n"
@@ -625,7 +645,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "      ],\n"
            << "      \"compilerPath\": \"" << compStr << "\",\n"
            << "      \"cStandard\": \"c11\",\n"
-           << "      \"cppStandard\": \"c++17\",\n"
+           << "      \"cppStandard\": \"c++20\",\n"
            << "      \"intelliSenseMode\": \"windows-gcc-x64\"\n"
            << "    }\n"
            << "  ],\n"
