@@ -1017,6 +1017,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
 
     int braceDepth = 0;
     bool inClass = false;
+    bool classBraceStarted = false;
     bool inPublic = false;
 
     for (const auto& rawLine : lines) {
@@ -1042,6 +1043,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             if (l.find("class ") != std::string::npos || l.find("struct ") != std::string::npos) {
                 if (l.find(';') == std::string::npos || l.find('{') != std::string::npos) {
                     inClass = true;
+                    classBraceStarted = (l.find('{') != std::string::npos);
                     inPublic = (l.find("struct ") != std::string::npos);
 
                     size_t cPos = l.find("class ");
@@ -1076,6 +1078,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             }
         }
 
+        if (inClass && openBracesOnLine > 0) {
+            classBraceStarted = true;
+        }
+
         int effectiveDepth = braceDepth;
 
         // Check for access specifiers at class scope
@@ -1095,10 +1101,11 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         bool isClassPublic = (effectiveDepth == 1 && inClass && inPublic);
 
         braceDepth += openBracesOnLine - closeBracesOnLine;
-        if (braceDepth <= 0) {
+        if (classBraceStarted && braceDepth <= 0) {
             braceDepth = 0;
             inClass = false;
             inPublic = false;
+            classBraceStarted = false;
         }
 
         if (!isClassPublic) continue;
