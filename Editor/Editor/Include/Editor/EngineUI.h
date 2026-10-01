@@ -479,6 +479,11 @@ public:
     void OpenWaterEditor(const std::string& path);
     void ApplyWaterToGameObject(Scene& scene, GameObject* obj, const WaterAsset& wa);
 
+    // UI Editor & Asset File I/O
+    bool showNewUIPopup = false;
+    char newUINameBuf[64] = "UI_NewInterface";
+    void OpenUIEditor(const std::string& path);
+
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;
@@ -583,6 +588,7 @@ public:
             case AssetType::Behaviour:
             case AssetType::Script:          return cbBehaviourIconGpuHandle;
             case AssetType::VisualBehaviour: return cbVisualBehaviourIconGpuHandle ? cbVisualBehaviourIconGpuHandle : cbBehaviourIconGpuHandle;
+            case AssetType::UserInterface:   return cbMaterialIconGpuHandle ? cbMaterialIconGpuHandle : cbBehaviourIconGpuHandle;
             default:                         return 0;
         }
     }

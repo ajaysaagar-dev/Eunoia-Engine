@@ -374,7 +374,8 @@ public:
                         file << "              \"value\": [" << v.x << ", " << v.y << ", " << v.z << "]\n";
                     } else if (p.type == BehaviourPropertyType::ObjectRef) {
                         file << "              \"targetId\": " << p.targetId << ",\n";
-                        file << "              \"refType\": " << (int)p.refType << "\n";
+                        file << "              \"refType\": " << (int)p.refType << ",\n";
+                        file << "              \"assetPath\": " << QuoteStr(p.assetPath) << "\n";
                     } else {
                         file << "              \"value\": 0\n";
                     }
@@ -1223,6 +1224,8 @@ public:
                                         } else if (prop.type == BehaviourPropertyType::ObjectRef) {
                                             size_t tidPos = pItem.find("\"targetId\"");
                                             if (tidPos != std::string::npos) prop.targetId = ParseIntAt(pItem, tidPos, -1);
+                                            size_t apPos = pItem.find("\"assetPath\"");
+                                            if (apPos != std::string::npos) prop.assetPath = ParseStringAt(pItem, apPos);
                                         }
                                     }
                                 }

@@ -10,6 +10,7 @@
 #include <EngineScene/ScreenPrint.h>
 #include <EngineScene/TransformTypes.h>
 #include <EnginePlatform/InputSystem.h>
+#include <UISystem/UISystem.h>
 
 // Forward declarations
 struct GameObject;
@@ -51,16 +52,18 @@ enum class ObjectRefType {
     Actor,
     Light,
     Mesh,
-    Camera
+    Camera,
+    UserInterface
 };
 
 inline const char* ObjectRefTypeToString(ObjectRefType type) {
     switch (type) {
-        case ObjectRefType::Actor:  return "GameObject";
-        case ObjectRefType::Light:  return "Light";
-        case ObjectRefType::Mesh:   return "Mesh";
-        case ObjectRefType::Camera: return "Camera";
-        default:                    return "GameObject";
+        case ObjectRefType::Actor:         return "GameObject";
+        case ObjectRefType::Light:         return "Light";
+        case ObjectRefType::Mesh:          return "Mesh";
+        case ObjectRefType::Camera:        return "Camera";
+        case ObjectRefType::UserInterface: return "User Interface";
+        default:                           return "GameObject";
     }
 }
 
@@ -78,6 +81,9 @@ struct BehaviourProperty {
 
     // Persistent target ID in Scene for ObjectRef properties (-1 = none)
     int targetId = -1;
+
+    // Persistent asset path for UserInterface or custom asset references
+    std::string assetPath = "";
 
     // Range metadata
     bool hasRange = false;

@@ -109,6 +109,7 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
     "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
+    "-I%PROJECT_DIR%\Plugins\UI-System\Include" ^
     "-I%PROJECT_DIR%\Editor\Editor\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
@@ -130,6 +131,8 @@ echo [INFO] Compiling Eunoia-Editor (DirectX 12) with Dear ImGui into %OUTPUT_DI
     "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsSystem.cpp" ^
     "%PROJECT_DIR%\Plugins\Graphics\Source\GraphicsPlugin.cpp" ^
     "%PROJECT_DIR%\Plugins\Visual-Behaviuors\Source\VisualBehaviuorsPlugin.cpp" ^
+    "%PROJECT_DIR%\Plugins\UI-System\Source\UISystem.cpp" ^
+    "%PROJECT_DIR%\Plugins\UI-System\Source\UIPlugin.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\MeshImporter.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\TextureManager.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\DirectXTex.cpp" ^
@@ -226,6 +229,7 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "-I%PROJECT_DIR%\Plugins\Lights-Baking\Include" ^
     "-I%PROJECT_DIR%\Plugins\Graphics\Include" ^
     "-I%PROJECT_DIR%\Plugins\Visual-Behaviuors\Include" ^
+    "-I%PROJECT_DIR%\Plugins\UI-System\Include" ^
     "-I%PROJECT_DIR%\deps\tinyobj" ^
     "-I%PROJECT_DIR%\deps\cgltf" ^
     "-I%PROJECT_DIR%\deps\ufbx" ^
@@ -234,6 +238,8 @@ echo [INFO] Building Game Project into %GAME_BUILD_DIR%...
     "-I%PROJECT_DIR%\deps\json" ^
     "-I%PROJECT_DIR%" ^
     "%PROJECT_DIR%\deps\ufbx\ufbx.c" ^
+    "%PROJECT_DIR%\Plugins\UI-System\Source\UISystem.cpp" ^
+    "%PROJECT_DIR%\Plugins\UI-System\Source\UIPlugin.cpp" ^
     "%PROJECT_DIR%\Engine\EnginePlatform\Src\Window.cpp" ^
     "%PROJECT_DIR%\Engine\EngineScene\Src\EunoiaBehaviour.cpp" ^
     "%PROJECT_DIR%\Engine\EngineAssets\Src\AssetRegistry.cpp" ^
