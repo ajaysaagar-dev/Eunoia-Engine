@@ -859,6 +859,10 @@ void EngineUI::LoadEditorConfig() {
                     currentTextureQuality = (TextureQuality)tq;
                     TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
                 }
+            } else if (key == "UIScale" || key == "uiScale" || key == "Scale") {
+                float sc = fVal;
+                if (sc > 5.0f) sc /= 100.0f;
+                ApplyUIScale(sc);
             }
         } catch (...) {
             // Ignore format errors
@@ -884,6 +888,7 @@ void EngineUI::SaveEditorConfig() {
     file << "LeftSidebarWidth=" << leftSidebarWidth << "\n";
     file << "RightSidebarWidth=" << rightSidebarWidth << "\n";
     file << "BottomDockHeight=" << bottomDockHeight << "\n";
+    file << "UIScale=" << uiScale << "\n";
     file << "\n[Graphics]\n";
     file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
     file << "TextureQuality=" << (int)currentTextureQuality << "\n";
@@ -2583,6 +2588,16 @@ void EngineUI::SetupTheme() {
     colors[ImGuiCol_Tab]                   = ImVec4(0.135f, 0.135f, 0.135f, 0.85f);
     colors[ImGuiCol_TabHovered]            = ImVec4(0.210f, 0.210f, 0.210f, 0.95f);
     colors[ImGuiCol_TabActive]             = ImVec4(0.080f, 0.500f, 0.900f, 1.00f);
+
+    if (uiScale != 1.0f) {
+        style.ScaleAllSizes(uiScale);
+    }
+    io.FontGlobalScale = uiScale;
+}
+
+void EngineUI::ApplyUIScale(float scale) {
+    uiScale = std::clamp(scale, 0.25f, 2.50f);
+    SetupTheme();
 }
 
 void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit) {
@@ -3236,6 +3251,71 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::Separator();
                 if (ImGui::MenuItem("Deselect All", "Esc")) {
                     scene.selectedId = -1;
+                }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Editor")) {
+                    if (ImGui::BeginMenu("Appearance")) {
+                        if (ImGui::BeginMenu("UI Scale")) {
+                            int currentPercent = (int)std::round(uiScale * 100.0f);
+                            char headerText[64];
+                            snprintf(headerText, sizeof(headerText), "Current Scale: %d%%", currentPercent);
+                            ImGui::TextDisabled("%s", headerText);
+                            ImGui::Separator();
+
+                            // Realtime slider for continuous adjustment between 25% and 250%
+                            int sliderPercent = currentPercent;
+                            ImGui::SetNextItemWidth(180.0f);
+                            if (ImGui::SliderInt("##UIScaleSlider", &sliderPercent, 25, 250, "%d%%")) {
+                                ApplyUIScale(sliderPercent / 100.0f);
+                                SaveEditorConfig();
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Drag to adjust editor UI scale in real time (25% - 250%)");
+                            }
+
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Presets:");
+
+                            struct ScalePreset {
+                                int percent;
+                                const char* label;
+                            };
+                            static const ScalePreset presets[] = {
+                                {  25, " 25% (Tiny)" },
+                                {  50, " 50% (Small)" },
+                                {  75, " 75% (Compact)" },
+                                { 100, "100% (Default)" },
+                                { 125, "125% (Medium)" },
+                                { 150, "150% (Large)" },
+                                { 175, "175% (Extra Large)" },
+                                { 200, "200% (2x High-DPI)" },
+                                { 225, "225% (2.25x)" },
+                                { 250, "250% (2.5x Maximum)" }
+                            };
+
+                            for (const auto& p : presets) {
+                                bool isSelected = (currentPercent == p.percent);
+                                char itemLabel[64];
+                                snprintf(itemLabel, sizeof(itemLabel), "%s##preset_%d", p.label, p.percent);
+                                if (ImGui::MenuItem(itemLabel, nullptr, isSelected)) {
+                                    ApplyUIScale(p.percent / 100.0f);
+                                    SaveEditorConfig();
+                                    AddLog("LogEditor", "UI Scale set to " + std::to_string(p.percent) + "%", 0);
+                                }
+                            }
+
+                            ImGui::Separator();
+                            if (ImGui::MenuItem("↺ Reset to 100% Default", nullptr, false, currentPercent != 100)) {
+                                ApplyUIScale(1.0f);
+                                SaveEditorConfig();
+                                AddLog("LogEditor", "UI Scale reset to 100%", 0);
+                            }
+
+                            ImGui::EndMenu();
+                        }
+                        ImGui::EndMenu();
+                    }
+                    ImGui::EndMenu();
                 }
                 ImGui::EndMenu();
             }

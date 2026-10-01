@@ -302,6 +302,7 @@ public:
     float leftSidebarWidth = 280.0f;
     float rightSidebarWidth = 320.0f;
     float bottomDockHeight = 260.0f;
+    float uiScale = 1.0f; // UI Scale factor (0.25f to 2.50f, 1.0f = 100%)
 
     struct ViewportRect {
         float x, y, width, height;
@@ -449,6 +450,7 @@ public:
 
     void AddLog(const std::string& category, const std::string& message, int level = 0);
     void SetupTheme();
+    void ApplyUIScale(float scale);
     void Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit);
     void RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidth, float viewportHeight);
 
