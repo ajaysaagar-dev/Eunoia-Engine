@@ -628,7 +628,7 @@ Options:
                             Interlocked.Increment(ref activeWorkers);
 
                             string compiler = unit.IsC ? s_gccExe : s_compilerExe;
-                            string langFlag = unit.IsC ? "-O2 -pipe" : "-std=c++20 -O2 -pipe -fno-strict-aliasing";
+                            string langFlag = unit.IsC ? "-O2 -pipe" : "-std=c++20 -O2 -pipe -fno-strict-aliasing -fext-numeric-literals";
 
                             string args = string.Format("{0} {1} -c \"{2}\" -o \"{3}\"",
                                 langFlag, incFlags, unit.SourcePath, unit.ObjectPath);
@@ -864,7 +864,7 @@ Options:
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("-std=c++20 -O2 ");
+            sb.Append("-std=c++20 -O2 -pipe -fno-strict-aliasing -fext-numeric-literals ");
             foreach (var inc in includes) sb.Append(string.Format("-I\"{0}\" ", inc));
             foreach (var src in sources) sb.Append(string.Format("\"{0}\" ", src));
 

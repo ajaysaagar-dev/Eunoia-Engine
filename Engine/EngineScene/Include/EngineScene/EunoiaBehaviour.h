@@ -600,6 +600,15 @@ public:
     CursorStateProxy CursorState;
     CursorStateProxy cursorState;
 
+    // UI System Controller (dev.md: UISystem.Add(UI); UISystem.Remove(UI); UISystem.RemoveAll();)
+    UISystemProxyType UISystem;
+    UISystemProxyType uiSystem;
+
+    // Direct UI helpers on behaviour
+    void AddUI(UserInterface* ui) { UISystem.Add(ui); }
+    void RemoveUI(UserInterface* ui) { UISystem.Remove(ui); }
+    void RemoveAllUI() { UISystem.RemoveAll(); }
+
     // Transform accessors (Capitalized keywords: Transform.Location, Transform.Position, Transform.Rotation, Transform.Scale)
     BehaviourTransform Transform;
     BehaviourTransform& transform = Transform;

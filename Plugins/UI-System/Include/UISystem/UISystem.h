@@ -54,30 +54,37 @@ private:
 // UISystem.Add(UI);
 // UISystem.Remove(UI);
 // UISystem.RemoveAll();
-// UISystem.Get().Add(UI);
+// UISystem::Add(UI);
+// UISystem::Remove(UI);
+// UISystem::RemoveAll();
 struct UISystemProxy {
-    void Add(UserInterface* ui) const {
+    static void Add(UserInterface* ui) {
         UISystemManager::Get().Add(ui);
     }
-    void Remove(UserInterface* ui) const {
+    static void Remove(UserInterface* ui) {
         UISystemManager::Get().Remove(ui);
     }
-    void RemoveAll() const {
+    static void RemoveAll() {
         UISystemManager::Get().RemoveAll();
     }
-    bool IsActive(UserInterface* ui) const {
+    static bool IsActive(UserInterface* ui) {
         return UISystemManager::Get().IsActive(ui);
     }
-    UISystemManager& Get() const {
+    static UISystemManager& Get() {
         return UISystemManager::Get();
     }
-    UserInterface* GetOrLoadUI(const std::string& path) const {
+    static UserInterface* GetOrLoadUI(const std::string& path) {
         return UISystemManager::Get().GetOrLoadUI(path);
+    }
+    static UserInterface* CreateNewUI(const std::string& name, const std::string& path) {
+        return UISystemManager::Get().CreateNewUI(name, path);
     }
 };
 
 } // namespace EunoiaUI
 
-// Global instance variable so scripts can write: UISystem.Add(UI); UISystem.RemoveAll();
+// Global instance variable & alias so scripts can write: UISystem.Add(UI); UISystem.RemoveAll(); UISystem::Add(UI);
 inline EunoiaUI::UISystemProxy UISystem;
+inline EunoiaUI::UISystemProxy uiSystem;
+using UISystemProxyType = EunoiaUI::UISystemProxy;
 using UISystemService = EunoiaUI::UISystemManager;
