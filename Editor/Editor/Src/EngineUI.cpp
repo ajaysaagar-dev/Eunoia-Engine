@@ -2323,6 +2323,10 @@ void EngineUI::SetupTheme() {
 }
 
 void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit) {
+    if (InputSystem::Get().IsCursorLocked()) {
+        ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+    }
+
     if (isGameOnlyWindow) {
         bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
                           InputSystem::Get().IsKeyDown(Key::LeftControl) ||

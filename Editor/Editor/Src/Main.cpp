@@ -4630,7 +4630,14 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 		{
 			s_isRightMouseDown = false;
 			g_camera.isFlying = false;
-			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			if (!InputSystem::Get().IsCursorLocked())
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			}
+			else
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			}
 			InputSystem::Get().ResetMouseDelta();
 		}
 	}
@@ -4642,6 +4649,15 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 	double deltaY = ypos - s_lastMouseY;
 	s_lastMouseX = xpos;
 	s_lastMouseY = ypos;
+
+	if (InputSystem::Get().IsCursorLocked())
+	{
+		ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+		if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+		{
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		}
+	}
 
 	if (g_scene.isPlayMode)
 	{
@@ -5388,6 +5404,19 @@ int main(int argc, char** argv)
 		ImGui_ImplDX12_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
+
+		if (InputSystem::Get().IsCursorLocked())
+		{
+			ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+			if (glfwGetInputMode(g_window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+			{
+				glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				if (glfwRawMouseMotionSupported())
+				{
+					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+				}
+			}
+		}
 
 		// Render Unreal Engine 5 Editor UI & 3D Gizmos
 		bool shouldExit = false;
