@@ -2352,7 +2352,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // Step progressive scene loader if active
     if (m_progressiveLoader.active) {
         if (!m_progressiveLoader.completed) {
-            m_progressiveLoader.Step(scene, 1);
+            m_progressiveLoader.Step(scene, 6);
             if (m_progressiveLoader.completed) {
                 Eunoia::LightBakeManager::Get().LoadAllBakesForScene(scene, activeProjectRoot);
                 AddLog("LogWorld", "Level loaded: " + m_progressiveLoader.filePath + " (" + std::to_string(scene.objects.size()) + " actors)", 2);
@@ -9216,12 +9216,22 @@ void EngineUI::RenderViewportLoadingOverlay() {
     std::string filename = std::filesystem::path(m_progressiveLoader.filePath).filename().string();
     std::string headerTitle = "LOADING LEVEL: " + filename;
 
+    std::string stageName;
+    std::string currentDetail;
+    std::string subDetail;
+    {
+        std::lock_guard<std::mutex> lock(m_progressiveLoader.stateMutex);
+        stageName = m_progressiveLoader.stageName;
+        currentDetail = m_progressiveLoader.currentDetail;
+        subDetail = m_progressiveLoader.subDetail;
+    }
+
     drawList->AddText(ImVec2(cardMin.x + 20.0f, cardMin.y + 16.0f),
                       IM_COL32(245, 248, 255, (int)(255 * alpha)),
                       headerTitle.c_str());
 
     // Stage Badge (Pill)
-    std::string badgeStr = "[" + m_progressiveLoader.stageName + "]";
+    std::string badgeStr = "[" + stageName + "]";
     ImVec2 badgeSize = ImGui::CalcTextSize(badgeStr.c_str());
     float badgePadding = 8.0f;
     ImVec2 badgeMax(cardMax.x - 20.0f, cardMin.y + 16.0f + badgeSize.y + 4.0f);
@@ -9247,7 +9257,7 @@ void EngineUI::RenderViewportLoadingOverlay() {
                             IM_COL32(20, 25, 36, (int)(255 * alpha)), 6.0f);
 
     // Progress bar fill
-    float clampedProgress = std::clamp(m_progressiveLoader.progress, 0.0f, 1.0f);
+    float clampedProgress = std::clamp(m_progressiveLoader.progress.load(), 0.0f, 1.0f);
     float fillW = barW * clampedProgress;
     if (fillW > 2.0f) {
         ImU32 fillColLeft = m_progressiveLoader.completed
@@ -9281,13 +9291,13 @@ void EngineUI::RenderViewportLoadingOverlay() {
     // Detail text
     drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 76.0f),
                       IM_COL32(215, 230, 248, (int)(255 * alpha)),
-                      m_progressiveLoader.currentDetail.c_str());
+                      currentDetail.c_str());
 
     // Sub-detail text
-    if (!m_progressiveLoader.subDetail.empty()) {
+    if (!subDetail.empty()) {
         drawList->AddText(ImVec2(cardMin.x + 46.0f, cardMin.y + 98.0f),
                           IM_COL32(130, 145, 165, (int)(230 * alpha)),
-                          m_progressiveLoader.subDetail.c_str());
+                          subDetail.c_str());
     }
 }
 

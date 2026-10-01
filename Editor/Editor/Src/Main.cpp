@@ -43,6 +43,7 @@
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <MeshClusterCulling/MeshClusterCulling.h>
+#include <Editor/StartupSplash.h>
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
 #include <Graphics/GraphicsSystem.h>
@@ -5082,11 +5083,19 @@ int main(int argc, char** argv)
 		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
 	}
 
+	if (!isGameOnlyMode) {
+		StartupSplash::Get().Show("Resources/Icons/eunoia.png");
+		StartupSplash::Get().PumpEvents();
+		EngineLogger::Get().LogAction("STARTUP_STAGE", "StartupSplash", "Startup splash window displayed");
+	}
+
 	// 2. Create main window (D3D12, NO_API)
 	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 	if (isGameOnlyMode) {
 		glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
 		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+	} else {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Hidden during initialization behind splash!
 	}
 
 	std::string winTitle = isGameOnlyMode ? (selectedProjectPath.filename().string() + " - Game Mode") : "Eunoia-Editor";
@@ -5094,6 +5103,7 @@ int main(int argc, char** argv)
 	if (!g_window)
 	{
 		std::cerr << "Failed to create GLFW window!" << std::endl;
+		StartupSplash::Get().Close();
 		glfwTerminate();
 		return -1;
 	}
@@ -5125,8 +5135,10 @@ int main(int argc, char** argv)
 	}
 #endif
 
-	ShowWindow(hwnd, SW_SHOW);
-	UpdateWindow(hwnd);
+	if (isGameOnlyMode) {
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
+	}
 
 	int fbWidth = 0, fbHeight = 0;
 	glfwGetFramebufferSize(g_window, &fbWidth, &fbHeight);
@@ -5142,24 +5154,36 @@ int main(int argc, char** argv)
 	glfwSetScrollCallback(g_window, scrollCallback);
 	glfwSetDropCallback(g_window, dropCallback);
 
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "PlatformWindow", "Main window created");
+
 	// 2. Initialize DirectX 12
 	if (initD3D12(hwnd) != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 initialization failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "DX12Device", "DirectX 12 device and queues initialized");
 
 	if (createShadersAndPipeline() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 pipeline creation failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "ShadersPipeline", "Shaders and pipeline states compiled");
 
 	if (createDynamicBuffers() != EXIT_SUCCESS)
 	{
 		std::cerr << "DirectX 12 buffer creation failed!" << std::endl;
+		StartupSplash::Get().Close();
 		return -1;
 	}
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "DynamicBuffers", "Dynamic buffers allocated");
 
 	// 3. Initialize Dear ImGui for DirectX 12
 	IMGUI_CHECKVERSION();
@@ -5241,10 +5265,25 @@ int main(int argc, char** argv)
 		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
 	}
+
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "Resources", "Fallback textures and icons loaded");
+
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
 	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
 
+	StartupSplash::Get().PumpEvents();
+	EngineLogger::Get().LogAction("STARTUP_STAGE", "EngineUI", "Engine UI and Asset Registry initialized");
+
 	updateSceneGeometry();
+
+	if (!isGameOnlyMode) {
+		StartupSplash::Get().Close();
+		ShowWindow(hwnd, SW_MAXIMIZE);
+		glfwShowWindow(g_window);
+		UpdateWindow(hwnd);
+		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Editor window opened maximized — ready for async level loading");
+	}
 
 	if (isGameOnlyMode) {
 		GameObject* camObj = nullptr;
