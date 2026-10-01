@@ -523,6 +523,8 @@ public:
             for (auto& dst : m_properties) {
                 if (dst.name == src.name) {
                     dst.targetId = src.targetId;
+                    dst.assetPath = src.assetPath;
+                    dst.refType = src.refType;
                     dst.isMissing = src.isMissing;
                     if (dst.dataPtr && src.dataPtr) {
                         switch (dst.type) {
@@ -599,6 +601,15 @@ public:
     // Cursor State Controller (dev.md: CursorState.Locked(); CursorState.UnLocked();)
     CursorStateProxy CursorState;
     CursorStateProxy cursorState;
+
+    // UI System Controller (dev.md: UISystem.Add(UI); UISystem.Remove(UI); UISystem.RemoveAll();)
+    UISystemProxyType UISystem;
+    UISystemProxyType uiSystem;
+
+    // Direct UI helpers on behaviour
+    void AddUI(UserInterface* ui) { UISystem.Add(ui); }
+    void RemoveUI(UserInterface* ui) { UISystem.Remove(ui); }
+    void RemoveAllUI() { UISystem.RemoveAll(); }
 
     // Transform accessors (Capitalized keywords: Transform.Location, Transform.Position, Transform.Rotation, Transform.Scale)
     BehaviourTransform Transform;

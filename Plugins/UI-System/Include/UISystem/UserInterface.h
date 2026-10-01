@@ -7,6 +7,8 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
+#include <unordered_set>
 #include <nlohmann/json.hpp>
 
 namespace EunoiaUI {
@@ -17,11 +19,18 @@ public:
     std::string filePath = "";
     glm::vec2 canvasResolution{ 1920.0f, 1080.0f };
     std::vector<UIElement> elements;
+    bool isVisible = true;
 
     UserInterface() = default;
     explicit UserInterface(const std::string& inName) : name(inName) {}
 
-    UIElement* AddElement(UIElementType type, const std::string& elemName = "") {
+    // Runtime Visibility API
+    void Show() { isVisible = true; }
+    void Hide() { isVisible = false; }
+    void SetVisible(bool v) { isVisible = v; }
+    bool IsVisible() const { return isVisible; }
+
+    UIElement* AddElement(UIElementType type, const std::string& elemName = "", const std::string& parentId = "") {
         static uint64_t s_elemCounter = 1;
         UIElement elem;
         elem.id = "elem_" + std::to_string(s_elemCounter++) + "_" + std::to_string(elements.size() + 1);
@@ -33,18 +42,21 @@ public:
             elem.name = std::string(UIElementTypeToString(type)) + "_" + std::to_string(elements.size() + 1);
         }
 
+        elem.anchorPreset = UIAnchorPreset::TopLeft;
+        AnchorPresetToMinMax(elem.anchorPreset, elem.anchorMin, elem.anchorMax, elem.pivot);
+
         if (type == UIElementType::Border) {
-            elem.position = glm::vec2(100.0f + (elements.size() % 10) * 20.0f, 100.0f + (elements.size() % 10) * 20.0f);
-            elem.size = glm::vec2(250.0f, 120.0f);
-            elem.backgroundColor = glm::vec4(0.10f, 0.10f, 0.12f, 0.85f);
+            elem.position = glm::vec2(50.0f, 50.0f);
+            elem.size = glm::vec2(300.0f, 150.0f);
+            elem.backgroundColor = glm::vec4(0.10f, 0.12f, 0.16f, 0.90f);
             elem.borderColor = glm::vec4(0.25f, 0.60f, 1.0f, 1.0f);
             elem.borderThickness = 2.0f;
-            elem.cornerRounding = 6.0f;
+            elem.cornerRounding = 8.0f;
             elem.filled = true;
         } else if (type == UIElementType::Text) {
-            elem.position = glm::vec2(120.0f + (elements.size() % 10) * 20.0f, 120.0f + (elements.size() % 10) * 20.0f);
+            elem.position = glm::vec2(20.0f, 20.0f);
             elem.size = glm::vec2(200.0f, 40.0f);
-            elem.text = "Sample Text";
+            elem.text = "New Text";
             elem.fontSize = 20.0f;
             elem.textColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
             elem.textAlignment = 0;
@@ -52,30 +64,160 @@ public:
         }
 
         elem.zOrder = (int)elements.size();
+        elem.parentId = parentId;
+
         elements.push_back(elem);
+
+        if (!parentId.empty()) {
+            UIElement* parent = FindElement(parentId);
+            if (parent) {
+                parent->childIds.push_back(elements.back().id);
+                parent->isExpanded = true;
+            }
+        }
+
         return &elements.back();
     }
 
-    UIElement* FindElement(const std::string& id) {
+    UIElement* FindElement(const std::string& idOrName) {
         for (auto& el : elements) {
-            if (el.id == id) return &el;
+            if (el.id == idOrName || el.name == idOrName) return &el;
         }
         return nullptr;
     }
 
-    const UIElement* FindElement(const std::string& id) const {
+    const UIElement* FindElement(const std::string& idOrName) const {
         for (const auto& el : elements) {
-            if (el.id == id) return &el;
+            if (el.id == idOrName || el.name == idOrName) return &el;
         }
         return nullptr;
+    }
+
+    bool IsDescendantOf(const std::string& potentialChildId, const std::string& potentialAncestorId) const {
+        if (potentialChildId.empty() || potentialAncestorId.empty()) return false;
+        if (potentialChildId == potentialAncestorId) return true;
+
+        const UIElement* child = FindElement(potentialChildId);
+        while (child && !child->parentId.empty()) {
+            if (child->parentId == potentialAncestorId) return true;
+            child = FindElement(child->parentId);
+        }
+        return false;
+    }
+
+    bool SetParent(const std::string& childId, const std::string& newParentId) {
+        if (childId.empty() || childId == newParentId) return false;
+        if (!newParentId.empty() && IsDescendantOf(newParentId, childId)) {
+            // Cannot parent to own descendant
+            return false;
+        }
+
+        UIElement* child = FindElement(childId);
+        if (!child) return false;
+
+        // Remove from old parent
+        if (!child->parentId.empty()) {
+            UIElement* oldParent = FindElement(child->parentId);
+            if (oldParent) {
+                auto it = std::find(oldParent->childIds.begin(), oldParent->childIds.end(), childId);
+                if (it != oldParent->childIds.end()) oldParent->childIds.erase(it);
+            }
+        }
+
+        // Assign new parent
+        child->parentId = newParentId;
+        if (!newParentId.empty()) {
+            UIElement* newParent = FindElement(newParentId);
+            if (newParent) {
+                if (std::find(newParent->childIds.begin(), newParent->childIds.end(), childId) == newParent->childIds.end()) {
+                    newParent->childIds.push_back(childId);
+                }
+                newParent->isExpanded = true;
+            }
+        }
+        return true;
     }
 
     bool RemoveElement(const std::string& id) {
-        for (auto it = elements.begin(); it != elements.end(); ++it) {
-            if (it->id == id) {
-                elements.erase(it);
-                return true;
+        // Collect all descendant ids
+        std::unordered_set<std::string> toRemove;
+        auto collectDescendants = [&](auto& self, const std::string& curId) -> void {
+            toRemove.insert(curId);
+            const UIElement* el = FindElement(curId);
+            if (el) {
+                for (const auto& ch : el->childIds) {
+                    self(self, ch);
+                }
             }
+        };
+        collectDescendants(collectDescendants, id);
+
+        // Remove from parent's child list
+        UIElement* target = FindElement(id);
+        if (target && !target->parentId.empty()) {
+            UIElement* parent = FindElement(target->parentId);
+            if (parent) {
+                auto it = std::find(parent->childIds.begin(), parent->childIds.end(), id);
+                if (it != parent->childIds.end()) parent->childIds.erase(it);
+            }
+        }
+
+        // Erase elements
+        elements.erase(std::remove_if(elements.begin(), elements.end(), [&](const UIElement& el) {
+            return toRemove.find(el.id) != toRemove.end();
+        }), elements.end());
+
+        return true;
+    }
+
+    // Calculates world / canvas-relative rectangle (X, Y, Width, Height) taking hierarchy into account
+    glm::vec4 GetElementWorldRect(const UIElement& el) const {
+        if (el.parentId.empty()) {
+            glm::vec4 canvasRect(0.0f, 0.0f, canvasResolution.x, canvasResolution.y);
+            return ComputeElementRect(canvasRect, el);
+        }
+        const UIElement* parent = FindElement(el.parentId);
+        if (!parent) {
+            glm::vec4 canvasRect(0.0f, 0.0f, canvasResolution.x, canvasResolution.y);
+            return ComputeElementRect(canvasRect, el);
+        }
+        glm::vec4 parentRect = GetElementWorldRect(*parent);
+        return ComputeElementRect(parentRect, el);
+    }
+
+    // Script helper APIs
+    bool SetText(const std::string& elemNameOrId, const std::string& newText) {
+        UIElement* el = FindElement(elemNameOrId);
+        if (el && el->type == UIElementType::Text) {
+            el->text = newText;
+            return true;
+        }
+        return false;
+    }
+
+    bool SetTextColor(const std::string& elemNameOrId, const glm::vec4& color) {
+        UIElement* el = FindElement(elemNameOrId);
+        if (el && el->type == UIElementType::Text) {
+            el->textColor = color;
+            return true;
+        }
+        return false;
+    }
+
+    bool SetBorderColor(const std::string& elemNameOrId, const glm::vec4& color) {
+        UIElement* el = FindElement(elemNameOrId);
+        if (el && el->type == UIElementType::Border) {
+            el->borderColor = color;
+            return true;
+        }
+        return false;
+    }
+
+    bool SetBackgroundColor(const std::string& elemNameOrId, const glm::vec4& color) {
+        UIElement* el = FindElement(elemNameOrId);
+        if (el && el->type == UIElementType::Border) {
+            el->backgroundColor = color;
+            return true;
         }
         return false;
     }
@@ -84,6 +226,7 @@ public:
         nlohmann::json root;
         root["name"] = name;
         root["canvasResolution"] = { canvasResolution.x, canvasResolution.y };
+        root["isVisible"] = isVisible;
 
         nlohmann::json elemArray = nlohmann::json::array();
         for (const auto& el : elements) {
@@ -93,11 +236,15 @@ public:
             e["type"] = UIElementTypeToString(el.type);
             e["position"] = { el.position.x, el.position.y };
             e["size"] = { el.size.x, el.size.y };
-            e["anchor"] = { el.anchor.x, el.anchor.y };
+            e["anchorMin"] = { el.anchorMin.x, el.anchorMin.y };
+            e["anchorMax"] = { el.anchorMax.x, el.anchorMax.y };
             e["pivot"] = { el.pivot.x, el.pivot.y };
+            e["anchorPreset"] = (int)el.anchorPreset;
             e["zOrder"] = el.zOrder;
             e["visible"] = el.visible;
             e["parentId"] = el.parentId;
+            e["childIds"] = el.childIds;
+            e["isExpanded"] = el.isExpanded;
 
             // Border properties
             e["backgroundColor"] = { el.backgroundColor.r, el.backgroundColor.g, el.backgroundColor.b, el.backgroundColor.a };
@@ -116,7 +263,7 @@ public:
             e["shadowColor"] = { el.shadowColor.r, el.shadowColor.g, el.shadowColor.b, el.shadowColor.a };
             e["shadowOffset"] = { el.shadowOffset.x, el.shadowOffset.y };
 
-            // Image / button properties
+            // Interactive properties
             e["hoverColor"] = { el.hoverColor.r, el.hoverColor.g, el.hoverColor.b, el.hoverColor.a };
             e["pressedColor"] = { el.pressedColor.r, el.pressedColor.g, el.pressedColor.b, el.pressedColor.a };
             e["texturePath"] = el.texturePath;
@@ -145,6 +292,7 @@ public:
                 canvasResolution.x = root["canvasResolution"][0].get<float>();
                 canvasResolution.y = root["canvasResolution"][1].get<float>();
             }
+            if (root.contains("isVisible")) isVisible = root["isVisible"].get<bool>();
 
             elements.clear();
             if (root.contains("elements") && root["elements"].is_array()) {
@@ -161,17 +309,34 @@ public:
                         el.size.x = e["size"][0].get<float>();
                         el.size.y = e["size"][1].get<float>();
                     }
-                    if (e.contains("anchor") && e["anchor"].size() >= 2) {
-                        el.anchor.x = e["anchor"][0].get<float>();
-                        el.anchor.y = e["anchor"][1].get<float>();
+                    if (e.contains("anchorMin") && e["anchorMin"].size() >= 2) {
+                        el.anchorMin.x = e["anchorMin"][0].get<float>();
+                        el.anchorMin.y = e["anchorMin"][1].get<float>();
+                    } else if (e.contains("anchor") && e["anchor"].size() >= 2) {
+                        el.anchorMin.x = e["anchor"][0].get<float>();
+                        el.anchorMin.y = e["anchor"][1].get<float>();
+                        el.anchorMax = el.anchorMin;
+                    }
+                    if (e.contains("anchorMax") && e["anchorMax"].size() >= 2) {
+                        el.anchorMax.x = e["anchorMax"][0].get<float>();
+                        el.anchorMax.y = e["anchorMax"][1].get<float>();
                     }
                     if (e.contains("pivot") && e["pivot"].size() >= 2) {
                         el.pivot.x = e["pivot"][0].get<float>();
                         el.pivot.y = e["pivot"][1].get<float>();
                     }
+                    if (e.contains("anchorPreset")) {
+                        el.anchorPreset = (UIAnchorPreset)e["anchorPreset"].get<int>();
+                    } else {
+                        el.anchorPreset = AnchorMinMaxToPreset(el.anchorMin, el.anchorMax);
+                    }
                     if (e.contains("zOrder")) el.zOrder = e["zOrder"].get<int>();
                     if (e.contains("visible")) el.visible = e["visible"].get<bool>();
                     if (e.contains("parentId")) el.parentId = e["parentId"].get<std::string>();
+                    if (e.contains("childIds") && e["childIds"].is_array()) {
+                        for (const auto& ch : e["childIds"]) el.childIds.push_back(ch.get<std::string>());
+                    }
+                    if (e.contains("isExpanded")) el.isExpanded = e["isExpanded"].get<bool>();
 
                     if (e.contains("backgroundColor") && e["backgroundColor"].size() >= 4) {
                         el.backgroundColor = glm::vec4(e["backgroundColor"][0], e["backgroundColor"][1], e["backgroundColor"][2], e["backgroundColor"][3]);
@@ -213,5 +378,4 @@ public:
 
 } // namespace EunoiaUI
 
-// Global type alias for script convenience
 using UserInterface = EunoiaUI::UserInterface;

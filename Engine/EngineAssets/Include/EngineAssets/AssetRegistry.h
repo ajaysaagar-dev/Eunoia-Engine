@@ -55,6 +55,7 @@ public:
 
     using AssetRegistryProgressFn = std::function<void(float progress, const std::string& step, const std::string& detail)>;
     void ScanAndSync(const std::filesystem::path& projectRoot, AssetRegistryProgressFn onProgress = nullptr);
+    void IncrementalSync(const std::filesystem::path& projectRoot);
 
     size_t GetAssetCount() const { return m_assetsByID.size(); }
     const std::unordered_map<AssetID, AssetMetadata>& GetAllAssets() const { return m_assetsByID; }

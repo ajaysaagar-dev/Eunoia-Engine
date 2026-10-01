@@ -9,7 +9,19 @@ AssetManager::AssetManager() {
 
 void AssetManager::Initialize(const std::filesystem::path& projectRoot) {
     m_projectRoot = projectRoot;
-    AssetRegistry::Get().ScanAndSync(projectRoot);
+    std::filesystem::path regPath = projectRoot / "Registry" / "AssetRegistry.json";
+    std::filesystem::path parentRegPath = projectRoot.parent_path() / "Registry" / "AssetRegistry.json";
+    std::error_code ec;
+
+    if (std::filesystem::exists(regPath, ec)) {
+        AssetRegistry::Get().SetProjectRoot(projectRoot);
+        AssetRegistry::Get().Load(regPath);
+    } else if (std::filesystem::exists(parentRegPath, ec)) {
+        AssetRegistry::Get().SetProjectRoot(projectRoot);
+        AssetRegistry::Get().Load(parentRegPath);
+    } else {
+        AssetRegistry::Get().ScanAndSync(projectRoot);
+    }
 }
 
 void AssetManager::InitFallbackCheckerTexture() {

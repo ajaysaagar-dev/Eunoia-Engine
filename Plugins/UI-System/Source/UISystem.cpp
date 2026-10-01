@@ -61,21 +61,9 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
 UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::string& path) {
     auto ui = std::make_shared<UserInterface>(name);
     ui->filePath = path;
-
-    // Create default border and text elements
-    UIElement* bg = ui->AddElement(UIElementType::Border, "Background");
-    bg->position = glm::vec2(100.0f, 100.0f);
-    bg->size = glm::vec2(300.0f, 100.0f);
-    bg->backgroundColor = glm::vec4(0.10f, 0.10f, 0.12f, 0.85f);
-    bg->borderColor = glm::vec4(0.25f, 0.60f, 1.0f, 1.0f);
-    bg->borderThickness = 2.0f;
-    bg->cornerRounding = 8.0f;
-
-    UIElement* txt = ui->AddElement(UIElementType::Text, "TitleText");
-    txt->position = glm::vec2(120.0f, 130.0f);
-    txt->text = name;
-    txt->fontSize = 22.0f;
-    txt->textColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+    // Default created user interface in content browser has NO default elements (completely empty canvas)
+    ui->canvasResolution = glm::vec2(1920.0f, 1080.0f);
+    ui->elements.clear();
 
     ui->SaveToFile(path);
     UserInterface* ptr = ui.get();
@@ -85,6 +73,8 @@ UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::
 
 void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, const glm::vec2& screenMax, const UserInterface& ui) {
 #if EUNOIA_HAS_IMGUI
+    if (!ui.isVisible) return;
+
     ImDrawList* drawList = reinterpret_cast<ImDrawList*>(imDrawListPtr);
     if (!drawList) return;
 
@@ -97,15 +87,16 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     float scale = std::min(scaleX, scaleY);
     if (scale <= 0.0f) scale = 1.0f;
 
-    // Center scaled design canvas in viewport
+    // Center design canvas in viewport
     glm::vec2 canvasOrigin = screenMin + (targetSize - ui.canvasResolution * scale) * 0.5f;
 
+    // Render elements according to hierarchy & computed layout
     for (const auto& el : ui.elements) {
         if (!el.visible) continue;
 
-        glm::vec2 anchorPos = canvasOrigin + el.anchor * ui.canvasResolution * scale;
-        glm::vec2 elemPos = anchorPos + el.position * scale - el.pivot * el.size * scale;
-        glm::vec2 elemSize = el.size * scale;
+        glm::vec4 worldRect = ui.GetElementWorldRect(el);
+        glm::vec2 elemPos = canvasOrigin + glm::vec2(worldRect.x, worldRect.y) * scale;
+        glm::vec2 elemSize = glm::vec2(worldRect.z, worldRect.w) * scale;
         glm::vec2 elemEnd = elemPos + elemSize;
 
         ImVec2 pMin(elemPos.x, elemPos.y);
@@ -124,11 +115,21 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
             ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255), (int)(el.textColor.b * 255), (int)(el.textColor.a * 255));
             ImU32 shdCol = IM_COL32((int)(el.shadowColor.r * 255), (int)(el.shadowColor.g * 255), (int)(el.shadowColor.b * 255), (int)(el.shadowColor.a * 255));
 
-            if (el.shadow) {
-                ImVec2 shdPos(elemPos.x + el.shadowOffset.x * scale, elemPos.y + el.shadowOffset.y * scale);
-                drawList->AddText(nullptr, el.fontSize * scale, shdPos, shdCol, el.text.c_str());
+            float fontSize = el.fontSize * scale;
+            ImVec2 textSize = ImGui::CalcTextSize(el.text.c_str());
+            ImVec2 textPos = pMin;
+
+            if (el.textAlignment == 1) { // Center
+                textPos.x = pMin.x + (elemSize.x - textSize.x) * 0.5f;
+            } else if (el.textAlignment == 2) { // Right
+                textPos.x = pMax.x - textSize.x;
             }
-            drawList->AddText(nullptr, el.fontSize * scale, pMin, txtCol, el.text.c_str());
+
+            if (el.shadow) {
+                ImVec2 shdPos(textPos.x + el.shadowOffset.x * scale, textPos.y + el.shadowOffset.y * scale);
+                drawList->AddText(nullptr, fontSize, shdPos, shdCol, el.text.c_str());
+            }
+            drawList->AddText(nullptr, fontSize, textPos, txtCol, el.text.c_str());
         }
     }
 #endif

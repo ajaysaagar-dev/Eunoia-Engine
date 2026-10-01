@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <unordered_map>
+#include <unordered_set>
 #include <memory>
 #include <algorithm>
 #include <cmath>
@@ -28,10 +29,10 @@ public:
     ImVec2 panInitial = { 0.0f, 0.0f };
 
     // Selection & Manipulation
-    std::string selectedElemId = "";
+    std::string selectedElemId = ""; // empty means Canvas (Root) is selected
     bool isDraggingElement = false;
     ImVec2 dragOffset = { 0.0f, 0.0f };
-    int resizeHandle = 0; // 0=none, 1=TL, 2=TR, 3=BR, 4=BL, 5=R, 6=B
+    int resizeHandle = 0; // 0=none, 1=TL, 2=TR, 3=BR, 4=BL
 
     UIEditorWindow(const std::string& path, const std::string& name = "") {
         filePath = path;
@@ -48,7 +49,7 @@ public:
         if (!isOpen) return;
 
         std::string winTitle = "🎨 UI Editor - " + ui.name + (isDirty ? " *" : "") + "###UIEditor_" + filePath;
-        ImGui::SetNextWindowSize(ImVec2(1000, 680), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(1080, 720), ImGuiCond_FirstUseEver);
 
         if (!ImGui::Begin(winTitle.c_str(), &isOpen, ImGuiWindowFlags_MenuBar)) {
             ImGui::End();
@@ -68,27 +69,27 @@ public:
             }
             if (ImGui::BeginMenu("Add")) {
                 if (ImGui::MenuItem("🔲 Border")) {
-                    AddElement(UIElementType::Border);
+                    AddElement(UIElementType::Border, "", selectedElemId);
                 }
                 if (ImGui::MenuItem("🔤 Text")) {
-                    AddElement(UIElementType::Text);
+                    AddElement(UIElementType::Text, "", selectedElemId);
                 }
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
         }
 
-        // Toolbar
+        // Top Toolbar
         RenderToolbar();
 
         // 3-Pane Layout: Left (Palette & Hierarchy) | Center (Canvas) | Right (Inspector)
-        float leftWidth = 240.0f;
-        float rightWidth = 280.0f;
+        float leftWidth = 260.0f;
+        float rightWidth = 300.0f;
         float centerWidth = ImGui::GetContentRegionAvail().x - leftWidth - rightWidth - 16.0f;
         if (centerWidth < 200.0f) centerWidth = 200.0f;
         float paneHeight = ImGui::GetContentRegionAvail().y;
 
-        // --- LEFT PANE (Palette + Hierarchy) ---
+        // --- LEFT PANE (Palette + Hierarchy Tree) ---
         ImGui::BeginChild("UILeftPane", ImVec2(leftWidth, paneHeight), true);
         RenderLeftPaletteAndHierarchy();
         ImGui::EndChild();
@@ -118,12 +119,13 @@ public:
         }
     }
 
-    void AddElement(UIElementType type) {
-        UIElement* elem = ui.AddElement(type);
+    UIElement* AddElement(UIElementType type, const std::string& name = "", const std::string& parentId = "") {
+        UIElement* elem = ui.AddElement(type, name, parentId);
         if (elem) {
             selectedElemId = elem->id;
             isDirty = true;
         }
+        return elem;
     }
 
 private:
@@ -133,11 +135,11 @@ private:
         }
         ImGui::SameLine();
         if (ImGui::Button("➕ Border")) {
-            AddElement(UIElementType::Border);
+            AddElement(UIElementType::Border, "", selectedElemId);
         }
         ImGui::SameLine();
         if (ImGui::Button("➕ Text")) {
-            AddElement(UIElementType::Text);
+            AddElement(UIElementType::Text, "", selectedElemId);
         }
         ImGui::SameLine();
         if (!selectedElemId.empty()) {
@@ -150,12 +152,13 @@ private:
             if (ImGui::Button("📋 Duplicate")) {
                 UIElement* orig = ui.FindElement(selectedElemId);
                 if (orig) {
-                    UIElement* dup = ui.AddElement(orig->type, orig->name + "_Copy");
+                    UIElement* dup = ui.AddElement(orig->type, orig->name + "_Copy", orig->parentId);
                     if (dup) {
                         *dup = *orig;
-                        dup->id = "elem_" + std::to_string(rand() % 100000);
+                        dup->id = "elem_" + std::to_string(rand() % 100000) + "_" + std::to_string(ui.elements.size());
                         dup->name = orig->name + "_Copy";
                         dup->position += glm::vec2(20.0f, 20.0f);
+                        dup->childIds.clear();
                         selectedElemId = dup->id;
                         isDirty = true;
                     }
@@ -186,35 +189,34 @@ private:
     }
 
     void RenderLeftPaletteAndHierarchy() {
+        // --- PALETTE ---
         ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "PALETTE (Drag to Canvas)");
         ImGui::Separator();
 
         // Draggable Border item
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.20f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.32f, 0.45f, 1.0f));
-        ImGui::Button("🔲 Border", ImVec2(-1, 32));
+        ImGui::Button("🔲 Border", ImVec2(-1, 30));
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            const char* payloadType = "UI_PALETTE_ITEM";
             int typeVal = (int)UIElementType::Border;
-            ImGui::SetDragDropPayload(payloadType, &typeVal, sizeof(int));
-            ImGui::Text("Drop Border onto Canvas");
+            ImGui::SetDragDropPayload("UI_PALETTE_ITEM", &typeVal, sizeof(int));
+            ImGui::Text("Drop Border onto Canvas or Hierarchy");
             ImGui::EndDragDropSource();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            AddElement(UIElementType::Border);
+            AddElement(UIElementType::Border, "", selectedElemId);
         }
 
         // Draggable Text item
-        ImGui::Button("🔤 Text", ImVec2(-1, 32));
+        ImGui::Button("🔤 Text", ImVec2(-1, 30));
         if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            const char* payloadType = "UI_PALETTE_ITEM";
             int typeVal = (int)UIElementType::Text;
-            ImGui::SetDragDropPayload(payloadType, &typeVal, sizeof(int));
-            ImGui::Text("Drop Text onto Canvas");
+            ImGui::SetDragDropPayload("UI_PALETTE_ITEM", &typeVal, sizeof(int));
+            ImGui::Text("Drop Text onto Canvas or Hierarchy");
             ImGui::EndDragDropSource();
         }
         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            AddElement(UIElementType::Text);
+            AddElement(UIElementType::Text, "", selectedElemId);
         }
         ImGui::PopStyleColor(2);
 
@@ -222,32 +224,157 @@ private:
         ImGui::Separator();
         ImGui::Spacing();
 
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "HIERARCHY");
+        // --- HIERARCHY TREE ---
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "HIERARCHY TREE");
         ImGui::Separator();
 
-        ImGui::BeginChild("HierarchyTreeChild", ImVec2(0, 0), false);
-        for (int i = (int)ui.elements.size() - 1; i >= 0; --i) {
-            auto& elem = ui.elements[i];
-            ImGui::PushID(elem.id.c_str());
+        ImGui::BeginChild("HierarchyTreeScroll", ImVec2(0, 0), false);
 
-            // Visibility toggle
-            if (ImGui::Button(elem.visible ? "👁" : "🚫", ImVec2(24, 20))) {
-                elem.visible = !elem.visible;
+        // Canvas (Root) Node
+        bool isCanvasSelected = selectedElemId.empty();
+        ImGuiTreeNodeFlags canvasFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_DefaultOpen | (isCanvasSelected ? ImGuiTreeNodeFlags_Selected : 0);
+        bool canvasOpen = ImGui::TreeNodeEx("CanvasRootNode", canvasFlags, "🖥 Canvas (Root) [%.0fx%.0f]", ui.canvasResolution.x, ui.canvasResolution.y);
+        
+        if (ImGui::IsItemClicked()) {
+            selectedElemId = ""; // Select Canvas root
+        }
+
+        // Drop target onto Canvas Root
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
+                std::string draggedId((const char*)payload->Data, payload->DataSize);
+                ui.SetParent(draggedId, ""); // Unparent to root
+                isDirty = true;
+            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
+                int typeVal = *(const int*)payload->Data;
+                AddElement((UIElementType)typeVal, "", "");
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        if (canvasOpen) {
+            // Render root-level elements (those without parent)
+            for (auto& elem : ui.elements) {
+                if (elem.parentId.empty() || !ui.FindElement(elem.parentId)) {
+                    DrawHierarchyNode(elem);
+                }
+            }
+            ImGui::TreePop();
+        }
+
+        // Empty area drop target to unparent
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        if (avail.y > 20.0f) {
+            ImGui::Dummy(ImVec2(avail.x, avail.y));
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
+                    std::string draggedId((const char*)payload->Data, payload->DataSize);
+                    ui.SetParent(draggedId, "");
+                    isDirty = true;
+                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
+                    int typeVal = *(const int*)payload->Data;
+                    AddElement((UIElementType)typeVal, "", "");
+                }
+                ImGui::EndDragDropTarget();
+            }
+        }
+
+        ImGui::EndChild();
+    }
+
+    void DrawHierarchyNode(UIElement& elem) {
+        ImGui::PushID(elem.id.c_str());
+
+        // Visibility eye button
+        if (ImGui::Button(elem.visible ? "👁" : "🚫", ImVec2(22, 20))) {
+            elem.visible = !elem.visible;
+            isDirty = true;
+        }
+        ImGui::SameLine();
+
+        bool hasChildren = !elem.childIds.empty();
+        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
+        if (!hasChildren) nodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+        if (selectedElemId == elem.id) nodeFlags |= ImGuiTreeNodeFlags_Selected;
+        if (elem.isExpanded) nodeFlags |= ImGuiTreeNodeFlags_DefaultOpen;
+
+        const char* icon = (elem.type == UIElementType::Border) ? "🔲" : "🔤";
+        std::string label = std::string(icon) + " " + elem.name;
+
+        bool nodeOpen = ImGui::TreeNodeEx(elem.id.c_str(), nodeFlags, "%s", label.c_str());
+
+        if (ImGui::IsItemClicked()) {
+            selectedElemId = elem.id;
+        }
+
+        // Drag Source (to re-parent or move)
+        if (ImGui::BeginDragDropSource()) {
+            ImGui::SetDragDropPayload("UI_HIERARCHY_ITEM", elem.id.c_str(), elem.id.size() + 1);
+            ImGui::Text("Move %s", elem.name.c_str());
+            ImGui::EndDragDropSource();
+        }
+
+        // Drag Target (to become parent of dragged item)
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
+                std::string draggedId((const char*)payload->Data, payload->DataSize);
+                if (draggedId != elem.id) {
+                    ui.SetParent(draggedId, elem.id);
+                    isDirty = true;
+                }
+            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
+                int typeVal = *(const int*)payload->Data;
+                AddElement((UIElementType)typeVal, "", elem.id);
+            }
+            ImGui::EndDragDropTarget();
+        }
+
+        // Right-Click Context Menu
+        if (ImGui::BeginPopupContextItem()) {
+            if (ImGui::MenuItem("➕ Add Child Border")) {
+                AddElement(UIElementType::Border, "", elem.id);
+            }
+            if (ImGui::MenuItem("➕ Add Child Text")) {
+                AddElement(UIElementType::Text, "", elem.id);
+            }
+            ImGui::Separator();
+            if (!elem.parentId.empty()) {
+                if (ImGui::MenuItem("📤 Unparent (Move to Root)")) {
+                    ui.SetParent(elem.id, "");
+                    isDirty = true;
+                }
+            }
+            if (ImGui::MenuItem("📋 Duplicate")) {
+                UIElement* dup = ui.AddElement(elem.type, elem.name + "_Copy", elem.parentId);
+                if (dup) {
+                    *dup = elem;
+                    dup->id = "elem_" + std::to_string(rand() % 100000);
+                    dup->name = elem.name + "_Copy";
+                    dup->position += glm::vec2(20.0f, 20.0f);
+                    dup->childIds.clear();
+                    selectedElemId = dup->id;
+                    isDirty = true;
+                }
+            }
+            if (ImGui::MenuItem("🗑 Delete")) {
+                ui.RemoveElement(elem.id);
+                if (selectedElemId == elem.id) selectedElemId = "";
                 isDirty = true;
             }
-            ImGui::SameLine();
-
-            bool isSelected = (selectedElemId == elem.id);
-            const char* icon = (elem.type == UIElementType::Border) ? "🔲" : "🔤";
-            std::string label = std::string(icon) + " " + elem.name;
-
-            if (ImGui::Selectable(label.c_str(), isSelected)) {
-                selectedElemId = elem.id;
-            }
-
-            ImGui::PopID();
+            ImGui::EndPopup();
         }
-        ImGui::EndChild();
+
+        if (hasChildren && nodeOpen) {
+            for (const auto& chId : elem.childIds) {
+                UIElement* child = ui.FindElement(chId);
+                if (child) {
+                    DrawHierarchyNode(*child);
+                }
+            }
+            ImGui::TreePop();
+        }
+
+        ImGui::PopID();
     }
 
     void RenderCanvas() {
@@ -259,27 +386,27 @@ private:
         drawList->PushClipRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), true);
 
         // Canvas Background Grid
-        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(24, 24, 28, 255));
+        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 20, 24, 255));
         float gridStep = 40.0f * zoom;
         if (gridStep > 8.0f) {
             for (float x = std::fmod(pan.x, gridStep); x < canvasSize.x; x += gridStep) {
-                drawList->AddLine(ImVec2(canvasPos.x + x, canvasPos.y), ImVec2(canvasPos.x + x, canvasPos.y + canvasSize.y), IM_COL32(35, 35, 42, 255));
+                drawList->AddLine(ImVec2(canvasPos.x + x, canvasPos.y), ImVec2(canvasPos.x + x, canvasPos.y + canvasSize.y), IM_COL32(30, 30, 38, 255));
             }
             for (float y = std::fmod(pan.y, gridStep); y < canvasSize.y; y += gridStep) {
-                drawList->AddLine(ImVec2(canvasPos.x, canvasPos.y + y), ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + y), IM_COL32(35, 35, 42, 255));
+                drawList->AddLine(ImVec2(canvasPos.x, canvasPos.y + y), ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + y), IM_COL32(30, 30, 38, 255));
             }
         }
 
-        // Virtual Screen Boundary (e.g. 1920x1080)
+        // Virtual Screen Boundary (e.g. 1920x1080) — Transparent interior with crisp border
         ImVec2 screenOrigin = ImVec2(canvasPos.x + pan.x, canvasPos.y + pan.y);
         ImVec2 screenEnd = ImVec2(screenOrigin.x + ui.canvasResolution.x * zoom, screenOrigin.y + ui.canvasResolution.y * zoom);
-        drawList->AddRectFilled(screenOrigin, screenEnd, IM_COL32(14, 14, 18, 240));
-        drawList->AddRect(screenOrigin, screenEnd, IM_COL32(60, 60, 75, 255), 0.0f, 0, 1.5f);
+        drawList->AddRectFilled(screenOrigin, screenEnd, IM_COL32(12, 12, 16, 220));
+        drawList->AddRect(screenOrigin, screenEnd, IM_COL32(70, 70, 90, 255), 0.0f, 0, 1.5f);
 
         // Resolution Tag
         char resBuf[64];
-        snprintf(resBuf, sizeof(resBuf), "Design Canvas: %.0f x %.0f", ui.canvasResolution.x, ui.canvasResolution.y);
-        drawList->AddText(ImVec2(screenOrigin.x + 8.0f, screenOrigin.y + 6.0f), IM_COL32(120, 120, 140, 255), resBuf);
+        snprintf(resBuf, sizeof(resBuf), "🖥 Canvas: %.0f x %.0f", ui.canvasResolution.x, ui.canvasResolution.y);
+        drawList->AddText(ImVec2(screenOrigin.x + 8.0f, screenOrigin.y + 6.0f), IM_COL32(140, 140, 165, 255), resBuf);
 
         // Handle Pan with Middle Mouse / Right Mouse Drag
         ImGuiIO& io = ImGui::GetIO();
@@ -307,19 +434,16 @@ private:
             zoom = newZoom;
         }
 
-        // Render UI Elements on Canvas
+        // Render UI Elements on Canvas using hierarchical world rects
         UIElement* selectedElem = nullptr;
         for (auto& el : ui.elements) {
             if (!el.visible) continue;
             if (el.id == selectedElemId) selectedElem = &el;
 
-            // Compute element screen coordinates
-            ImVec2 anchorPos = ImVec2(screenOrigin.x + el.anchor.x * ui.canvasResolution.x * zoom,
-                                      screenOrigin.y + el.anchor.y * ui.canvasResolution.y * zoom);
-            ImVec2 elemPos = ImVec2(anchorPos.x + el.position.x * zoom - el.pivot.x * el.size.x * zoom,
-                                    anchorPos.y + el.position.y * zoom - el.pivot.y * el.size.y * zoom);
-            ImVec2 elemSize = ImVec2(el.size.x * zoom, el.size.y * zoom);
-            ImVec2 elemEnd = ImVec2(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
+            glm::vec4 wRect = ui.GetElementWorldRect(el);
+            ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
+            ImVec2 elemSize(wRect.z * zoom, wRect.w * zoom);
+            ImVec2 elemEnd(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
 
             if (el.type == UIElementType::Border) {
                 ImU32 bgCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
@@ -334,22 +458,29 @@ private:
                 ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255), (int)(el.textColor.b * 255), (int)(el.textColor.a * 255));
                 ImU32 shdCol = IM_COL32((int)(el.shadowColor.r * 255), (int)(el.shadowColor.g * 255), (int)(el.shadowColor.b * 255), (int)(el.shadowColor.a * 255));
 
-                if (el.shadow) {
-                    ImVec2 shdPos = ImVec2(elemPos.x + el.shadowOffset.x * zoom, elemPos.y + el.shadowOffset.y * zoom);
-                    drawList->AddText(nullptr, el.fontSize * zoom, shdPos, shdCol, el.text.c_str());
+                float fontSize = el.fontSize * zoom;
+                ImVec2 textSize = ImGui::CalcTextSize(el.text.c_str());
+                ImVec2 textPos = elemPos;
+                if (el.textAlignment == 1) {
+                    textPos.x = elemPos.x + (elemSize.x - textSize.x) * 0.5f;
+                } else if (el.textAlignment == 2) {
+                    textPos.x = elemEnd.x - textSize.x;
                 }
-                drawList->AddText(nullptr, el.fontSize * zoom, elemPos, txtCol, el.text.c_str());
+
+                if (el.shadow) {
+                    ImVec2 shdPos(textPos.x + el.shadowOffset.x * zoom, textPos.y + el.shadowOffset.y * zoom);
+                    drawList->AddText(nullptr, fontSize, shdPos, shdCol, el.text.c_str());
+                }
+                drawList->AddText(nullptr, fontSize, textPos, txtCol, el.text.c_str());
             }
         }
 
         // Selection Outline & Gizmo for Selected Element
         if (selectedElem) {
-            ImVec2 anchorPos = ImVec2(screenOrigin.x + selectedElem->anchor.x * ui.canvasResolution.x * zoom,
-                                      screenOrigin.y + selectedElem->anchor.y * ui.canvasResolution.y * zoom);
-            ImVec2 elemPos = ImVec2(anchorPos.x + selectedElem->position.x * zoom - selectedElem->pivot.x * selectedElem->size.x * zoom,
-                                    anchorPos.y + selectedElem->position.y * zoom - selectedElem->pivot.y * selectedElem->size.y * zoom);
-            ImVec2 elemSize = ImVec2(selectedElem->size.x * zoom, selectedElem->size.y * zoom);
-            ImVec2 elemEnd = ImVec2(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
+            glm::vec4 wRect = ui.GetElementWorldRect(*selectedElem);
+            ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
+            ImVec2 elemSize(wRect.z * zoom, wRect.w * zoom);
+            ImVec2 elemEnd(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
 
             // Selection box
             drawList->AddRect(elemPos, elemEnd, IM_COL32(50, 160, 255, 255), 0.0f, 0, 2.0f);
@@ -359,8 +490,23 @@ private:
             drawList->AddRectFilled(ImVec2(elemEnd.x - handleSize, elemEnd.y - handleSize), ImVec2(elemEnd.x + handleSize, elemEnd.y + handleSize), IM_COL32(255, 255, 255, 255));
             drawList->AddRect(ImVec2(elemEnd.x - handleSize, elemEnd.y - handleSize), ImVec2(elemEnd.x + handleSize, elemEnd.y + handleSize), IM_COL32(50, 160, 255, 255), 0.0f, 0, 1.5f);
 
-            // Anchor marker
-            drawList->AddCircleFilled(anchorPos, 4.0f, IM_COL32(255, 200, 50, 255));
+            // Parent rect & Anchor visualization
+            glm::vec4 parentRect(0.0f, 0.0f, ui.canvasResolution.x, ui.canvasResolution.y);
+            if (!selectedElem->parentId.empty()) {
+                const UIElement* p = ui.FindElement(selectedElem->parentId);
+                if (p) parentRect = ui.GetElementWorldRect(*p);
+            }
+            ImVec2 pMin(screenOrigin.x + parentRect.x * zoom, screenOrigin.y + parentRect.y * zoom);
+            ImVec2 pSize(parentRect.z * zoom, parentRect.w * zoom);
+
+            ImVec2 anchorMinPos(pMin.x + selectedElem->anchorMin.x * pSize.x, pMin.y + selectedElem->anchorMin.y * pSize.y);
+            ImVec2 anchorMaxPos(pMin.x + selectedElem->anchorMax.x * pSize.x, pMin.y + selectedElem->anchorMax.y * pSize.y);
+
+            drawList->AddCircleFilled(anchorMinPos, 4.0f, IM_COL32(255, 200, 50, 255));
+            if (anchorMinPos.x != anchorMaxPos.x || anchorMinPos.y != anchorMaxPos.y) {
+                drawList->AddCircleFilled(anchorMaxPos, 4.0f, IM_COL32(255, 200, 50, 255));
+                drawList->AddLine(anchorMinPos, anchorMaxPos, IM_COL32(255, 200, 50, 180), 1.0f);
+            }
         }
 
         // Handle Element Selection & Dragging
@@ -371,11 +517,9 @@ private:
                 auto& el = ui.elements[i];
                 if (!el.visible) continue;
 
-                ImVec2 anchorPos = ImVec2(screenOrigin.x + el.anchor.x * ui.canvasResolution.x * zoom,
-                                          screenOrigin.y + el.anchor.y * ui.canvasResolution.y * zoom);
-                ImVec2 elemPos = ImVec2(anchorPos.x + el.position.x * zoom - el.pivot.x * el.size.x * zoom,
-                                        anchorPos.y + el.position.y * zoom - el.pivot.y * el.size.y * zoom);
-                ImVec2 elemEnd = ImVec2(elemPos.x + el.size.x * zoom, elemPos.y + el.size.y * zoom);
+                glm::vec4 wRect = ui.GetElementWorldRect(el);
+                ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
+                ImVec2 elemEnd(elemPos.x + wRect.z * zoom, elemPos.y + wRect.w * zoom);
 
                 // Check resize handle click if already selected
                 if (el.id == selectedElemId) {
@@ -400,32 +544,42 @@ private:
                 }
             }
             if (!clickedElem) {
-                // Clicked on empty canvas
+                // Clicked on empty canvas background -> select Canvas Root
                 selectedElemId = "";
             }
         }
 
         // Process Dragging / Resizing
         if (isDraggingElement && selectedElem && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            glm::vec4 parentRect(0.0f, 0.0f, ui.canvasResolution.x, ui.canvasResolution.y);
+            if (!selectedElem->parentId.empty()) {
+                const UIElement* p = ui.FindElement(selectedElem->parentId);
+                if (p) parentRect = ui.GetElementWorldRect(*p);
+            }
+
             if (resizeHandle == 3) {
                 // Resize bottom-right
-                ImVec2 anchorPos = ImVec2(screenOrigin.x + selectedElem->anchor.x * ui.canvasResolution.x * zoom,
-                                          screenOrigin.y + selectedElem->anchor.y * ui.canvasResolution.y * zoom);
-                ImVec2 elemPos = ImVec2(anchorPos.x + selectedElem->position.x * zoom - selectedElem->pivot.x * selectedElem->size.x * zoom,
-                                        anchorPos.y + selectedElem->position.y * zoom - selectedElem->pivot.y * selectedElem->size.y * zoom);
-                float newW = (io.MousePos.x - elemPos.x) / zoom;
-                float newH = (io.MousePos.y - elemPos.y) / zoom;
-                if (newW > 20.0f) selectedElem->size.x = std::round(newW);
+                glm::vec4 curRect = ui.GetElementWorldRect(*selectedElem);
+                float mouseCanvasX = (io.MousePos.x - screenOrigin.x) / zoom;
+                float mouseCanvasY = (io.MousePos.y - screenOrigin.y) / zoom;
+                float newW = mouseCanvasX - curRect.x;
+                float newH = mouseCanvasY - curRect.y;
+                if (newW > 10.0f) selectedElem->size.x = std::round(newW);
                 if (newH > 10.0f) selectedElem->size.y = std::round(newH);
                 isDirty = true;
             } else {
-                // Move element
-                ImVec2 anchorPos = ImVec2(screenOrigin.x + selectedElem->anchor.x * ui.canvasResolution.x * zoom,
-                                          screenOrigin.y + selectedElem->anchor.y * ui.canvasResolution.y * zoom);
-                float targetCanvasX = (io.MousePos.x - anchorPos.x) / zoom - dragOffset.x + selectedElem->pivot.x * selectedElem->size.x;
-                float targetCanvasY = (io.MousePos.y - anchorPos.y) / zoom - dragOffset.y + selectedElem->pivot.y * selectedElem->size.y;
-                selectedElem->position.x = std::round(targetCanvasX);
-                selectedElem->position.y = std::round(targetCanvasY);
+                // Move element in parent coordinate space
+                float mouseCanvasX = (io.MousePos.x - screenOrigin.x) / zoom;
+                float mouseCanvasY = (io.MousePos.y - screenOrigin.y) / zoom;
+
+                float targetElemLeft = mouseCanvasX - dragOffset.x;
+                float targetElemTop = mouseCanvasY - dragOffset.y;
+
+                float anchorX = parentRect.x + selectedElem->anchorMin.x * parentRect.z;
+                float anchorY = parentRect.y + selectedElem->anchorMin.y * parentRect.w;
+
+                selectedElem->position.x = std::round(targetElemLeft - anchorX + selectedElem->pivot.x * selectedElem->size.x);
+                selectedElem->position.y = std::round(targetElemTop - anchorY + selectedElem->pivot.y * selectedElem->size.y);
                 isDirty = true;
             }
         } else {
@@ -440,7 +594,6 @@ private:
                 UIElementType type = (UIElementType)typeVal;
                 UIElement* newElem = ui.AddElement(type);
                 if (newElem) {
-                    // Position at drop location relative to screenOrigin
                     float dropX = (io.MousePos.x - screenOrigin.x) / zoom;
                     float dropY = (io.MousePos.y - screenOrigin.y) / zoom;
                     newElem->position = glm::vec2(std::round(dropX), std::round(dropY));
@@ -458,11 +611,66 @@ private:
         ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "DETAILS / INSPECTOR");
         ImGui::Separator();
 
+        if (selectedElemId.empty()) {
+            // --- CANVAS ROOT PROPERTIES ---
+            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "🖥 CANVAS (ROOT CONTAINER)");
+            ImGui::Spacing();
+
+            char nameBuf[128];
+            strncpy(nameBuf, ui.name.c_str(), sizeof(nameBuf) - 1);
+            nameBuf[sizeof(nameBuf) - 1] = '\0';
+            if (ImGui::InputText("UI Asset Name", nameBuf, sizeof(nameBuf))) {
+                ui.name = nameBuf;
+                isDirty = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "CANVAS RESOLUTION");
+
+            // Preset Combo
+            const char* resPresets[] = {
+                "1920 x 1080 (Full HD / 16:9)",
+                "1280 x 720 (HD / 16:9)",
+                "2560 x 1440 (2K QHD / 16:9)",
+                "3840 x 2160 (4K UHD / 16:9)",
+                "1080 x 1920 (Portrait / 9:16)",
+                "Custom"
+            };
+
+            int currentResIdx = 5; // Custom
+            if (ui.canvasResolution.x == 1920.0f && ui.canvasResolution.y == 1080.0f) currentResIdx = 0;
+            else if (ui.canvasResolution.x == 1280.0f && ui.canvasResolution.y == 720.0f) currentResIdx = 1;
+            else if (ui.canvasResolution.x == 2560.0f && ui.canvasResolution.y == 1440.0f) currentResIdx = 2;
+            else if (ui.canvasResolution.x == 3840.0f && ui.canvasResolution.y == 2160.0f) currentResIdx = 3;
+            else if (ui.canvasResolution.x == 1080.0f && ui.canvasResolution.y == 1920.0f) currentResIdx = 4;
+
+            if (ImGui::Combo("Preset", &currentResIdx, resPresets, 6)) {
+                switch (currentResIdx) {
+                    case 0: ui.canvasResolution = { 1920.0f, 1080.0f }; break;
+                    case 1: ui.canvasResolution = { 1280.0f, 720.0f }; break;
+                    case 2: ui.canvasResolution = { 2560.0f, 1440.0f }; break;
+                    case 3: ui.canvasResolution = { 3840.0f, 2160.0f }; break;
+                    case 4: ui.canvasResolution = { 1080.0f, 1920.0f }; break;
+                }
+                isDirty = true;
+            }
+
+            if (ImGui::DragFloat2("Resolution (W, H)", &ui.canvasResolution.x, 10.0f, 320.0f, 7680.0f, "%.0f px")) {
+                if (ui.canvasResolution.x < 100.0f) ui.canvasResolution.x = 100.0f;
+                if (ui.canvasResolution.y < 100.0f) ui.canvasResolution.y = 100.0f;
+                isDirty = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextDisabled("Total Elements: %d", (int)ui.elements.size());
+            return;
+        }
+
         UIElement* elem = ui.FindElement(selectedElemId);
         if (!elem) {
-            ImGui::Spacing();
-            ImGui::TextDisabled("No element selected.");
-            ImGui::TextDisabled("Click an element on canvas or hierarchy to view properties.");
+            selectedElemId = "";
             return;
         }
 
@@ -479,36 +687,91 @@ private:
         if (ImGui::Checkbox("Visible", &elem->visible)) isDirty = true;
         if (ImGui::DragInt("Z-Order", &elem->zOrder, 1, -100, 100)) isDirty = true;
 
+        // Parent Information
+        std::string parentName = "(Root Canvas)";
+        if (!elem->parentId.empty()) {
+            UIElement* p = ui.FindElement(elem->parentId);
+            if (p) parentName = p->name + " (" + elem->parentId + ")";
+        }
+        ImGui::Text("Parent: %s", parentName.c_str());
+        if (!elem->parentId.empty()) {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Unparent")) {
+                ui.SetParent(elem->id, "");
+                isDirty = true;
+            }
+        }
+
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "TRANSFORM & LAYOUT");
+        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "ANCHORS & LAYOUT");
 
-        // Position & Size
-        if (ImGui::DragFloat2("Position (X, Y)", &elem->position.x, 1.0f)) isDirty = true;
-        if (ImGui::DragFloat2("Size (W, H)", &elem->size.x, 1.0f, 1.0f, 4000.0f)) isDirty = true;
+        // Anchor Presets Selector (All 16 presets)
+        const char* anchorPresetNames[] = {
+            "Top-Left",
+            "Top-Center",
+            "Top-Right",
+            "Center-Left",
+            "Center",
+            "Center-Right",
+            "Bottom-Left",
+            "Bottom-Center",
+            "Bottom-Right",
+            "Stretch Horizontal (Top)",
+            "Stretch Horizontal (Middle)",
+            "Stretch Horizontal (Bottom)",
+            "Stretch Vertical (Left)",
+            "Stretch Vertical (Center)",
+            "Stretch Vertical (Right)",
+            "Stretch Full (Both)",
+            "Custom"
+        };
 
-        // Anchor Preset Selector
-        const char* anchorPresets[] = { "Top-Left", "Top-Center", "Top-Right", "Center-Left", "Center", "Center-Right", "Bottom-Left", "Bottom-Center", "Bottom-Right" };
-        int currentPreset = -1;
-        for (int p = 0; p < 9; ++p) {
-            glm::vec2 pv = AnchorPresetToVec2((UIAnchorPreset)p);
-            if (std::abs(elem->anchor.x - pv.x) < 0.01f && std::abs(elem->anchor.y - pv.y) < 0.01f) {
-                currentPreset = p;
-                break;
+        int presetIdx = (int)elem->anchorPreset;
+        if (ImGui::Combo("Anchor Preset", &presetIdx, anchorPresetNames, 17)) {
+            elem->anchorPreset = (UIAnchorPreset)presetIdx;
+            if (elem->anchorPreset != UIAnchorPreset::Custom) {
+                AnchorPresetToMinMax(elem->anchorPreset, elem->anchorMin, elem->anchorMax, elem->pivot);
+            }
+            isDirty = true;
+        }
+
+        bool isHorizStretch = (std::abs(elem->anchorMin.x - elem->anchorMax.x) > 0.001f);
+        bool isVertStretch = (std::abs(elem->anchorMin.y - elem->anchorMax.y) > 0.001f);
+
+        // Position & Size controls (hierarchy parent-relative)
+        if (!isHorizStretch && !isVertStretch) {
+            // Point anchor
+            if (ImGui::DragFloat2("Position (X, Y)", &elem->position.x, 1.0f)) isDirty = true;
+            if (ImGui::DragFloat2("Size (W, H)", &elem->size.x, 1.0f, 1.0f, 4000.0f)) isDirty = true;
+        } else {
+            // Stretch mode
+            if (isHorizStretch) {
+                if (ImGui::DragFloat("Left Offset", &elem->position.x, 1.0f)) isDirty = true;
+                if (ImGui::DragFloat("Right Offset", &elem->size.x, 1.0f)) isDirty = true;
+            } else {
+                if (ImGui::DragFloat("Position X", &elem->position.x, 1.0f)) isDirty = true;
+                if (ImGui::DragFloat("Width", &elem->size.x, 1.0f, 1.0f, 4000.0f)) isDirty = true;
+            }
+
+            if (isVertStretch) {
+                if (ImGui::DragFloat("Top Offset", &elem->position.y, 1.0f)) isDirty = true;
+                if (ImGui::DragFloat("Bottom Offset", &elem->size.y, 1.0f)) isDirty = true;
+            } else {
+                if (ImGui::DragFloat("Position Y", &elem->position.y, 1.0f)) isDirty = true;
+                if (ImGui::DragFloat("Height", &elem->size.y, 1.0f, 1.0f, 4000.0f)) isDirty = true;
             }
         }
-        const char* preview = (currentPreset >= 0) ? anchorPresets[currentPreset] : "Custom";
-        if (ImGui::BeginCombo("Anchor Preset", preview)) {
-            for (int p = 0; p < 9; ++p) {
-                if (ImGui::Selectable(anchorPresets[p], currentPreset == p)) {
-                    elem->anchor = AnchorPresetToVec2((UIAnchorPreset)p);
-                    isDirty = true;
-                }
-            }
-            ImGui::EndCombo();
-        }
-        if (ImGui::DragFloat2("Anchor (Norm)", &elem->anchor.x, 0.01f, 0.0f, 1.0f)) isDirty = true;
+
         if (ImGui::DragFloat2("Pivot (Norm)", &elem->pivot.x, 0.01f, 0.0f, 1.0f)) isDirty = true;
+        if (ImGui::DragFloat2("Anchor Min", &elem->anchorMin.x, 0.01f, 0.0f, 1.0f)) {
+            elem->anchorPreset = UIAnchorPreset::Custom;
+            isDirty = true;
+        }
+        if (ImGui::DragFloat2("Anchor Max", &elem->anchorMax.x, 0.01f, 0.0f, 1.0f)) {
+            elem->anchorPreset = UIAnchorPreset::Custom;
+            isDirty = true;
+        }
 
         ImGui::Spacing();
         ImGui::Separator();

@@ -250,6 +250,7 @@ struct DX12GpuTexture {
 	int height = 0;
 	UINT mipLevels = 1;
 	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	bool isCubemap = false;
 };
 
 static std::vector<ID3D12Resource*> g_allocatedTextures;
@@ -837,16 +838,20 @@ DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const 
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Format = meta.format;
 
+	float lodClamp = TextureManager::CalculateTextureMinLOD(
+		static_cast<int>(meta.width), static_cast<int>(meta.height),
+		TextureManager::Get().GetMaxTextureResolution());
+
 	if (meta.IsCubemap()) {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 		srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
 		srvDesc.TextureCube.MostDetailedMip = 0;
-		srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+		srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
 	} else {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
 		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+		srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
 	}
 
 	g_d3dDevice->CreateShaderResourceView(tex, &srvDesc, cpu);
@@ -858,6 +863,7 @@ DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const 
 	result.height = static_cast<int>(meta.height);
 	result.mipLevels = static_cast<UINT>(meta.mipLevels);
 	result.format = meta.format;
+	result.isCubemap = meta.IsCubemap();
 
 	g_allocatedTextures.push_back(tex);
 	return result;
@@ -1149,6 +1155,39 @@ void PreRenderUploadTextures()
 	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
 	{
 		GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+	}
+}
+
+// Updates the D3D12 Shader Resource View (SRV) ResourceMinLODClamp for all active textures in real time.
+// Zero reallocation, zero disk read, zero GPU stall.
+// If a texture's native resolution is <= maxAllowedResolution (e.g. 2K texture in 4K quality), it retains full native sharpness (0.0f clamp).
+void UpdateAllTextureLODClamps()
+{
+	if (!g_d3dDevice) return;
+
+	int maxRes = TextureManager::Get().GetMaxTextureResolution();
+	for (auto& pair : g_gpuTextureMap)
+	{
+		DX12GpuTexture& tex = pair.second;
+		if (!tex.resource || tex.cpuHandle.ptr == 0) continue;
+
+		float lodClamp = TextureManager::CalculateTextureMinLOD(tex.width, tex.height, maxRes);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Format = tex.format;
+		if (tex.isCubemap) {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+			srvDesc.TextureCube.MipLevels = tex.mipLevels;
+			srvDesc.TextureCube.MostDetailedMip = 0;
+			srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
+		} else {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = tex.mipLevels;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
+		}
+		g_d3dDevice->CreateShaderResourceView(tex.resource, &srvDesc, tex.cpuHandle);
 	}
 }
 
@@ -1885,9 +1924,13 @@ static HRESULT CompileOrLoadCachedShader(
 		return E_INVALIDARG;
 	}
 
-	// Compute a hash of source + entryPoint + profile to detect any changes
+	// Compute a stable FNV-1a 64-bit hash of source + entryPoint + profile
 	std::string key = std::string(entryPoint) + "_" + targetProfile + "_" + hlslSource;
-	size_t hashVal = std::hash<std::string>{}(key);
+	uint64_t hashVal = 14695981039346656037ull;
+	for (char c : key) {
+		hashVal ^= (uint8_t)c;
+		hashVal *= 1099511628211ull;
+	}
 	char hexHash[32];
 	snprintf(hexHash, sizeof(hexHash), "%016llx", (unsigned long long)hashVal);
 
@@ -5130,10 +5173,21 @@ int main(int argc, char** argv)
 		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
 	}
 
+	auto startupStart = std::chrono::high_resolution_clock::now();
+	auto stageStart = startupStart;
+	auto logStartupStage = [&](const std::string& stageName, const std::string& desc) {
+		auto now = std::chrono::high_resolution_clock::now();
+		auto stageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - stageStart).count();
+		auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startupStart).count();
+		stageStart = now;
+		std::string msg = desc + " (+" + std::to_string(stageMs) + "ms, total " + std::to_string(totalMs) + "ms)";
+		EngineLogger::Get().LogAction("STARTUP_STAGE", stageName, msg);
+	};
+
 	if (!isGameOnlyMode) {
 		StartupSplash::Get().Show("Resources/Icons/eunoia.png");
 		StartupSplash::Get().PumpEvents();
-		EngineLogger::Get().LogAction("STARTUP_STAGE", "StartupSplash", "Startup splash window displayed");
+		logStartupStage("StartupSplash", "Startup splash window displayed");
 	}
 
 	// 2. Create main window (D3D12, NO_API)
@@ -5202,7 +5256,7 @@ int main(int argc, char** argv)
 	glfwSetDropCallback(g_window, dropCallback);
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "PlatformWindow", "Main window created");
+	logStartupStage("PlatformWindow", "Main window created");
 
 	// 2. Initialize DirectX 12
 	if (initD3D12(hwnd) != EXIT_SUCCESS)
@@ -5212,7 +5266,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "DX12Device", "DirectX 12 device and queues initialized");
+	logStartupStage("DX12Device", "DirectX 12 device and queues initialized");
 
 	if (createShadersAndPipeline() != EXIT_SUCCESS)
 	{
@@ -5221,7 +5275,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "ShadersPipeline", "Shaders and pipeline states compiled");
+	logStartupStage("ShadersPipeline", "Shaders and pipeline states compiled / cached");
 
 	if (createDynamicBuffers() != EXIT_SUCCESS)
 	{
@@ -5230,7 +5284,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "DynamicBuffers", "Dynamic buffers allocated");
+	logStartupStage("DynamicBuffers", "Dynamic buffers allocated");
 
 	// 3. Initialize Dear ImGui for DirectX 12
 	IMGUI_CHECKVERSION();
@@ -5239,25 +5293,29 @@ int main(int argc, char** argv)
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.IniFilename = nullptr; // Prevent stale off-screen positions from overriding responsive layout
 
-	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px)
+	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px) with fast 1x oversample
 	ImFont* mainFont = nullptr;
 	ImFontConfig fontConfig;
-	fontConfig.OversampleH = isGameOnlyMode ? 1 : 2;
-	fontConfig.OversampleV = isGameOnlyMode ? 1 : 2;
+	fontConfig.OversampleH = 1;
+	fontConfig.OversampleV = 1;
 	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
 	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
 	}
 
-	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available (skip in game mode for fast launch)
+	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons
 	if (!isGameOnlyMode && mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
 		ImFontConfig symbolConfig;
 		symbolConfig.MergeMode = true;
-		symbolConfig.OversampleH = 2;
-		symbolConfig.OversampleV = 2;
+		symbolConfig.OversampleH = 1;
+		symbolConfig.OversampleV = 1;
 		static const ImWchar symbolRanges[] = {
-			0x2000, 0x2BFF, // General Punctuation, Arrows, Mathematical & Geometric Shapes, Miscellaneous Symbols
+			0x2022, 0x2022, // Bullet
+			0x2190, 0x21FF, // Arrows
+			0x25A0, 0x25FF, // Geometric Shapes
+			0x2600, 0x26FF, // Miscellaneous Symbols
+			0x2700, 0x27BF, // Dingbats
 			0,
 		};
 		io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", 18.0f, &symbolConfig, symbolRanges);
@@ -5285,9 +5343,13 @@ int main(int argc, char** argv)
 	init_info.SrvDescriptorFreeFn  = ImGui_SrvFree;
 
 	ImGui_ImplDX12_Init(&init_info);
+	logStartupStage("ImGuiFonts", "Dear ImGui and fonts initialized");
 
 	InitFallbackTextures();
 	InitLightmapSrvSlot();
+	TextureManager::Get().RegisterQualityChangedCallback("D3D12Renderer", [](TextureQuality /*q*/, int /*maxRes*/) {
+		UpdateAllTextureLODClamps();
+	});
 	if (!isGameOnlyMode) {
 		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
@@ -5331,13 +5393,13 @@ int main(int argc, char** argv)
 	}
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "Resources", "Fallback textures and icons loaded");
+	logStartupStage("Resources", "Fallback textures and icons loaded");
 
 	// Initialize EngineUI with the project selected from the standalone Project Browser window
 	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
 
 	StartupSplash::Get().PumpEvents();
-	EngineLogger::Get().LogAction("STARTUP_STAGE", "EngineUI", "Engine UI and Asset Registry initialized");
+	logStartupStage("EngineUI", "Engine UI and Asset Registry initialized");
 
 	if (!isGameOnlyMode) {
 		if (g_engineUI.pendingInitialSceneLoad) {
@@ -5345,12 +5407,10 @@ int main(int argc, char** argv)
 			g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
 		}
 
-		// Keep splash visible until scene is completely loaded with all objects, lights, skyboxes
+		// Fast drain staged actors and keep splash updated smoothly
 		while (g_engineUI.IsProgressiveLoadingActive()) {
-			StartupSplash::Get().PumpEvents();
-
 			if (!g_engineUI.m_progressiveLoader.completed) {
-				g_engineUI.m_progressiveLoader.Step(g_scene, 8);
+				g_engineUI.m_progressiveLoader.Step(g_scene, 128);
 				float p = g_engineUI.m_progressiveLoader.progress.load();
 				std::string detail;
 				{
@@ -5361,19 +5421,50 @@ int main(int argc, char** argv)
 			} else {
 				break;
 			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(4));
 		}
 
 		updateSceneGeometry();
-		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
-		StartupSplash::Get().PumpEvents();
-		std::this_thread::sleep_for(std::chrono::milliseconds(120));
+		if (g_scene.objects.empty()) {
+			StartupSplash::Get().UpdateProgress(1.0f, "Empty level ready.");
+			logStartupStage("ScenePreload", "Empty level initialized");
+		} else {
+			StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+			logStartupStage("ScenePreload", "Scene and actors loaded");
+		}
+
+		// Warm up GPU pipelines and render targets behind splash before revealing window to prevent blank frame
+		for (int warmup = 0; warmup < 2; ++warmup)
+		{
+			InputSystem::Get().BeginFrame();
+			glfwPollEvents();
+			InputSystem::Get().Update(g_window);
+
+			ImGui_ImplDX12_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
+
+			bool warmupExit = false;
+			g_engineUI.Render(g_scene, g_camera, 60.0f, 16.6f, g_currentVertexCount, g_currentIndexCount, warmupExit);
+
+			ImGui::Render();
+
+			if (g_fence && g_fenceValues[g_frameIndex] > 0 && g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
+			{
+				SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "Warmup frame fence sync");
+			}
+
+			updateSceneGeometry();
+			updateConstantBuffer();
+			PreRenderUploadTextures();
+			renderFrame();
+		}
+		logStartupStage("WarmupFrames", "Warm-up frames presented behind splash");
 
 		StartupSplash::Get().Close();
 		ShowWindow(hwnd, SW_MAXIMIZE);
 		glfwShowWindow(g_window);
 		UpdateWindow(hwnd);
-		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Scene completely loaded — Editor opened maximized");
+		logStartupStage("EditorWindow", "Editor window opened maximized — startup complete");
 	} else {
 		updateSceneGeometry();
 	}

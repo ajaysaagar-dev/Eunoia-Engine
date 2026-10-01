@@ -558,6 +558,11 @@ struct CursorStateController {
     static void Lock() { Locked(); }
     static void Unlock() { UnLocked(); }
     static void Unlocked() { UnLocked(); }
+    static void locked() { Locked(); }
+    static void unLocked() { UnLocked(); }
+    static void unlocked() { UnLocked(); }
+    static void lock() { Locked(); }
+    static void unlock() { UnLocked(); }
 
     static bool IsLocked() {
         return InputSystem::Get().IsCursorLocked();

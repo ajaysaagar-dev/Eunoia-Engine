@@ -78,6 +78,10 @@ namespace EunoiaBuildTool
                 return 0;
             }
 
+            // Always terminate running instances and clean previous build intermediates for 100% fresh rebuild
+            KillProcess("Eunoia-Editor.exe");
+            KillProcess("Eunoia-Game.exe");
+            CleanIntermediates();
             EnsureDirectories();
 
             // Phase 1: Environment & Multi-core Toolchain Detection
@@ -96,8 +100,8 @@ namespace EunoiaBuildTool
             PrintSection(3, 4, "RESOURCE COMPILATION", ConsoleColor.Cyan);
             CompileResources();
 
-            // Phase 4: Multi-Threaded Incremental Engine Compilation & Packaging
-            PrintSection(4, 4, "PARALLEL INCREMENTAL ENGINE BUILD (DX12)", ConsoleColor.Cyan);
+            // Phase 4: Multi-Threaded Fresh Engine Compilation & Packaging
+            PrintSection(4, 4, "PARALLEL FRESH ENGINE BUILD (DX12)", ConsoleColor.Cyan);
             if (!BuildEditorParallel())
             {
                 PrintError("Engine Editor build failed.");
@@ -239,6 +243,32 @@ Options:
             catch (Exception ex)
             {
                 PrintError(string.Format("Failed to clean build directory: {0}", ex.Message));
+            }
+        }
+
+        private static void CleanIntermediates()
+        {
+            try
+            {
+                if (Directory.Exists(s_intermediatesDir))
+                {
+                    PrintInfo(string.Format("Cleaning intermediate build artifacts: {0}", s_intermediatesDir));
+                    Directory.Delete(s_intermediatesDir, true);
+                }
+                string editorExe = Path.Combine(s_outputDir, "Eunoia-Editor.exe");
+                if (File.Exists(editorExe))
+                {
+                    File.Delete(editorExe);
+                }
+                string gameExe = Path.Combine(s_outputDir, "Eunoia-Game.exe");
+                if (File.Exists(gameExe))
+                {
+                    File.Delete(gameExe);
+                }
+            }
+            catch (Exception ex)
+            {
+                PrintWarning(string.Format("Could not delete some intermediate files: {0}", ex.Message));
             }
         }
 
@@ -598,7 +628,7 @@ Options:
                             Interlocked.Increment(ref activeWorkers);
 
                             string compiler = unit.IsC ? s_gccExe : s_compilerExe;
-                            string langFlag = unit.IsC ? "-O2" : "-std=c++20 -O2";
+                            string langFlag = unit.IsC ? "-O2 -pipe" : "-std=c++20 -O2 -pipe -fno-strict-aliasing -fext-numeric-literals";
 
                             string args = string.Format("{0} {1} -c \"{2}\" -o \"{3}\"",
                                 langFlag, incFlags, unit.SourcePath, unit.ObjectPath);
@@ -834,7 +864,7 @@ Options:
             }
 
             StringBuilder sb = new StringBuilder();
-            sb.Append("-std=c++20 -O2 ");
+            sb.Append("-std=c++20 -O2 -pipe -fno-strict-aliasing -fext-numeric-literals ");
             foreach (var inc in includes) sb.Append(string.Format("-I\"{0}\" ", inc));
             foreach (var src in sources) sb.Append(string.Format("\"{0}\" ", src));
 

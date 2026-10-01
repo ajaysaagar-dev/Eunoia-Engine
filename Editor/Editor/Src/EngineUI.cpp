@@ -246,6 +246,224 @@ static bool MoveFolderToDirectory(const std::string& srcVirtualDir, const std::s
     return true;
 }
 
+void EngineUI::OpenRenameAssetModal(const AssetID& id, const std::string& currentName, const std::string& virtualPath) {
+    renameTargetAssetId = id;
+    renameTargetAssetName = currentName;
+    renameTargetAssetVirtualPath = virtualPath;
+    snprintf(renameItemNameBuf, sizeof(renameItemNameBuf), "%s", currentName.c_str());
+    showRenameAssetPopup = true;
+    renameFocusInput = true;
+}
+
+void EngineUI::OpenRenameFolderModal(const std::string& virtualDir) {
+    if (virtualDir == "/Game" || virtualDir.empty()) return;
+    renameTargetVirtualDir = virtualDir;
+    std::string dirName = AssetPath::GetObjectName(virtualDir);
+    snprintf(renameItemNameBuf, sizeof(renameItemNameBuf), "%s", dirName.c_str());
+    showRenameFolderPopup = true;
+    renameFocusInput = true;
+}
+
+bool EngineUI::RenameContentAsset(const AssetID& id, const std::string& newName) {
+    std::string cleanNewName = newName;
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.front())) cleanNewName.erase(cleanNewName.begin());
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.back())) cleanNewName.pop_back();
+    if (cleanNewName.empty()) return false;
+
+    const AssetMetadata* meta = AssetRegistry::Get().FindById(id);
+    if (!meta) return false;
+    if (meta->objectName == cleanNewName) return true;
+
+    std::filesystem::path srcDisk = contentRootPath / meta->sourcePath;
+    std::string ext = srcDisk.extension().string();
+
+    // Strip trailing extension if user typed it
+    if (cleanNewName.size() > ext.size() &&
+        cleanNewName.compare(cleanNewName.size() - ext.size(), ext.size(), ext) == 0) {
+        cleanNewName = cleanNewName.substr(0, cleanNewName.size() - ext.size());
+    }
+
+    std::string newFileName = cleanNewName + ext;
+    std::filesystem::path dstDisk = srcDisk.parent_path() / newFileName;
+
+    std::error_code ec;
+    if (std::filesystem::exists(dstDisk, ec)) {
+        AddLog("LogContent", "Cannot rename asset: '" + newFileName + "' already exists!", 3);
+        return false;
+    }
+
+    if (std::filesystem::exists(srcDisk, ec)) {
+        std::filesystem::rename(srcDisk, dstDisk, ec);
+        if (ec) {
+            ec.clear();
+            std::filesystem::copy_file(srcDisk, dstDisk, std::filesystem::copy_options::overwrite_existing, ec);
+            if (!ec) std::filesystem::remove(srcDisk, ec);
+            else {
+                AddLog("LogContent", "Failed to rename file on disk: " + srcDisk.string(), 3);
+                return false;
+            }
+        }
+    }
+
+    // Rename sidecar files (.assetmeta, .meta)
+    std::vector<std::string> sidecarExts = { ".assetmeta", ".meta" };
+    for (const auto& scExt : sidecarExts) {
+        std::filesystem::path srcMeta = srcDisk.string() + scExt;
+        std::filesystem::path dstMeta = dstDisk.string() + scExt;
+        if (std::filesystem::exists(srcMeta, ec)) {
+            ec.clear();
+            std::filesystem::rename(srcMeta, dstMeta, ec);
+        }
+    }
+
+    std::string oldVirtual = meta->virtualPath;
+    std::string parentVirtual = AssetPath::GetDirectory(oldVirtual);
+    std::string newVirtual = AssetPath::Combine(parentVirtual, cleanNewName);
+
+    // Update active editors if currently editing this file
+    if (activeMaterial.filePath == srcDisk.string()) {
+        activeMaterial.filePath = dstDisk.string();
+        activeMaterial.name = cleanNewName;
+        activeMaterial.virtualPath = newVirtual;
+    }
+    if (activeSkybox.filePath == srcDisk.string()) {
+        activeSkybox.filePath = dstDisk.string();
+        activeSkybox.name = cleanNewName;
+        activeSkybox.virtualPath = newVirtual;
+    }
+    if (activeWater.filePath == srcDisk.string()) {
+        activeWater.filePath = dstDisk.string();
+        activeWater.name = cleanNewName;
+        activeWater.virtualPath = newVirtual;
+    }
+
+    // Update asset internal metadata files
+    if (meta->type == AssetType::Material) {
+        MaterialAsset ma;
+        if (LoadMaterialFile(dstDisk.string(), ma)) {
+            ma.name = cleanNewName;
+            ma.virtualPath = newVirtual;
+            ma.filePath = dstDisk.string();
+            SaveMaterialFile(dstDisk.string(), ma);
+        }
+    } else if (meta->type == AssetType::Skybox) {
+        SkyboxAsset sky;
+        if (LoadSkyboxFile(dstDisk.string(), sky)) {
+            sky.name = cleanNewName;
+            sky.virtualPath = newVirtual;
+            sky.filePath = dstDisk.string();
+            SaveSkyboxFile(dstDisk.string(), sky);
+        }
+    } else if (meta->type == AssetType::Water) {
+        WaterAsset water;
+        if (LoadWaterFile(dstDisk.string(), water)) {
+            water.name = cleanNewName;
+            water.virtualPath = newVirtual;
+            water.filePath = dstDisk.string();
+            SaveWaterFile(dstDisk.string(), water);
+        }
+    } else if (meta->type == AssetType::VisualBehaviour) {
+        VisualBehaviuors::BehaviourGraph g;
+        if (VisualBehaviuors::LoadGraph(g, dstDisk.string())) {
+            g.name = cleanNewName;
+            VisualBehaviuors::SaveGraph(g, dstDisk.string());
+        }
+    } else if (meta->type == AssetType::Behaviour || meta->type == AssetType::Script) {
+        std::string scriptExt = dstDisk.extension().string();
+        std::transform(scriptExt.begin(), scriptExt.end(), scriptExt.begin(), ::tolower);
+        if (scriptExt == ".cpp") {
+            BehaviourRegistry::Get().RegisterScriptFile(cleanNewName, dstDisk.string());
+        }
+    }
+
+    // Update Asset Registry
+    std::filesystem::path newRel = std::filesystem::relative(dstDisk, contentRootPath, ec);
+    AssetRegistry::Get().RenameAsset(id, cleanNewName);
+    AssetMetadata* updated = AssetRegistry::Get().FindById(id);
+    if (updated) {
+        if (!ec) updated->sourcePath = newRel.generic_string();
+        updated->virtualPath = newVirtual;
+        updated->objectName = cleanNewName;
+    }
+
+    // Update selection states
+    if (selectedContentItem == oldVirtual) {
+        selectedContentItem = newVirtual;
+    }
+    if (selectedContentItems.count("ASSET:" + oldVirtual)) {
+        selectedContentItems.erase("ASSET:" + oldVirtual);
+        selectedContentItems.insert("ASSET:" + newVirtual);
+    }
+    if (lastSelectedContentItem == "ASSET:" + oldVirtual) {
+        lastSelectedContentItem = "ASSET:" + newVirtual;
+    }
+
+    TriggerBackgroundRegistrySync(contentRootPath);
+    AddLog("LogContent", "Renamed asset from '" + meta->objectName + "' to '" + cleanNewName + "'", 2);
+    return true;
+}
+
+bool EngineUI::RenameContentFolder(const std::string& srcVirtualDir, const std::string& newFolderName) {
+    std::string cleanNewName = newFolderName;
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.front())) cleanNewName.erase(cleanNewName.begin());
+    while (!cleanNewName.empty() && isspace((unsigned char)cleanNewName.back())) cleanNewName.pop_back();
+
+    if (srcVirtualDir == "/Game" || srcVirtualDir.empty() || cleanNewName.empty()) return false;
+    std::string oldFolderName = AssetPath::GetObjectName(srcVirtualDir);
+    if (oldFolderName == cleanNewName) return true;
+
+    std::string srcSub = srcVirtualDir;
+    if (srcSub.rfind("/Game", 0) == 0) srcSub = srcSub.substr(5);
+    if (!srcSub.empty() && srcSub[0] == '/') srcSub.erase(0, 1);
+    std::filesystem::path srcDiskDir = srcSub.empty() ? contentRootPath : (contentRootPath / srcSub);
+
+    std::filesystem::path dstDiskDir = srcDiskDir.parent_path() / cleanNewName;
+
+    std::error_code ec;
+    if (std::filesystem::exists(dstDiskDir, ec)) {
+        AddLog("LogContent", "Cannot rename folder: '" + cleanNewName + "' already exists!", 3);
+        return false;
+    }
+
+    if (!std::filesystem::exists(srcDiskDir, ec)) return false;
+
+    std::filesystem::rename(srcDiskDir, dstDiskDir, ec);
+    if (ec) {
+        ec.clear();
+        std::filesystem::copy(srcDiskDir, dstDiskDir, std::filesystem::copy_options::recursive | std::filesystem::copy_options::overwrite_existing, ec);
+        if (!ec) std::filesystem::remove_all(srcDiskDir, ec);
+        else {
+            AddLog("LogContent", "Failed to rename folder on disk: " + srcDiskDir.string(), 3);
+            return false;
+        }
+    }
+
+    std::string parentVirtual = AssetPath::GetDirectory(srcVirtualDir);
+    std::string newVirtualDir = AssetPath::Combine(parentVirtual, cleanNewName);
+
+    // Update currentVirtualDir if it was inside or equal to srcVirtualDir
+    if (currentVirtualDir == srcVirtualDir) {
+        currentVirtualDir = newVirtualDir;
+    } else if (currentVirtualDir.rfind(srcVirtualDir + "/", 0) == 0) {
+        currentVirtualDir = newVirtualDir + currentVirtualDir.substr(srcVirtualDir.length());
+    }
+
+    if (selectedContentItem == srcVirtualDir) {
+        selectedContentItem = newVirtualDir;
+    }
+    if (selectedContentItems.count("DIR:" + srcVirtualDir)) {
+        selectedContentItems.erase("DIR:" + srcVirtualDir);
+        selectedContentItems.insert("DIR:" + newVirtualDir);
+    }
+    if (lastSelectedContentItem == "DIR:" + srcVirtualDir) {
+        lastSelectedContentItem = "DIR:" + newVirtualDir;
+    }
+
+    TriggerBackgroundRegistrySync(contentRootPath);
+    AddLog("LogContent", "Renamed folder from '" + oldFolderName + "' to '" + cleanNewName + "'", 2);
+    return true;
+}
+
 static std::filesystem::path FindEngineSourceRoot() {
     std::error_code ec;
     std::vector<std::filesystem::path> candidates = {
@@ -304,8 +522,22 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     std::filesystem::path compilerPath = FindCompilerPath(engineRoot);
 
     std::filesystem::path depDir = projectRoot / "Dependencies";
+    std::filesystem::path stampPath = depDir / ".engine_stamp";
+
+    // Fast-path: If stamp matches current engine root and version, dependencies are already up-to-date
+    if (std::filesystem::exists(stampPath, ec)) {
+        std::ifstream sf(stampPath);
+        std::string stampedRoot;
+        if (std::getline(sf, stampedRoot)) {
+            if (stampedRoot == engineRoot.generic_string()) {
+                return; // 0ms fast exit
+            }
+        }
+    }
+
     std::filesystem::path depEngineDir = depDir / "Engine";
     std::filesystem::path depDepsDir = depDir / "deps";
+    std::filesystem::path depPluginsDir = depDir / "Plugins";
 
     // 1. Copy Engine Include headers
     std::vector<std::string> engineModules = {
@@ -315,7 +547,22 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     for (const auto& mod : engineModules) {
         std::filesystem::path srcInc = engineRoot / "Engine" / mod / "Include";
         std::filesystem::path dstInc = depEngineDir / mod / "Include";
-        if (std::filesystem::exists(srcInc, ec) && !std::filesystem::exists(dstInc, ec)) {
+        if (std::filesystem::exists(srcInc, ec)) {
+            CopyHeadersRecursive(srcInc, dstInc);
+        }
+    }
+
+    // 1b. Copy Plugins Include headers (UI-System, etc.)
+    std::vector<std::string> pluginModules = {
+        "UI-System", "Mesh-Cluster-Culling", "water", "skybox"
+    };
+    for (const auto& plug : pluginModules) {
+        std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
+        if (!std::filesystem::exists(srcInc, ec)) {
+            srcInc = engineRoot / "Plugins" / plug / "include";
+        }
+        std::filesystem::path dstInc = depPluginsDir / plug / "Include";
+        if (std::filesystem::exists(srcInc, ec)) {
             CopyHeadersRecursive(srcInc, dstInc);
         }
     }
@@ -323,25 +570,25 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     // 2. Copy third-party headers (GLFW, GLM, JSON, ImGui)
     std::filesystem::path glfwSrc = engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "include";
     std::filesystem::path glfwDst = depDepsDir / "glfw-3.5.1.bin.WIN64" / "include";
-    if (std::filesystem::exists(glfwSrc, ec) && !std::filesystem::exists(glfwDst, ec)) {
+    if (std::filesystem::exists(glfwSrc, ec)) {
         CopyHeadersRecursive(glfwSrc, glfwDst);
     }
 
     std::filesystem::path glmSrc = engineRoot / "deps" / "glm";
     std::filesystem::path glmDst = depDepsDir / "glm";
-    if (std::filesystem::exists(glmSrc, ec) && !std::filesystem::exists(glmDst, ec)) {
+    if (std::filesystem::exists(glmSrc, ec)) {
         CopyHeadersRecursive(glmSrc, glmDst);
     }
 
     std::filesystem::path jsonSrc = engineRoot / "deps" / "json";
     std::filesystem::path jsonDst = depDepsDir / "json";
-    if (std::filesystem::exists(jsonSrc, ec) && !std::filesystem::exists(jsonDst, ec)) {
+    if (std::filesystem::exists(jsonSrc, ec)) {
         CopyHeadersRecursive(jsonSrc, jsonDst);
     }
 
     std::filesystem::path imguiSrc = engineRoot / "deps" / "imgui";
     std::filesystem::path imguiDst = depDepsDir / "imgui";
-    if (std::filesystem::exists(imguiSrc, ec) && !std::filesystem::exists(imguiDst, ec)) {
+    if (std::filesystem::exists(imguiSrc, ec)) {
         CopyHeadersRecursive(imguiSrc, imguiDst);
     }
 
@@ -369,6 +616,8 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "        \"${workspaceFolder}/Dependencies/Engine/EngineScene/Include\",\n"
            << "        \"${workspaceFolder}/Dependencies/Engine/EngineAssets/Include\",\n"
            << "        \"${workspaceFolder}/Dependencies/Engine/EunoiaPluginCore/Include\",\n"
+           << "        \"${workspaceFolder}/Dependencies/Plugins/UI-System/Include\",\n"
+           << "        \"${workspaceFolder}/Dependencies/Plugins/**\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/glfw-3.5.1.bin.WIN64/include\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/glm\",\n"
            << "        \"${workspaceFolder}/Dependencies/deps/json\",\n"
@@ -380,6 +629,8 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "        \"" << engStr << "/Engine/EngineScene/Include\",\n"
            << "        \"" << engStr << "/Engine/EngineAssets/Include\",\n"
            << "        \"" << engStr << "/Engine/EunoiaPluginCore/Include\",\n"
+           << "        \"" << engStr << "/Plugins/UI-System/Include\",\n"
+           << "        \"" << engStr << "/Plugins/**\",\n"
            << "        \"" << engStr << "/deps/glfw-3.5.1.bin.WIN64/include\",\n"
            << "        \"" << engStr << "/deps/glm\",\n"
            << "        \"" << engStr << "/deps/json\",\n"
@@ -394,7 +645,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "      ],\n"
            << "      \"compilerPath\": \"" << compStr << "\",\n"
            << "      \"cStandard\": \"c11\",\n"
-           << "      \"cppStandard\": \"c++17\",\n"
+           << "      \"cppStandard\": \"c++20\",\n"
            << "      \"intelliSenseMode\": \"windows-gcc-x64\"\n"
            << "    }\n"
            << "  ],\n"
@@ -414,6 +665,13 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "  }\n"
            << "}\n";
         sf.close();
+    }
+
+    // 5. Write stamp file to cache dependency state
+    std::ofstream stampf(stampPath);
+    if (stampf.is_open()) {
+        stampf << engineRoot.generic_string() << "\n";
+        stampf.close();
     }
 }
 
@@ -595,11 +853,22 @@ void EngineUI::LoadEditorConfig() {
                     currentAntiAliasing = (AntiAliasingMethod)aa;
                     Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(currentAntiAliasing);
                 }
+            } else if (key == "TextureQuality" || key == "textureQuality") {
+                int tq = (int)fVal;
+                if (tq >= 0 && tq <= 5) {
+                    currentTextureQuality = (TextureQuality)tq;
+                    TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
+                }
             }
         } catch (...) {
             // Ignore format errors
         }
     }
+}
+
+void EngineUI::ApplyTextureQuality(TextureQuality quality) {
+    currentTextureQuality = quality;
+    TextureManager::Get().SetTextureQuality(quality);
 }
 
 void EngineUI::SaveEditorConfig() {
@@ -617,6 +886,7 @@ void EngineUI::SaveEditorConfig() {
     file << "BottomDockHeight=" << bottomDockHeight << "\n";
     file << "\n[Graphics]\n";
     file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
+    file << "TextureQuality=" << (int)currentTextureQuality << "\n";
     file.close();
 }
 
@@ -1030,8 +1300,8 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
 
     // Load font
     ImFontConfig fontConfig;
-    fontConfig.OversampleH = 2;
-    fontConfig.OversampleV = 2;
+    fontConfig.OversampleH = 1;
+    fontConfig.OversampleV = 1;
     ImFont* mainFont = nullptr;
     if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
         mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
@@ -1845,60 +2115,51 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     currentVirtualDir = "/Game";
     selectedContentItem = "";
 
-    // Re-initialize subsystems with new content root
+    // Re-initialize subsystems with new content root (loads cached AssetRegistry.json in ~1ms)
     TextureManager::Get().SetProjectRoot(contentRootPath);
     AssetManager::Get().Initialize(contentRootPath);
-    if (!isGameMode) {
-        AssetRegistry::Get().ScanDirectory(contentRootPath);
-    }
 
-    // Scan and register existing 3D models so they don't trigger import popups on open (skip in game mode)
+    // Single unified recursive directory walk for models, behaviour scripts, and scene discovery
     if (!isGameMode) {
         knownModelFiles.clear();
         pendingModelImportQueue.clear();
         showModelImportModal = false;
-        for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-            if (!entry.is_directory(ec)) {
-                std::string ext = entry.path().extension().string();
-                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                if (ext == ".fbx" || ext == ".glb" || ext == ".gltf" || ext == ".obj") {
-                    knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
-                }
-            }
-        }
     }
 
-    // Scan and register all behaviour scripts in Content before loading the scene
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-        if (!entry.is_directory(ec) && entry.path().extension() == ".cpp") {
-            std::string pStr = entry.path().string();
-            std::string pLower = pStr;
-            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
-                std::string stem = entry.path().stem().string();
-                if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" &&
-                    stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
-                    BehaviourRegistry::Get().RegisterScriptFile(stem, pStr);
-                }
-            }
-        }
-    }
-
-    // Determine respective scene path to load
     std::string targetScenePath = specificScenePath;
-    if (targetScenePath.empty()) {
+    if (isGameMode) {
         std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-        if (std::filesystem::exists(mainScene, ec)) {
+        if (targetScenePath.empty() && std::filesystem::exists(mainScene, ec)) {
             targetScenePath = mainScene.string();
-        } else {
-            for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
-                if (entry.is_regular_file(ec)) {
-                    std::string ext = entry.path().extension().string();
-                    if (ext == ".escene" || ext == ".elevel") {
-                        targetScenePath = entry.path().string();
-                        break;
+        }
+    }
+
+    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
+        if (!entry.is_directory(ec)) {
+            std::string ext = entry.path().extension().string();
+            std::string extLower = ext;
+            std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+
+            // 1. Known 3D model formats
+            if (!isGameMode && (extLower == ".fbx" || extLower == ".glb" || extLower == ".gltf" || extLower == ".obj")) {
+                knownModelFiles.insert(std::filesystem::absolute(entry.path()).string());
+            }
+            // 2. Gameplay behaviour scripts
+            else if (extLower == ".cpp") {
+                std::string pStr = entry.path().string();
+                std::string pLower = pStr;
+                std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
+                if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                    std::string stem = entry.path().stem().string();
+                    if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" &&
+                        stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
+                        BehaviourRegistry::Get().RegisterScriptFile(stem, pStr);
                     }
                 }
+            }
+            // 3. Respective scene discovery if in game mode and not already specified
+            else if (isGameMode && targetScenePath.empty() && (extLower == ".escene" || extLower == ".elevel")) {
+                targetScenePath = entry.path().string();
             }
         }
     }
@@ -1916,15 +2177,15 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         isInitialSceneLoaded = true;
         pendingInitialSceneLoad = false;
     } else {
-        // Editor mode: Open engine editor with no viewport rendered first,
-        // then once open and displayed, load the respective scene/level.
+        // Editor mode: Always open non-saved empty level on startup
         scene.Clear();
         currentLevelFilePath = "";
-        pendingScenePath = targetScenePath;
-        pendingBinPath = specificBinPath;
-        pendingInitialSceneLoad = true;
-        isInitialSceneLoaded = false;
-        initialLoadFrameCountdown = 2; // Allow editor window to present initial frame
+        levelUnsaved = false;
+        pendingScenePath = "";
+        pendingBinPath = "";
+        pendingInitialSceneLoad = false;
+        isInitialSceneLoaded = true;
+        initialLoadFrameCountdown = 0;
 
         camera.target = glm::vec3(0.0f, 0.5f, 0.0f);
         camera.distance = 7.0f;
@@ -2373,11 +2634,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
     }
 
-    // Periodic check for behaviour script modifications (User Request: ask as compile or later)
+    // Periodic check for behaviour script modifications (Auto-compilation on focus)
     scriptWatchTimer += (frameTimeMs * 0.001f);
-    if (scriptWatchTimer >= 0.5f) {
+    if (scriptWatchTimer >= 0.2f) {
         scriptWatchTimer = 0.0f;
-        CheckForScriptChanges();
+        CheckForScriptChanges(&scene);
     }
 
     // Periodic check for 3D model files added in real-time
@@ -2997,6 +3258,37 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::EndMenu();
                 }
 
+                if (ImGui::BeginMenu("Texture Quality")) {
+                    struct TQEntry {
+                        TextureQuality quality;
+                        const char* name;
+                        const char* res;
+                    };
+                    static const TQEntry tqEntries[] = {
+                        { TextureQuality::None,   "None",   "Native Quality" },
+                        { TextureQuality::Low,    "Low",    "256 x 256" },
+                        { TextureQuality::Medium, "Medium", "512 x 512" },
+                        { TextureQuality::High,   "High",   "1024 x 1024" },
+                        { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                        { TextureQuality::Max,    "Max",    "4096 x 4096" }
+                    };
+
+                    for (const auto& entry : tqEntries) {
+                        bool isSelected = (currentTextureQuality == entry.quality);
+                        char label[64];
+                        snprintf(label, sizeof(label), "%s (%s)", entry.name, entry.res);
+                        if (ImGui::MenuItem(label, nullptr, isSelected)) {
+                            ApplyTextureQuality(entry.quality);
+                            SaveEditorConfig();
+                            AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Max Texture Resolution: %s\nDynamic D3D12 Sampler Feedback & LOD clamp applied in real time.", entry.res);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+
                 if (ImGui::BeginMenu("Quality")) {
                     if (ImGui::BeginMenu("Anti Aliasing")) {
                         const auto& aaMethods = GetAntiAliasingMethods();
@@ -3010,6 +3302,36 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             }
                             if (ImGui::IsItemHovered()) {
                                 ImGui::SetTooltip("Quality: %s\nCost: %s\nRole: %s", m.quality, m.cost, m.role);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::BeginMenu("Texture Quality")) {
+                        struct TQEntry {
+                            TextureQuality quality;
+                            const char* name;
+                            const char* res;
+                        };
+                        static const TQEntry tqEntries[] = {
+                            { TextureQuality::None,   "None",   "Native Quality" },
+                            { TextureQuality::Low,    "Low",    "256 x 256" },
+                            { TextureQuality::Medium, "Medium", "512 x 512" },
+                            { TextureQuality::High,   "High",   "1024 x 1024" },
+                            { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                            { TextureQuality::Max,    "Max",    "4096 x 4096" }
+                        };
+
+                        for (const auto& entry : tqEntries) {
+                            bool isSelected = (currentTextureQuality == entry.quality);
+                            char label[64];
+                            snprintf(label, sizeof(label), "%s (%s)", entry.name, entry.res);
+                            if (ImGui::MenuItem(label, nullptr, isSelected)) {
+                                ApplyTextureQuality(entry.quality);
+                                SaveEditorConfig();
+                                AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Max Texture Resolution: %s\nDynamic D3D12 Sampler Feedback & LOD clamp applied in real time.", entry.res);
                             }
                         }
                         ImGui::EndMenu();
@@ -7167,6 +7489,106 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                 ImGui::Separator();
 
+                // Modals for Renaming Asset / Folder
+                if (showRenameAssetPopup) {
+                    ImGui::OpenPopup("Rename Asset##Modal");
+                    showRenameAssetPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Rename Asset##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    const AssetMetadata* rMeta = AssetRegistry::Get().FindById(renameTargetAssetId);
+                    std::string curName = rMeta ? rMeta->objectName : renameTargetAssetName;
+                    std::string curType = rMeta ? AssetTypeToString(rMeta->type) : "Asset";
+
+                    ImGui::Text("Renaming %s: %s", curType.c_str(), curName.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter new name:");
+                    ImGui::SetNextItemWidth(300.0f);
+                    if (renameFocusInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        renameFocusInput = false;
+                    }
+                    ImGui::InputText("##RenameAssetInput", renameItemNameBuf, sizeof(renameItemNameBuf));
+
+                    std::string inputName = renameItemNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool hasInvalidChar = (inputName.find('/') != std::string::npos || inputName.find('\\') != std::string::npos ||
+                                           inputName.find(':') != std::string::npos || inputName.find('*') != std::string::npos ||
+                                           inputName.find('?') != std::string::npos || inputName.find('\"') != std::string::npos ||
+                                           inputName.find('<') != std::string::npos || inputName.find('>') != std::string::npos ||
+                                           inputName.find('|') != std::string::npos);
+
+                    bool isValid = !inputName.empty() && !hasInvalidChar;
+                    if (hasInvalidChar) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "⚠️ Name contains invalid filename characters (/ \\ : * ? \" < > |)");
+                    }
+
+                    ImGui::Spacing();
+                    if (!isValid) ImGui::BeginDisabled();
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    bool okClicked = ImGui::Button("Rename", ImVec2(120, 0));
+                    if (!isValid) ImGui::EndDisabled();
+
+                    if (isValid && (okClicked || enterPressed)) {
+                        RenameContentAsset(renameTargetAssetId, inputName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (showRenameFolderPopup) {
+                    ImGui::OpenPopup("Rename Folder##Modal");
+                    showRenameFolderPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Rename Folder##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string oldDirName = AssetPath::GetObjectName(renameTargetVirtualDir);
+                    ImGui::Text("Renaming virtual folder: %s", renameTargetVirtualDir.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter new folder name:");
+                    ImGui::SetNextItemWidth(300.0f);
+                    if (renameFocusInput) {
+                        ImGui::SetKeyboardFocusHere();
+                        renameFocusInput = false;
+                    }
+                    ImGui::InputText("##RenameFolderInput", renameItemNameBuf, sizeof(renameItemNameBuf));
+
+                    std::string inputName = renameItemNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool hasInvalidChar = (inputName.find('/') != std::string::npos || inputName.find('\\') != std::string::npos ||
+                                           inputName.find(':') != std::string::npos || inputName.find('*') != std::string::npos ||
+                                           inputName.find('?') != std::string::npos || inputName.find('\"') != std::string::npos ||
+                                           inputName.find('<') != std::string::npos || inputName.find('>') != std::string::npos ||
+                                           inputName.find('|') != std::string::npos);
+
+                    bool isValid = !inputName.empty() && !hasInvalidChar && renameTargetVirtualDir != "/Game";
+                    if (hasInvalidChar) {
+                        ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "⚠️ Name contains invalid folder characters (/ \\ : * ? \" < > |)");
+                    }
+
+                    ImGui::Spacing();
+                    if (!isValid) ImGui::BeginDisabled();
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    bool okClicked = ImGui::Button("Rename", ImVec2(120, 0));
+                    if (!isValid) ImGui::EndDisabled();
+
+                    if (isValid && (okClicked || enterPressed)) {
+                        RenameContentFolder(renameTargetVirtualDir, inputName);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape)) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Modals for creating Folder / Material / Skybox / Behaviour
                 if (showNewFolderPopup) {
                     ImGui::OpenPopup("Create Folder##Modal");
@@ -7372,8 +7794,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "// ============================================================================\n"
                                 << "class " << behName << " : public EunoiaBehaviour {\n"
                                 << "public:\n"
-                                << "    // Public variables are automatically registered as editable properties\n"
-                                << "    float Speed = 5.0f;\n\n"
+                                << "    // Public variables are automatically registered as editable properties\n\n"
                                 << "    // ------------------------------------------------------------------------\n"
                                 << "    // Lifecycle Methods\n"
                                 << "    // ------------------------------------------------------------------------\n"
@@ -7677,6 +8098,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             selectedContentItem = "";
                             selectedContentItems.clear();
                             lastSelectedContentItem = "";
+                        }
+                        if (vDir != "/Game") {
+                            if (ImGui::MenuItem("✏️ Rename Folder...", "F2")) {
+                                OpenRenameFolderModal(vDir);
+                            }
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("➕ New Folder")) {
@@ -8065,6 +8491,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     selectedContentItems.clear();
                                     lastSelectedContentItem = "";
                                 }
+                                if (item.subDir != "/Game") {
+                                    if (ImGui::MenuItem("✏️ Rename Folder...", "F2")) {
+                                        OpenRenameFolderModal(item.subDir);
+                                    }
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("➕ New Folder")) {
                                     popupTargetVirtualDir = item.subDir;
@@ -8226,6 +8657,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     ImGui::Separator();
                                 }
 
+                                if (ImGui::MenuItem("✏️ Rename...", "F2")) {
+                                    OpenRenameAssetModal(item.meta.id, item.meta.objectName, item.meta.virtualPath);
+                                }
                                 if (ImGui::MenuItem("🔍 View in Reference Viewer")) {
                                     OpenReferenceViewer(item.meta.id);
                                 }
@@ -8519,6 +8953,22 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         TriggerBackgroundRegistrySync(contentRootPath);
                     }
                     ImGui::EndDragDropTarget();
+                }
+
+                // F2 Keyboard shortcut to rename currently selected item in Content Browser
+                if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) && ImGui::IsKeyPressed(ImGuiKey_F2)) {
+                    if (!selectedContentItem.empty()) {
+                        if (selectedContentItem.rfind("DIR:", 0) == 0) {
+                            OpenRenameFolderModal(selectedContentItem.substr(4));
+                        } else {
+                            std::string pathQuery = selectedContentItem;
+                            if (pathQuery.rfind("ASSET:", 0) == 0) pathQuery = pathQuery.substr(6);
+                            const AssetMetadata* m = AssetRegistry::Get().FindByPath(pathQuery);
+                            if (m) {
+                                OpenRenameAssetModal(m->id, m->objectName, m->virtualPath);
+                            }
+                        }
+                    }
                 }
 
                 ImGui::EndChild();
@@ -9125,6 +9575,45 @@ void EngineUI::RenderQualitySettings() {
                     ImGui::Text("%s", m.role);
                 }
                 ImGui::EndTable();
+            }
+        }
+
+        ImGui::Spacing();
+        if (ImGui::CollapsingHeader("Texture Quality", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Active Texture Quality: ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%s", GetTextureQualityName(currentTextureQuality));
+
+            struct TQEntry {
+                TextureQuality quality;
+                const char* name;
+                const char* res;
+            };
+            static const TQEntry tqEntries[] = {
+                { TextureQuality::None,   "None",   "Native Quality" },
+                { TextureQuality::Low,    "Low",    "256 x 256" },
+                { TextureQuality::Medium, "Medium", "512 x 512" },
+                { TextureQuality::High,   "High",   "1024 x 1024" },
+                { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                { TextureQuality::Max,    "Max",    "4096 x 4096" }
+            };
+
+            for (const auto& entry : tqEntries) {
+                bool isSelected = (currentTextureQuality == entry.quality);
+                char radioLabel[128];
+                snprintf(radioLabel, sizeof(radioLabel), "%s (%s)##tq_radio_%d", entry.name, entry.res, (int)entry.quality);
+                if (ImGui::RadioButton(radioLabel, isSelected)) {
+                    ApplyTextureQuality(entry.quality);
+                    SaveEditorConfig();
+                    AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                }
+                if (ImGui::IsItemHovered()) {
+                    if (entry.quality == TextureQuality::None) {
+                        ImGui::SetTooltip("Native Realtime Quality (Unconstrained)\nAll textures render at their full native resolution with no LOD clamp.");
+                    } else {
+                        ImGui::SetTooltip("Max Texture Resolution: %s\nNative resolutions <= %s remain unscaled (full native detail).\nResolutions > %s are clamped via D3D12 Sampler Feedback / MinLODClamp.", entry.res, entry.res, entry.res);
+                    }
+                }
             }
         }
     }
@@ -9958,18 +10447,17 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene, OrbitCamera* cameraPtr) {
 }
 
 // ============================================================================
-// Behaviour Script Watcher & Compilation (User Request: ask compile or later)
+// Behaviour Script Watcher & Compilation (Auto-compile on focus & Centered Overlay)
 // ============================================================================
 
-void EngineUI::CheckForScriptChanges() {
-    if (showScriptCompileModal || isCompilingScripts) return;
+void EngineUI::CheckForScriptChanges(Scene* scene) {
+    if (isCompilingScripts) return;
 
     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
     std::filesystem::path contentDir = projectBase / "Content";
     std::error_code ec;
     if (!std::filesystem::exists(contentDir, ec)) return;
 
-    std::vector<std::string> detectedChanges;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentDir, std::filesystem::directory_options::skip_permission_denied, ec)) {
         if (entry.is_regular_file(ec) && entry.path().extension() == ".cpp") {
             std::string pStr = entry.path().string();
@@ -9990,17 +10478,33 @@ void EngineUI::CheckForScriptChanges() {
             } else {
                 // If timestamp is newer, file was modified externally
                 if (currentLwt > it->second) {
-                    detectedChanges.push_back(pStr);
-                    // Update timestamp to current so we only notify once per file edit
+                    if (std::find(pendingChangedScripts.begin(), pendingChangedScripts.end(), pStr) == pendingChangedScripts.end()) {
+                        pendingChangedScripts.push_back(pStr);
+                    }
+                    // Update timestamp to current so we only queue once per file edit
                     scriptFileTimestamps[pStr] = currentLwt;
                 }
             }
         }
     }
 
-    if (!detectedChanges.empty()) {
-        pendingChangedScripts = detectedChanges;
-        showScriptCompileModal = true;
+    // Only auto-compile when the editor window is focused (main window)
+    bool isEditorFocused = false;
+    if (m_window) {
+        isEditorFocused = (glfwGetWindowAttrib(m_window, GLFW_FOCUSED) == GLFW_TRUE);
+    }
+#ifdef _WIN32
+    if (m_window) {
+        HWND editorHwnd = glfwGetWin32Window(m_window);
+        HWND fgHwnd = GetForegroundWindow();
+        if (editorHwnd && fgHwnd != editorHwnd) {
+            isEditorFocused = false;
+        }
+    }
+#endif
+
+    if (!pendingChangedScripts.empty() && isEditorFocused) {
+        TriggerCompileScripts(scene);
     }
 }
 
@@ -10084,66 +10588,56 @@ void EngineUI::TriggerCompileScripts(Scene* scene) {
 }
 
 void EngineUI::RenderScriptCompileModal(Scene& scene) {
-    if (!showScriptCompileModal) return;
+    if (!isCompilingScripts) return;
 
-    ImGui::OpenPopup("Script Changes Detected##CompilePrompt");
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImDrawList* fgDraw = ImGui::GetForegroundDrawList();
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    if (displaySize.x <= 0.0f || displaySize.y <= 0.0f) return;
 
-    if (ImGui::BeginPopupModal("Script Changes Detected##CompilePrompt", &showScriptCompileModal, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(0.2f, 0.75f, 1.0f, 1.0f), "⚡ Behaviour Script Changes Detected");
-        ImGui::Separator();
-        ImGui::Spacing();
+    ImVec2 center(displaySize.x * 0.5f, displaySize.y * 0.5f);
 
-        ImGui::TextWrapped("The following behaviour script(s) have been modified externally:");
-        ImGui::Spacing();
+    // Dimmed translucent backdrop
+    fgDraw->AddRectFilled(ImVec2(0, 0), displaySize, IM_COL32(12, 14, 18, 175));
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
-        float childHeight = std::min(140.0f, std::max(40.0f, (float)pendingChangedScripts.size() * 26.0f + 12.0f));
-        ImGui::BeginChild("##ChangedScriptsList", ImVec2(420.0f, childHeight), true);
-        for (const auto& scriptPath : pendingChangedScripts) {
-            std::string filename = std::filesystem::path(scriptPath).filename().string();
-            ImGui::BulletText("%s", filename.c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", scriptPath.c_str());
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
+    // Centered modal card
+    float cardWidth = 420.0f;
+    float cardHeight = 135.0f;
+    ImVec2 cardMin(center.x - cardWidth * 0.5f, center.y - cardHeight * 0.5f);
+    ImVec2 cardMax(center.x + cardWidth * 0.5f, center.y + cardHeight * 0.5f);
 
-        ImGui::Spacing();
-        ImGui::TextWrapped("Would you like to compile the updated behaviour script(s) now?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    // Glowing pulsating border
+    float time = (float)glfwGetTime();
+    float pulse = 0.65f + 0.35f * sinf(time * 4.0f);
+    ImU32 borderColor = IM_COL32((int)(30 * pulse), (int)(180 * pulse), (int)(255 * pulse), 245);
+    ImU32 cardBg = IM_COL32(20, 22, 28, 250);
 
-        // [ Compile ] button (Primary green)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.60f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.75f, 0.32f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.45f, 0.18f, 1.0f));
-        if (ImGui::Button("⚡ Compile", ImVec2(120, 32))) {
-            showScriptCompileModal = false;
-            ImGui::CloseCurrentPopup();
-            TriggerCompileScripts(&scene);
-        }
-        ImGui::PopStyleColor(3);
+    // Drop shadow & Card body
+    fgDraw->AddRectFilled(ImVec2(cardMin.x - 6, cardMin.y - 6), ImVec2(cardMax.x + 6, cardMax.y + 6), IM_COL32(0, 0, 0, 90), 14.0f);
+    fgDraw->AddRectFilled(cardMin, cardMax, cardBg, 12.0f);
+    fgDraw->AddRect(cardMin, cardMax, borderColor, 12.0f, 0, 2.0f);
 
-        ImGui::SameLine();
-        ImGui::Spacing();
-        ImGui::SameLine();
-
-        // [ Later ] button (Neutral gray)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.38f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
-        if (ImGui::Button("Later", ImVec2(100, 32))) {
-            showScriptCompileModal = false;
-            pendingChangedScripts.clear();
-            ImGui::CloseCurrentPopup();
-            AddLog("LogScript", "Behaviour script compilation deferred. You can compile anytime via [⚡ Compile] or Build menu.", 0);
-        }
-        ImGui::PopStyleColor(3);
-
-        ImGui::EndPopup();
+    // Animated Spinner Arc
+    float spinnerRadius = 18.0f;
+    ImVec2 spinnerCenter(center.x, center.y - 18.0f);
+    int numSegments = 32;
+    for (int i = 0; i < numSegments; ++i) {
+        float aMin = ((float)i / (float)numSegments) * 6.2831853f + time * 5.5f;
+        float aMax = (((float)i + 0.75f) / (float)numSegments) * 6.2831853f + time * 5.5f;
+        float alpha = (float)i / (float)numSegments;
+        ImU32 spinColor = IM_COL32(20, (int)(180 + 75 * alpha), 255, (int)(alpha * 255));
+        fgDraw->PathArcTo(spinnerCenter, spinnerRadius, aMin, aMax, 4);
+        fgDraw->PathStroke(spinColor, 0, 3.5f);
     }
+
+    // Centered Title Text: "Compiling C++ Scripts..."
+    const char* titleText = "Compiling C++ Scripts...";
+    ImVec2 titleSize = ImGui::CalcTextSize(titleText);
+    fgDraw->AddText(ImVec2(center.x - titleSize.x * 0.5f, center.y + 12.0f), IM_COL32(245, 248, 255, 255), titleText);
+
+    // Subtext
+    const char* subText = "Please wait while code compiles...";
+    ImVec2 subSize = ImGui::CalcTextSize(subText);
+    fgDraw->AddText(ImVec2(center.x - subSize.x * 0.5f, center.y + 34.0f), IM_COL32(130, 155, 180, 220), subText);
 }
 
 // ============================================================================
@@ -11319,7 +11813,8 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
                             }
 
-                            if (ImGui::BeginCombo("##UIAssetCombo", preview.c_str())) {
+                            std::string comboId = "##UIAssetCombo_" + std::to_string(obj->id) + "_" + prop.name;
+                            if (ImGui::BeginCombo(comboId.c_str(), preview.c_str())) {
                                 if (ImGui::Selectable("(None)", prop.assetPath.empty())) {
                                     UndoManager::Get().RecordSnapshot(scene, "Clear UI Reference: " + prop.name);
                                     prop.assetPath = "";
@@ -11336,7 +11831,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                         if (it->is_regular_file() && it->path().extension() == ".eui") {
                                             std::string uiPath = it->path().string();
                                             std::string uiStem = it->path().stem().string();
-                                            bool isSel = (prop.assetPath == uiPath);
+                                            bool isSel = (!prop.assetPath.empty() && (prop.assetPath == uiPath || std::filesystem::path(prop.assetPath).filename() == it->path().filename()));
                                             if (ImGui::Selectable(uiStem.c_str(), isSel)) {
                                                 UndoManager::Get().RecordSnapshot(scene, "Assign UI: " + prop.name);
                                                 prop.assetPath = uiPath;

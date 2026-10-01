@@ -32,10 +32,26 @@ if exist "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" (
     if !ERRORLEVEL! equ 0 set "CSC_CMD=csc"
 )
 
+:: Always ensure clean fresh build by deleting previous intermediates and binaries
+if exist "%PROJECT_DIR%\Build\Intermediates" (
+    rmdir /s /q "%PROJECT_DIR%\Build\Intermediates" >nul 2>&1
+)
+if exist "%PROJECT_DIR%\Build\Engine\Eunoia-Editor.exe" (
+    del /f /q "%PROJECT_DIR%\Build\Engine\Eunoia-Editor.exe" >nul 2>&1
+)
+
 :: Compile .NET build tool if binary is missing or source is newer
 set "NEED_COMPILE=0"
 if not exist "%BUILD_TOOL_EXE%" (
     if not exist "%BUILD_TOOL_DLL%" set "NEED_COMPILE=1"
+)
+if exist "%BUILD_TOOL_EXE%" (
+    for /f %%A in ('powershell -NoProfile -Command "(Get-Item '%BUILD_TOOL_SRC%').LastWriteTime -gt (Get-Item '%BUILD_TOOL_EXE%').LastWriteTime"') do (
+        if "%%A"=="True" (
+            del /f /q "%BUILD_TOOL_EXE%" >nul 2>&1
+            set "NEED_COMPILE=1"
+        )
+    )
 )
 
 if "!NEED_COMPILE!"=="1" (

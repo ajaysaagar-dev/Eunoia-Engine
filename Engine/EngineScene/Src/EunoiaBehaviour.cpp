@@ -809,6 +809,39 @@ void DynamicScriptBehaviour::Start() {
     } else if (m_startLockCursor) {
         CursorState.Locked();
     }
+    if (m_startUIRemoveAll) {
+        EunoiaUI::UISystemManager::Get().RemoveAll();
+    }
+    for (const auto& uiVar : m_startUIAddTargets) {
+        UserInterface* uiPtr = nullptr;
+        for (auto& p : m_properties) {
+            if (p.name == uiVar && p.refType == ObjectRefType::UserInterface) {
+                if (!p.assetPath.empty()) {
+                    uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(p.assetPath);
+                    if (p.dataPtr) *reinterpret_cast<UserInterface**>(p.dataPtr) = uiPtr;
+                } else if (p.dataPtr) {
+                    uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                }
+                break;
+            }
+        }
+        if (uiPtr) {
+            EunoiaUI::UISystemManager::Get().Add(uiPtr);
+            AddEngineLog("LogUI", "Added UserInterface to viewport: " + uiPtr->name, 2);
+        }
+    }
+    for (const auto& uiVar : m_startUIRemoveTargets) {
+        UserInterface* uiPtr = nullptr;
+        for (auto& p : m_properties) {
+            if (p.name == uiVar && p.refType == ObjectRefType::UserInterface && p.dataPtr) {
+                uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                break;
+            }
+        }
+        if (uiPtr) {
+            EunoiaUI::UISystemManager::Get().Remove(uiPtr);
+        }
+    }
 }
 
 void DynamicScriptBehaviour::Update(float deltaTime) {
@@ -1629,6 +1662,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             const SavedValue* sv = findSaved(propName, refVar);
             void* actualPtr = (sv && sv->hasValue) ? sv->refPtr : nullptr;
             int actualTargetId = (sv && sv->hasValue) ? sv->targetId : -1;
+            std::string actualAssetPath = (sv && sv->hasValue) ? sv->assetPath : "";
 
             m_refStorage[propName] = actualPtr;
             if (!refVar.empty()) m_refStorage[refVar] = actualPtr;
@@ -1636,6 +1670,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             RegisterReference(propName, &m_refStorage[propName], refType, category);
             if (!m_properties.empty()) {
                 m_properties.back().targetId = actualTargetId;
+                m_properties.back().assetPath = actualAssetPath;
             }
         }
     }
@@ -1782,6 +1817,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
 
     // 3. Third pass: scan Start() and Update() bodies for runtime actions
     m_startPrintMessages.clear();
+    m_startUIAddTargets.clear();
+    m_startUIRemoveTargets.clear();
+    m_startUIRemoveAll = false;
     m_updatePrintMessages.clear();
     m_transformActions.clear();
     m_hasRotation = false;
@@ -2026,6 +2064,45 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             } else if (lLower.find("cursorstate.locked") != std::string::npos || lLower.find("cursorstate.lock") != std::string::npos) {
                 m_startLockCursor = true;
             }
+
+            if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos) {
+                m_startUIRemoveAll = true;
+            }
+
+            size_t addUIPos = l.find("UISystem.Add(");
+            if (addUIPos == std::string::npos) addUIPos = l.find("UISystem::Add(");
+            if (addUIPos == std::string::npos) addUIPos = l.find("AddUI(");
+            if (addUIPos != std::string::npos) {
+                size_t p1 = l.find('(', addUIPos);
+                size_t p2 = l.find(')', p1);
+                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
+                    size_t vn1 = varName.find_first_not_of(" \t&");
+                    size_t vn2 = varName.find_last_not_of(" \t&");
+                    if (vn1 != std::string::npos && vn2 != std::string::npos) {
+                        varName = varName.substr(vn1, vn2 - vn1 + 1);
+                        m_startUIAddTargets.push_back(varName);
+                    }
+                }
+            }
+
+            size_t remUIPos = l.find("UISystem.Remove(");
+            if (remUIPos == std::string::npos) remUIPos = l.find("UISystem::Remove(");
+            if (remUIPos == std::string::npos) remUIPos = l.find("RemoveUI(");
+            if (remUIPos != std::string::npos) {
+                size_t p1 = l.find('(', remUIPos);
+                size_t p2 = l.find(')', p1);
+                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
+                    size_t vn1 = varName.find_first_not_of(" \t&");
+                    size_t vn2 = varName.find_last_not_of(" \t&");
+                    if (vn1 != std::string::npos && vn2 != std::string::npos) {
+                        varName = varName.substr(vn1, vn2 - vn1 + 1);
+                        m_startUIRemoveTargets.push_back(varName);
+                    }
+                }
+            }
+
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
                 size_t q1 = l.find('"', prPos);
