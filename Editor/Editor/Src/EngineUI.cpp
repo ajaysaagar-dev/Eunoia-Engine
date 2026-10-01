@@ -7774,8 +7774,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 << "// ============================================================================\n"
                                 << "class " << behName << " : public EunoiaBehaviour {\n"
                                 << "public:\n"
-                                << "    // Public variables are automatically registered as editable properties\n"
-                                << "    float Speed = 5.0f;\n\n"
+                                << "    // Public variables are automatically registered as editable properties\n\n"
                                 << "    // ------------------------------------------------------------------------\n"
                                 << "    // Lifecycle Methods\n"
                                 << "    // ------------------------------------------------------------------------\n"
@@ -10460,16 +10459,32 @@ void EngineUI::CheckForScriptChanges() {
             } else {
                 // If timestamp is newer, file was modified externally
                 if (currentLwt > it->second) {
-                    detectedChanges.push_back(pStr);
-                    // Update timestamp to current so we only notify once per file edit
+                    if (std::find(pendingChangedScripts.begin(), pendingChangedScripts.end(), pStr) == pendingChangedScripts.end()) {
+                        pendingChangedScripts.push_back(pStr);
+                    }
+                    // Update timestamp to current so we only queue once per file edit
                     scriptFileTimestamps[pStr] = currentLwt;
                 }
             }
         }
     }
 
-    if (!detectedChanges.empty()) {
-        pendingChangedScripts = detectedChanges;
+    // Only prompt compilation when the editor window is focused (main window)
+    bool isEditorFocused = false;
+    if (m_window) {
+        isEditorFocused = (glfwGetWindowAttrib(m_window, GLFW_FOCUSED) == GLFW_TRUE);
+    }
+#ifdef _WIN32
+    if (m_window) {
+        HWND editorHwnd = glfwGetWin32Window(m_window);
+        HWND fgHwnd = GetForegroundWindow();
+        if (editorHwnd && fgHwnd != editorHwnd) {
+            isEditorFocused = false;
+        }
+    }
+#endif
+
+    if (!pendingChangedScripts.empty() && isEditorFocused) {
         showScriptCompileModal = true;
     }
 }
