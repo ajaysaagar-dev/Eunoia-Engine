@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 
 namespace EunoiaBuildTool
 {
@@ -14,33 +16,31 @@ namespace EunoiaBuildTool
         private static string s_buildRoot = "";
         private static string s_outputDir = "";
         private static string s_intermediatesDir = "";
+        private static string s_objDir = "";
         private static string s_projectsRoot = "";
         private static string s_customProjectPath = "";
-        private static bool s_editorOnly = false;
-        private static bool s_gameOnly = false;
+        private static bool s_buildGame = false;
         private static bool s_clean = false;
         private static bool s_verbose = false;
 
         private static string s_compilerExe = "";
+        private static string s_gccExe = "";
+        private static string s_ccacheExe = "";
         private static string s_windresExe = "";
         private static string s_cmakeExe = "";
         private static string s_ninjaExe = "";
         private static string s_resObj = "";
 
+        private static int s_maxConcurrency = Environment.ProcessorCount;
         private static List<string> s_projectScripts = new List<string>();
         private static Stopwatch s_totalTimer = new Stopwatch();
 
         static int Main(string[] args)
         {
-            try
-            {
-                Console.OutputEncoding = Encoding.UTF8;
-            }
-            catch { }
-
+            try { Console.OutputEncoding = Encoding.UTF8; } catch { }
             s_totalTimer.Start();
 
-            // Locate project root
+            // Locate engine root
             string currentDir = AppDomain.CurrentDomain.BaseDirectory;
             s_projectDir = FindEngineRoot(currentDir);
             if (string.IsNullOrEmpty(s_projectDir))
@@ -58,6 +58,7 @@ namespace EunoiaBuildTool
             s_buildRoot = Path.Combine(s_projectDir, "Build");
             s_outputDir = Path.Combine(s_buildRoot, "Engine");
             s_intermediatesDir = Path.Combine(s_buildRoot, "Intermediates");
+            s_objDir = Path.Combine(s_intermediatesDir, "Obj");
 
             string parentProjects = Path.GetFullPath(Path.Combine(s_projectDir, "..", "Projects"));
             if (Directory.Exists(parentProjects))
@@ -79,36 +80,33 @@ namespace EunoiaBuildTool
 
             EnsureDirectories();
 
-            // Phase 1: Environment & Toolchains
-            PrintSection(1, 5, "TOOLCHAIN DETECTION", ConsoleColor.Cyan);
+            // Phase 1: Environment & Multi-core Toolchain Detection
+            PrintSection(1, 4, "TOOLCHAIN & PARALLEL ENVIRONMENT", ConsoleColor.Cyan);
             if (!DetectToolchains())
             {
                 PrintError("Toolchain detection failed. Cannot proceed with build.");
                 return 1;
             }
 
-            // Phase 2: Asset & Script Discovery
-            PrintSection(2, 5, "DISCOVERY & SCRIPT SCANNING", ConsoleColor.Cyan);
+            // Phase 2: Script Scanning
+            PrintSection(2, 4, "DISCOVERY & SCRIPT SCANNING", ConsoleColor.Cyan);
             ScanProjectScripts();
 
             // Phase 3: Application Resources
-            PrintSection(3, 5, "RESOURCE COMPILATION", ConsoleColor.Cyan);
+            PrintSection(3, 4, "RESOURCE COMPILATION", ConsoleColor.Cyan);
             CompileResources();
 
-            // Phase 4: Eunoia-Editor (DX12 + ImGui)
-            if (!s_gameOnly)
+            // Phase 4: Multi-Threaded Incremental Engine Compilation & Packaging
+            PrintSection(4, 4, "PARALLEL INCREMENTAL ENGINE BUILD (DX12)", ConsoleColor.Cyan);
+            if (!BuildEditorParallel())
             {
-                PrintSection(4, 5, "BUILDING EUNOIA-EDITOR (DX12)", ConsoleColor.Cyan);
-                if (!BuildEditor())
-                {
-                    PrintError("Engine Editor build failed.");
-                    return 1;
-                }
-                PackageEngine();
+                PrintError("Engine Editor build failed.");
+                return 1;
             }
+            PackageEngine();
 
-            // Phase 5: Standalone Game Runtime
-            if (!s_editorOnly)
+            // Standalone Game Runtime only if explicitly requested
+            if (s_buildGame)
             {
                 PrintSection(5, 5, "BUILDING GAME RUNTIME", ConsoleColor.Cyan);
                 if (!BuildGameRuntime())
@@ -127,13 +125,10 @@ namespace EunoiaBuildTool
             for (int i = 0; i < args.Length; i++)
             {
                 string arg = args[i].Trim();
-                if (arg.Equals("--editor-only", StringComparison.OrdinalIgnoreCase) || arg.Equals("-e", StringComparison.OrdinalIgnoreCase))
+                if (arg.Equals("--game", StringComparison.OrdinalIgnoreCase) || arg.Equals("-g", StringComparison.OrdinalIgnoreCase) ||
+                    arg.Equals("--game-only", StringComparison.OrdinalIgnoreCase))
                 {
-                    s_editorOnly = true;
-                }
-                else if (arg.Equals("--game-only", StringComparison.OrdinalIgnoreCase) || arg.Equals("-g", StringComparison.OrdinalIgnoreCase))
-                {
-                    s_gameOnly = true;
+                    s_buildGame = true;
                 }
                 else if (arg.Equals("--clean", StringComparison.OrdinalIgnoreCase) || arg.Equals("-c", StringComparison.OrdinalIgnoreCase))
                 {
@@ -145,9 +140,18 @@ namespace EunoiaBuildTool
                 }
                 else if (arg.Equals("--project", StringComparison.OrdinalIgnoreCase) || arg.Equals("-p", StringComparison.OrdinalIgnoreCase))
                 {
+                    s_buildGame = true;
                     if (i + 1 < args.Length)
                     {
                         s_customProjectPath = args[++i];
+                    }
+                }
+                else if (arg.Equals("-j", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    int threads;
+                    if (int.TryParse(args[++i], out threads) && threads > 0)
+                    {
+                        s_maxConcurrency = threads;
                     }
                 }
                 else if (arg.Equals("--help", StringComparison.OrdinalIgnoreCase) || arg.Equals("-h", StringComparison.OrdinalIgnoreCase) || arg.Equals("/?"))
@@ -155,9 +159,10 @@ namespace EunoiaBuildTool
                     PrintHelp();
                     Environment.Exit(0);
                 }
-                else if (!arg.StartsWith("-") && string.IsNullOrEmpty(s_customProjectPath) && Directory.Exists(arg))
+                else if (!arg.StartsWith("-") && Directory.Exists(arg))
                 {
                     s_customProjectPath = arg;
+                    s_buildGame = true;
                 }
             }
         }
@@ -165,14 +170,14 @@ namespace EunoiaBuildTool
         private static void PrintHelp()
         {
             Console.WriteLine(@"
-Eunoia Engine Build System (.NET)
+Eunoia Engine Multi-Threaded Build System (.NET)
 Usage: Build.bat [options] [ProjectPath]
 
 Options:
-  -e, --editor-only       Build only the Eunoia Editor executable and package engine
-  -g, --game-only         Build only the Standalone Game Runtime
-  -p, --project <path>    Specify game project directory (defaults to Projects\test)
-  -c, --clean             Clean all build intermediates and outputs
+  -g, --game              Build the Standalone Game Runtime in addition to the engine
+  -p, --project <path>    Specify game project directory (builds game runtime for project)
+  -j <threads>            Set maximum parallel compilation worker threads (default: CPU cores)
+  -c, --clean             Clean all object files, build intermediates, and outputs
   -v, --verbose           Enable verbose compilation logs
   -h, --help              Show this help message
 ");
@@ -206,12 +211,12 @@ Options:
           | |____| |_| | |\  | |__| || / ____ \| |____| |\  | |__| |_| |_| |\  | |____ 
           |______|\___/|_| \_|\____/_____/_/  \_\______|_| \_|\_____|_____|_| \_|______|
 ================================================================================
-                                .NET BUILD SYSTEM
+                  MULTI-THREADED INCREMENTAL BUILD SYSTEM (.NET)
 ");
             Console.ResetColor();
             PrintInfo(string.Format("Engine Root:    {0}", s_projectDir));
             PrintInfo(string.Format("Build Output:   {0}", s_outputDir));
-            PrintInfo(string.Format("Projects Root:  {0}", s_projectsRoot));
+            PrintInfo(string.Format("Parallel Cores: {0} CPU Threads", s_maxConcurrency));
             Console.WriteLine();
         }
 
@@ -244,6 +249,7 @@ Options:
                 s_buildRoot,
                 s_outputDir,
                 s_intermediatesDir,
+                s_objDir,
                 Path.Combine(s_buildRoot, "Tests"),
                 Path.Combine(s_buildRoot, "Runtime"),
                 s_projectsRoot
@@ -260,60 +266,57 @@ Options:
 
         private static bool DetectToolchains()
         {
-            // Compiler (g++ / cl)
+            // Compiler (g++ / gcc)
             string localGpp = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "g++.exe");
+            string localGcc = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "gcc.exe");
             if (File.Exists(localGpp))
             {
                 s_compilerExe = localGpp;
+                s_gccExe = File.Exists(localGcc) ? localGcc : localGpp;
             }
             else
             {
                 s_compilerExe = FindInPath("g++.exe");
-                if (string.IsNullOrEmpty(s_compilerExe))
-                {
-                    s_compilerExe = FindInPath("cl.exe");
-                }
+                s_gccExe = FindInPath("gcc.exe") ?? s_compilerExe;
             }
 
             if (string.IsNullOrEmpty(s_compilerExe))
             {
-                PrintError("C++ Compiler not found! Ensure w64devkit or g++/cl is installed.");
+                PrintError("C++ Compiler (g++) not found! Ensure w64devkit or g++ is available.");
                 return false;
             }
 
             PrintSuccess(string.Format("Compiler:       {0}", s_compilerExe));
 
-            // Windres (Resource compiler)
-            string localWindres = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "windres.exe");
-            if (File.Exists(localWindres))
+            // CCache (Compiler Cache Acceleration)
+            string localCcache = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "ccache.exe");
+            if (File.Exists(localCcache))
             {
-                s_windresExe = localWindres;
+                s_ccacheExe = localCcache;
+                PrintSuccess(string.Format("CCache:         {0} (Acceleration Active)", s_ccacheExe));
             }
             else
             {
-                s_windresExe = FindInPath("windres.exe");
+                s_ccacheExe = FindInPath("ccache.exe");
+                if (!string.IsNullOrEmpty(s_ccacheExe))
+                {
+                    PrintSuccess(string.Format("CCache:         {0} (Acceleration Active)", s_ccacheExe));
+                }
             }
 
+            // Windres (Resource compiler)
+            string localWindres = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "windres.exe");
+            s_windresExe = File.Exists(localWindres) ? localWindres : FindInPath("windres.exe");
             if (!string.IsNullOrEmpty(s_windresExe))
             {
                 PrintSuccess(string.Format("Resource Comp:  {0}", s_windresExe));
             }
 
-            // CMake
+            // CMake & Ninja
             string localCmake = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "cmake.exe");
             s_cmakeExe = File.Exists(localCmake) ? localCmake : FindInPath("cmake.exe");
-            if (!string.IsNullOrEmpty(s_cmakeExe))
-            {
-                PrintSuccess(string.Format("CMake:          {0}", s_cmakeExe));
-            }
-
-            // Ninja
             string localNinja = Path.Combine(s_projectDir, "tools", "w64devkit", "bin", "ninja.exe");
             s_ninjaExe = File.Exists(localNinja) ? localNinja : FindInPath("ninja.exe");
-            if (!string.IsNullOrEmpty(s_ninjaExe))
-            {
-                PrintSuccess(string.Format("Ninja:          {0}", s_ninjaExe));
-            }
 
             return true;
         }
@@ -373,9 +376,15 @@ Options:
             }
 
             string outObj = Path.Combine(s_intermediatesDir, "Eunoia.res.o");
-            string args = string.Format("-I\"{0}\" -i \"{1}\" -O coff -o \"{2}\"", s_projectDir, rcFile, outObj);
+            if (File.Exists(outObj) && File.GetLastWriteTimeUtc(outObj) >= File.GetLastWriteTimeUtc(rcFile))
+            {
+                s_resObj = outObj;
+                PrintSuccess(string.Format("Resource object up to date: {0}", Path.GetFileName(outObj)));
+                return;
+            }
 
-            bool success = RunProcessWithProgress("Compiling application icons & metadata...", s_windresExe, args);
+            string args = string.Format("-I\"{0}\" -i \"{1}\" -O coff -o \"{2}\"", s_projectDir, rcFile, outObj);
+            bool success = RunProcessDirect(s_windresExe, args);
             if (success && File.Exists(outObj))
             {
                 s_resObj = outObj;
@@ -383,11 +392,11 @@ Options:
             }
             else
             {
-                PrintWarning("Resource compilation produced warnings or failed. Proceeding without resource object.");
+                PrintWarning("Resource compilation produced warnings. Proceeding without resource object.");
             }
         }
 
-        private static bool BuildEditor()
+        private static bool BuildEditorParallel()
         {
             KillProcess("Eunoia-Editor.exe");
 
@@ -421,7 +430,7 @@ Options:
                 s_projectDir
             };
 
-            List<string> sources = new List<string>
+            List<string> sourceFiles = new List<string>
             {
                 Path.Combine(s_projectDir, "deps", "ufbx", "ufbx.c"),
                 Path.Combine(s_projectDir, "Plugins", "Mesh-Cluster-Culling", "Source", "MeshClusterBuilder.cpp"),
@@ -465,39 +474,261 @@ Options:
                 Path.Combine(s_projectDir, "deps", "imgui", "ImGuizmo.cpp")
             };
 
-            // Add user behaviour scripts
-            sources.AddRange(s_projectScripts);
+            sourceFiles.AddRange(s_projectScripts);
 
-            StringBuilder sb = new StringBuilder();
-            sb.Append("-std=c++20 -O2 ");
+            // Generate include string
+            StringBuilder incSb = new StringBuilder();
             foreach (var inc in includes)
             {
-                sb.Append(string.Format("-I\"{0}\" ", inc));
+                incSb.Append(string.Format("-I\"{0}\" ", inc));
             }
-            foreach (var src in sources)
+            string incFlags = incSb.ToString();
+
+            // Prepare list of compilation units
+            List<CompileUnit> units = new List<CompileUnit>();
+            foreach (var src in sourceFiles)
             {
-                sb.Append(string.Format("\"{0}\" ", src));
+                string rel = GetRelativeOrHashedPath(src, s_projectDir);
+                string objName = rel.Replace('\\', '_').Replace('/', '_').Replace(':', '_') + ".o";
+                string objPath = Path.Combine(s_objDir, objName);
+
+                bool isC = src.EndsWith(".c", StringComparison.OrdinalIgnoreCase);
+                units.Add(new CompileUnit
+                {
+                    SourcePath = src,
+                    ObjectPath = objPath,
+                    IsC = isC
+                });
+            }
+
+            // Identify units that need compilation
+            int upToDateCount = 0;
+            List<CompileUnit> toCompile = new List<CompileUnit>();
+            foreach (var unit in units)
+            {
+                if (File.Exists(unit.ObjectPath) &&
+                    File.GetLastWriteTimeUtc(unit.ObjectPath) >= File.GetLastWriteTimeUtc(unit.SourcePath))
+                {
+                    upToDateCount++;
+                }
+                else
+                {
+                    toCompile.Add(unit);
+                }
+            }
+
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.White;
+            Console.Write("  [STAGE] ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(string.Format("Compiling {0} translation units in parallel ({1} up to date, {2} to build on {3} threads)...",
+                units.Count, upToDateCount, toCompile.Count, s_maxConcurrency));
+            Console.ResetColor();
+
+            Stopwatch parallelTimer = Stopwatch.StartNew();
+            ConcurrentBag<string> errors = new ConcurrentBag<string>();
+            ConcurrentBag<string> warnings = new ConcurrentBag<string>();
+
+            int completed = upToDateCount;
+            int total = units.Count;
+            int activeWorkers = 0;
+
+            bool compileFailed = false;
+
+            if (toCompile.Count > 0)
+            {
+                using (CancellationTokenSource cts = new CancellationTokenSource())
+                {
+                    // Dynamic live progress bar thread
+                    bool progressDone = false;
+                    char[] spinner = new char[] { '|', '/', '-', '\\' };
+                    int spinIdx = 0;
+
+                    Thread progressThread = new Thread(() =>
+                    {
+                        while (!progressDone)
+                        {
+                            int cur = Volatile.Read(ref completed);
+                            int act = Volatile.Read(ref activeWorkers);
+                            double el = parallelTimer.Elapsed.TotalSeconds;
+                            int percent = total > 0 ? (cur * 100) / total : 100;
+                            string bar = GenerateProgressBar(percent, 24);
+
+                            try
+                            {
+                                Console.CursorLeft = 0;
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
+                                Console.Write("    [");
+                                Console.ForegroundColor = ConsoleColor.Green;
+                                Console.Write(spinner[spinIdx % spinner.Length]);
+                                Console.ForegroundColor = ConsoleColor.DarkGray;
+                                Console.Write("] ");
+                                Console.ForegroundColor = ConsoleColor.Yellow;
+                                Console.Write(bar);
+                                Console.ForegroundColor = ConsoleColor.White;
+                                Console.Write(string.Format(" {0}/{1} ({2} active) {3:F1}s   ", cur, total, act, el));
+                                Console.ResetColor();
+                            }
+                            catch { }
+
+                            spinIdx++;
+                            Thread.Sleep(80);
+                        }
+                    });
+
+                    progressThread.Start();
+
+                    // Parallel compile loop
+                    ParallelOptions pOpts = new ParallelOptions
+                    {
+                        MaxDegreeOfParallelism = s_maxConcurrency,
+                        CancellationToken = cts.Token
+                    };
+
+                    try
+                    {
+                        Parallel.ForEach(toCompile, pOpts, (unit, loopState) =>
+                        {
+                            if (compileFailed)
+                            {
+                                loopState.Stop();
+                                return;
+                            }
+
+                            Interlocked.Increment(ref activeWorkers);
+
+                            string compiler = unit.IsC ? s_gccExe : s_compilerExe;
+                            string langFlag = unit.IsC ? "-O2" : "-std=c++20 -O2";
+
+                            string args = string.Format("{0} {1} -c \"{2}\" -o \"{3}\"",
+                                langFlag, incFlags, unit.SourcePath, unit.ObjectPath);
+
+                            string execPath = compiler;
+                            if (!string.IsNullOrEmpty(s_ccacheExe))
+                            {
+                                execPath = s_ccacheExe;
+                                args = string.Format("\"{0}\" {1}", compiler, args);
+                            }
+
+                            string unitErr = "";
+                            string unitWarn = "";
+                            bool success = RunProcessCapture(execPath, args, s_projectDir, out unitErr, out unitWarn);
+
+                            if (!string.IsNullOrWhiteSpace(unitWarn))
+                            {
+                                warnings.Add(string.Format("{0}: {1}", Path.GetFileName(unit.SourcePath), unitWarn));
+                            }
+
+                            if (!success || !File.Exists(unit.ObjectPath))
+                            {
+                                compileFailed = true;
+                                errors.Add(string.Format("{0}: {1}", Path.GetFileName(unit.SourcePath), unitErr));
+                                loopState.Stop();
+                            }
+
+                            Interlocked.Decrement(ref activeWorkers);
+                            Interlocked.Increment(ref completed);
+                        });
+                    }
+                    catch (Exception ex)
+                    {
+                        if (!compileFailed) errors.Add(ex.Message);
+                    }
+
+                    progressDone = true;
+                    progressThread.Join();
+                }
+            }
+
+            parallelTimer.Stop();
+
+            // Clear progress line
+            try
+            {
+                Console.CursorLeft = 0;
+                string fullBar = GenerateProgressBar(compileFailed ? (completed * 100) / total : 100, 24);
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write("    [");
+                Console.ForegroundColor = compileFailed ? ConsoleColor.Red : ConsoleColor.Green;
+                Console.Write(compileFailed ? "XX" : "OK");
+                Console.ForegroundColor = ConsoleColor.DarkGray;
+                Console.Write("] ");
+                Console.ForegroundColor = compileFailed ? ConsoleColor.Red : ConsoleColor.Green;
+                Console.Write(fullBar);
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine(string.Format(" {0}/{1} objects compiled in {2:F2}s  ", completed, total, parallelTimer.Elapsed.TotalSeconds));
+                Console.ResetColor();
+            }
+            catch { }
+
+            if (warnings.Count > 0 && !s_verbose)
+            {
+                PrintWarning(string.Format("{0} compilation warnings encountered.", warnings.Count));
+            }
+
+            if (errors.Count > 0 || compileFailed)
+            {
+                PrintError(string.Format("{0} compilation error(s) encountered:", errors.Count));
+                foreach (var err in errors)
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine(string.Format("      [ERROR] {0}", err));
+                    Console.ResetColor();
+                }
+                return false;
+            }
+
+            // Link step
+            PrintSection(0, 0, "LINKING EUNOIA-EDITOR", ConsoleColor.Green);
+            Stopwatch linkTimer = Stopwatch.StartNew();
+
+            StringBuilder linkArgs = new StringBuilder();
+            foreach (var unit in units)
+            {
+                linkArgs.Append(string.Format("\"{0}\" ", unit.ObjectPath));
+            }
+
+            if (!string.IsNullOrEmpty(s_resObj) && File.Exists(s_resObj))
+            {
+                linkArgs.Append(string.Format("\"{0}\" ", s_resObj));
             }
 
             string libDir = Path.Combine(s_projectDir, "deps", "glfw-3.5.1.bin.WIN64", "lib-mingw-w64");
-            sb.Append(string.Format("-L\"{0}\" ", libDir));
-            sb.Append("-lglfw3 -ld3d12 -ldxgi -ld3dcompiler -lgdi32 -limm32 -lcomdlg32 -lshell32 -lole32 -lopengl32 -ldwmapi ");
+            linkArgs.Append(string.Format("-L\"{0}\" ", libDir));
+            linkArgs.Append("-lglfw3 -ld3d12 -ldxgi -ld3dcompiler -lgdi32 -limm32 -lcomdlg32 -lshell32 -lole32 -lopengl32 -ldwmapi ");
+            linkArgs.Append(string.Format("-o \"{0}\"", editorExe));
 
-            if (!string.IsNullOrEmpty(s_resObj))
-            {
-                sb.Append(string.Format("\"{0}\" ", s_resObj));
-            }
+            bool linkSuccess = RunProcessDirect(s_compilerExe, linkArgs.ToString());
+            linkTimer.Stop();
 
-            sb.Append(string.Format("-o \"{0}\"", editorExe));
-
-            bool success = RunProcessWithProgress("Compiling Eunoia-Editor (DirectX 12 + ImGui)...", s_compilerExe, sb.ToString());
-            if (success && File.Exists(editorExe))
+            if (linkSuccess && File.Exists(editorExe))
             {
                 FileInfo fi = new FileInfo(editorExe);
-                PrintSuccess(string.Format("Eunoia-Editor.exe built successfully! ({0:F2} MB)", fi.Length / (1024.0 * 1024.0)));
+                PrintSuccess(string.Format("Eunoia-Editor.exe linked successfully in {0:F2}s! ({1:F2} MB)",
+                    linkTimer.Elapsed.TotalSeconds, fi.Length / (1024.0 * 1024.0)));
                 return true;
             }
-            return false;
+            else
+            {
+                PrintError("Linking failed.");
+                return false;
+            }
+        }
+
+        private static string GetRelativeOrHashedPath(string fullPath, string basePath)
+        {
+            try
+            {
+                if (fullPath.StartsWith(basePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    return fullPath.Substring(basePath.Length).TrimStart('\\', '/');
+                }
+                return Path.GetFileName(fullPath) + "_" + fullPath.GetHashCode().ToString("X8");
+            }
+            catch
+            {
+                return Path.GetFileName(fullPath);
+            }
         }
 
         private static void PackageEngine()
@@ -615,14 +846,15 @@ Options:
 
             sb.Append(string.Format("-o \"{0}\"", gameExe));
 
-            bool success = RunProcessWithProgress(string.Format("Compiling Standalone Game Runtime ({0})...", projName), s_compilerExe, sb.ToString());
+            Stopwatch sw = Stopwatch.StartNew();
+            bool success = RunProcessDirect(s_compilerExe, sb.ToString());
+            sw.Stop();
+
             if (success && File.Exists(gameExe))
             {
-                // Copy to project name executable
                 string projExe = Path.Combine(gameBuildDir, string.Format("{0}.exe", projName));
                 try { File.Copy(gameExe, projExe, true); } catch { }
 
-                // Package Game Assets & DLLs
                 CopyFileIfExists(Path.Combine(s_projectDir, "deps", "glfw-3.5.1.bin.WIN64", "lib-mingw-w64", "glfw3.dll"), Path.Combine(gameBuildDir, "glfw3.dll"));
                 CopyFileIfExists(Path.Combine(s_projectDir, "Plugins", "primitives", "primitives.dll"), Path.Combine(gameBuildDir, "primitives.dll"));
 
@@ -635,29 +867,17 @@ Options:
                 if (Directory.Exists(Path.Combine(targetProj, "Materials"))) SyncDirectory(Path.Combine(targetProj, "Materials"), Path.Combine(gameBuildDir, "Materials"));
                 if (Directory.Exists(Path.Combine(targetProj, "Models"))) SyncDirectory(Path.Combine(targetProj, "Models"), Path.Combine(gameBuildDir, "Models"));
 
-                // Write Game Run.bat
                 string gameRunBat = Path.Combine(gameBuildDir, "Run.bat");
                 File.WriteAllText(gameRunBat, string.Format("@echo off\r\ncd /d \"%~dp0\"\r\necho [INFO] Starting {0}...\r\nstart \"\" \"test.exe\"\r\n", projName));
 
-                PrintSuccess(string.Format("Game runtime packaged successfully into: {0}", gameBuildDir));
+                PrintSuccess(string.Format("Game runtime packaged in {0:F2}s into: {1}", sw.Elapsed.TotalSeconds, gameBuildDir));
                 return true;
             }
             return false;
         }
 
-        private static bool RunProcessWithProgress(string taskName, string exePath, string args)
+        private static bool RunProcessDirect(string exePath, string args)
         {
-            Console.WriteLine();
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.Write("  [STAGE] ");
-            Console.ForegroundColor = ConsoleColor.Cyan;
-            Console.WriteLine(taskName);
-            Console.ResetColor();
-
-            Stopwatch sw = Stopwatch.StartNew();
-            List<string> errorLines = new List<string>();
-            List<string> warningLines = new List<string>();
-
             ProcessStartInfo psi = new ProcessStartInfo
             {
                 FileName = exePath,
@@ -669,131 +889,42 @@ Options:
                 CreateNoWindow = true
             };
 
-            bool isDone = false;
-            char[] spinner = new char[] { '|', '/', '-', '\\' };
-            int spinIndex = 0;
-
-            Thread progressThread = new Thread(() =>
+            using (Process p = Process.Start(psi))
             {
-                while (!isDone)
-                {
-                    double elapsed = sw.Elapsed.TotalSeconds;
-                    int percent = Math.Min(95, (int)(elapsed * 3.5)); // Simulated smooth progress
-                    string bar = GenerateProgressBar(percent, 24);
+                p.WaitForExit();
+                return p.ExitCode == 0;
+            }
+        }
 
-                    try
-                    {
-                        Console.CursorLeft = 0;
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write("    [");
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.Write(spinner[spinIndex % spinner.Length]);
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.Write("] ");
-                        Console.ForegroundColor = ConsoleColor.Yellow;
-                        Console.Write(bar);
-                        Console.ForegroundColor = ConsoleColor.White;
-                        Console.Write(string.Format(" {0:F1}s  ", elapsed));
-                        Console.ResetColor();
-                    }
-                    catch { }
+        private static bool RunProcessCapture(string exePath, string args, string workingDir, out string errOutput, out string warnOutput)
+        {
+            StringBuilder outSb = new StringBuilder();
+            StringBuilder errSb = new StringBuilder();
 
-                    spinIndex++;
-                    Thread.Sleep(100);
-                }
-            });
+            ProcessStartInfo psi = new ProcessStartInfo
+            {
+                FileName = exePath,
+                Arguments = args,
+                WorkingDirectory = workingDir,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
 
             using (Process p = new Process { StartInfo = psi })
             {
-                p.OutputDataReceived += (s, e) =>
-                {
-                    if (!string.IsNullOrWhiteSpace(e.Data))
-                    {
-                        string line = e.Data.Trim();
-                        if (line.IndexOf("error:", StringComparison.OrdinalIgnoreCase) >= 0)
-                            errorLines.Add(line);
-                        else if (line.IndexOf("warning:", StringComparison.OrdinalIgnoreCase) >= 0)
-                            warningLines.Add(line);
-
-                        if (s_verbose)
-                        {
-                            Console.WriteLine(string.Format("\r\n    [OUT] {0}", line));
-                        }
-                    }
-                };
-
-                p.ErrorDataReceived += (s, e) =>
-                {
-                    if (!string.IsNullOrWhiteSpace(e.Data))
-                    {
-                        string line = e.Data.Trim();
-                        if (line.IndexOf("error:", StringComparison.OrdinalIgnoreCase) >= 0)
-                            errorLines.Add(line);
-                        else if (line.IndexOf("warning:", StringComparison.OrdinalIgnoreCase) >= 0)
-                            warningLines.Add(line);
-
-                        if (s_verbose)
-                        {
-                            Console.WriteLine(string.Format("\r\n    [ERR] {0}", line));
-                        }
-                    }
-                };
+                p.OutputDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) outSb.AppendLine(e.Data); };
+                p.ErrorDataReceived += (s, e) => { if (!string.IsNullOrEmpty(e.Data)) errSb.AppendLine(e.Data); };
 
                 p.Start();
-                progressThread.Start();
                 p.BeginOutputReadLine();
                 p.BeginErrorReadLine();
                 p.WaitForExit();
-                isDone = true;
-                progressThread.Join();
-                sw.Stop();
 
-                try
-                {
-                    Console.CursorLeft = 0;
-                    string fullBar = GenerateProgressBar(100, 24);
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write("    [");
-                    Console.ForegroundColor = p.ExitCode == 0 ? ConsoleColor.Green : ConsoleColor.Red;
-                    Console.Write(p.ExitCode == 0 ? "OK" : "XX");
-                    Console.ForegroundColor = ConsoleColor.DarkGray;
-                    Console.Write("] ");
-                    Console.ForegroundColor = p.ExitCode == 0 ? ConsoleColor.Green : ConsoleColor.Red;
-                    Console.Write(fullBar);
-                    Console.ForegroundColor = ConsoleColor.White;
-                    Console.WriteLine(string.Format(" {0:F1}s  ", sw.Elapsed.TotalSeconds));
-                    Console.ResetColor();
-                }
-                catch { }
-
-                if (warningLines.Count > 0 && !s_verbose)
-                {
-                    PrintWarning(string.Format("Encountered {0} compiler warning(s):", warningLines.Count));
-                    foreach (var w in warningLines.Take(3))
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkYellow;
-                        Console.WriteLine(string.Format("      -> {0}", w));
-                        Console.ResetColor();
-                    }
-                    if (warningLines.Count > 3)
-                    {
-                        Console.ForegroundColor = ConsoleColor.DarkGray;
-                        Console.WriteLine(string.Format("      -> ... and {0} more warnings.", warningLines.Count - 3));
-                        Console.ResetColor();
-                    }
-                }
-
-                if (errorLines.Count > 0)
-                {
-                    PrintError(string.Format("Encountered {0} compilation error(s):", errorLines.Count));
-                    foreach (var err in errorLines)
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine(string.Format("      [ERROR] {0}", err));
-                        Console.ResetColor();
-                    }
-                }
-
+                string combined = outSb.ToString() + "\n" + errSb.ToString();
+                errOutput = p.ExitCode != 0 ? combined : "";
+                warnOutput = combined.IndexOf("warning:", StringComparison.OrdinalIgnoreCase) >= 0 ? combined : "";
                 return p.ExitCode == 0;
             }
         }
@@ -862,7 +993,8 @@ Options:
         {
             Console.WriteLine();
             Console.ForegroundColor = ConsoleColor.DarkGray;
-            Console.Write(string.Format("[{0}/{1}] ", step, total));
+            if (step > 0 && total > 0)
+                Console.Write(string.Format("[{0}/{1}] ", step, total));
             Console.ForegroundColor = color;
             Console.WriteLine(string.Format("=== {0} ===", title));
             Console.ResetColor();
@@ -916,11 +1048,19 @@ Options:
             Console.WriteLine(string.Format("| Total Elapsed Time           | {0:F2} seconds", s_totalTimer.Elapsed.TotalSeconds).PadRight(79) + "|");
             Console.WriteLine(string.Format("| Engine Output                | {0}", Path.Combine(s_buildRoot, "Engine")).PadRight(79) + "|");
             Console.WriteLine(string.Format("| Editor Executable            | Eunoia-Editor.exe").PadRight(79) + "|");
+            Console.WriteLine(string.Format("| Parallel Worker Threads      | {0} threads", s_maxConcurrency).PadRight(79) + "|");
             Console.WriteLine(string.Format("| Discovered Scripts           | {0} scripts", s_projectScripts.Count).PadRight(79) + "|");
             Console.ForegroundColor = ConsoleColor.Green;
             Console.WriteLine(@"+------------------------------+-----------------------------------------------+");
             Console.ResetColor();
             Console.WriteLine();
+        }
+
+        private class CompileUnit
+        {
+            public string SourcePath;
+            public string ObjectPath;
+            public bool IsC;
         }
     }
 }
