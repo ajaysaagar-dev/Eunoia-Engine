@@ -51,14 +51,64 @@ struct CachedTexture {
     }
 };
 
+enum class TextureQuality : int {
+    Low = 0,     // 256
+    Medium = 1,  // 512
+    High = 2,    // 1024
+    Ultra = 3,   // 2048
+    Max = 4      // 4096
+};
+
+inline int GetMaxResolutionForQuality(TextureQuality quality) {
+    switch (quality) {
+        case TextureQuality::Low:    return 256;
+        case TextureQuality::Medium: return 512;
+        case TextureQuality::High:   return 1024;
+        case TextureQuality::Ultra:  return 2048;
+        case TextureQuality::Max:    return 4096;
+        default: return 2048;
+    }
+}
+
+inline const char* GetTextureQualityName(TextureQuality quality) {
+    switch (quality) {
+        case TextureQuality::Low:    return "Low (256)";
+        case TextureQuality::Medium: return "Medium (512)";
+        case TextureQuality::High:   return "High (1024)";
+        case TextureQuality::Ultra:  return "Ultra (2048)";
+        case TextureQuality::Max:    return "Max (4096)";
+        default: return "Ultra (2048)";
+    }
+}
+
+// Calculates D3D12 ResourceMinLODClamp for Shader Resource Views.
+// If texture's native resolution is <= maxAllowedResolution (e.g. 2K texture when setting is 4K), returns 0.0f (uses full native resolution).
+// If texture's native resolution is > maxAllowedResolution (e.g. 4K texture when setting is 2K), clamps to the appropriate mip level.
+inline float CalculateTextureMinLOD(int nativeWidth, int nativeHeight, int maxAllowedResolution) {
+    int maxDim = std::max(nativeWidth, nativeHeight);
+    if (maxDim <= maxAllowedResolution || maxDim <= 0 || maxAllowedResolution <= 0) {
+        return 0.0f;
+    }
+    float ratio = (float)maxDim / (float)maxAllowedResolution;
+    return std::max(0.0f, std::log2(ratio));
+}
+
 class TextureManager {
+public:
+    using TextureQualityCallback = std::function<void(TextureQuality quality, int maxRes)>;
+
 private:
     std::unordered_map<std::string, CachedTexture> m_cache;
     std::unordered_map<std::string, std::string> m_resolvedPathCache;
     std::filesystem::path m_projectRoot;
+    TextureQuality m_textureQuality = TextureQuality::Ultra;
+    int m_maxTextureResolution = 2048;
+    std::unordered_map<std::string, TextureQualityCallback> m_qualityCallbacks;
 
     TextureManager() {
         m_projectRoot = "C:\\Projects\\Eunoia-Engine\\Projects\\test";
+        m_textureQuality = TextureQuality::Ultra;
+        m_maxTextureResolution = 2048;
     }
 
 public:
@@ -77,6 +127,32 @@ public:
     void ClearCache() {
         m_cache.clear();
         m_resolvedPathCache.clear();
+    }
+
+    TextureQuality GetTextureQuality() const { return m_textureQuality; }
+    int GetMaxTextureResolution() const { return m_maxTextureResolution; }
+
+    void SetTextureQuality(TextureQuality quality) {
+        if (m_textureQuality != quality) {
+            m_textureQuality = quality;
+            m_maxTextureResolution = GetMaxResolutionForQuality(quality);
+            for (const auto& kv : m_qualityCallbacks) {
+                if (kv.second) kv.second(quality, m_maxTextureResolution);
+            }
+        }
+    }
+
+    void SetTextureQualitySilent(TextureQuality quality) {
+        m_textureQuality = quality;
+        m_maxTextureResolution = GetMaxResolutionForQuality(quality);
+    }
+
+    void RegisterQualityChangedCallback(const std::string& id, TextureQualityCallback cb) {
+        m_qualityCallbacks[id] = cb;
+    }
+
+    void UnregisterQualityChangedCallback(const std::string& id) {
+        m_qualityCallbacks.erase(id);
     }
 
     void InvalidateTexture(const std::string& name) {
@@ -106,28 +182,32 @@ public:
             if (result.empty()) result = name;
         }
         // 2. Relative to project root
-        else if (std::filesystem::exists(m_projectRoot / name, ec)) {
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / name, ec)) {
             result = (m_projectRoot / name).string();
         }
         // 3. Under Materials/textures/
-        else if (std::filesystem::exists(m_projectRoot / "Materials" / "textures" / name, ec)) {
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / "Materials" / "textures" / name, ec)) {
             result = (m_projectRoot / "Materials" / "textures" / name).string();
         }
         // 4. Under Materials/
-        else if (std::filesystem::exists(m_projectRoot / "Materials" / name, ec)) {
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / "Materials" / name, ec)) {
             result = (m_projectRoot / "Materials" / name).string();
         }
-        // 5. Recursive search matching filename
-        else {
-            std::string targetFilename = std::filesystem::path(name).filename().string();
-            auto options = std::filesystem::directory_options::skip_permission_denied;
-            for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
-                 !ec && it != std::filesystem::recursive_directory_iterator();
-                 it.increment(ec)) {
-                if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
-                    result = it->path().string();
-                    break;
+        // 5. Recursive search matching filename inside project root
+        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot, ec) && std::filesystem::is_directory(m_projectRoot, ec)) {
+            try {
+                std::string targetFilename = std::filesystem::path(name).filename().string();
+                auto options = std::filesystem::directory_options::skip_permission_denied;
+                for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
+                     !ec && it != std::filesystem::recursive_directory_iterator();
+                     it.increment(ec)) {
+                    if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
+                        result = it->path().string();
+                        break;
+                    }
                 }
+            } catch (...) {
+                // Ignore filesystem errors
             }
         }
 

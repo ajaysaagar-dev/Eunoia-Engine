@@ -250,6 +250,7 @@ struct DX12GpuTexture {
 	int height = 0;
 	UINT mipLevels = 1;
 	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	bool isCubemap = false;
 };
 
 static std::vector<ID3D12Resource*> g_allocatedTextures;
@@ -837,16 +838,20 @@ DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const 
 	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
 	srvDesc.Format = meta.format;
 
+	float lodClamp = TextureManager::CalculateTextureMinLOD(
+		static_cast<int>(meta.width), static_cast<int>(meta.height),
+		TextureManager::Get().GetMaxTextureResolution());
+
 	if (meta.IsCubemap()) {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
 		srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
 		srvDesc.TextureCube.MostDetailedMip = 0;
-		srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+		srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
 	} else {
 		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
 		srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
 		srvDesc.Texture2D.MostDetailedMip = 0;
-		srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+		srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
 	}
 
 	g_d3dDevice->CreateShaderResourceView(tex, &srvDesc, cpu);
@@ -858,6 +863,7 @@ DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const 
 	result.height = static_cast<int>(meta.height);
 	result.mipLevels = static_cast<UINT>(meta.mipLevels);
 	result.format = meta.format;
+	result.isCubemap = meta.IsCubemap();
 
 	g_allocatedTextures.push_back(tex);
 	return result;
@@ -1149,6 +1155,39 @@ void PreRenderUploadTextures()
 	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
 	{
 		GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+	}
+}
+
+// Updates the D3D12 Shader Resource View (SRV) ResourceMinLODClamp for all active textures in real time.
+// Zero reallocation, zero disk read, zero GPU stall.
+// If a texture's native resolution is <= maxAllowedResolution (e.g. 2K texture in 4K quality), it retains full native sharpness (0.0f clamp).
+void UpdateAllTextureLODClamps()
+{
+	if (!g_d3dDevice) return;
+
+	int maxRes = TextureManager::Get().GetMaxTextureResolution();
+	for (auto& pair : g_gpuTextureMap)
+	{
+		DX12GpuTexture& tex = pair.second;
+		if (!tex.resource || tex.cpuHandle.ptr == 0) continue;
+
+		float lodClamp = TextureManager::CalculateTextureMinLOD(tex.width, tex.height, maxRes);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Format = tex.format;
+		if (tex.isCubemap) {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+			srvDesc.TextureCube.MipLevels = tex.mipLevels;
+			srvDesc.TextureCube.MostDetailedMip = 0;
+			srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
+		} else {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = tex.mipLevels;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
+		}
+		g_d3dDevice->CreateShaderResourceView(tex.resource, &srvDesc, tex.cpuHandle);
 	}
 }
 
@@ -5308,6 +5347,9 @@ int main(int argc, char** argv)
 
 	InitFallbackTextures();
 	InitLightmapSrvSlot();
+	TextureManager::Get().RegisterQualityChangedCallback("D3D12Renderer", [](TextureQuality /*q*/, int /*maxRes*/) {
+		UpdateAllTextureLODClamps();
+	});
 	if (!isGameOnlyMode) {
 		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;

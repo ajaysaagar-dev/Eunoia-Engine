@@ -615,11 +615,22 @@ void EngineUI::LoadEditorConfig() {
                     currentAntiAliasing = (AntiAliasingMethod)aa;
                     Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(currentAntiAliasing);
                 }
+            } else if (key == "TextureQuality" || key == "textureQuality") {
+                int tq = (int)fVal;
+                if (tq >= 0 && tq <= 4) {
+                    currentTextureQuality = (TextureQuality)tq;
+                    TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
+                }
             }
         } catch (...) {
             // Ignore format errors
         }
     }
+}
+
+void EngineUI::ApplyTextureQuality(TextureQuality quality) {
+    currentTextureQuality = quality;
+    TextureManager::Get().SetTextureQuality(quality);
 }
 
 void EngineUI::SaveEditorConfig() {
@@ -637,6 +648,7 @@ void EngineUI::SaveEditorConfig() {
     file << "BottomDockHeight=" << bottomDockHeight << "\n";
     file << "\n[Graphics]\n";
     file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
+    file << "TextureQuality=" << (int)currentTextureQuality << "\n";
     file.close();
 }
 
@@ -3008,6 +3020,36 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::EndMenu();
                 }
 
+                if (ImGui::BeginMenu("Texture Quality")) {
+                    struct TQEntry {
+                        TextureQuality quality;
+                        const char* name;
+                        const char* res;
+                    };
+                    static const TQEntry tqEntries[] = {
+                        { TextureQuality::Low,    "Low",    "256 x 256" },
+                        { TextureQuality::Medium, "Medium", "512 x 512" },
+                        { TextureQuality::High,   "High",   "1024 x 1024" },
+                        { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                        { TextureQuality::Max,    "Max",    "4096 x 4096" }
+                    };
+
+                    for (const auto& entry : tqEntries) {
+                        bool isSelected = (currentTextureQuality == entry.quality);
+                        char label[64];
+                        snprintf(label, sizeof(label), "%s (%s)", entry.name, entry.res);
+                        if (ImGui::MenuItem(label, nullptr, isSelected)) {
+                            ApplyTextureQuality(entry.quality);
+                            SaveEditorConfig();
+                            AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Max Texture Resolution: %s\nDynamic D3D12 Sampler Feedback & LOD clamp applied in real time.", entry.res);
+                        }
+                    }
+                    ImGui::EndMenu();
+                }
+
                 if (ImGui::BeginMenu("Quality")) {
                     if (ImGui::BeginMenu("Anti Aliasing")) {
                         const auto& aaMethods = GetAntiAliasingMethods();
@@ -3021,6 +3063,35 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             }
                             if (ImGui::IsItemHovered()) {
                                 ImGui::SetTooltip("Quality: %s\nCost: %s\nRole: %s", m.quality, m.cost, m.role);
+                            }
+                        }
+                        ImGui::EndMenu();
+                    }
+                    if (ImGui::BeginMenu("Texture Quality")) {
+                        struct TQEntry {
+                            TextureQuality quality;
+                            const char* name;
+                            const char* res;
+                        };
+                        static const TQEntry tqEntries[] = {
+                            { TextureQuality::Low,    "Low",    "256 x 256" },
+                            { TextureQuality::Medium, "Medium", "512 x 512" },
+                            { TextureQuality::High,   "High",   "1024 x 1024" },
+                            { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                            { TextureQuality::Max,    "Max",    "4096 x 4096" }
+                        };
+
+                        for (const auto& entry : tqEntries) {
+                            bool isSelected = (currentTextureQuality == entry.quality);
+                            char label[64];
+                            snprintf(label, sizeof(label), "%s (%s)", entry.name, entry.res);
+                            if (ImGui::MenuItem(label, nullptr, isSelected)) {
+                                ApplyTextureQuality(entry.quality);
+                                SaveEditorConfig();
+                                AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                            }
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Max Texture Resolution: %s\nDynamic D3D12 Sampler Feedback & LOD clamp applied in real time.", entry.res);
                             }
                         }
                         ImGui::EndMenu();
@@ -9136,6 +9207,40 @@ void EngineUI::RenderQualitySettings() {
                     ImGui::Text("%s", m.role);
                 }
                 ImGui::EndTable();
+            }
+        }
+
+        ImGui::Spacing();
+        if (ImGui::CollapsingHeader("Texture Quality", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Text("Active Texture Quality: ");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%s", GetTextureQualityName(currentTextureQuality));
+
+            struct TQEntry {
+                TextureQuality quality;
+                const char* name;
+                const char* res;
+            };
+            static const TQEntry tqEntries[] = {
+                { TextureQuality::Low,    "Low",    "256 x 256" },
+                { TextureQuality::Medium, "Medium", "512 x 512" },
+                { TextureQuality::High,   "High",   "1024 x 1024" },
+                { TextureQuality::Ultra,  "Ultra",  "2048 x 2048" },
+                { TextureQuality::Max,    "Max",    "4096 x 4096" }
+            };
+
+            for (const auto& entry : tqEntries) {
+                bool isSelected = (currentTextureQuality == entry.quality);
+                char radioLabel[128];
+                snprintf(radioLabel, sizeof(radioLabel), "%s (%s)##tq_radio_%d", entry.name, entry.res, (int)entry.quality);
+                if (ImGui::RadioButton(radioLabel, isSelected)) {
+                    ApplyTextureQuality(entry.quality);
+                    SaveEditorConfig();
+                    AddLog("LogRenderer", std::string("Texture Quality set globally to: ") + entry.name + " (" + entry.res + ")", 0);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Max Texture Resolution: %s\nNative resolutions <= %s remain unscaled (full native detail).\nResolutions > %s are clamped via D3D12 Sampler Feedback / MinLODClamp.", entry.res, entry.res, entry.res);
+                }
             }
         }
     }
