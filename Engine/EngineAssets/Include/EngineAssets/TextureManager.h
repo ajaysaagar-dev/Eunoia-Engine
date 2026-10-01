@@ -124,6 +124,10 @@ public:
         return instance;
     }
 
+    static float CalculateTextureMinLOD(int nativeWidth, int nativeHeight, int maxAllowedResolution) {
+        return ::CalculateTextureMinLOD(nativeWidth, nativeHeight, maxAllowedResolution);
+    }
+
     void SetProjectRoot(const std::filesystem::path& root) {
         if (m_projectRoot != root) {
             m_projectRoot = root;

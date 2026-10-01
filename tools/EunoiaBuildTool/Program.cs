@@ -628,7 +628,7 @@ Options:
                             Interlocked.Increment(ref activeWorkers);
 
                             string compiler = unit.IsC ? s_gccExe : s_compilerExe;
-                            string langFlag = unit.IsC ? "-O2" : "-std=c++20 -O2";
+                            string langFlag = unit.IsC ? "-O2 -pipe" : "-std=c++20 -O2 -pipe -fno-strict-aliasing";
 
                             string args = string.Format("{0} {1} -c \"{2}\" -o \"{3}\"",
                                 langFlag, incFlags, unit.SourcePath, unit.ObjectPath);
