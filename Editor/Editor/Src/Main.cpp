@@ -4888,6 +4888,23 @@ bool RecoverD3D12Device(HWND hwnd)
 	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
 
+	DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+	g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+	DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+	g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+	DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+	g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+	DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+	g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+	DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+	g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+	DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+	g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+	DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+	g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+	DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+	g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+
 	// 5. Pre-upload textures & rebuild scene geometry
 	PreRenderUploadTextures();
 	updateSceneGeometry();
@@ -5264,6 +5281,23 @@ int main(int argc, char** argv)
 		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
 		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+
+		DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+		g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+		DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+		g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+		DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+		g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+		DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+		g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+		DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+		g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+		DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+		g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+		DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+		g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+		DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+		g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
 	}
 
 	StartupSplash::Get().PumpEvents();

@@ -8205,17 +8205,20 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         drawList->AddRectFilled(tMin, tMax, IM_COL32(13, 16, 22, 255), 4.0f);
                         drawList->AddRect(tMin, tMax, IM_COL32(36, 42, 54, 180), 4.0f, 0, 1.0f);
 
-                        // Determine Icon and Accent Color
+                        // Determine Icon, GPU Texture Handle, and Accent Color
+                        uint64_t iconGpuHandle = 0;
                         const char* iconStr = "📄";
                         ImU32 accentCol = IM_COL32(135, 150, 170, 255);
                         const char* typeStr = "Unknown";
 
                         if (item.isFolder) {
+                            iconGpuHandle = cbFolderIconGpuHandle;
                             iconStr = "📁";
                             accentCol = IM_COL32(235, 185, 45, 255);
                             typeStr = "Folder";
                         } else {
                             typeStr = AssetTypeToString(item.meta.type);
+                            iconGpuHandle = GetContentBrowserAssetIcon(item.meta.type);
                             iconStr = GetAssetTypeIcon(item.meta.type);
                             switch (item.meta.type) {
                                 case AssetType::Material:        accentCol = IM_COL32(50, 210, 160, 255); break;
@@ -8231,11 +8234,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             }
                         }
 
-                        // Center Icon
-                        ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
-                        ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
-                                       tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
-                        drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+                        // Center Icon (GPU texture or fallback glyph)
+                        if (iconGpuHandle != 0) {
+                            float maxIconDim = std::min(tMax.x - tMin.x - 10.0f, tMax.y - tMin.y - 10.0f);
+                            float iconDim = std::clamp(maxIconDim, 24.0f, 44.0f);
+                            float iconCenterX = tMin.x + (tMax.x - tMin.x) * 0.5f;
+                            float iconCenterY = tMin.y + (tMax.y - tMin.y) * 0.5f - 1.0f;
+                            ImVec2 imgMin(iconCenterX - iconDim * 0.5f, iconCenterY - iconDim * 0.5f);
+                            ImVec2 imgMax(iconCenterX + iconDim * 0.5f, iconCenterY + iconDim * 0.5f);
+                            drawList->AddImage((ImTextureID)iconGpuHandle, imgMin, imgMax);
+                        } else {
+                            ImVec2 iconSz = ImGui::CalcTextSize(iconStr);
+                            ImVec2 iconPos(tMin.x + (tMax.x - tMin.x - iconSz.x) * 0.5f,
+                                           tMin.y + (tMax.y - tMin.y - iconSz.y) * 0.5f - 2.0f);
+                            drawList->AddText(iconPos, IM_COL32(255, 255, 255, 255), iconStr);
+                        }
 
                         // Unreal-Engine Signature Accent Stripe
                         drawList->AddRectFilled(ImVec2(tMin.x + 1.0f, tMax.y - 3.5f),
