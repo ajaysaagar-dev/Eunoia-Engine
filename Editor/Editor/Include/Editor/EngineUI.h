@@ -547,7 +547,7 @@ public:
     std::mutex asyncLogMutex;
     std::vector<EngineLogEntry> pendingAsyncLogs;
 
-    void CheckForScriptChanges();
+    void CheckForScriptChanges(Scene* scene = nullptr);
     void TriggerCompileScripts(Scene* scene = nullptr);
     void RenderScriptCompileModal(Scene& scene);
 

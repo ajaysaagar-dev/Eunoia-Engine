@@ -2614,11 +2614,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
     }
 
-    // Periodic check for behaviour script modifications (User Request: ask as compile or later)
+    // Periodic check for behaviour script modifications (Auto-compilation on focus)
     scriptWatchTimer += (frameTimeMs * 0.001f);
-    if (scriptWatchTimer >= 0.5f) {
+    if (scriptWatchTimer >= 0.2f) {
         scriptWatchTimer = 0.0f;
-        CheckForScriptChanges();
+        CheckForScriptChanges(&scene);
     }
 
     // Periodic check for 3D model files added in real-time
@@ -10427,18 +10427,17 @@ void EngineUI::LaunchGameSeparateWindow(Scene& scene, OrbitCamera* cameraPtr) {
 }
 
 // ============================================================================
-// Behaviour Script Watcher & Compilation (User Request: ask compile or later)
+// Behaviour Script Watcher & Compilation (Auto-compile on focus & Centered Overlay)
 // ============================================================================
 
-void EngineUI::CheckForScriptChanges() {
-    if (showScriptCompileModal || isCompilingScripts) return;
+void EngineUI::CheckForScriptChanges(Scene* scene) {
+    if (isCompilingScripts) return;
 
     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
     std::filesystem::path contentDir = projectBase / "Content";
     std::error_code ec;
     if (!std::filesystem::exists(contentDir, ec)) return;
 
-    std::vector<std::string> detectedChanges;
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentDir, std::filesystem::directory_options::skip_permission_denied, ec)) {
         if (entry.is_regular_file(ec) && entry.path().extension() == ".cpp") {
             std::string pStr = entry.path().string();
@@ -10469,7 +10468,7 @@ void EngineUI::CheckForScriptChanges() {
         }
     }
 
-    // Only prompt compilation when the editor window is focused (main window)
+    // Only auto-compile when the editor window is focused (main window)
     bool isEditorFocused = false;
     if (m_window) {
         isEditorFocused = (glfwGetWindowAttrib(m_window, GLFW_FOCUSED) == GLFW_TRUE);
@@ -10485,7 +10484,7 @@ void EngineUI::CheckForScriptChanges() {
 #endif
 
     if (!pendingChangedScripts.empty() && isEditorFocused) {
-        showScriptCompileModal = true;
+        TriggerCompileScripts(scene);
     }
 }
 
@@ -10569,66 +10568,56 @@ void EngineUI::TriggerCompileScripts(Scene* scene) {
 }
 
 void EngineUI::RenderScriptCompileModal(Scene& scene) {
-    if (!showScriptCompileModal) return;
+    if (!isCompilingScripts) return;
 
-    ImGui::OpenPopup("Script Changes Detected##CompilePrompt");
-    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
-    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImDrawList* fgDraw = ImGui::GetForegroundDrawList();
+    ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+    if (displaySize.x <= 0.0f || displaySize.y <= 0.0f) return;
 
-    if (ImGui::BeginPopupModal("Script Changes Detected##CompilePrompt", &showScriptCompileModal, ImGuiWindowFlags_AlwaysAutoResize)) {
-        ImGui::TextColored(ImVec4(0.2f, 0.75f, 1.0f, 1.0f), "⚡ Behaviour Script Changes Detected");
-        ImGui::Separator();
-        ImGui::Spacing();
+    ImVec2 center(displaySize.x * 0.5f, displaySize.y * 0.5f);
 
-        ImGui::TextWrapped("The following behaviour script(s) have been modified externally:");
-        ImGui::Spacing();
+    // Dimmed translucent backdrop
+    fgDraw->AddRectFilled(ImVec2(0, 0), displaySize, IM_COL32(12, 14, 18, 175));
 
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.10f, 0.10f, 0.12f, 1.0f));
-        float childHeight = std::min(140.0f, std::max(40.0f, (float)pendingChangedScripts.size() * 26.0f + 12.0f));
-        ImGui::BeginChild("##ChangedScriptsList", ImVec2(420.0f, childHeight), true);
-        for (const auto& scriptPath : pendingChangedScripts) {
-            std::string filename = std::filesystem::path(scriptPath).filename().string();
-            ImGui::BulletText("%s", filename.c_str());
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", scriptPath.c_str());
-        }
-        ImGui::EndChild();
-        ImGui::PopStyleColor();
+    // Centered modal card
+    float cardWidth = 420.0f;
+    float cardHeight = 135.0f;
+    ImVec2 cardMin(center.x - cardWidth * 0.5f, center.y - cardHeight * 0.5f);
+    ImVec2 cardMax(center.x + cardWidth * 0.5f, center.y + cardHeight * 0.5f);
 
-        ImGui::Spacing();
-        ImGui::TextWrapped("Would you like to compile the updated behaviour script(s) now?");
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
+    // Glowing pulsating border
+    float time = (float)glfwGetTime();
+    float pulse = 0.65f + 0.35f * sinf(time * 4.0f);
+    ImU32 borderColor = IM_COL32((int)(30 * pulse), (int)(180 * pulse), (int)(255 * pulse), 245);
+    ImU32 cardBg = IM_COL32(20, 22, 28, 250);
 
-        // [ Compile ] button (Primary green)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.60f, 0.25f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.75f, 0.32f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.45f, 0.18f, 1.0f));
-        if (ImGui::Button("⚡ Compile", ImVec2(120, 32))) {
-            showScriptCompileModal = false;
-            ImGui::CloseCurrentPopup();
-            TriggerCompileScripts(&scene);
-        }
-        ImGui::PopStyleColor(3);
+    // Drop shadow & Card body
+    fgDraw->AddRectFilled(ImVec2(cardMin.x - 6, cardMin.y - 6), ImVec2(cardMax.x + 6, cardMax.y + 6), IM_COL32(0, 0, 0, 90), 14.0f);
+    fgDraw->AddRectFilled(cardMin, cardMax, cardBg, 12.0f);
+    fgDraw->AddRect(cardMin, cardMax, borderColor, 12.0f, 0, 2.0f);
 
-        ImGui::SameLine();
-        ImGui::Spacing();
-        ImGui::SameLine();
-
-        // [ Later ] button (Neutral gray)
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.35f, 0.38f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.20f, 0.22f, 1.0f));
-        if (ImGui::Button("Later", ImVec2(100, 32))) {
-            showScriptCompileModal = false;
-            pendingChangedScripts.clear();
-            ImGui::CloseCurrentPopup();
-            AddLog("LogScript", "Behaviour script compilation deferred. You can compile anytime via [⚡ Compile] or Build menu.", 0);
-        }
-        ImGui::PopStyleColor(3);
-
-        ImGui::EndPopup();
+    // Animated Spinner Arc
+    float spinnerRadius = 18.0f;
+    ImVec2 spinnerCenter(center.x, center.y - 18.0f);
+    int numSegments = 32;
+    for (int i = 0; i < numSegments; ++i) {
+        float aMin = ((float)i / (float)numSegments) * 6.2831853f + time * 5.5f;
+        float aMax = (((float)i + 0.75f) / (float)numSegments) * 6.2831853f + time * 5.5f;
+        float alpha = (float)i / (float)numSegments;
+        ImU32 spinColor = IM_COL32(20, (int)(180 + 75 * alpha), 255, (int)(alpha * 255));
+        fgDraw->PathArcTo(spinnerCenter, spinnerRadius, aMin, aMax, 4);
+        fgDraw->PathStroke(spinColor, 0, 3.5f);
     }
+
+    // Centered Title Text: "Compiling C++ Scripts..."
+    const char* titleText = "Compiling C++ Scripts...";
+    ImVec2 titleSize = ImGui::CalcTextSize(titleText);
+    fgDraw->AddText(ImVec2(center.x - titleSize.x * 0.5f, center.y + 12.0f), IM_COL32(245, 248, 255, 255), titleText);
+
+    // Subtext
+    const char* subText = "Please wait while code compiles...";
+    ImVec2 subSize = ImGui::CalcTextSize(subText);
+    fgDraw->AddText(ImVec2(center.x - subSize.x * 0.5f, center.y + 34.0f), IM_COL32(130, 155, 180, 220), subText);
 }
 
 // ============================================================================
