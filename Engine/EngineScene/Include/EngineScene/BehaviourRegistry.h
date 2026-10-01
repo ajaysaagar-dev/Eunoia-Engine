@@ -78,6 +78,9 @@ public:
         clone->m_transformActions = m_transformActions;
         clone->m_startLockCursor = m_startLockCursor;
         clone->m_startUnlockCursor = m_startUnlockCursor;
+        clone->m_startUIAddTargets = m_startUIAddTargets;
+        clone->m_startUIRemoveTargets = m_startUIRemoveTargets;
+        clone->m_startUIRemoveAll = m_startUIRemoveAll;
         clone->RegisterProperties();
         clone->CopyPropertiesFrom(*this);
         clone->Transform.Init(clone.get());
@@ -122,6 +125,9 @@ public:
     bool m_startLockCursor = false;
     bool m_startUnlockCursor = false;
     std::vector<std::string> m_startPrintMessages;
+    std::vector<std::string> m_startUIAddTargets;
+    std::vector<std::string> m_startUIRemoveTargets;
+    bool m_startUIRemoveAll = false;
 
     struct DynamicUpdatePrint {
         std::string textPrefix;

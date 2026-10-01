@@ -523,6 +523,8 @@ public:
             for (auto& dst : m_properties) {
                 if (dst.name == src.name) {
                     dst.targetId = src.targetId;
+                    dst.assetPath = src.assetPath;
+                    dst.refType = src.refType;
                     dst.isMissing = src.isMissing;
                     if (dst.dataPtr && src.dataPtr) {
                         switch (dst.type) {

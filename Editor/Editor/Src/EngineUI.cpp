@@ -11813,7 +11813,8 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.35f, 0.35f, 1.0f));
                             }
 
-                            if (ImGui::BeginCombo("##UIAssetCombo", preview.c_str())) {
+                            std::string comboId = "##UIAssetCombo_" + std::to_string(obj->id) + "_" + prop.name;
+                            if (ImGui::BeginCombo(comboId.c_str(), preview.c_str())) {
                                 if (ImGui::Selectable("(None)", prop.assetPath.empty())) {
                                     UndoManager::Get().RecordSnapshot(scene, "Clear UI Reference: " + prop.name);
                                     prop.assetPath = "";
@@ -11830,7 +11831,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                         if (it->is_regular_file() && it->path().extension() == ".eui") {
                                             std::string uiPath = it->path().string();
                                             std::string uiStem = it->path().stem().string();
-                                            bool isSel = (prop.assetPath == uiPath);
+                                            bool isSel = (!prop.assetPath.empty() && (prop.assetPath == uiPath || std::filesystem::path(prop.assetPath).filename() == it->path().filename()));
                                             if (ImGui::Selectable(uiStem.c_str(), isSel)) {
                                                 UndoManager::Get().RecordSnapshot(scene, "Assign UI: " + prop.name);
                                                 prop.assetPath = uiPath;
