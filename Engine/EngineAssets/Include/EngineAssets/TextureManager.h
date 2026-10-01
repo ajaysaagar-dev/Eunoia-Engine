@@ -184,6 +184,12 @@ public:
         }
     }
 
+    void SetTextureQualitySilent(TextureQuality quality) {
+        m_textureQuality = quality;
+        m_maxTextureResolution = GetMaxResolutionForQuality(quality);
+        m_cache.clear();
+    }
+
     void RegisterQualityChangedCallback(const std::string& id, TextureQualityCallback cb) {
         m_qualityCallbacks[id] = cb;
     }

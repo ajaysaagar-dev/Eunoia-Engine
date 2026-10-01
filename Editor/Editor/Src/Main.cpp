@@ -1158,10 +1158,19 @@ void ReloadAllGpuTextures()
 
 	WaitForGpuIdle();
 
-	for (auto& pair : g_gpuTextureMap)
+	// Snapshot all keys to avoid iterator invalidation
+	std::vector<std::string> textureKeys;
+	textureKeys.reserve(g_gpuTextureMap.size());
+	for (const auto& pair : g_gpuTextureMap)
 	{
-		const std::string& cacheKey = pair.first;
-		DX12GpuTexture& gpuTex = pair.second;
+		textureKeys.push_back(pair.first);
+	}
+
+	for (const std::string& cacheKey : textureKeys)
+	{
+		auto it = g_gpuTextureMap.find(cacheKey);
+		if (it == g_gpuTextureMap.end()) continue;
+		DX12GpuTexture& gpuTex = it->second;
 
 		size_t slotPos = cacheKey.find("@slot=");
 		std::string resolvedPath = (slotPos != std::string::npos) ? cacheKey.substr(0, slotPos) : cacheKey;
@@ -1255,7 +1264,17 @@ void ReloadAllGpuTextures()
 		}
 	}
 
-	// Re-copy updated descriptors into existing material tables
+	auto lookupExistingTexture = [](const std::string& path, const DX12GpuTexture& fallback, TextureUsageSlot slot) -> DX12GpuTexture {
+		if (path.empty() || path == "none") return fallback;
+		std::string key = path + "@slot=" + std::to_string((int)slot);
+		auto it = g_gpuTextureMap.find(key);
+		if (it != g_gpuTextureMap.end() && it->second.resource) return it->second;
+		it = g_gpuTextureMap.find(path);
+		if (it != g_gpuTextureMap.end() && it->second.resource) return it->second;
+		return fallback;
+	};
+
+	// Re-copy updated descriptors into existing material tables without modifying g_gpuTextureMap
 	for (const auto& matEntry : g_materialDescriptorTables)
 	{
 		const std::string& key = matEntry.first;
@@ -1274,12 +1293,12 @@ void ReloadAllGpuTextures()
 		parts.push_back(s);
 
 		if (parts.size() >= 6) {
-			DX12GpuTexture texAlbedo  = (!parts[0].empty() && parts[0] != "none") ? GetOrLoadGPUTexture(parts[0], g_fallbackMissing, TextureUsageSlot::BaseColor) : g_fallbackWhite;
-			DX12GpuTexture texNormal  = GetOrLoadGPUTexture(parts[1], g_fallbackNormal, TextureUsageSlot::Normal);
-			DX12GpuTexture texRough   = GetOrLoadGPUTexture(parts[2], g_fallbackRoughness, TextureUsageSlot::Roughness);
-			DX12GpuTexture texMetal   = GetOrLoadGPUTexture(parts[3], g_fallbackMetallic, TextureUsageSlot::Metallic);
-			DX12GpuTexture texAO      = GetOrLoadGPUTexture(parts[4], g_fallbackAO, TextureUsageSlot::AO);
-			DX12GpuTexture texOpacity = (!parts[5].empty() && parts[5] != "none") ? GetOrLoadGPUTexture(parts[5], g_fallbackWhite, TextureUsageSlot::Opacity) : g_fallbackWhite;
+			DX12GpuTexture texAlbedo  = lookupExistingTexture(parts[0], g_fallbackMissing, TextureUsageSlot::BaseColor);
+			DX12GpuTexture texNormal  = lookupExistingTexture(parts[1], g_fallbackNormal, TextureUsageSlot::Normal);
+			DX12GpuTexture texRough   = lookupExistingTexture(parts[2], g_fallbackRoughness, TextureUsageSlot::Roughness);
+			DX12GpuTexture texMetal   = lookupExistingTexture(parts[3], g_fallbackMetallic, TextureUsageSlot::Metallic);
+			DX12GpuTexture texAO      = lookupExistingTexture(parts[4], g_fallbackAO, TextureUsageSlot::AO);
+			DX12GpuTexture texOpacity = lookupExistingTexture(parts[5], g_fallbackWhite, TextureUsageSlot::Opacity);
 
 			DX12GpuTexture slots[6] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity };
 			for (int i = 0; i < 6; ++i) {
@@ -1291,7 +1310,7 @@ void ReloadAllGpuTextures()
 		}
 	}
 
-	// Re-copy skybox descriptors
+	// Re-copy skybox descriptors without modifying g_gpuTextureMap
 	for (const auto& skyEntry : g_skyboxDescriptorTables)
 	{
 		const std::string& key = skyEntry.first;
@@ -1301,7 +1320,7 @@ void ReloadAllGpuTextures()
 		tableCpu.ptr += (SIZE_T)gpuOffset;
 
 		std::string texPath = (key == "__default_skybox__") ? "" : key;
-		DX12GpuTexture tex = (!texPath.empty() && texPath != "none") ? GetOrLoadGPUTexture(texPath, g_fallbackWhite, TextureUsageSlot::BaseColor) : g_fallbackWhite;
+		DX12GpuTexture tex = lookupExistingTexture(texPath, g_fallbackWhite, TextureUsageSlot::BaseColor);
 		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
 		g_d3dDevice->CopyDescriptorsSimple(1, tableCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	}
@@ -5547,34 +5566,6 @@ int main(int argc, char** argv)
 			StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
 			logStartupStage("ScenePreload", "Scene and actors loaded");
 		}
-
-		// Warm up GPU pipelines and render targets behind splash before revealing window to prevent blank frame
-		for (int warmup = 0; warmup < 2; ++warmup)
-		{
-			InputSystem::Get().BeginFrame();
-			glfwPollEvents();
-			InputSystem::Get().Update(g_window);
-
-			ImGui_ImplDX12_NewFrame();
-			ImGui_ImplGlfw_NewFrame();
-			ImGui::NewFrame();
-
-			bool warmupExit = false;
-			g_engineUI.Render(g_scene, g_camera, 60.0f, 16.6f, g_currentVertexCount, g_currentIndexCount, warmupExit);
-
-			ImGui::Render();
-
-			if (g_fence && g_fenceValues[g_frameIndex] > 0 && g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
-			{
-				SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "Warmup frame fence sync");
-			}
-
-			updateSceneGeometry();
-			updateConstantBuffer();
-			PreRenderUploadTextures();
-			renderFrame();
-		}
-		logStartupStage("WarmupFrames", "Warm-up frames presented behind splash");
 
 		StartupSplash::Get().Close();
 		ShowWindow(hwnd, SW_MAXIMIZE);

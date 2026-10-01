@@ -619,7 +619,7 @@ void EngineUI::LoadEditorConfig() {
                 int tq = (int)fVal;
                 if (tq >= 0 && tq <= 4) {
                     currentTextureQuality = (TextureQuality)tq;
-                    TextureManager::Get().SetTextureQuality(currentTextureQuality);
+                    TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
                 }
             }
         } catch (...) {
