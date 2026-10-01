@@ -5275,14 +5275,43 @@ int main(int argc, char** argv)
 	StartupSplash::Get().PumpEvents();
 	EngineLogger::Get().LogAction("STARTUP_STAGE", "EngineUI", "Engine UI and Asset Registry initialized");
 
-	updateSceneGeometry();
-
 	if (!isGameOnlyMode) {
+		if (g_engineUI.pendingInitialSceneLoad) {
+			StartupSplash::Get().UpdateProgress(0.15f, "Preparing project level...");
+			g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+		}
+
+		// Keep splash visible until scene is completely loaded with all objects, lights, skyboxes
+		while (g_engineUI.IsProgressiveLoadingActive()) {
+			StartupSplash::Get().PumpEvents();
+
+			if (!g_engineUI.m_progressiveLoader.completed) {
+				g_engineUI.m_progressiveLoader.Step(g_scene, 8);
+				float p = g_engineUI.m_progressiveLoader.progress.load();
+				std::string detail;
+				{
+					std::lock_guard<std::mutex> lock(g_engineUI.m_progressiveLoader.stateMutex);
+					detail = g_engineUI.m_progressiveLoader.currentDetail;
+				}
+				StartupSplash::Get().UpdateProgress(p, detail.empty() ? "Loading objects, lights & skyboxes..." : detail);
+			} else {
+				break;
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(4));
+		}
+
+		updateSceneGeometry();
+		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+		StartupSplash::Get().PumpEvents();
+		std::this_thread::sleep_for(std::chrono::milliseconds(120));
+
 		StartupSplash::Get().Close();
 		ShowWindow(hwnd, SW_MAXIMIZE);
 		glfwShowWindow(g_window);
 		UpdateWindow(hwnd);
-		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Editor window opened maximized — ready for async level loading");
+		EngineLogger::Get().LogAction("STARTUP_COMPLETE", "EditorWindow", "Scene completely loaded — Editor opened maximized");
+	} else {
+		updateSceneGeometry();
 	}
 
 	if (isGameOnlyMode) {

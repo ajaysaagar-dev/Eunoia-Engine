@@ -7,6 +7,7 @@
 #include <vector>
 #include <algorithm>
 #include <iostream>
+#include <mutex>
 
 extern "C" {
     unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -36,8 +37,8 @@ public:
 
         RegisterClassExA(&wc);
 
-        m_winW = 540;
-        m_winH = 340;
+        m_winW = 560;
+        m_winH = 360;
 
         int screenW = GetSystemMetrics(SM_CXSCREEN);
         int screenH = GetSystemMetrics(SM_CYSCREEN);
@@ -45,6 +46,9 @@ public:
         int posY = (screenH - m_winH) / 2;
 
         LoadLogo(logoPath);
+
+        m_progress = 0.05f;
+        m_statusText = "Initializing Eunoia Engine...";
 
         m_hwnd = CreateWindowExA(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -57,6 +61,21 @@ public:
 
         if (m_hwnd) {
             ShowWindow(m_hwnd, SW_SHOW);
+            UpdateWindow(m_hwnd);
+            PumpEvents();
+        }
+    }
+
+    void UpdateProgress(float progress, const std::string& statusText) {
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_progress = std::clamp(progress, 0.0f, 1.0f);
+            if (!statusText.empty()) {
+                m_statusText = statusText;
+            }
+        }
+        if (m_hwnd) {
+            InvalidateRect(m_hwnd, NULL, FALSE);
             UpdateWindow(m_hwnd);
             PumpEvents();
         }
@@ -93,8 +112,12 @@ private:
     HBITMAP m_hBitmap = nullptr;
     int m_logoW = 0;
     int m_logoH = 0;
-    int m_winW = 540;
-    int m_winH = 340;
+    int m_winW = 560;
+    int m_winH = 360;
+
+    std::mutex m_mutex;
+    float m_progress = 0.0f;
+    std::string m_statusText;
 
     void LoadLogo(const std::string& path) {
         const char* candidatePaths[] = {
@@ -181,21 +204,114 @@ private:
         RECT rc;
         GetClientRect(hwnd, &rc);
 
-        HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
-        FillRect(hdc, &rc, blackBrush);
+        // Double buffer using memory DC to eliminate flicker
+        HDC memHdc = CreateCompatibleDC(hdc);
+        HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
+        HBITMAP oldMemBmp = (HBITMAP)SelectObject(memHdc, memBmp);
 
+        // 1. Pure black background
+        HBRUSH blackBrush = (HBRUSH)GetStockObject(BLACK_BRUSH);
+        FillRect(memHdc, &rc, blackBrush);
+
+        int statusBarHeight = 38;
+        int mainAreaHeight = rc.bottom - statusBarHeight;
+
+        // 2. Centered Logo above the status bar
         if (m_hBitmap && m_logoW > 0 && m_logoH > 0) {
-            HDC memDC = CreateCompatibleDC(hdc);
-            HBITMAP oldBmp = (HBITMAP)SelectObject(memDC, m_hBitmap);
+            HDC logoDC = CreateCompatibleDC(memHdc);
+            HBITMAP oldLogoBmp = (HBITMAP)SelectObject(logoDC, m_hBitmap);
 
             int dstX = (rc.right - m_logoW) / 2;
-            int dstY = (rc.bottom - m_logoH) / 2;
+            int dstY = (mainAreaHeight - m_logoH) / 2;
 
-            BitBlt(hdc, dstX, dstY, m_logoW, m_logoH, memDC, 0, 0, SRCCOPY);
+            BitBlt(memHdc, dstX, dstY, m_logoW, m_logoH, logoDC, 0, 0, SRCCOPY);
 
-            SelectObject(memDC, oldBmp);
-            DeleteDC(memDC);
+            SelectObject(logoDC, oldLogoBmp);
+            DeleteDC(logoDC);
         }
+
+        // 3. Status Bar at the bottom in color #1e1e1e (RGB 30, 30, 30)
+        RECT barRect;
+        barRect.left = 0;
+        barRect.top = mainAreaHeight;
+        barRect.right = rc.right;
+        barRect.bottom = rc.bottom;
+
+        HBRUSH barBgBrush = CreateSolidBrush(RGB(0x1E, 0x1E, 0x1E)); // #1e1e1e
+        FillRect(memHdc, &barRect, barBgBrush);
+        DeleteObject(barBgBrush);
+
+        // Top subtle separator for status bar
+        HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(45, 45, 48));
+        HPEN oldPen = (HPEN)SelectObject(memHdc, borderPen);
+        MoveToEx(memHdc, 0, barRect.top, NULL);
+        LineTo(memHdc, rc.right, barRect.top);
+        SelectObject(memHdc, oldPen);
+        DeleteObject(borderPen);
+
+        float curProgress = 0.0f;
+        std::string curStatus;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            curProgress = m_progress;
+            curStatus = m_statusText;
+        }
+
+        // Sleek progress fill line at top of status bar
+        if (curProgress > 0.001f) {
+            int fillW = (int)((float)rc.right * curProgress);
+            if (fillW > 0) {
+                RECT fillRect;
+                fillRect.left = 0;
+                fillRect.top = barRect.top;
+                fillRect.right = fillW;
+                fillRect.bottom = barRect.top + 3;
+
+                HBRUSH fillBrush = CreateSolidBrush(RGB(14, 112, 224)); // Vibrant Blue
+                FillRect(memHdc, &fillRect, fillBrush);
+                DeleteObject(fillBrush);
+            }
+        }
+
+        // Status Text inside the #1e1e1e status bar
+        if (!curStatus.empty()) {
+            HFONT hFont = CreateFontA(
+                15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, "Segoe UI"
+            );
+            HFONT oldFont = (HFONT)SelectObject(memHdc, hFont);
+
+            SetBkMode(memHdc, TRANSPARENT);
+            SetTextColor(memHdc, RGB(200, 205, 215));
+
+            RECT textRect = barRect;
+            textRect.left += 16;
+            textRect.right -= 80;
+            textRect.top += 4;
+
+            DrawTextA(memHdc, curStatus.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            // Progress percentage on right side of status bar
+            char pctStr[16];
+            snprintf(pctStr, sizeof(pctStr), "%d%%", (int)(curProgress * 100.0f));
+            SetTextColor(memHdc, RGB(0, 190, 255));
+            RECT pctRect = barRect;
+            pctRect.left = rc.right - 70;
+            pctRect.right = rc.right - 16;
+            pctRect.top += 4;
+            DrawTextA(memHdc, pctStr, -1, &pctRect, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+
+            SelectObject(memHdc, oldFont);
+            DeleteObject(hFont);
+        }
+
+        // Blit back buffer to screen
+        BitBlt(hdc, 0, 0, rc.right, rc.bottom, memHdc, 0, 0, SRCCOPY);
+
+        SelectObject(memHdc, oldMemBmp);
+        DeleteObject(memBmp);
+        DeleteDC(memHdc);
 
         EndPaint(hwnd, &ps);
     }
@@ -234,6 +350,7 @@ public:
         return s_instance;
     }
     void Show(const std::string& = "") {}
+    void UpdateProgress(float, const std::string&) {}
     void PumpEvents() {}
     void Close() {}
     bool IsOpen() const { return false; }
