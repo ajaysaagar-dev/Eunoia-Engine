@@ -1673,28 +1673,56 @@ int initD3D12(HWND hwnd)
 		return EXIT_FAILURE;
 	}
 
-	// 2. Select Hardware Adapter (Prefer High Performance / Discrete GPU)
+	// 2. Select Hardware Adapter (Prefer High Performance / Discrete GPU via IDXGIFactory6)
 	IDXGIAdapter1* adapter = nullptr;
-	for (UINT i = 0; g_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
+	IDXGIFactory6* factory6 = nullptr;
+	if (SUCCEEDED(g_dxgiFactory->QueryInterface(IID_PPV_ARGS(&factory6))))
 	{
-		DXGI_ADAPTER_DESC1 desc;
-		adapter->GetDesc1(&desc);
-		if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+		for (UINT i = 0; SUCCEEDED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter))); ++i)
 		{
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				adapter = nullptr;
+				continue;
+			}
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] High Performance D3D12 GPU Selected: " << descStr << std::endl;
+				break;
+			}
 			adapter->Release();
-			continue;
+			adapter = nullptr;
 		}
+		factory6->Release();
+	}
 
-		char descStr[128];
-		WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
-		std::cout << "DirectX 12 Adapter " << i << " : " << descStr << std::endl;
-
-		if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+	if (!adapter)
+	{
+		for (UINT i = 0; g_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
 		{
-			break;
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				continue;
+			}
+
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] Direct3D 12 Adapter: " << descStr << std::endl;
+				break;
+			}
+			adapter->Release();
+			adapter = nullptr;
 		}
-		adapter->Release();
-		adapter = nullptr;
 	}
 
 	// 3. Create Device
@@ -1731,6 +1759,8 @@ int initD3D12(HWND hwnd)
 	g_commandQueue->SetName(L"g_commandQueue");
 
 	// 5. Create SwapChain
+	g_dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+
 	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
 	swapChainDesc.BufferCount = FRAME_COUNT;
 	swapChainDesc.Width = (UINT)g_currentWidth;

@@ -29,26 +29,38 @@ bool Device::Initialize(const DeviceConfig& cfg) {
         return false;
     }
 
-    // Enumerate hardware adapters
+    // Fast path: Enumerate high-performance discrete GPU directly via IDXGIFactory6
     ComPtr<IDXGIAdapter1> chosenAdapter;
-    ComPtr<IDXGIAdapter1> adapter;
-    uint32_t currentAdapterIndex = 0;
-
-    for (UINT i = 0; m_factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 desc;
-        adapter->GetDesc1(&desc);
-        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) {
-            continue;
-        }
-
-        if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr))) {
-            if (currentAdapterIndex == cfg.adapterIndex || chosenAdapter == nullptr) {
+    ComPtr<IDXGIFactory6> factory6;
+    if (SUCCEEDED(m_factory.As(&factory6))) {
+        ComPtr<IDXGIAdapter1> adapter;
+        for (UINT i = 0; SUCCEEDED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter))); ++i) {
+            DXGI_ADAPTER_DESC1 desc;
+            adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr))) {
                 chosenAdapter = adapter;
-                if (currentAdapterIndex == cfg.adapterIndex) {
-                    break;
-                }
+                break;
             }
-            currentAdapterIndex++;
+        }
+    }
+
+    // Fallback enumeration if factory6 not present
+    if (!chosenAdapter) {
+        ComPtr<IDXGIAdapter1> adapter;
+        uint32_t currentAdapterIndex = 0;
+        for (UINT i = 0; m_factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+            DXGI_ADAPTER_DESC1 desc;
+            adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+
+            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr))) {
+                if (currentAdapterIndex == cfg.adapterIndex || chosenAdapter == nullptr) {
+                    chosenAdapter = adapter;
+                    if (currentAdapterIndex == cfg.adapterIndex) break;
+                }
+                currentAdapterIndex++;
+            }
         }
     }
 
