@@ -8,6 +8,9 @@
 #include <algorithm>
 #include <iostream>
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <chrono>
 
 extern "C" {
     unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
@@ -22,8 +25,75 @@ public:
     }
 
     void Show(const std::string& logoPath = "Resources/Icons/eunoia.png") {
-        if (m_hwnd) return;
+        if (m_isRunning) return;
 
+        m_logoPath = logoPath;
+        m_progress.store(0.05f);
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_statusText = "Initializing Eunoia Engine...";
+        }
+        m_shouldClose.store(false);
+        m_isRunning.store(true);
+
+        m_splashThread = std::thread(&StartupSplash::ThreadMain, this);
+
+        // Wait briefly until HWND is created
+        for (int i = 0; i < 50 && !m_hwnd; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+
+    void UpdateProgress(float progress, const std::string& statusText) {
+        m_progress.store(std::clamp(progress, 0.0f, 1.0f));
+        if (!statusText.empty()) {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            m_statusText = statusText;
+        }
+        if (m_hwnd) {
+            PostMessageA(m_hwnd, WM_USER + 1, 0, 0);
+        }
+    }
+
+    void PumpEvents() {
+        // Handled automatically on dedicated splash thread
+    }
+
+    void Close() {
+        if (!m_isRunning) return;
+        m_shouldClose.store(true);
+        if (m_hwnd) {
+            PostMessageA(m_hwnd, WM_CLOSE, 0, 0);
+        }
+        if (m_splashThread.joinable()) {
+            m_splashThread.join();
+        }
+        m_isRunning.store(false);
+    }
+
+    bool IsOpen() const { return m_isRunning.load() && m_hwnd != nullptr; }
+
+private:
+    StartupSplash() = default;
+    ~StartupSplash() { Close(); }
+
+    std::atomic<bool> m_isRunning{ false };
+    std::atomic<bool> m_shouldClose{ false };
+    std::thread m_splashThread;
+
+    std::string m_logoPath;
+    HWND m_hwnd = nullptr;
+    HBITMAP m_hBitmap = nullptr;
+    int m_logoW = 0;
+    int m_logoH = 0;
+    int m_winW = 560;
+    int m_winH = 360;
+
+    std::mutex m_mutex;
+    std::atomic<float> m_progress{ 0.0f };
+    std::string m_statusText;
+
+    void ThreadMain() {
         HINSTANCE hInstance = GetModuleHandleA(NULL);
 
         WNDCLASSEXA wc = { 0 };
@@ -45,10 +115,7 @@ public:
         int posX = (screenW - m_winW) / 2;
         int posY = (screenH - m_winH) / 2;
 
-        LoadLogo(logoPath);
-
-        m_progress = 0.05f;
-        m_statusText = "Initializing Eunoia Engine...";
+        LoadLogo(m_logoPath);
 
         m_hwnd = CreateWindowExA(
             WS_EX_TOPMOST | WS_EX_TOOLWINDOW,
@@ -62,35 +129,26 @@ public:
         if (m_hwnd) {
             ShowWindow(m_hwnd, SW_SHOW);
             UpdateWindow(m_hwnd);
-            PumpEvents();
         }
-    }
 
-    void UpdateProgress(float progress, const std::string& statusText) {
-        {
-            std::lock_guard<std::mutex> lock(m_mutex);
-            m_progress = std::clamp(progress, 0.0f, 1.0f);
-            if (!statusText.empty()) {
-                m_statusText = statusText;
-            }
-        }
-        if (m_hwnd) {
-            InvalidateRect(m_hwnd, NULL, FALSE);
-            UpdateWindow(m_hwnd);
-            PumpEvents();
-        }
-    }
-
-    void PumpEvents() {
-        if (!m_hwnd) return;
         MSG msg;
-        while (PeekMessageA(&msg, m_hwnd, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageA(&msg);
-        }
-    }
+        while (!m_shouldClose.load()) {
+            while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) {
+                if (msg.message == WM_QUIT || msg.message == WM_CLOSE) {
+                    m_shouldClose.store(true);
+                    break;
+                }
+                TranslateMessage(&msg);
+                DispatchMessageA(&msg);
+            }
 
-    void Close() {
+            if (m_hwnd) {
+                InvalidateRect(m_hwnd, NULL, FALSE);
+                UpdateWindow(m_hwnd);
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(16));
+        }
+
         if (m_hwnd) {
             DestroyWindow(m_hwnd);
             m_hwnd = nullptr;
@@ -99,25 +157,8 @@ public:
             DeleteObject(m_hBitmap);
             m_hBitmap = nullptr;
         }
-        UnregisterClassA("EunoiaStartupSplashClass", GetModuleHandleA(NULL));
+        UnregisterClassA("EunoiaStartupSplashClass", hInstance);
     }
-
-    bool IsOpen() const { return m_hwnd != nullptr; }
-
-private:
-    StartupSplash() = default;
-    ~StartupSplash() { Close(); }
-
-    HWND m_hwnd = nullptr;
-    HBITMAP m_hBitmap = nullptr;
-    int m_logoW = 0;
-    int m_logoH = 0;
-    int m_winW = 560;
-    int m_winH = 360;
-
-    std::mutex m_mutex;
-    float m_progress = 0.0f;
-    std::string m_statusText;
 
     void LoadLogo(const std::string& path) {
         const char* candidatePaths[] = {
@@ -140,7 +181,6 @@ private:
 
         if (!data) return;
 
-        // Target logo size in splash (scaled proportionally, centered)
         int targetW = 160;
         int targetH = (int)((float)h / (float)w * (float)targetW);
         if (targetH > 160) {
@@ -166,7 +206,6 @@ private:
             m_logoH = targetH;
             uint32_t* dstPixels = (uint32_t*)pBits;
 
-            // Bilinear resize and alpha composite onto black background
             for (int y = 0; y < targetH; ++y) {
                 float srcY = ((float)y / (float)targetH) * (float)h;
                 int sy = (int)srcY;
@@ -183,7 +222,6 @@ private:
                     uint8_t b = data[srcIdx + 2];
                     uint8_t a = data[srcIdx + 3];
 
-                    // Premultiplied alpha composite with black (0,0,0)
                     float alphaNorm = (float)a / 255.0f;
                     uint8_t outR = (uint8_t)(r * alphaNorm);
                     uint8_t outG = (uint8_t)(g * alphaNorm);
@@ -204,7 +242,6 @@ private:
         RECT rc;
         GetClientRect(hwnd, &rc);
 
-        // Double buffer using memory DC to eliminate flicker
         HDC memHdc = CreateCompatibleDC(hdc);
         HBITMAP memBmp = CreateCompatibleBitmap(hdc, rc.right, rc.bottom);
         HBITMAP oldMemBmp = (HBITMAP)SelectObject(memHdc, memBmp);
@@ -216,7 +253,7 @@ private:
         int statusBarHeight = 38;
         int mainAreaHeight = rc.bottom - statusBarHeight;
 
-        // 2. Centered Logo above the status bar
+        // 2. Centered Logo
         if (m_hBitmap && m_logoW > 0 && m_logoH > 0) {
             HDC logoDC = CreateCompatibleDC(memHdc);
             HBITMAP oldLogoBmp = (HBITMAP)SelectObject(logoDC, m_hBitmap);
@@ -230,18 +267,17 @@ private:
             DeleteDC(logoDC);
         }
 
-        // 3. Status Bar at the bottom in color #1e1e1e (RGB 30, 30, 30)
+        // 3. Status Bar at the bottom in #1e1e1e
         RECT barRect;
         barRect.left = 0;
         barRect.top = mainAreaHeight;
         barRect.right = rc.right;
         barRect.bottom = rc.bottom;
 
-        HBRUSH barBgBrush = CreateSolidBrush(RGB(0x1E, 0x1E, 0x1E)); // #1e1e1e
+        HBRUSH barBgBrush = CreateSolidBrush(RGB(0x1E, 0x1E, 0x1E));
         FillRect(memHdc, &barRect, barBgBrush);
         DeleteObject(barBgBrush);
 
-        // Top subtle separator for status bar
         HPEN borderPen = CreatePen(PS_SOLID, 1, RGB(45, 45, 48));
         HPEN oldPen = (HPEN)SelectObject(memHdc, borderPen);
         MoveToEx(memHdc, 0, barRect.top, NULL);
@@ -249,15 +285,13 @@ private:
         SelectObject(memHdc, oldPen);
         DeleteObject(borderPen);
 
-        float curProgress = 0.0f;
+        float curProgress = m_progress.load();
         std::string curStatus;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
-            curProgress = m_progress;
             curStatus = m_statusText;
         }
 
-        // Sleek progress fill line at top of status bar
         if (curProgress > 0.001f) {
             int fillW = (int)((float)rc.right * curProgress);
             if (fillW > 0) {
@@ -267,13 +301,12 @@ private:
                 fillRect.right = fillW;
                 fillRect.bottom = barRect.top + 3;
 
-                HBRUSH fillBrush = CreateSolidBrush(RGB(14, 112, 224)); // Vibrant Blue
+                HBRUSH fillBrush = CreateSolidBrush(RGB(14, 112, 224));
                 FillRect(memHdc, &fillRect, fillBrush);
                 DeleteObject(fillBrush);
             }
         }
 
-        // Status Text inside the #1e1e1e status bar
         if (!curStatus.empty()) {
             HFONT hFont = CreateFontA(
                 15, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
@@ -292,7 +325,6 @@ private:
 
             DrawTextA(memHdc, curStatus.c_str(), -1, &textRect, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-            // Progress percentage on right side of status bar
             char pctStr[16];
             snprintf(pctStr, sizeof(pctStr), "%d%%", (int)(curProgress * 100.0f));
             SetTextColor(memHdc, RGB(0, 190, 255));
@@ -306,7 +338,6 @@ private:
             DeleteObject(hFont);
         }
 
-        // Blit back buffer to screen
         BitBlt(hdc, 0, 0, rc.right, rc.bottom, memHdc, 0, 0, SRCCOPY);
 
         SelectObject(memHdc, oldMemBmp);
@@ -329,6 +360,9 @@ private:
         switch (msg) {
             case WM_ERASEBKGND:
                 return 1;
+            case WM_USER + 1:
+                if (hwnd) InvalidateRect(hwnd, NULL, FALSE);
+                return 0;
             case WM_PAINT:
                 if (self) {
                     self->OnPaint(hwnd);

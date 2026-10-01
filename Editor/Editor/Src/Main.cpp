@@ -5239,23 +5239,23 @@ int main(int argc, char** argv)
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	io.IniFilename = nullptr; // Prevent stale off-screen positions from overriding responsive layout
 
-	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px)
+	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px) with fast 1x oversample
 	ImFont* mainFont = nullptr;
 	ImFontConfig fontConfig;
-	fontConfig.OversampleH = isGameOnlyMode ? 1 : 2;
-	fontConfig.OversampleV = isGameOnlyMode ? 1 : 2;
+	fontConfig.OversampleH = 1;
+	fontConfig.OversampleV = 1;
 	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
 	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
 		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
 	}
 
-	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons if available (skip in game mode for fast launch)
+	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons
 	if (!isGameOnlyMode && mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
 		ImFontConfig symbolConfig;
 		symbolConfig.MergeMode = true;
-		symbolConfig.OversampleH = 2;
-		symbolConfig.OversampleV = 2;
+		symbolConfig.OversampleH = 1;
+		symbolConfig.OversampleV = 1;
 		static const ImWchar symbolRanges[] = {
 			0x2000, 0x2BFF, // General Punctuation, Arrows, Mathematical & Geometric Shapes, Miscellaneous Symbols
 			0,
@@ -5345,12 +5345,10 @@ int main(int argc, char** argv)
 			g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
 		}
 
-		// Keep splash visible until scene is completely loaded with all objects, lights, skyboxes
+		// Fast drain staged actors and keep splash updated smoothly
 		while (g_engineUI.IsProgressiveLoadingActive()) {
-			StartupSplash::Get().PumpEvents();
-
 			if (!g_engineUI.m_progressiveLoader.completed) {
-				g_engineUI.m_progressiveLoader.Step(g_scene, 8);
+				g_engineUI.m_progressiveLoader.Step(g_scene, 128);
 				float p = g_engineUI.m_progressiveLoader.progress.load();
 				std::string detail;
 				{
@@ -5361,13 +5359,10 @@ int main(int argc, char** argv)
 			} else {
 				break;
 			}
-			std::this_thread::sleep_for(std::chrono::milliseconds(4));
 		}
 
 		updateSceneGeometry();
 		StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
-		StartupSplash::Get().PumpEvents();
-		std::this_thread::sleep_for(std::chrono::milliseconds(120));
 
 		StartupSplash::Get().Close();
 		ShowWindow(hwnd, SW_MAXIMIZE);

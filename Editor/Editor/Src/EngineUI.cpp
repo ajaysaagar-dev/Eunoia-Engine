@@ -304,6 +304,19 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     std::filesystem::path compilerPath = FindCompilerPath(engineRoot);
 
     std::filesystem::path depDir = projectRoot / "Dependencies";
+    std::filesystem::path stampPath = depDir / ".engine_stamp";
+
+    // Fast-path: If stamp matches current engine root and version, dependencies are already up-to-date
+    if (std::filesystem::exists(stampPath, ec)) {
+        std::ifstream sf(stampPath);
+        std::string stampedRoot;
+        if (std::getline(sf, stampedRoot)) {
+            if (stampedRoot == engineRoot.generic_string()) {
+                return; // 0ms fast exit
+            }
+        }
+    }
+
     std::filesystem::path depEngineDir = depDir / "Engine";
     std::filesystem::path depDepsDir = depDir / "deps";
 
@@ -414,6 +427,13 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "  }\n"
            << "}\n";
         sf.close();
+    }
+
+    // 5. Write stamp file to cache dependency state
+    std::ofstream stampf(stampPath);
+    if (stampf.is_open()) {
+        stampf << engineRoot.generic_string() << "\n";
+        stampf.close();
     }
 }
 
