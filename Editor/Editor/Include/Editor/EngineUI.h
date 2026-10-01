@@ -209,6 +209,8 @@ public:
     using AntiAliasingInfo = Eunoia::AntiAliasingInfo;
 
     AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::TAA;
+    TextureQuality currentTextureQuality = TextureQuality::Ultra;
+    void ApplyTextureQuality(TextureQuality quality);
     void RenderQualitySettings();
     static const std::vector<AntiAliasingInfo>& GetAntiAliasingMethods();
     static const char* GetAntiAliasingName(AntiAliasingMethod method);

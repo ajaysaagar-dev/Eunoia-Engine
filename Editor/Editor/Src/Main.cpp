@@ -1152,6 +1152,161 @@ void PreRenderUploadTextures()
 	}
 }
 
+void ReloadAllGpuTextures()
+{
+	if (!g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return;
+
+	WaitForGpuIdle();
+
+	for (auto& pair : g_gpuTextureMap)
+	{
+		const std::string& cacheKey = pair.first;
+		DX12GpuTexture& gpuTex = pair.second;
+
+		size_t slotPos = cacheKey.find("@slot=");
+		std::string resolvedPath = (slotPos != std::string::npos) ? cacheKey.substr(0, slotPos) : cacheKey;
+		int slotInt = (slotPos != std::string::npos) ? std::stoi(cacheKey.substr(slotPos + 6)) : 0;
+		bool isNormal = (slotInt == (int)TextureUsageSlot::Normal);
+
+		CachedTexture* cached = TextureManager::Get().GetTexture(resolvedPath, isNormal);
+		if (cached && cached->valid)
+		{
+			const DirectX::ScratchImage* pScratch = (cached->scratchImage.GetImageCount() > 0) ? &cached->scratchImage : nullptr;
+			DirectX::ScratchImage fallbackScratch;
+			if (!pScratch && !cached->data.empty() && cached->width > 0 && cached->height > 0)
+			{
+				DirectX::Image baseImg;
+				baseImg.width = cached->width;
+				baseImg.height = cached->height;
+				baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+				baseImg.rowPitch = cached->width * 4;
+				baseImg.slicePitch = cached->width * cached->height * 4;
+				baseImg.pixels = cached->data.data();
+				uint32_t filterFlags = isNormal ? (DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_NORMAL_NORMALIZE) : (DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_SRGB);
+				if (DirectX::GenerateMipMaps(baseImg, filterFlags, 0, fallbackScratch)) {
+					pScratch = &fallbackScratch;
+				}
+			}
+
+			if (pScratch && pScratch->GetImageCount() > 0)
+			{
+				const DirectX::TexMetadata& meta = pScratch->GetMetadata();
+				ID3D12Resource* newTex = nullptr;
+				HRESULT hr = DirectX::CreateTexture(g_d3dDevice, meta, &newTex);
+				if (SUCCEEDED(hr) && newTex)
+				{
+					std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+					hr = DirectX::PrepareUpload(g_d3dDevice, pScratch->GetImages(), pScratch->GetImageCount(), meta, subresources);
+					if (SUCCEEDED(hr) && !subresources.empty())
+					{
+						UINT numSub = static_cast<UINT>(subresources.size());
+						UINT64 uploadSize = DirectX::GetRequiredIntermediateSize(g_d3dDevice, newTex, 0, numSub);
+						D3D12_RESOURCE_DESC upDesc = CreateBufferResourceDesc(uploadSize);
+						D3D12_HEAP_PROPERTIES upHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+						ID3D12Resource* uploadBuf = nullptr;
+						hr = g_d3dDevice->CreateCommittedResource(&upHeap, D3D12_HEAP_FLAG_NONE, &upDesc,
+							D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
+						if (SUCCEEDED(hr) && uploadBuf)
+						{
+							g_uploadCmdAlloc->Reset();
+							g_uploadCmdList->Reset(g_uploadCmdAlloc, nullptr);
+							DirectX::UpdateSubresources(g_d3dDevice, g_uploadCmdList, newTex, uploadBuf, 0, 0, numSub, subresources.data());
+							D3D12_RESOURCE_BARRIER b = CreateTransitionBarrier(newTex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+							g_uploadCmdList->ResourceBarrier(1, &b);
+							g_uploadCmdList->Close();
+							ID3D12CommandList* lists[] = { g_uploadCmdList };
+							g_commandQueue->ExecuteCommandLists(1, lists);
+							g_uploadFenceValue++;
+							g_commandQueue->Signal(g_uploadFence, g_uploadFenceValue);
+							SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "ReloadTextureMips");
+							uploadBuf->Release();
+
+							// Release previous texture resource
+							if (gpuTex.resource) {
+								gpuTex.resource->Release();
+							}
+
+							gpuTex.resource = newTex;
+							gpuTex.width = static_cast<int>(meta.width);
+							gpuTex.height = static_cast<int>(meta.height);
+							gpuTex.mipLevels = static_cast<UINT>(meta.mipLevels);
+							gpuTex.format = meta.format;
+
+							// Update existing SRV in descriptor heap in-place
+							D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+							srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+							srvDesc.Format = meta.format;
+							if (meta.IsCubemap()) {
+								srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+								srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+								srvDesc.TextureCube.MostDetailedMip = 0;
+								srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+							} else {
+								srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+								srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+								srvDesc.Texture2D.MostDetailedMip = 0;
+								srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+							}
+							g_d3dDevice->CreateShaderResourceView(newTex, &srvDesc, gpuTex.cpuHandle);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// Re-copy updated descriptors into existing material tables
+	for (const auto& matEntry : g_materialDescriptorTables)
+	{
+		const std::string& key = matEntry.first;
+		D3D12_GPU_DESCRIPTOR_HANDLE tableGpu = matEntry.second;
+		UINT64 gpuOffset = tableGpu.ptr - g_srvDescHeap->GetGPUDescriptorHandleForHeapStart().ptr;
+		D3D12_CPU_DESCRIPTOR_HANDLE tableCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		tableCpu.ptr += (SIZE_T)gpuOffset;
+
+		std::vector<std::string> parts;
+		std::string s = key;
+		size_t pos = 0;
+		while ((pos = s.find('|')) != std::string::npos) {
+			parts.push_back(s.substr(0, pos));
+			s.erase(0, pos + 1);
+		}
+		parts.push_back(s);
+
+		if (parts.size() >= 6) {
+			DX12GpuTexture texAlbedo  = (!parts[0].empty() && parts[0] != "none") ? GetOrLoadGPUTexture(parts[0], g_fallbackMissing, TextureUsageSlot::BaseColor) : g_fallbackWhite;
+			DX12GpuTexture texNormal  = GetOrLoadGPUTexture(parts[1], g_fallbackNormal, TextureUsageSlot::Normal);
+			DX12GpuTexture texRough   = GetOrLoadGPUTexture(parts[2], g_fallbackRoughness, TextureUsageSlot::Roughness);
+			DX12GpuTexture texMetal   = GetOrLoadGPUTexture(parts[3], g_fallbackMetallic, TextureUsageSlot::Metallic);
+			DX12GpuTexture texAO      = GetOrLoadGPUTexture(parts[4], g_fallbackAO, TextureUsageSlot::AO);
+			DX12GpuTexture texOpacity = (!parts[5].empty() && parts[5] != "none") ? GetOrLoadGPUTexture(parts[5], g_fallbackWhite, TextureUsageSlot::Opacity) : g_fallbackWhite;
+
+			DX12GpuTexture slots[6] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity };
+			for (int i = 0; i < 6; ++i) {
+				D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (slots[i].resource && slots[i].cpuHandle.ptr != 0) ? slots[i].cpuHandle : g_fallbackWhite.cpuHandle;
+				D3D12_CPU_DESCRIPTOR_HANDLE dst = tableCpu;
+				dst.ptr += (SIZE_T)i * g_srvDescriptorSize;
+				g_d3dDevice->CopyDescriptorsSimple(1, dst, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+			}
+		}
+	}
+
+	// Re-copy skybox descriptors
+	for (const auto& skyEntry : g_skyboxDescriptorTables)
+	{
+		const std::string& key = skyEntry.first;
+		D3D12_GPU_DESCRIPTOR_HANDLE tableGpu = skyEntry.second;
+		UINT64 gpuOffset = tableGpu.ptr - g_srvDescHeap->GetGPUDescriptorHandleForHeapStart().ptr;
+		D3D12_CPU_DESCRIPTOR_HANDLE tableCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		tableCpu.ptr += (SIZE_T)gpuOffset;
+
+		std::string texPath = (key == "__default_skybox__") ? "" : key;
+		DX12GpuTexture tex = (!texPath.empty() && texPath != "none") ? GetOrLoadGPUTexture(texPath, g_fallbackWhite, TextureUsageSlot::BaseColor) : g_fallbackWhite;
+		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
+		g_d3dDevice->CopyDescriptorsSimple(1, tableCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	}
+}
+
 int createDepthStencilView(int width, int height)
 {
 	if (g_depthStencilBuffer)
@@ -5308,6 +5463,9 @@ int main(int argc, char** argv)
 
 	InitFallbackTextures();
 	InitLightmapSrvSlot();
+	TextureManager::Get().RegisterQualityChangedCallback("D3D12Renderer", [](TextureQuality /*q*/, int /*maxRes*/) {
+		ReloadAllGpuTextures();
+	});
 	if (!isGameOnlyMode) {
 		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
 		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;

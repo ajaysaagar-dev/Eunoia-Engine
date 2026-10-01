@@ -51,14 +51,105 @@ struct CachedTexture {
     }
 };
 
+enum class TextureQuality : int {
+    Low = 0,     // 256
+    Medium = 1,  // 512
+    High = 2,    // 1024
+    Ultra = 3,   // 2048
+    Max = 4      // 4096
+};
+
+inline int GetMaxResolutionForQuality(TextureQuality quality) {
+    switch (quality) {
+        case TextureQuality::Low:    return 256;
+        case TextureQuality::Medium: return 512;
+        case TextureQuality::High:   return 1024;
+        case TextureQuality::Ultra:  return 2048;
+        case TextureQuality::Max:    return 4096;
+        default: return 2048;
+    }
+}
+
+inline const char* GetTextureQualityName(TextureQuality quality) {
+    switch (quality) {
+        case TextureQuality::Low:    return "Low (256)";
+        case TextureQuality::Medium: return "Medium (512)";
+        case TextureQuality::High:   return "High (1024)";
+        case TextureQuality::Ultra:  return "Ultra (2048)";
+        case TextureQuality::Max:    return "Max (4096)";
+        default: return "Ultra (2048)";
+    }
+}
+
+inline std::vector<uint8_t> DownsampleRGBA(const uint8_t* src, int srcW, int srcH, int dstW, int dstH, bool isNormalMap = false) {
+    std::vector<uint8_t> dst(dstW * dstH * 4);
+    float scaleX = (float)srcW / (float)dstW;
+    float scaleY = (float)srcH / (float)dstH;
+
+    for (int y = 0; y < dstH; ++y) {
+        for (int x = 0; x < dstW; ++x) {
+            float gx = (x + 0.5f) * scaleX - 0.5f;
+            float gy = (y + 0.5f) * scaleY - 0.5f;
+            int gxi = (int)std::floor(gx);
+            int gyi = (int)std::floor(gy);
+            float fx = gx - gxi;
+            float fy = gy - gyi;
+
+            int x0 = std::clamp(gxi, 0, srcW - 1);
+            int x1 = std::clamp(gxi + 1, 0, srcW - 1);
+            int y0 = std::clamp(gyi, 0, srcH - 1);
+            int y1 = std::clamp(gyi + 1, 0, srcH - 1);
+
+            for (int c = 0; c < 4; ++c) {
+                float c00 = src[(y0 * srcW + x0) * 4 + c];
+                float c10 = src[(y0 * srcW + x1) * 4 + c];
+                float c01 = src[(y1 * srcW + x0) * 4 + c];
+                float c11 = src[(y1 * srcW + x1) * 4 + c];
+
+                float top = c00 * (1.0f - fx) + c10 * fx;
+                float bot = c01 * (1.0f - fx) + c11 * fx;
+                float val = top * (1.0f - fy) + bot * fy;
+                dst[(y * dstW + x) * 4 + c] = static_cast<uint8_t>(std::clamp(val + 0.5f, 0.0f, 255.0f));
+            }
+        }
+    }
+
+    if (isNormalMap) {
+        for (int i = 0; i < dstW * dstH; ++i) {
+            float nx = (dst[i * 4 + 0] / 255.0f) * 2.0f - 1.0f;
+            float ny = (dst[i * 4 + 1] / 255.0f) * 2.0f - 1.0f;
+            float nz = (dst[i * 4 + 2] / 255.0f) * 2.0f - 1.0f;
+            float len = std::sqrt(nx * nx + ny * ny + nz * nz);
+            if (len > 0.0001f) {
+                nx /= len; ny /= len; nz /= len;
+            } else {
+                nx = 0.0f; ny = 0.0f; nz = 1.0f;
+            }
+            dst[i * 4 + 0] = static_cast<uint8_t>((nx * 0.5f + 0.5f) * 255.0f);
+            dst[i * 4 + 1] = static_cast<uint8_t>((ny * 0.5f + 0.5f) * 255.0f);
+            dst[i * 4 + 2] = static_cast<uint8_t>((nz * 0.5f + 0.5f) * 255.0f);
+        }
+    }
+
+    return dst;
+}
+
 class TextureManager {
+public:
+    using TextureQualityCallback = std::function<void(TextureQuality quality, int maxRes)>;
+
 private:
     std::unordered_map<std::string, CachedTexture> m_cache;
     std::unordered_map<std::string, std::string> m_resolvedPathCache;
     std::filesystem::path m_projectRoot;
+    TextureQuality m_textureQuality = TextureQuality::Ultra;
+    int m_maxTextureResolution = 2048;
+    std::unordered_map<std::string, TextureQualityCallback> m_qualityCallbacks;
 
     TextureManager() {
         m_projectRoot = "C:\\Projects\\Eunoia-Engine\\Projects\\test";
+        m_textureQuality = TextureQuality::Ultra;
+        m_maxTextureResolution = 2048;
     }
 
 public:
@@ -77,6 +168,28 @@ public:
     void ClearCache() {
         m_cache.clear();
         m_resolvedPathCache.clear();
+    }
+
+    TextureQuality GetTextureQuality() const { return m_textureQuality; }
+    int GetMaxTextureResolution() const { return m_maxTextureResolution; }
+
+    void SetTextureQuality(TextureQuality quality) {
+        if (m_textureQuality != quality) {
+            m_textureQuality = quality;
+            m_maxTextureResolution = GetMaxResolutionForQuality(quality);
+            m_cache.clear();
+            for (const auto& kv : m_qualityCallbacks) {
+                if (kv.second) kv.second(quality, m_maxTextureResolution);
+            }
+        }
+    }
+
+    void RegisterQualityChangedCallback(const std::string& id, TextureQualityCallback cb) {
+        m_qualityCallbacks[id] = cb;
+    }
+
+    void UnregisterQualityChangedCallback(const std::string& id) {
+        m_qualityCallbacks.erase(id);
     }
 
     void InvalidateTexture(const std::string& name) {
@@ -216,24 +329,38 @@ public:
         int w = 0, h = 0, comp = 0;
         unsigned char* pixels = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
         if (pixels && w > 0 && h > 0) {
+            int maxDim = m_maxTextureResolution;
+            int finalW = w;
+            int finalH = h;
+            std::vector<uint8_t> downsampledData;
+            const uint8_t* uploadPixels = pixels;
+
+            if (w > maxDim || h > maxDim) {
+                float scale = (float)maxDim / (float)std::max(w, h);
+                finalW = std::max(1, (int)(w * scale));
+                finalH = std::max(1, (int)(h * scale));
+                downsampledData = DownsampleRGBA(pixels, w, h, finalW, finalH, isNormalMap);
+                uploadPixels = downsampledData.data();
+            }
+
             tex.channels = 4;
             tex.valid = true;
-            tex.width = w;
-            tex.height = h;
+            tex.width = finalW;
+            tex.height = finalH;
             tex.format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            tex.data.assign(pixels, pixels + (w * h * 4));
+            tex.data.assign(uploadPixels, uploadPixels + (finalW * finalH * 4));
 
             // Fast compute averageColor using 32x32 point stride
-            int stepX = std::max(1, w / 32);
-            int stepY = std::max(1, h / 32);
+            int stepX = std::max(1, finalW / 32);
+            int stepY = std::max(1, finalH / 32);
             double sumR = 0, sumG = 0, sumB = 0;
             int sampleCount = 0;
-            for (int y = 0; y < h; y += stepY) {
-                for (int x = 0; x < w; x += stepX) {
-                    int idx = (y * w + x) * 4;
-                    sumR += pixels[idx + 0];
-                    sumG += pixels[idx + 1];
-                    sumB += pixels[idx + 2];
+            for (int y = 0; y < finalH; y += stepY) {
+                for (int x = 0; x < finalW; x += stepX) {
+                    int idx = (y * finalW + x) * 4;
+                    sumR += tex.data[idx + 0];
+                    sumG += tex.data[idx + 1];
+                    sumB += tex.data[idx + 2];
                     sampleCount++;
                 }
             }
@@ -243,12 +370,12 @@ public:
 
             // Generate full mipmap chain using DirectXTex
             DirectX::Image baseImage;
-            baseImage.width = static_cast<size_t>(w);
-            baseImage.height = static_cast<size_t>(h);
+            baseImage.width = static_cast<size_t>(finalW);
+            baseImage.height = static_cast<size_t>(finalH);
             baseImage.format = DXGI_FORMAT_R8G8B8A8_UNORM;
-            baseImage.rowPitch = static_cast<size_t>(w * 4);
-            baseImage.slicePitch = static_cast<size_t>(w * h * 4);
-            baseImage.pixels = pixels;
+            baseImage.rowPitch = static_cast<size_t>(finalW * 4);
+            baseImage.slicePitch = static_cast<size_t>(finalW * finalH * 4);
+            baseImage.pixels = const_cast<uint8_t*>(uploadPixels);
 
             uint32_t filterFlags = DirectX::TEX_FILTER_BOX;
             if (isNormalMap) {
