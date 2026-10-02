@@ -543,9 +543,9 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
         }
     }
 
-    // 1b. Copy Plugins Include headers (UI-System, Collisions, etc.)
+    // 1b. Copy Plugins Include headers (UI-System, Collisions, Physics, RayTrace, etc.)
     std::vector<std::string> pluginModules = {
-        "UI-System", "Collisions", "Physics", "Mesh-Cluster-Culling", "water", "skybox"
+        "UI-System", "Collisions", "Physics", "RayTrace", "Mesh-Cluster-Culling", "water", "skybox"
     };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";

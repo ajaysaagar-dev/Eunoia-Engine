@@ -11,6 +11,7 @@
 #include <EngineScene/TransformTypes.h>
 #include <EnginePlatform/InputSystem.h>
 #include <UISystem/UISystem.h>
+#include <RayTrace/RayTrace.h>
 
 // Forward declarations
 struct GameObject;
@@ -440,6 +441,16 @@ struct BehaviourTransform {
 #undef GetClassName
 #endif
 
+struct BehaviourRayTraceProxy {
+    EunoiaBehaviour* behaviour = nullptr;
+
+    const RayTraceHit& LineTrace(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params = RayTraceParams()) const;
+    const RayTraceHit& LineTrace(const glm::vec3& start, const glm::vec3& end, const GameObject* ignoreObject) const;
+    const RayTraceHit& LineTrace(const glm::vec3& start, const glm::vec3& end, int ignoreObjectId) const;
+    std::vector<RayTraceHit> LineTraceMulti(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params = RayTraceParams()) const;
+    bool LineTraceTest(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params = RayTraceParams()) const;
+};
+
 // ============================================================================
 // EunoiaBehaviour — Canonical Base Behaviour Class (dev.md Section 1)
 // ============================================================================
@@ -474,6 +485,8 @@ public:
         CursorStateController::s_activeBehaviour = this;
         CursorState.behaviour = this;
         cursorState.behaviour = this;
+        RayTrace.behaviour = this;
+        rayTrace.behaviour = this;
     }
 
     Scene* GetScene() const { return m_scene; }
@@ -625,6 +638,10 @@ public:
     // UI System Controller (dev.md: UISystem.Add(UI); UISystem.Remove(UI); UISystem.RemoveAll();)
     UISystemProxyType UISystem;
     UISystemProxyType uiSystem;
+
+    // RayTrace Collision Line Trace Controller (RayTrace.LineTrace(start, end))
+    BehaviourRayTraceProxy RayTrace;
+    BehaviourRayTraceProxy rayTrace;
 
     // Direct UI helpers on behaviour
     void AddUI(UserInterface* ui) { UISystem.Add(ui); }
@@ -967,6 +984,8 @@ protected:
         Transform.Init(this);
         CursorState.behaviour = this;
         cursorState.behaviour = this;
+        RayTrace.behaviour = this;
+        rayTrace.behaviour = this;
     }
 
     EunoiaBehaviour(const EunoiaBehaviour& other)
@@ -985,6 +1004,8 @@ protected:
         Transform.Init(this);
         CursorState.behaviour = this;
         cursorState.behaviour = this;
+        RayTrace.behaviour = this;
+        rayTrace.behaviour = this;
     }
 
     EunoiaBehaviour& operator=(const EunoiaBehaviour& other) {
@@ -1003,6 +1024,8 @@ protected:
             Transform.Init(this);
             CursorState.behaviour = this;
             cursorState.behaviour = this;
+            RayTrace.behaviour = this;
+            rayTrace.behaviour = this;
         }
         return *this;
     }
@@ -1020,6 +1043,44 @@ protected:
     friend struct RespectiveObjectAccessor;
     friend struct BehaviourTransformProperty;
 };
+
+// ============================================================================
+// BehaviourRayTraceProxy Inline Implementations
+// ============================================================================
+inline const RayTraceHit& BehaviourRayTraceProxy::LineTrace(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params) const {
+    if (behaviour && behaviour->GetScene()) {
+        Eunoia::RayTrace::RayTraceSystem::Get().SetActiveScene(behaviour->GetScene());
+    }
+    return Eunoia::RayTrace::RayTraceSystem::Get().LineTrace(start, end, params);
+}
+
+inline const RayTraceHit& BehaviourRayTraceProxy::LineTrace(const glm::vec3& start, const glm::vec3& end, const GameObject* ignoreObject) const {
+    if (behaviour && behaviour->GetScene()) {
+        Eunoia::RayTrace::RayTraceSystem::Get().SetActiveScene(behaviour->GetScene());
+    }
+    return Eunoia::RayTrace::RayTraceSystem::Get().LineTrace(start, end, ignoreObject);
+}
+
+inline const RayTraceHit& BehaviourRayTraceProxy::LineTrace(const glm::vec3& start, const glm::vec3& end, int ignoreObjectId) const {
+    if (behaviour && behaviour->GetScene()) {
+        Eunoia::RayTrace::RayTraceSystem::Get().SetActiveScene(behaviour->GetScene());
+    }
+    return Eunoia::RayTrace::RayTraceSystem::Get().LineTrace(start, end, ignoreObjectId);
+}
+
+inline std::vector<RayTraceHit> BehaviourRayTraceProxy::LineTraceMulti(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params) const {
+    if (behaviour && behaviour->GetScene()) {
+        Eunoia::RayTrace::RayTraceSystem::Get().SetActiveScene(behaviour->GetScene());
+    }
+    return Eunoia::RayTrace::RayTraceSystem::Get().LineTraceMulti(start, end, params);
+}
+
+inline bool BehaviourRayTraceProxy::LineTraceTest(const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params) const {
+    if (behaviour && behaviour->GetScene()) {
+        Eunoia::RayTrace::RayTraceSystem::Get().SetActiveScene(behaviour->GetScene());
+    }
+    return Eunoia::RayTrace::RayTraceSystem::Get().LineTraceTest(start, end, params);
+}
 
 // ============================================================================
 // GetComponent<T> Specialisations (dev.md Section 35)
