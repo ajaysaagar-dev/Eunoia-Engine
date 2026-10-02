@@ -108,18 +108,13 @@ glm::vec3 BehaviourTransformProperty::WorldSpace() const {
         case Type::Location:
             return glm::vec3(worldMat[3]);
         case Type::Rotation: {
-            glm::vec3 c0(worldMat[0]), c1(worldMat[1]), c2(worldMat[2]);
-            float sx = glm::length(c0);
-            float sy = glm::length(c1);
-            float sz = glm::length(c2);
-            if (sx > 1e-6f && sy > 1e-6f && sz > 1e-6f) {
-                glm::mat3 rotMat(c0 / sx, c1 / sy, c2 / sz);
-                float pitch = glm::degrees(std::asin(glm::clamp(-rotMat[1][2], -1.0f, 1.0f)));
-                float yaw = glm::degrees(std::atan2(rotMat[0][2], rotMat[2][2]));
-                float roll = glm::degrees(std::atan2(rotMat[1][0], rotMat[1][1]));
-                return glm::vec3(pitch, yaw, roll);
+            glm::vec3 worldRot = owner->rotation;
+            const GameObject* p = scene->FindObjectConst(owner->parentId);
+            while (p) {
+                worldRot += p->rotation;
+                p = (p->parentId != -1) ? scene->FindObjectConst(p->parentId) : nullptr;
             }
-            return owner->rotation;
+            return worldRot;
         }
         case Type::Scale: {
             return glm::vec3(glm::length(glm::vec3(worldMat[0])),
@@ -152,7 +147,13 @@ void BehaviourTransformProperty::WorldSpace(const glm::vec3& v) {
             break;
         }
         case Type::Rotation: {
-            owner->rotation = v - parent->rotation;
+            glm::vec3 parentRot(0.0f);
+            const GameObject* p = scene->FindObjectConst(owner->parentId);
+            while (p) {
+                parentRot += p->rotation;
+                p = (p->parentId != -1) ? scene->FindObjectConst(p->parentId) : nullptr;
+            }
+            owner->rotation = v - parentRot;
             break;
         }
         case Type::Scale: {
@@ -244,19 +245,13 @@ glm::vec3 GameObjectTransform::GetWorldRotationInternal() const {
     if (!scene || gameObject->parentId == -1) {
         return gameObject->rotation;
     }
-    glm::mat4 worldMat = scene->GetWorldMatrix(*gameObject);
-    glm::vec3 c0(worldMat[0]), c1(worldMat[1]), c2(worldMat[2]);
-    float sx = glm::length(c0);
-    float sy = glm::length(c1);
-    float sz = glm::length(c2);
-    if (sx > 1e-6f && sy > 1e-6f && sz > 1e-6f) {
-        glm::mat3 rotMat(c0 / sx, c1 / sy, c2 / sz);
-        float pitch = glm::degrees(std::asin(glm::clamp(-rotMat[1][2], -1.0f, 1.0f)));
-        float yaw = glm::degrees(std::atan2(rotMat[0][2], rotMat[2][2]));
-        float roll = glm::degrees(std::atan2(rotMat[1][0], rotMat[1][1]));
-        return glm::vec3(pitch, yaw, roll);
+    glm::vec3 worldRot = gameObject->rotation;
+    const GameObject* p = scene->FindObjectConst(gameObject->parentId);
+    while (p) {
+        worldRot += p->rotation;
+        p = (p->parentId != -1) ? scene->FindObjectConst(p->parentId) : nullptr;
     }
-    return gameObject->rotation;
+    return worldRot;
 }
 
 void GameObjectTransform::SetWorldRotationInternal(const glm::vec3& v) {
@@ -266,12 +261,13 @@ void GameObjectTransform::SetWorldRotationInternal(const glm::vec3& v) {
         gameObject->rotation = v;
         return;
     }
-    const GameObject* parent = scene->FindObjectConst(gameObject->parentId);
-    if (!parent) {
-        gameObject->rotation = v;
-        return;
+    glm::vec3 parentRot(0.0f);
+    const GameObject* p = scene->FindObjectConst(gameObject->parentId);
+    while (p) {
+        parentRot += p->rotation;
+        p = (p->parentId != -1) ? scene->FindObjectConst(p->parentId) : nullptr;
     }
-    gameObject->rotation = v - parent->rotation;
+    gameObject->rotation = v - parentRot;
 }
 
 glm::vec3 GameObjectTransform::GetWorldScaleInternal() const {
