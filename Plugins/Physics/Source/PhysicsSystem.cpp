@@ -215,7 +215,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             IntegratePhysicsBody(obj, subDt);
         }
 
-        // 2. Ground plane collision resolution
+        // 2. Ground plane collision resolution & continuous toppling torque
         for (auto& obj : scene.objects) {
             if (!obj.hasPhysics || !obj.physics.enabled || obj.physics.isKinematic) {
                 continue;
@@ -241,6 +241,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
 
                 int contactCount = 0;
                 float maxPen = 0.0f;
+                std::vector<glm::vec3> activeContactOffsets;
 
                 for (const auto& cornerWorld : corners) {
                     glm::vec3 delta = cornerWorld - planePoint;
@@ -250,12 +251,14 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
 
                     float distToPlane = glm::dot(delta, planeNormal);
 
-                    if (distToPlane < 0.0f) {
-                        float penetration = -distToPlane;
+                    if (distToPlane < 0.02f) { // Penetrating or resting on ground
+                        float penetration = std::max(0.0f, -distToPlane);
                         maxPen = std::max(maxPen, penetration);
                         contactCount++;
 
                         glm::vec3 r_body = cornerWorld - obj.position;
+                        activeContactOffsets.push_back(r_body);
+
                         glm::vec3 pointVel = phys.velocity + glm::cross(phys.angularVelocity, r_body);
                         float velAlongNormal = glm::dot(pointVel, planeNormal);
 
@@ -263,14 +266,14 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                             glm::vec3 rCrossN = glm::cross(r_body, planeNormal);
                             float effMassInv = (1.0f / mass) + glm::dot(rCrossN, I_inv_world * rCrossN);
 
-                            float rest = (std::abs(velAlongNormal) < 0.3f) ? 0.0f : std::clamp(phys.bounciness, 0.0f, 0.9f);
+                            float rest = (std::abs(velAlongNormal) < 0.25f) ? 0.0f : std::clamp(phys.bounciness, 0.0f, 0.9f);
                             float Jn = -(1.0f + rest) * velAlongNormal / std::max(1e-4f, effMassInv);
                             glm::vec3 impN = Jn * planeNormal;
 
                             phys.velocity += impN / mass;
                             phys.angularVelocity += I_inv_world * glm::cross(r_body, impN);
 
-                            // Friction
+                            // Surface friction impulse
                             glm::vec3 tangentVel = pointVel - velAlongNormal * planeNormal;
                             float tSpeed = glm::length(tangentVel);
                             if (tSpeed > 1e-4f) {
@@ -287,20 +290,38 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                 }
 
                 if (contactCount > 0) {
-                    obj.position += planeNormal * (maxPen * 0.8f);
+                    obj.position += planeNormal * (maxPen * 0.85f);
                     phys.isGrounded = true;
                     phys.groundObjectId = groundObj.id;
 
-                    if (glm::length(phys.velocity) < 0.4f && glm::length(phys.angularVelocity) < 0.8f) {
-                        phys.velocity.y *= 0.1f;
-                        phys.velocity.x *= std::clamp(1.0f - phys.friction * 20.0f * subDt, 0.0f, 1.0f);
-                        phys.velocity.z *= std::clamp(1.0f - phys.friction * 20.0f * subDt, 0.0f, 1.0f);
-                        phys.angularVelocity *= std::clamp(1.0f - 15.0f * subDt, 0.0f, 1.0f);
-
-                        if (contactCount >= 3 && glm::length(phys.velocity) < 0.1f && glm::length(phys.angularVelocity) < 0.2f) {
-                            phys.velocity = glm::vec3(0.0f);
-                            phys.angularVelocity = glm::vec3(0.0f);
+                    // Continuous gravitational toppling torque:
+                    // When resting on 1 corner or 1 edge (contactCount < 4), normal reaction force at contact point
+                    // exerts torque that naturally topples the cube onto its full face!
+                    if (contactCount < 4 && phys.useGravity) {
+                        float supportWeight = mass * 9.81f * phys.gravityMultiplier / (float)contactCount;
+                        for (const auto& r_c : activeContactOffsets) {
+                            glm::vec3 normalForce = planeNormal * supportWeight;
+                            glm::vec3 topplingTorque = glm::cross(r_c, normalForce);
+                            phys.angularVelocity += (I_inv_world * topplingTorque) * subDt;
                         }
+                    }
+
+                    // Resting stabilization only when a full face (4 corners) is resting on ground
+                    if (contactCount >= 4) {
+                        if (glm::length(phys.velocity) < 0.5f && glm::length(phys.angularVelocity) < 0.8f) {
+                            phys.velocity.y *= 0.05f;
+                            phys.velocity.x *= std::clamp(1.0f - phys.friction * 25.0f * subDt, 0.0f, 1.0f);
+                            phys.velocity.z *= std::clamp(1.0f - phys.friction * 25.0f * subDt, 0.0f, 1.0f);
+                            phys.angularVelocity *= std::clamp(1.0f - 20.0f * subDt, 0.0f, 1.0f);
+
+                            if (glm::length(phys.velocity) < 0.1f && glm::length(phys.angularVelocity) < 0.15f) {
+                                phys.velocity = glm::vec3(0.0f);
+                                phys.angularVelocity = glm::vec3(0.0f);
+                            }
+                        }
+                    } else {
+                        // Light damping while tumbling/toppling
+                        phys.angularVelocity *= std::clamp(1.0f - phys.angularDamping * subDt, 0.0f, 1.0f);
                     }
                 }
             }
@@ -405,18 +426,28 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                     }
                 }
 
+                // Continuous toppling torque for stacked/tilted dynamic bodies
+                if (dynA && objA.physics.useGravity) {
+                    glm::vec3 normalReaction = -normal * (massA * 9.81f * objA.physics.gravityMultiplier);
+                    objA.physics.angularVelocity += (IA_inv * glm::cross(rA, normalReaction)) * (subDt * 0.5f);
+                }
+                if (dynB && objB.physics.useGravity) {
+                    glm::vec3 normalReaction = normal * (massB * 9.81f * objB.physics.gravityMultiplier);
+                    objB.physics.angularVelocity += (IB_inv * glm::cross(rB, normalReaction)) * (subDt * 0.5f);
+                }
+
                 // Positional separation (split proportionally by mass)
                 float totalMass = (dynA ? massA : 0.0f) + (dynB ? massB : 0.0f);
                 if (totalMass > 0.0f) {
                     if (dynA && dynB) {
                         float ratioA = massB / totalMass;
                         float ratioB = massA / totalMass;
-                        objA.position -= normal * (pen * ratioA * 0.8f);
-                        objB.position += normal * (pen * ratioB * 0.8f);
+                        objA.position -= normal * (pen * ratioA * 0.85f);
+                        objB.position += normal * (pen * ratioB * 0.85f);
                     } else if (dynA) {
-                        objA.position -= normal * (pen * 0.8f);
+                        objA.position -= normal * (pen * 0.85f);
                     } else if (dynB) {
-                        objB.position += normal * (pen * 0.8f);
+                        objB.position += normal * (pen * 0.85f);
                     }
                 }
             }
@@ -465,7 +496,7 @@ void PhysicsSystem::IntegratePhysicsBody(GameObject& obj, float dt) {
     // Axis rotation locking
     if (phys.lockRotationX) phys.angularVelocity.x = 0.0f;
     if (phys.lockRotationY) phys.angularVelocity.y = 0.0f;
-    if (phys.lockRotationZ) phys.angularVelocity.z = 0.0f;
+    if (phys.lockPositionZ) phys.angularVelocity.z = 0.0f;
 
     // Rotation integration (degrees)
     if (glm::length(phys.angularVelocity) > 1e-6f) {
