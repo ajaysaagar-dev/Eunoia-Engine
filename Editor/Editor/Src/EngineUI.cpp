@@ -2578,6 +2578,16 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
         EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
         EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(mainVp->WorkPos.x, mainVp->WorkPos.y), glm::vec2(mainVp->WorkSize.x, mainVp->WorkSize.y));
+
+        ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+        if (fgDrawList) {
+            EunoiaUI::UISystem3DManager::Get().RenderAllScene3DUI(
+                fgDrawList, scene, camera,
+                glm::vec4(mainVp->WorkPos.x, mainVp->WorkPos.y, mainVp->WorkSize.x, mainVp->WorkSize.y),
+                true
+            );
+        }
+
         RenderScreenPrintOverlay(24.0f, 24.0f);
         return;
     }
@@ -2769,6 +2779,16 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         // Render Active Runtime UIs added via UISystem.Add(UI)
         EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
         EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(mainVp->WorkPos.x, mainVp->WorkPos.y), glm::vec2(mainVp->WorkSize.x, mainVp->WorkSize.y));
+
+        // Render 3D World-Space and Screen-Space User Interfaces in Play Mode
+        ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+        if (fgDrawList) {
+            EunoiaUI::UISystem3DManager::Get().RenderAllScene3DUI(
+                fgDrawList, scene, camera,
+                glm::vec4(mainVp->WorkPos.x, mainVp->WorkPos.y, mainVp->WorkSize.x, mainVp->WorkSize.y),
+                true
+            );
+        }
 
         // Game View top-left: Render on-screen Print messages (Print(value, time))
         RenderScreenPrintOverlay(mainVp->WorkPos.x + 16.0f, mainVp->WorkPos.y + 16.0f);
@@ -3943,12 +3963,12 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
     EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y), glm::vec2(vpRect.width, vpRect.height));
 
     // Render 3D World-Space and Screen-Space User Interfaces
-    ImDrawList* bgDrawList = ImGui::GetBackgroundDrawList();
-    if (bgDrawList) {
+    ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+    if (fgDrawList) {
         EunoiaUI::UISystem3DManager::Get().RenderAllScene3DUI(
-            bgDrawList, scene, camera,
+            fgDrawList, scene, camera,
             glm::vec4(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y, vpRect.width, vpRect.height),
-            isGameView
+            isGameView || scene.isPlayMode
         );
     }
 
@@ -4084,10 +4104,10 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
     }
 
     // 1px border framing the center 3D viewport exactly according to UI_Ref.svg blueprint
-    ImDrawList* fgDrawList = ImGui::GetForegroundDrawList();
+    ImDrawList* borderDrawList = ImGui::GetForegroundDrawList();
     ImVec2 vpMin(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y);
     ImVec2 vpMax(vp->Pos.x + vpRect.x + vpRect.width, vp->Pos.y + vpRect.y + vpRect.height);
-    fgDrawList->AddRect(vpMin, vpMax, IM_COL32(40, 40, 40, 255), 0.0f, 0, 1.0f);
+    borderDrawList->AddRect(vpMin, vpMax, IM_COL32(40, 40, 40, 255), 0.0f, 0, 1.0f);
 }
 
 void EngineUI::RenderScreenPrintOverlay(float startX, float startY) {

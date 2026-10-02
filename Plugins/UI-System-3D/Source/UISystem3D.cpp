@@ -165,14 +165,16 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
         }
     }
 
-    // 1. Draw 3D Quad Background
-    ImU32 bgCol = IM_COL32(
-        (int)(obj.ui3d.backgroundColor.r * 255.0f),
-        (int)(obj.ui3d.backgroundColor.g * 255.0f),
-        (int)(obj.ui3d.backgroundColor.b * 255.0f),
-        (int)(obj.ui3d.backgroundColor.a * obj.ui3d.opacity * 255.0f)
-    );
-    drawList->AddQuadFilled(pTL, pTR, pBR, pBL, bgCol);
+    // 1. Draw 3D Quad Background (if not transparent)
+    if (obj.ui3d.backgroundColor.a > 0.001f) {
+        ImU32 bgCol = IM_COL32(
+            (int)(obj.ui3d.backgroundColor.r * 255.0f),
+            (int)(obj.ui3d.backgroundColor.g * 255.0f),
+            (int)(obj.ui3d.backgroundColor.b * 255.0f),
+            (int)(obj.ui3d.backgroundColor.a * obj.ui3d.opacity * 255.0f)
+        );
+        drawList->AddQuadFilled(pTL, pTR, pBR, pBL, bgCol);
+    }
 
     // 2. Render UI Content Elements if UI asset is assigned
     UserInterface* ui = nullptr;
@@ -193,8 +195,8 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
         drawList->PushClipRect(ImVec2(minX, minY), ImVec2(maxX, maxY), true);
         UISystemManager::Get().RenderUI(drawList, quadMin, quadMax, *ui);
         drawList->PopClipRect();
-    } else {
-        // Placeholder preview if no asset assigned
+    } else if (!isGameView) {
+        // Placeholder preview only in editor if no asset assigned
         ImVec2 center((pTL.x + pTR.x + pBR.x + pBL.x) * 0.25f, (pTL.y + pTR.y + pBR.y + pBL.y) * 0.25f);
         std::string placeholder = "[User Interface 3D]";
         if (!obj.ui3d.uiAssetPath.empty()) {
@@ -206,15 +208,19 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
     }
 
     // 3. Draw Quad Border
-    ImU32 borderCol = isSelected ? IM_COL32(50, 200, 255, 255) :
-                      IM_COL32(
-                          (int)(obj.ui3d.borderColor.r * 255.0f),
-                          (int)(obj.ui3d.borderColor.g * 255.0f),
-                          (int)(obj.ui3d.borderColor.b * 255.0f),
-                          (int)(obj.ui3d.borderColor.a * obj.ui3d.opacity * 255.0f)
-                      );
-    float borderThick = isSelected ? (obj.ui3d.borderWidth + 1.5f) : obj.ui3d.borderWidth;
-    drawList->AddQuad(pTL, pTR, pBR, pBL, borderCol, borderThick);
+    if (obj.ui3d.borderWidth > 0.0f && obj.ui3d.borderColor.a > 0.001f) {
+        ImU32 borderCol = (isSelected && !isGameView) ? IM_COL32(50, 200, 255, 255) :
+                          IM_COL32(
+                              (int)(obj.ui3d.borderColor.r * 255.0f),
+                              (int)(obj.ui3d.borderColor.g * 255.0f),
+                              (int)(obj.ui3d.borderColor.b * 255.0f),
+                              (int)(obj.ui3d.borderColor.a * obj.ui3d.opacity * 255.0f)
+                          );
+        float borderThick = (isSelected && !isGameView) ? (obj.ui3d.borderWidth + 1.5f) : obj.ui3d.borderWidth;
+        drawList->AddQuad(pTL, pTR, pBR, pBL, borderCol, borderThick);
+    } else if (isSelected && !isGameView) {
+        drawList->AddQuad(pTL, pTR, pBR, pBL, IM_COL32(50, 200, 255, 255), 1.5f);
+    }
 
     // 4. Editor Overlay Badge & Controls
     if (!isGameView) {

@@ -35,9 +35,9 @@ struct UserInterface3DComponent {
     bool twoSided = true;                                 // Render both front and back in 3D
     float opacity = 1.0f;                                 // Master opacity
     bool interactable = true;                             // Raycast / pointer interactivity
-    glm::vec4 backgroundColor{0.10f, 0.12f, 0.16f, 0.85f};
-    glm::vec4 borderColor{0.25f, 0.60f, 1.00f, 0.90f};
-    float borderWidth = 2.0f;
+    glm::vec4 backgroundColor{0.0f, 0.0f, 0.0f, 0.0f};   // Canvas always transparent by default
+    glm::vec4 borderColor{0.0f, 0.0f, 0.0f, 0.0f};       // Transparent border by default
+    float borderWidth = 0.0f;
 };
 
 } // namespace EunoiaUI
