@@ -507,8 +507,10 @@ static void CopyHeadersRecursive(const std::filesystem::path& src, const std::fi
             if (ext == ".h" || ext == ".hpp" || ext == ".inl" || ext == ".c") {
                 std::filesystem::path rel = std::filesystem::relative(it->path(), src, ec);
                 std::filesystem::path target = dst / rel;
-                std::filesystem::create_directories(target.parent_path(), ec);
-                std::filesystem::copy_file(it->path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+                if (!std::filesystem::exists(target, ec) || std::filesystem::last_write_time(it->path(), ec) > std::filesystem::last_write_time(target, ec)) {
+                    std::filesystem::create_directories(target.parent_path(), ec);
+                    std::filesystem::copy_file(it->path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+                }
             }
         }
     }
@@ -522,19 +524,6 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     std::filesystem::path compilerPath = FindCompilerPath(engineRoot);
 
     std::filesystem::path depDir = projectRoot / "Dependencies";
-    std::filesystem::path stampPath = depDir / ".engine_stamp";
-
-    // Fast-path: If stamp matches current engine root and version, dependencies are already up-to-date
-    if (std::filesystem::exists(stampPath, ec)) {
-        std::ifstream sf(stampPath);
-        std::string stampedRoot;
-        if (std::getline(sf, stampedRoot)) {
-            if (stampedRoot == engineRoot.generic_string()) {
-                return; // 0ms fast exit
-            }
-        }
-    }
-
     std::filesystem::path depEngineDir = depDir / "Engine";
     std::filesystem::path depDepsDir = depDir / "deps";
     std::filesystem::path depPluginsDir = depDir / "Plugins";
@@ -668,6 +657,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     }
 
     // 5. Write stamp file to cache dependency state
+    std::filesystem::path stampPath = depDir / ".engine_stamp";
     std::ofstream stampf(stampPath);
     if (stampf.is_open()) {
         stampf << engineRoot.generic_string() << "\n";
