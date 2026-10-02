@@ -1256,9 +1256,37 @@ public:
         p = actorBlock.find("\"uiTwoSided\""); if (p != std::string::npos) obj.ui3d.twoSided = ParseBoolAt(actorBlock, p, true);
         p = actorBlock.find("\"uiOpacity\""); if (p != std::string::npos) obj.ui3d.opacity = ParseFloatAt(actorBlock, p, 1.0f);
         p = actorBlock.find("\"uiInteractable\""); if (p != std::string::npos) obj.ui3d.interactable = ParseBoolAt(actorBlock, p, true);
-        p = actorBlock.find("\"uiBackgroundColor\""); if (p != std::string::npos) obj.ui3d.backgroundColor = ParseVec4(actorBlock, p);
-        p = actorBlock.find("\"uiBorderColor\""); if (p != std::string::npos) obj.ui3d.borderColor = ParseVec4(actorBlock, p);
-        p = actorBlock.find("\"uiBorderWidth\""); if (p != std::string::npos) obj.ui3d.borderWidth = ParseFloatAt(actorBlock, p, 2.0f);
+        p = actorBlock.find("\"uiBackgroundColor\"");
+        if (p != std::string::npos) {
+            obj.ui3d.backgroundColor = ParseVec4(actorBlock, p);
+            if (std::abs(obj.ui3d.backgroundColor.r - 0.10f) < 0.03f &&
+                std::abs(obj.ui3d.backgroundColor.g - 0.12f) < 0.03f &&
+                std::abs(obj.ui3d.backgroundColor.b - 0.16f) < 0.03f) {
+                obj.ui3d.backgroundColor = glm::vec4(0.0f);
+            }
+        } else {
+            obj.ui3d.backgroundColor = glm::vec4(0.0f);
+        }
+
+        p = actorBlock.find("\"uiBorderColor\"");
+        if (p != std::string::npos) {
+            obj.ui3d.borderColor = ParseVec4(actorBlock, p);
+            if (std::abs(obj.ui3d.borderColor.r - 0.25f) < 0.03f &&
+                std::abs(obj.ui3d.borderColor.g - 0.60f) < 0.03f &&
+                std::abs(obj.ui3d.borderColor.b - 1.00f) < 0.03f) {
+                obj.ui3d.borderColor = glm::vec4(0.0f);
+            }
+        } else {
+            obj.ui3d.borderColor = glm::vec4(0.0f);
+        }
+
+        p = actorBlock.find("\"uiBorderWidth\"");
+        if (p != std::string::npos) {
+            obj.ui3d.borderWidth = ParseFloatAt(actorBlock, p, 0.0f);
+            if (obj.ui3d.borderColor.a <= 0.001f) obj.ui3d.borderWidth = 0.0f;
+        } else {
+            obj.ui3d.borderWidth = 0.0f;
+        }
 
         // Parse Physics Modifier
         p = actorBlock.find("\"hasPhysics\"");
