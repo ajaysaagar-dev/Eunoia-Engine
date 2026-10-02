@@ -146,6 +146,11 @@ public:
         bool isNegated = false; // true: !IsKeyDown
     };
 
+    struct DynamicBoolCondition {
+        std::string varName;
+        bool expectedVal = true;
+    };
+
     struct DynamicTransformAction {
         enum class ActionType {
             TranslateRelative,
@@ -164,6 +169,7 @@ public:
         bool activeAxis[3] = {false, false, false};
         std::string targetRefName;
         std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
     };
     std::vector<DynamicTransformAction> m_transformActions;
 

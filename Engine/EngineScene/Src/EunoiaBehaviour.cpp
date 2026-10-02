@@ -899,6 +899,31 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
     Transform.Init(this);
     auto& input = InputSystem::Get();
     for (const auto& action : m_transformActions) {
+        // 1. Check boolean condition variables (e.g. CanMove == true / canMove == false)
+        bool boolConditionMet = true;
+        for (const auto& bCond : action.requiredBools) {
+            auto itB = m_boolStorage.find(bCond.varName);
+            if (itB == m_boolStorage.end()) {
+                // Case-insensitive lookup fallback
+                for (const auto& kv : m_boolStorage) {
+                    std::string k1 = kv.first, k2 = bCond.varName;
+                    std::transform(k1.begin(), k1.end(), k1.begin(), ::tolower);
+                    std::transform(k2.begin(), k2.end(), k2.begin(), ::tolower);
+                    if (k1 == k2) {
+                        itB = m_boolStorage.find(kv.first);
+                        break;
+                    }
+                }
+            }
+            if (itB != m_boolStorage.end()) {
+                if (itB->second != bCond.expectedVal) {
+                    boolConditionMet = false;
+                    break;
+                }
+            }
+        }
+        if (!boolConditionMet) continue;
+
         if (!action.requiredKeys.empty()) {
             bool conditionMet = false;
             for (const auto& cond : action.requiredKeys) {
@@ -2031,11 +2056,65 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         return conds;
     };
 
+    auto extractBoolConditions = [&](const std::string& str) -> std::vector<DynamicScriptBehaviour::DynamicBoolCondition> {
+        std::vector<DynamicScriptBehaviour::DynamicBoolCondition> conds;
+        for (const auto& v : declaredVars) {
+            if (v.second.type != "bool") continue;
+            const std::string& varName = v.first;
+            size_t p = str.find(varName);
+            if (p == std::string::npos) continue;
+
+            if (p > 0 && (std::isalnum((unsigned char)str[p - 1]) || str[p - 1] == '_')) continue;
+            size_t after = p + varName.size();
+            if (after < str.size() && (std::isalnum((unsigned char)str[after]) || str[after] == '_')) continue;
+
+            DynamicScriptBehaviour::DynamicBoolCondition bc;
+            bc.varName = varName;
+            bc.expectedVal = true;
+
+            std::string sub = str.substr(0, p);
+            size_t lastNonSpace = sub.find_last_not_of(" \t(");
+            bool isNegated = (lastNonSpace != std::string::npos && sub[lastNonSpace] == '!');
+
+            std::string rest = str.substr(after);
+            size_t eqPos = rest.find("==");
+            if (eqPos != std::string::npos) {
+                std::string afterEq = rest.substr(eqPos + 2);
+                size_t fPos = afterEq.find("false");
+                size_t tPos = afterEq.find("true");
+                if (fPos != std::string::npos && (tPos == std::string::npos || fPos < tPos)) {
+                    bc.expectedVal = false;
+                } else if (tPos != std::string::npos) {
+                    bc.expectedVal = true;
+                }
+            } else if (rest.find("!=") != std::string::npos) {
+                std::string afterNeq = rest.substr(rest.find("!=") + 2);
+                size_t tPos = afterNeq.find("true");
+                if (tPos != std::string::npos) {
+                    bc.expectedVal = false;
+                }
+            } else if (isNegated) {
+                bc.expectedVal = false;
+            }
+
+            conds.push_back(bc);
+        }
+        return conds;
+    };
+
+    struct ConditionScope {
+        int braceDepth = 0;
+        std::vector<DynamicScriptBehaviour::DynamicKeyCondition> keys;
+        std::vector<DynamicScriptBehaviour::DynamicBoolCondition> bools;
+    };
+    std::vector<ConditionScope> conditionStack;
+    std::vector<DynamicScriptBehaviour::DynamicKeyCondition> pendingSingleLineKeys;
+    std::vector<DynamicScriptBehaviour::DynamicBoolCondition> pendingSingleLineBools;
+    bool hasPendingSingleLineCondition = false;
+    int updateMethodBraceDepth = 0;
+
     bool inStartMethod = false;
     bool inUpdateMethod = false;
-    std::vector<DynamicScriptBehaviour::DynamicKeyCondition> activeKeyConditions;
-    bool pendingSingleLineCondition = false;
-    int conditionBraceLevel = 0;
 
     for (const auto& rawLine : lines) {
         std::string l = rawLine;
@@ -2051,9 +2130,11 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         } else if (l.find("void Update(") != std::string::npos || l.find("Update(float") != std::string::npos) {
             inUpdateMethod = true;
             inStartMethod = false;
-            activeKeyConditions.clear();
-            pendingSingleLineCondition = false;
-            conditionBraceLevel = 0;
+            conditionStack.clear();
+            pendingSingleLineKeys.clear();
+            pendingSingleLineBools.clear();
+            hasPendingSingleLineCondition = false;
+            updateMethodBraceDepth = 0;
         }
 
         if (inStartMethod) {
@@ -2119,17 +2200,25 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         }
 
         if (inUpdateMethod) {
-            // Track block braces for active condition
-            if (conditionBraceLevel > 0) {
-                for (char c : l) {
-                    if (c == '{') conditionBraceLevel++;
-                    else if (c == '}') conditionBraceLevel--;
-                }
-                if (conditionBraceLevel <= 0) {
-                    conditionBraceLevel = 0;
-                    activeKeyConditions.clear();
-                }
+            int openBracesOnLine = 0;
+            int closeBracesOnLine = 0;
+            for (char c : l) {
+                if (c == '{') openBracesOnLine++;
+                else if (c == '}') closeBracesOnLine++;
             }
+
+            if (openBracesOnLine > 0 && hasPendingSingleLineCondition) {
+                ConditionScope scope;
+                scope.braceDepth = updateMethodBraceDepth + openBracesOnLine;
+                scope.keys = pendingSingleLineKeys;
+                scope.bools = pendingSingleLineBools;
+                conditionStack.push_back(scope);
+                pendingSingleLineKeys.clear();
+                pendingSingleLineBools.clear();
+                hasPendingSingleLineCondition = false;
+            }
+
+            updateMethodBraceDepth += openBracesOnLine;
 
             // Check for local variable declaration / assignment inside Update()
             size_t eqPos = l.find('=');
@@ -2152,30 +2241,40 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             }
 
-            // Check if this line introduces an if (...) with key checks
+            // Check if this line introduces an if (...) with key or bool checks
             size_t ifPos = l.find("if (");
             if (ifPos == std::string::npos) ifPos = l.find("if(");
-            std::vector<DynamicScriptBehaviour::DynamicKeyCondition> lineConditions;
             if (ifPos != std::string::npos) {
-                lineConditions = extractKeyConditions(l);
-            }
-
-            bool hasTranslate = (l.find("Translate(") != std::string::npos);
-            bool hasRotate = (l.find("Rotate(") != std::string::npos || l.find("Rotation(") != std::string::npos) && l.find("AutoRotate") == std::string::npos;
-
-            if (!lineConditions.empty()) {
-                if (hasTranslate || hasRotate) {
-                    activeKeyConditions = lineConditions;
-                    pendingSingleLineCondition = true;
-                } else if (l.find('{') != std::string::npos) {
-                    activeKeyConditions = lineConditions;
-                    conditionBraceLevel = 1;
-                    pendingSingleLineCondition = false;
-                } else {
-                    activeKeyConditions = lineConditions;
-                    pendingSingleLineCondition = true;
+                auto lineKeys = extractKeyConditions(l);
+                auto lineBools = extractBoolConditions(l);
+                if (!lineKeys.empty() || !lineBools.empty()) {
+                    if (openBracesOnLine > 0) {
+                        ConditionScope scope;
+                        scope.braceDepth = updateMethodBraceDepth;
+                        scope.keys = lineKeys;
+                        scope.bools = lineBools;
+                        conditionStack.push_back(scope);
+                    } else {
+                        pendingSingleLineKeys = lineKeys;
+                        pendingSingleLineBools = lineBools;
+                        hasPendingSingleLineCondition = true;
+                    }
                 }
             }
+
+            auto applyConditionsToAction = [&](DynamicTransformAction& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+                if (hasPendingSingleLineCondition) {
+                    pendingSingleLineKeys.clear();
+                    pendingSingleLineBools.clear();
+                    hasPendingSingleLineCondition = false;
+                }
+            };
 
             // 1. Scan for Print statements
             size_t prPos = l.find("Print(");
@@ -2281,13 +2380,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         for (int i = 0; i < 3; ++i) {
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i], action.scaleVarNames[i], action.activeAxis[i]);
                         }
-                        if (!activeKeyConditions.empty()) {
-                            action.requiredKeys = activeKeyConditions;
-                            if (pendingSingleLineCondition) {
-                                activeKeyConditions.clear();
-                                pendingSingleLineCondition = false;
-                            }
-                        }
+                        applyConditionsToAction(action);
                         m_transformActions.push_back(action);
                     }
                 }
@@ -2347,13 +2440,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             action.activeAxis[0] = action.activeAxis[2];
                             action.activeAxis[2] = false;
                         }
-                        if (!activeKeyConditions.empty()) {
-                            action.requiredKeys = activeKeyConditions;
-                            if (pendingSingleLineCondition) {
-                                activeKeyConditions.clear();
-                                pendingSingleLineCondition = false;
-                            }
-                        }
+                        applyConditionsToAction(action);
                         m_transformActions.push_back(action);
                     }
                 }
@@ -2369,6 +2456,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         break;
                     }
                 }
+                applyConditionsToAction(action);
                 m_transformActions.push_back(action);
             } else if (l.find("rotation.x") != std::string::npos || l.find("Rotation.x") != std::string::npos) {
                 DynamicTransformAction action;
@@ -2383,6 +2471,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         break;
                     }
                 }
+                applyConditionsToAction(action);
                 m_transformActions.push_back(action);
             }
 
@@ -2390,38 +2479,27 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             if (l.find("CursorState.UnLocked") != std::string::npos || l.find("CursorState.Unlock") != std::string::npos) {
                 DynamicTransformAction action;
                 action.type = DynamicTransformAction::ActionType::UnlockCursor;
-                if (!activeKeyConditions.empty()) {
-                    action.requiredKeys = activeKeyConditions;
-                    if (pendingSingleLineCondition) {
-                        activeKeyConditions.clear();
-                        pendingSingleLineCondition = false;
-                    }
-                }
+                applyConditionsToAction(action);
                 m_transformActions.push_back(action);
             } else if (l.find("CursorState.Locked") != std::string::npos || l.find("CursorState.Lock") != std::string::npos) {
                 DynamicTransformAction action;
                 action.type = DynamicTransformAction::ActionType::LockCursor;
-                if (!activeKeyConditions.empty()) {
-                    action.requiredKeys = activeKeyConditions;
-                    if (pendingSingleLineCondition) {
-                        activeKeyConditions.clear();
-                        pendingSingleLineCondition = false;
-                    }
-                }
+                applyConditionsToAction(action);
                 m_transformActions.push_back(action);
             }
 
-            if (!hasTranslate && !hasRotate && lineConditions.empty() && pendingSingleLineCondition) {
-                if (l.find(';') != std::string::npos || l.find('{') != std::string::npos) {
-                    activeKeyConditions.clear();
-                    pendingSingleLineCondition = false;
-                }
+            // Handle brace cleanup at end of line
+            updateMethodBraceDepth -= closeBracesOnLine;
+            while (!conditionStack.empty() && conditionStack.back().braceDepth > updateMethodBraceDepth) {
+                conditionStack.pop_back();
             }
 
-            if (conditionBraceLevel == 0 && l.find('}') != std::string::npos && l.find('{') == std::string::npos) {
+            if (closeBracesOnLine > 0 && updateMethodBraceDepth <= 0) {
                 inUpdateMethod = false;
-                activeKeyConditions.clear();
-                pendingSingleLineCondition = false;
+                conditionStack.clear();
+                pendingSingleLineKeys.clear();
+                pendingSingleLineBools.clear();
+                hasPendingSingleLineCondition = false;
             }
         }
 
