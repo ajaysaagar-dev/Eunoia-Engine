@@ -2573,7 +2573,10 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             outShouldExit = true;
         }
 
-        // Render on-screen prints / HUD in game window
+        // Render active runtime UIs and on-screen prints / HUD in game window
+        ImGuiViewport* mainVp = ImGui::GetMainViewport();
+        EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
+        EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(mainVp->WorkPos.x, mainVp->WorkPos.y), glm::vec2(mainVp->WorkSize.x, mainVp->WorkSize.y));
         RenderScreenPrintOverlay(24.0f, 24.0f);
         return;
     }
@@ -3933,6 +3936,10 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
     }
     ImGui::End();
     ImGui::PopStyleVar();
+
+    // Render Active Runtime UIs added via UISystem.Add(UI)
+    EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
+    EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y), glm::vec2(vpRect.width, vpRect.height));
 
     // Viewport top-left: Render on-screen Print messages
     RenderScreenPrintOverlay(overlayX, overlayY + 36.0f);

@@ -294,6 +294,22 @@ public:
     };
     std::vector<DynamicTransformAction> m_transformActions;
 
+    struct DynamicUIAction {
+        enum class ActionType {
+            Add,
+            Remove,
+            RemoveAll
+        };
+        ActionType type = ActionType::Add;
+        std::string targetVar;
+        bool requireHitStatus = false;
+        bool requireNoHit = false;
+        std::string requireHitTag;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+    };
+    std::vector<DynamicUIAction> m_uiActions;
+
     std::string m_sourceCppPath;
     std::filesystem::file_time_type m_sourceTimestamp{};
 };

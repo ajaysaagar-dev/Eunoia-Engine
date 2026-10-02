@@ -118,11 +118,35 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
         return it->second.get();
     }
 
-    auto ui = std::make_shared<UserInterface>();
-    if (ui->LoadFromFile(path)) {
-        UserInterface* ptr = ui.get();
-        m_loadedUIs[path] = ui;
-        return ptr;
+    std::error_code ec;
+    if (std::filesystem::exists(path, ec) && !std::filesystem::is_directory(path, ec)) {
+        auto ui = std::make_shared<UserInterface>();
+        if (ui->LoadFromFile(path)) {
+            UserInterface* ptr = ui.get();
+            m_loadedUIs[path] = ui;
+            return ptr;
+        }
+    }
+
+    // Try appending .eui if missing
+    if (path.rfind(".eui") == std::string::npos && path.rfind(".html") == std::string::npos) {
+        std::string withEui = path + ".eui";
+        if (std::filesystem::exists(withEui, ec)) {
+            auto ui = std::make_shared<UserInterface>();
+            if (ui->LoadFromFile(withEui)) {
+                UserInterface* ptr = ui.get();
+                m_loadedUIs[path] = ui;
+                m_loadedUIs[withEui] = ui;
+                return ptr;
+            }
+        }
+    }
+
+    // Check loaded UIs by name
+    for (const auto& pair : m_loadedUIs) {
+        if (pair.second && (pair.second->name == path || pair.first.find(path) != std::string::npos)) {
+            return pair.second.get();
+        }
     }
 
     return nullptr;

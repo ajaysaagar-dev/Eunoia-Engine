@@ -747,13 +747,23 @@ void EunoiaBehaviour::ResolveReferences(Scene& scene) {
         if (prop.type != BehaviourPropertyType::ObjectRef || !prop.dataPtr) continue;
 
         if (prop.refType == ObjectRefType::UserInterface) {
+            UserInterface* resolvedUI = nullptr;
             if (!prop.assetPath.empty()) {
-                *reinterpret_cast<UserInterface**>(prop.dataPtr) = EunoiaUI::UISystemManager::Get().GetOrLoadUI(prop.assetPath);
-                prop.isMissing = (*reinterpret_cast<void**>(prop.dataPtr) == nullptr);
-            } else {
-                *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
-                prop.isMissing = false;
+                resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(prop.assetPath);
             }
+            if (!resolvedUI) {
+                resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(prop.name);
+            }
+            if (!resolvedUI) {
+                for (const auto& pair : EunoiaUI::UISystemManager::Get().GetLoadedUIs()) {
+                    if (pair.second && (pair.second->name == prop.name || pair.first.find(prop.name) != std::string::npos)) {
+                        resolvedUI = pair.second.get();
+                        break;
+                    }
+                }
+            }
+            *reinterpret_cast<UserInterface**>(prop.dataPtr) = resolvedUI;
+            prop.isMissing = false;
             continue;
         }
 
@@ -1685,6 +1695,105 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             CursorState.UnLocked();
         }
     }
+
+    // Execute real-time dynamic UI actions inside Update()
+    for (const auto& action : m_uiActions) {
+        // 1. Check boolean condition variables
+        bool boolConditionMet = true;
+        for (const auto& bCond : action.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        // 2. Check hit conditions
+        if (action.requireHitStatus) {
+            if (!m_lastDynamicHit.Status) continue;
+            if (!action.requireHitTag.empty()) {
+                if (!m_lastDynamicHit.GameObject || !m_lastDynamicHit.GameObject.HasTag(action.requireHitTag)) {
+                    continue;
+                }
+            }
+        }
+        if (action.requireNoHit) {
+            if (m_lastDynamicHit.Status && !action.requireHitTag.empty() && m_lastDynamicHit.GameObject && m_lastDynamicHit.GameObject.HasTag(action.requireHitTag)) {
+                continue;
+            }
+            if (m_lastDynamicHit.Status && action.requireHitTag.empty()) {
+                continue;
+            }
+        }
+
+        // 3. Check key conditions if any
+        if (!action.requiredKeys.empty()) {
+            bool keyMet = false;
+            for (const auto& cond : action.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    if (cond.isNegated) down = !down;
+                    if (down) { keyMet = true; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        // 4. Perform UI action
+        if (action.type == DynamicScriptBehaviour::DynamicUIAction::ActionType::RemoveAll) {
+            EunoiaUI::UISystemManager::Get().RemoveAll();
+        } else {
+            UserInterface* uiPtr = nullptr;
+            for (auto& p : m_properties) {
+                if (p.name == action.targetVar && p.refType == ObjectRefType::UserInterface) {
+                    if (p.dataPtr) uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                    if (!uiPtr && !p.assetPath.empty()) {
+                        uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(p.assetPath);
+                        if (p.dataPtr) *reinterpret_cast<UserInterface**>(p.dataPtr) = uiPtr;
+                    }
+                    break;
+                }
+            }
+            if (!uiPtr) {
+                uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(action.targetVar);
+            }
+            if (!uiPtr) {
+                for (const auto& pair : EunoiaUI::UISystemManager::Get().GetLoadedUIs()) {
+                    if (pair.second && (pair.second->name == action.targetVar || pair.first.find(action.targetVar) != std::string::npos)) {
+                        uiPtr = pair.second.get();
+                        break;
+                    }
+                }
+            }
+
+            if (uiPtr) {
+                if (action.type == DynamicScriptBehaviour::DynamicUIAction::ActionType::Add) {
+                    EunoiaUI::UISystemManager::Get().Add(uiPtr);
+                    for (auto& pair : m_boolStorage) {
+                        std::string kLow = pair.first;
+                        std::transform(kLow.begin(), kLow.end(), kLow.begin(), ::tolower);
+                        std::string targetLow = action.targetVar;
+                        std::transform(targetLow.begin(), targetLow.end(), targetLow.begin(), ::tolower);
+                        if (kLow.find(targetLow) != std::string::npos && kLow.find("added") != std::string::npos) {
+                            pair.second = true;
+                        }
+                    }
+                } else if (action.type == DynamicScriptBehaviour::DynamicUIAction::ActionType::Remove) {
+                    EunoiaUI::UISystemManager::Get().Remove(uiPtr);
+                    for (auto& pair : m_boolStorage) {
+                        std::string kLow = pair.first;
+                        std::transform(kLow.begin(), kLow.end(), kLow.begin(), ::tolower);
+                        std::string targetLow = action.targetVar;
+                        std::transform(targetLow.begin(), targetLow.end(), targetLow.begin(), ::tolower);
+                        if (kLow.find(targetLow) != std::string::npos && kLow.find("added") != std::string::npos) {
+                            pair.second = false;
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 void DynamicScriptBehaviour::RegisterProperties() {
@@ -2562,6 +2671,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     m_updatePrintMessages.clear();
     m_transformActions.clear();
     m_lineTraceActions.clear();
+    m_uiActions.clear();
     m_hasRotation = false;
     m_hasTranslation = false;
     m_rotateAxis = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -2823,15 +2933,18 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         std::vector<DynamicScriptBehaviour::DynamicBoolCondition> bools;
         bool requireHitStatus = false;
         bool requireNoHit = false;
+        std::string requireHitTag;
     };
     std::vector<ConditionScope> conditionStack;
     std::vector<DynamicScriptBehaviour::DynamicKeyCondition> pendingSingleLineKeys;
     std::vector<DynamicScriptBehaviour::DynamicBoolCondition> pendingSingleLineBools;
     bool pendingSingleLineRequireHitStatus = false;
     bool pendingSingleLineRequireNoHit = false;
+    std::string pendingSingleLineRequireHitTag;
     bool hasPendingSingleLineCondition = false;
     bool lastIfWasHitCondition = false;
     bool lastIfHitConditionNegated = false;
+    std::string lastIfHitTag;
     int updateMethodBraceDepth = 0;
 
     m_methods.clear();
@@ -2892,9 +3005,11 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         pendingSingleLineBools.clear();
                         pendingSingleLineRequireHitStatus = false;
                         pendingSingleLineRequireNoHit = false;
+                        pendingSingleLineRequireHitTag.clear();
                         hasPendingSingleLineCondition = false;
                         lastIfWasHitCondition = false;
                         lastIfHitConditionNegated = false;
+                        lastIfHitTag.clear();
                         updateMethodBraceDepth = currentMethodBraceDepth;
                     } else if (mName == "Start") {
                         inStartMethod = true;
@@ -3272,11 +3387,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 scope.bools = pendingSingleLineBools;
                 scope.requireHitStatus = pendingSingleLineRequireHitStatus;
                 scope.requireNoHit = pendingSingleLineRequireNoHit;
+                scope.requireHitTag = pendingSingleLineRequireHitTag;
                 conditionStack.push_back(scope);
                 pendingSingleLineKeys.clear();
                 pendingSingleLineBools.clear();
                 pendingSingleLineRequireHitStatus = false;
                 pendingSingleLineRequireNoHit = false;
+                pendingSingleLineRequireHitTag.clear();
                 hasPendingSingleLineCondition = false;
             }
 
@@ -3306,21 +3423,36 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             std::string lLower = l;
             std::transform(lLower.begin(), lLower.end(), lLower.begin(), ::tolower);
 
-            // Check if this line introduces an if (...) with key or bool checks or Hit.Status
+            // Check if this line introduces an if (...) with key or bool checks, Hit.Status, or HasTag
             size_t ifPos = l.find("if (");
             if (ifPos == std::string::npos) ifPos = l.find("if(");
             if (ifPos != std::string::npos && (ifPos == 0 || l[ifPos - 1] == ' ' || l[ifPos - 1] == '\t' || l[ifPos - 1] == '}' || l[ifPos - 1] == ';')) {
                 auto lineKeys = extractKeyConditions(l);
                 auto lineBools = extractBoolConditions(l);
-                bool isHitCheck = (lLower.find("hit.status") != std::string::npos || lLower.find("hit.gameobject") != std::string::npos);
+                std::string hitTag;
+                size_t htPos = l.find("HasTag(");
+                if (htPos == std::string::npos) htPos = l.find("hasTag(");
+                if (htPos == std::string::npos) htPos = l.find("hastag(");
+                if (htPos != std::string::npos) {
+                    size_t q1 = l.find('"', htPos);
+                    if (q1 != std::string::npos) {
+                        size_t q2 = l.find('"', q1 + 1);
+                        if (q2 != std::string::npos) {
+                            hitTag = l.substr(q1 + 1, q2 - q1 - 1);
+                        }
+                    }
+                }
+                bool isHitCheck = (lLower.find("hit.status") != std::string::npos || lLower.find("hit.gameobject") != std::string::npos || !hitTag.empty());
                 bool isNegatedHit = (lLower.find("!hit.status") != std::string::npos || lLower.find("hit.status == false") != std::string::npos || lLower.find("!hit.gameobject") != std::string::npos);
 
                 if (!lineKeys.empty() || !lineBools.empty() || isHitCheck) {
                     if (isHitCheck) {
                         lastIfWasHitCondition = true;
                         lastIfHitConditionNegated = isNegatedHit;
+                        lastIfHitTag = hitTag;
                     } else {
                         lastIfWasHitCondition = false;
+                        lastIfHitTag.clear();
                     }
 
                     if (openBracesOnLine > 0) {
@@ -3330,7 +3462,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         scope.bools = lineBools;
                         if (isHitCheck) {
                             if (isNegatedHit) scope.requireNoHit = true;
-                            else scope.requireHitStatus = true;
+                            else {
+                                scope.requireHitStatus = true;
+                                scope.requireHitTag = hitTag;
+                            }
                         }
                         conditionStack.push_back(scope);
                     } else {
@@ -3338,7 +3473,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         pendingSingleLineBools = lineBools;
                         if (isHitCheck) {
                             if (isNegatedHit) pendingSingleLineRequireNoHit = true;
-                            else pendingSingleLineRequireHitStatus = true;
+                            else {
+                                pendingSingleLineRequireHitStatus = true;
+                                pendingSingleLineRequireHitTag = hitTag;
+                            }
                         }
                         hasPendingSingleLineCondition = true;
                     }
@@ -3350,12 +3488,22 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         if (openBracesOnLine > 0) {
                             ConditionScope scope;
                             scope.braceDepth = updateMethodBraceDepth;
-                            if (lastIfHitConditionNegated) scope.requireHitStatus = true;
-                            else scope.requireNoHit = true;
+                            if (lastIfHitConditionNegated) {
+                                scope.requireHitStatus = true;
+                                scope.requireHitTag = lastIfHitTag;
+                            } else {
+                                scope.requireNoHit = true;
+                                scope.requireHitTag = lastIfHitTag;
+                            }
                             conditionStack.push_back(scope);
                         } else {
-                            if (lastIfHitConditionNegated) pendingSingleLineRequireHitStatus = true;
-                            else pendingSingleLineRequireNoHit = true;
+                            if (lastIfHitConditionNegated) {
+                                pendingSingleLineRequireHitStatus = true;
+                                pendingSingleLineRequireHitTag = lastIfHitTag;
+                            } else {
+                                pendingSingleLineRequireNoHit = true;
+                                pendingSingleLineRequireHitTag = lastIfHitTag;
+                            }
                             hasPendingSingleLineCondition = true;
                         }
                     }
@@ -3374,6 +3522,30 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     pendingSingleLineBools.clear();
                     pendingSingleLineRequireHitStatus = false;
                     pendingSingleLineRequireNoHit = false;
+                    pendingSingleLineRequireHitTag.clear();
+                    hasPendingSingleLineCondition = false;
+                }
+            };
+
+            auto applyConditionsToUIAction = [&](DynamicScriptBehaviour::DynamicUIAction& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                    if (sc.requireHitStatus) act.requireHitStatus = true;
+                    if (sc.requireNoHit) act.requireNoHit = true;
+                    if (!sc.requireHitTag.empty()) act.requireHitTag = sc.requireHitTag;
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+                if (pendingSingleLineRequireHitStatus) act.requireHitStatus = true;
+                if (pendingSingleLineRequireNoHit) act.requireNoHit = true;
+                if (!pendingSingleLineRequireHitTag.empty()) act.requireHitTag = pendingSingleLineRequireHitTag;
+                if (hasPendingSingleLineCondition) {
+                    pendingSingleLineKeys.clear();
+                    pendingSingleLineBools.clear();
+                    pendingSingleLineRequireHitStatus = false;
+                    pendingSingleLineRequireNoHit = false;
+                    pendingSingleLineRequireHitTag.clear();
                     hasPendingSingleLineCondition = false;
                 }
             };
@@ -3687,6 +3859,54 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 m_lineTraceActions.push_back(action);
             }
 
+            // 6. Scan for UISystem.Add / UISystem.Remove / UISystem.RemoveAll
+            size_t uiAddPos = lLower.find("uisystem.add(");
+            if (uiAddPos == std::string::npos) uiAddPos = lLower.find("uisystem::add(");
+            if (uiAddPos == std::string::npos) uiAddPos = lLower.find("addui(");
+            if (uiAddPos != std::string::npos) {
+                size_t p1 = l.find('(', uiAddPos);
+                size_t p2 = l.find(')', p1);
+                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
+                    size_t v1 = varName.find_first_not_of(" \t&");
+                    size_t v2 = varName.find_last_not_of(" \t&");
+                    if (v1 != std::string::npos && v2 != std::string::npos) {
+                        DynamicScriptBehaviour::DynamicUIAction act;
+                        act.type = DynamicScriptBehaviour::DynamicUIAction::ActionType::Add;
+                        act.targetVar = varName.substr(v1, v2 - v1 + 1);
+                        applyConditionsToUIAction(act);
+                        m_uiActions.push_back(act);
+                    }
+                }
+            }
+
+            size_t uiRemPos = lLower.find("uisystem.remove(");
+            if (uiRemPos == std::string::npos) uiRemPos = lLower.find("uisystem::remove(");
+            if (uiRemPos == std::string::npos) uiRemPos = lLower.find("removeui(");
+            if (uiRemPos != std::string::npos && lLower.find("removeall") == std::string::npos) {
+                size_t p1 = l.find('(', uiRemPos);
+                size_t p2 = l.find(')', p1);
+                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
+                    size_t v1 = varName.find_first_not_of(" \t&");
+                    size_t v2 = varName.find_last_not_of(" \t&");
+                    if (v1 != std::string::npos && v2 != std::string::npos) {
+                        DynamicScriptBehaviour::DynamicUIAction act;
+                        act.type = DynamicScriptBehaviour::DynamicUIAction::ActionType::Remove;
+                        act.targetVar = varName.substr(v1, v2 - v1 + 1);
+                        applyConditionsToUIAction(act);
+                        m_uiActions.push_back(act);
+                    }
+                }
+            }
+
+            if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos) {
+                DynamicScriptBehaviour::DynamicUIAction act;
+                act.type = DynamicScriptBehaviour::DynamicUIAction::ActionType::RemoveAll;
+                applyConditionsToUIAction(act);
+                m_uiActions.push_back(act);
+            }
+
             // Handle brace cleanup at end of line
             updateMethodBraceDepth -= closeBracesOnLine;
             while (!conditionStack.empty() && conditionStack.back().braceDepth > updateMethodBraceDepth) {
@@ -3700,8 +3920,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 pendingSingleLineBools.clear();
                 pendingSingleLineRequireHitStatus = false;
                 pendingSingleLineRequireNoHit = false;
+                pendingSingleLineRequireHitTag.clear();
                 hasPendingSingleLineCondition = false;
                 lastIfWasHitCondition = false;
+                lastIfHitTag.clear();
             }
         }
 
@@ -3713,6 +3935,14 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal || pr.appendHitTags) {
                 needsHit = true;
                 break;
+            }
+        }
+        if (!needsHit) {
+            for (const auto& uia : m_uiActions) {
+                if (uia.requireHitStatus || uia.requireNoHit || !uia.requireHitTag.empty()) {
+                    needsHit = true;
+                    break;
+                }
             }
         }
         if (needsHit) {
