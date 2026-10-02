@@ -315,14 +315,16 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
         // 2b. Dynamic Body vs Body SAT Contacts
         for (size_t i = 0; i < numObjs; ++i) {
             auto& objA = scene.objects[i];
-            if (!objA.visible || objA.isLight || IsLightPrimitive(objA.type) || objA.isCamera || objA.type == PrimitiveType::Empty) continue;
+            if (!objA.visible || objA.isLight || IsLightPrimitive(objA.type) || objA.isCamera) continue;
+            if (objA.type == PrimitiveType::Empty && objA.modifiers.empty() && !objA.hasPhysics) continue;
             bool isGroundA = (objA.type == PrimitiveType::Plane || objA.type == PrimitiveType::Quad ||
                              (!objA.modifiers.empty() && objA.modifiers[0].shapeType == CollisionShapeType::Plane));
             if (isGroundA) continue;
 
             for (size_t j = i + 1; j < numObjs; ++j) {
                 auto& objB = scene.objects[j];
-                if (!objB.visible || objB.isLight || IsLightPrimitive(objB.type) || objB.isCamera || objB.type == PrimitiveType::Empty) continue;
+                if (!objB.visible || objB.isLight || IsLightPrimitive(objB.type) || objB.isCamera) continue;
+                if (objB.type == PrimitiveType::Empty && objB.modifiers.empty() && !objB.hasPhysics) continue;
                 bool isGroundB = (objB.type == PrimitiveType::Plane || objB.type == PrimitiveType::Quad ||
                                  (!objB.modifiers.empty() && objB.modifiers[0].shapeType == CollisionShapeType::Plane));
                 if (isGroundB) continue;

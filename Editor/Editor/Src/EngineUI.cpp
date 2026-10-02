@@ -5891,7 +5891,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty) {
+        if (!obj->isLight && !obj->isCamera && !IsLightPrimitive(obj->type) && !IsCameraPrimitive(obj->type)) {
             char modHeaderTitle[64];
             int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0);
             snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", totalMods);

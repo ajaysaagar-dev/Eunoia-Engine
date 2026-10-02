@@ -658,27 +658,32 @@ struct GameObject {
 
     CollisionModifier& AddModifier(CollisionShapeType shape) {
         CollisionModifier mod(shape);
+        float w = (params.width > 0.05f) ? params.width : 1.0f;
+        float h = (params.height > 0.05f) ? params.height : 1.0f;
+        float d = (params.depth > 0.05f) ? params.depth : 1.0f;
+        float r = (params.radius > 0.05f) ? params.radius : 0.5f;
+
         switch (shape) {
             case CollisionShapeType::Box:
-                mod.boxExtents = glm::vec3(std::max(0.1f, params.width * 0.5f), std::max(0.1f, params.height * 0.5f), std::max(0.1f, params.depth * 0.5f));
+                mod.boxExtents = glm::vec3(w * 0.5f, h * 0.5f, d * 0.5f);
                 break;
             case CollisionShapeType::Sphere:
-                mod.radius = std::max(0.1f, params.radius);
+                mod.radius = r;
                 break;
             case CollisionShapeType::Capsule:
-                mod.radius = std::max(0.1f, params.radius);
-                mod.height = std::max(0.2f, params.height);
+                mod.radius = r;
+                mod.height = h;
                 break;
             case CollisionShapeType::Cylinder:
-                mod.radius = std::max(0.1f, params.radius);
-                mod.height = std::max(0.2f, params.height);
+                mod.radius = r;
+                mod.height = h;
                 break;
             case CollisionShapeType::Cone:
-                mod.radius = std::max(0.1f, params.radius);
-                mod.height = std::max(0.2f, params.height);
+                mod.radius = r;
+                mod.height = h;
                 break;
             case CollisionShapeType::Plane:
-                mod.planeSize = glm::vec2(std::max(0.2f, params.width), std::max(0.2f, params.depth > 0.0f ? params.depth : params.height));
+                mod.planeSize = glm::vec2(std::max(0.2f, w), std::max(0.2f, d > 0.05f ? d : 2.5f));
                 break;
             case CollisionShapeType::Mesh:
                 mod.boxExtents = glm::vec3(0.5f);
