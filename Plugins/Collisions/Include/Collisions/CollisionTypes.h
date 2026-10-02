@@ -99,6 +99,7 @@ struct CollisionModifier {
         if (shape == CollisionShapeType::Character) {
             radius = 0.4f;
             height = 1.8f;
+            centerOffset = glm::vec3(0.0f, 0.9f, 0.0f);
             preventSideFall = true;
             sideFall = false;
         }

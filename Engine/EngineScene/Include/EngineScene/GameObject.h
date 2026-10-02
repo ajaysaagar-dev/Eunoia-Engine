@@ -721,6 +721,7 @@ struct GameObject {
             case CollisionShapeType::Character:
                 mod.radius = 0.4f;
                 mod.height = 1.8f;
+                mod.centerOffset = glm::vec3(0.0f, 0.9f, 0.0f);
                 mod.preventSideFall = true;
                 mod.sideFall = false;
                 break;

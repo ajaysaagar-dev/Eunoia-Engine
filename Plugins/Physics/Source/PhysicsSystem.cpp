@@ -109,20 +109,29 @@ static glm::mat3 ComputeBodyInertiaInv(const GameObject& obj) {
     );
 }
 
+static glm::vec3 GetObjectCenterOffset(const GameObject& obj) {
+    if (!obj.modifiers.empty()) {
+        return obj.modifiers[0].centerOffset * obj.scale;
+    }
+    return glm::vec3(0.0f);
+}
+
 static std::vector<glm::vec3> GetBoxCornersWorld(const GameObject& obj) {
     std::vector<glm::vec3> pts;
     pts.reserve(8);
     glm::mat3 R = GetRotationMatrix(obj.rotation);
     glm::vec3 h = GetObjectHalfExtents(obj);
+    glm::vec3 c = GetObjectCenterOffset(obj);
+    glm::vec3 centerWorld = obj.position + R * c;
 
-    pts.push_back(obj.position + R * glm::vec3(-h.x, -h.y, -h.z));
-    pts.push_back(obj.position + R * glm::vec3( h.x, -h.y, -h.z));
-    pts.push_back(obj.position + R * glm::vec3( h.x, -h.y,  h.z));
-    pts.push_back(obj.position + R * glm::vec3(-h.x, -h.y,  h.z));
-    pts.push_back(obj.position + R * glm::vec3(-h.x,  h.y, -h.z));
-    pts.push_back(obj.position + R * glm::vec3( h.x,  h.y, -h.z));
-    pts.push_back(obj.position + R * glm::vec3( h.x,  h.y,  h.z));
-    pts.push_back(obj.position + R * glm::vec3(-h.x,  h.y,  h.z));
+    pts.push_back(centerWorld + R * glm::vec3(-h.x, -h.y, -h.z));
+    pts.push_back(centerWorld + R * glm::vec3( h.x, -h.y, -h.z));
+    pts.push_back(centerWorld + R * glm::vec3( h.x, -h.y,  h.z));
+    pts.push_back(centerWorld + R * glm::vec3(-h.x, -h.y,  h.z));
+    pts.push_back(centerWorld + R * glm::vec3(-h.x,  h.y, -h.z));
+    pts.push_back(centerWorld + R * glm::vec3( h.x,  h.y, -h.z));
+    pts.push_back(centerWorld + R * glm::vec3( h.x,  h.y,  h.z));
+    pts.push_back(centerWorld + R * glm::vec3(-h.x,  h.y,  h.z));
     return pts;
 }
 
@@ -305,9 +314,10 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                         cc.effTangent2Mass = 1.0f / std::max(1e-4f, Kt2);
 
                         // Baumgarte stabilization velocity bias & restitution
-                        const float baumgarte = 0.25f;
-                        const float slop = 0.001f;
+                        const float baumgarte = 0.15f;
+                        const float slop = 0.005f;
                         float penBias = (baumgarte / subDt) * std::max(0.0f, penetration - slop);
+                        penBias = std::min(penBias, 2.0f);
 
                         // Relative velocity along normal before impulse
                         glm::vec3 vPoint = obj.physics.velocity + glm::cross(obj.physics.angularVelocity, cc.rA);
@@ -423,9 +433,10 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                             (dynB ? (1.0f / massB + glm::dot(rCrossT2B, IB_inv * rCrossT2B)) : 0.0f);
                 cc.effTangent2Mass = 1.0f / std::max(1e-4f, Kt2);
 
-                const float baumgarte = 0.25f;
-                const float slop = 0.001f;
+                const float baumgarte = 0.15f;
+                const float slop = 0.005f;
                 float penBias = (baumgarte / subDt) * std::max(0.0f, minPen - slop);
+                penBias = std::min(penBias, 2.0f);
 
                 // Relative velocity along normal before impulse
                 glm::vec3 vPtA = dynA ? (objA.physics.velocity + glm::cross(objA.physics.angularVelocity, cc.rA)) : glm::vec3(0.0f);
