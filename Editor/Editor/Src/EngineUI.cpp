@@ -6027,6 +6027,10 @@ void EngineUI::RenderDetails(Scene& scene) {
                         obj->AddModifier(CollisionShapeType::Mesh);
                         AddLog("LogPhysics", "Added Mesh Collision to " + obj->name, 0);
                     }
+                    if (ImGui::MenuItem("🧍  Character Collision")) {
+                        obj->AddModifier(CollisionShapeType::Character);
+                        AddLog("LogPhysics", "Added Character Collision to " + obj->name, 0);
+                    }
 
                     ImGui::Spacing();
                     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "PHYSICS MODIFIERS");
@@ -6092,10 +6096,11 @@ void EngineUI::RenderDetails(Scene& scene) {
                             // Shape Type selector
                             const char* shapeNames[] = {
                                 "None", "Box Collision", "Sphere Collision", "Capsule Collision",
-                                "Cylinder Collision", "Cone Collision", "Plane Collision", "Mesh Collision"
+                                "Cylinder Collision", "Cone Collision", "Plane Collision", "Mesh Collision",
+                                "Character Collision"
                             };
                             int currentShapeIdx = (int)mod.shapeType;
-                            if (ImGui::Combo("Shape", &currentShapeIdx, shapeNames, 8)) {
+                            if (ImGui::Combo("Shape", &currentShapeIdx, shapeNames, 9)) {
                                 mod.shapeType = (CollisionShapeType)currentShapeIdx;
                                 mod.isDefaultFit = false;
                             }
@@ -6119,6 +6124,17 @@ void EngineUI::RenderDetails(Scene& scene) {
                                 case CollisionShapeType::Capsule:
                                     ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
                                     ImGui::DragFloat("Height", &mod.height, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Character:
+                                    ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    ImGui::DragFloat("Height", &mod.height, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    if (ImGui::Checkbox("Prevent Side Fall", &mod.preventSideFall)) {
+                                        mod.sideFall = !mod.preventSideFall;
+                                    }
+                                    if (ImGui::IsItemHovered()) {
+                                        ImGui::SetTooltip("When enabled (default), keeps character upright and prevents falling in cross/side directions during physics simulation. Disable to allow side falling.");
+                                    }
                                     break;
 
                                 case CollisionShapeType::Cylinder:

@@ -69,6 +69,17 @@ static glm::vec3 GetObjectHalfExtents(const GameObject& obj) {
     return h;
 }
 
+static bool ShouldLockCharacterUpright(const GameObject& obj) {
+    for (const auto& mod : obj.modifiers) {
+        if (mod.enabled && mod.shapeType == CollisionShapeType::Character) {
+            if (mod.preventSideFall && !mod.sideFall) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static glm::mat3 ComputeBodyInertiaInv(const GameObject& obj) {
     float m = std::max(0.001f, obj.physics.mass);
     glm::vec3 h = GetObjectHalfExtents(obj);
@@ -212,9 +223,10 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             // Angular damping
             phys.angularVelocity *= 1.0f / (1.0f + subDt * std::max(0.0f, phys.angularDamping));
 
-            if (phys.lockRotationX) phys.angularVelocity.x = 0.0f;
+            bool isCharUpright = ShouldLockCharacterUpright(obj);
+            if (phys.lockRotationX || isCharUpright) phys.angularVelocity.x = 0.0f;
             if (phys.lockRotationY) phys.angularVelocity.y = 0.0f;
-            if (phys.lockRotationZ) phys.angularVelocity.z = 0.0f;
+            if (phys.lockRotationZ || isCharUpright) phys.angularVelocity.z = 0.0f;
 
             phys.accumulatedForce = glm::vec3(0.0f);
             phys.accumulatedTorque = glm::vec3(0.0f);
@@ -533,17 +545,25 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             obj.position += phys.velocity * subDt;
 
             // Integrate 3D orientation smoothly with quaternion
+            bool isCharUpright = ShouldLockCharacterUpright(obj);
+            if (isCharUpright) {
+                obj.rotation.x = 0.0f;
+                obj.rotation.z = 0.0f;
+                phys.angularVelocity.x = 0.0f;
+                phys.angularVelocity.z = 0.0f;
+            }
+
             if (glm::length(phys.angularVelocity) > 1e-6f) {
                 glm::quat currentQuat = glm::quat(glm::radians(obj.rotation));
-                glm::quat deltaQuat(0.0f, phys.angularVelocity.x * subDt * 0.5f,
+                glm::quat deltaQuat(0.0f, (isCharUpright ? 0.0f : phys.angularVelocity.x) * subDt * 0.5f,
                                           phys.angularVelocity.y * subDt * 0.5f,
-                                          phys.angularVelocity.z * subDt * 0.5f);
+                                          (isCharUpright ? 0.0f : phys.angularVelocity.z) * subDt * 0.5f);
                 glm::quat nextQuat = glm::normalize(currentQuat + deltaQuat * currentQuat);
                 glm::vec3 nextEulerDeg = glm::degrees(glm::eulerAngles(nextQuat));
 
-                if (!phys.lockRotationX) obj.rotation.x = nextEulerDeg.x;
+                if (!phys.lockRotationX && !isCharUpright) obj.rotation.x = nextEulerDeg.x;
                 if (!phys.lockRotationY) obj.rotation.y = nextEulerDeg.y;
-                if (!phys.lockRotationZ) obj.rotation.z = nextEulerDeg.z;
+                if (!phys.lockRotationZ && !isCharUpright) obj.rotation.z = nextEulerDeg.z;
 
                 // Keep angles normalized between -180 and 180
                 for (int a = 0; a < 3; ++a) {

@@ -13,20 +13,22 @@ enum class CollisionShapeType {
     Cylinder = 4,
     Cone = 5,
     Plane = 6,
-    Mesh = 7
+    Mesh = 7,
+    Character = 8
 };
 
 inline const char* GetCollisionShapeTypeName(CollisionShapeType shape) {
     switch (shape) {
-        case CollisionShapeType::None:     return "None";
-        case CollisionShapeType::Box:      return "Box Collision";
-        case CollisionShapeType::Sphere:   return "Sphere Collision";
-        case CollisionShapeType::Capsule:  return "Capsule Collision";
-        case CollisionShapeType::Cylinder: return "Cylinder Collision";
-        case CollisionShapeType::Cone:     return "Cone Collision";
-        case CollisionShapeType::Plane:    return "Plane Collision";
-        case CollisionShapeType::Mesh:     return "Mesh Collision";
-        default:                           return "Custom Collision";
+        case CollisionShapeType::None:      return "None";
+        case CollisionShapeType::Box:       return "Box Collision";
+        case CollisionShapeType::Sphere:    return "Sphere Collision";
+        case CollisionShapeType::Capsule:   return "Capsule Collision";
+        case CollisionShapeType::Cylinder:  return "Cylinder Collision";
+        case CollisionShapeType::Cone:      return "Cone Collision";
+        case CollisionShapeType::Plane:     return "Plane Collision";
+        case CollisionShapeType::Mesh:      return "Mesh Collision";
+        case CollisionShapeType::Character: return "Character Collision";
+        default:                            return "Custom Collision";
     }
 }
 
@@ -39,6 +41,7 @@ inline CollisionShapeType StringToCollisionShapeType(const std::string& str) {
     if (str == "Cone" || str == "Cone Collision") return CollisionShapeType::Cone;
     if (str == "Plane" || str == "Plane Collision") return CollisionShapeType::Plane;
     if (str == "Mesh" || str == "Mesh Collision") return CollisionShapeType::Mesh;
+    if (str == "Character" || str == "Character Collision") return CollisionShapeType::Character;
     return CollisionShapeType::Box;
 }
 
@@ -70,10 +73,14 @@ struct CollisionModifier {
 
     // Dimensions (Local space)
     glm::vec3 boxExtents{0.5f, 0.5f, 0.5f}; // Half-extents for Box (size is 2 * boxExtents)
-    float radius = 0.5f;                    // Radius for Sphere, Capsule, Cylinder, Cone
-    float height = 1.0f;                    // Total height for Capsule, Cylinder, Cone
+    float radius = 0.5f;                    // Radius for Sphere, Capsule, Cylinder, Cone, Character
+    float height = 1.0f;                    // Total height for Capsule, Cylinder, Cone, Character
     glm::vec2 planeSize{2.5f, 2.5f};        // Width and length for Plane
     glm::vec3 centerOffset{0.0f, 0.0f, 0.0f}; // Offset relative to object pivot
+
+    // Character Physics & Upright constraints
+    bool preventSideFall = true;            // Upright lock: prevents falling/tipping sideways in physics simulation (enabled by default)
+    bool sideFall = false;                  // When true (or preventSideFall is false), character can fall sideways
 
     // Physical Material properties
     float friction = 0.5f;                  // Surface friction (0.0 = ice, 1.0 = rubber)
@@ -89,6 +96,12 @@ struct CollisionModifier {
     CollisionModifier(CollisionShapeType shape, const std::string& customName = "") {
         shapeType = shape;
         name = customName.empty() ? GetCollisionShapeTypeName(shape) : customName;
+        if (shape == CollisionShapeType::Character) {
+            radius = 0.4f;
+            height = 1.8f;
+            preventSideFall = true;
+            sideFall = false;
+        }
     }
 
     // Apply preset settings

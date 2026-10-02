@@ -162,6 +162,7 @@ void CollisionSystem::AutoFitModifier(GameObject& obj, CollisionModifier& mod) {
             break;
 
         case CollisionShapeType::Capsule:
+        case CollisionShapeType::Character:
         case CollisionShapeType::Cylinder:
         case CollisionShapeType::Cone:
             mod.radius = std::max(halfSize.x, halfSize.z);
@@ -201,6 +202,12 @@ void CollisionSystem::ResetModifierToDefault(GameObject& obj, CollisionModifier&
         case CollisionShapeType::Capsule:
             mod.radius = std::max(0.05f, obj.params.radius > 0.0f ? obj.params.radius : 0.35f);
             mod.height = std::max(0.1f, obj.params.height > 0.0f ? obj.params.height : 0.8f);
+            break;
+        case CollisionShapeType::Character:
+            mod.radius = 0.4f;
+            mod.height = 1.8f;
+            mod.preventSideFall = true;
+            mod.sideFall = false;
             break;
         case CollisionShapeType::Cylinder:
             mod.radius = std::max(0.05f, obj.params.radius > 0.0f ? obj.params.radius : 0.5f);
@@ -454,6 +461,7 @@ void CollisionSystem::AppendCollisionWireframe(
                 break;
 
             case CollisionShapeType::Capsule:
+            case CollisionShapeType::Character:
                 GenerateCapsuleWireframe(edges, mod.radius, mod.height, mod.centerOffset);
                 break;
 

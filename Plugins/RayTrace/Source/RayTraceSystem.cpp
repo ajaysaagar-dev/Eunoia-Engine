@@ -455,6 +455,7 @@ bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& s
                     hitMod = IntersectRayCylinder(localOrigin, localDirNorm, mod.centerOffset, mod.radius, mod.height, t, n);
                     break;
                 case CollisionShapeType::Capsule:
+                case CollisionShapeType::Character:
                     hitMod = IntersectRayCapsule(localOrigin, localDirNorm, mod.centerOffset, mod.radius, mod.height, t, n);
                     break;
                 case CollisionShapeType::Cone:

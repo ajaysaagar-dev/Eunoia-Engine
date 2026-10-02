@@ -380,7 +380,9 @@ public:
                 file << "          \"preset\": " << QuoteStr(mod.preset) << ",\n";
                 file << "          \"showWireframe\": " << BoolStr(mod.showWireframe) << ",\n";
                 file << "          \"wireframeColor\": [" << mod.wireframeColor.r << ", " << mod.wireframeColor.g << ", " << mod.wireframeColor.b << ", " << mod.wireframeColor.a << "],\n";
-                file << "          \"isDefaultFit\": " << BoolStr(mod.isDefaultFit) << "\n";
+                file << "          \"isDefaultFit\": " << BoolStr(mod.isDefaultFit) << ",\n";
+                file << "          \"preventSideFall\": " << BoolStr(mod.preventSideFall) << ",\n";
+                file << "          \"sideFall\": " << BoolStr(mod.sideFall) << "\n";
                 file << "        }" << (mi + 1 < obj.modifiers.size() ? "," : "") << "\n";
             }
             file << "      ],\n";
@@ -1279,6 +1281,8 @@ public:
                     mp = mBlock.find("\"showWireframe\""); if (mp != std::string::npos) mod.showWireframe = ParseBoolAt(mBlock, mp, true);
                     mp = mBlock.find("\"isDefaultFit\""); if (mp != std::string::npos) mod.isDefaultFit = ParseBoolAt(mBlock, mp, true);
                     mp = mBlock.find("\"wireframeColor\""); if (mp != std::string::npos) mod.wireframeColor = ParseVec4(mBlock, mp);
+                    mp = mBlock.find("\"preventSideFall\""); if (mp != std::string::npos) mod.preventSideFall = ParseBoolAt(mBlock, mp, true);
+                    mp = mBlock.find("\"sideFall\""); if (mp != std::string::npos) mod.sideFall = ParseBoolAt(mBlock, mp, false);
                     mp = mBlock.find("\"planeSize\"");
                     if (mp != std::string::npos) {
                         size_t lb = mBlock.find('[', mp);

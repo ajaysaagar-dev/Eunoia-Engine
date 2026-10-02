@@ -718,6 +718,12 @@ struct GameObject {
                 mod.radius = r;
                 mod.height = h;
                 break;
+            case CollisionShapeType::Character:
+                mod.radius = 0.4f;
+                mod.height = 1.8f;
+                mod.preventSideFall = true;
+                mod.sideFall = false;
+                break;
             case CollisionShapeType::Cylinder:
                 mod.radius = r;
                 mod.height = h;
