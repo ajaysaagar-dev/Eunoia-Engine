@@ -4732,6 +4732,13 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 		}
 	}
+	else
+	{
+		if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+		{
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		}
+	}
 
 	if (g_scene.isPlayMode)
 	{
@@ -5638,6 +5645,17 @@ int main(int argc, char** argv)
 				{
 					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
 				}
+			}
+		}
+		else
+		{
+			if (glfwGetInputMode(g_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+			{
+				if (glfwRawMouseMotionSupported())
+				{
+					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+				}
+				glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
 			}
 		}
 

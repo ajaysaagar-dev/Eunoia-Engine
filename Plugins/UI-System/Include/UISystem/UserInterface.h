@@ -239,6 +239,8 @@ public:
         return "";
     }
 
+    CssStyleSheet htmlSheet;
+
     bool LoadFromHtml(const std::string& path) {
         std::ifstream in(path);
         if (!in.is_open()) return false;
@@ -246,7 +248,8 @@ public:
         ss << in.rdbuf();
         htmlSource = ss.str();
         htmlPath = path;
-        htmlRoot = HtmlCssParser::Parse(htmlSource);
+        htmlSheet = CssStyleSheet();
+        htmlRoot = HtmlCssParser::Parse(htmlSource, &htmlSheet);
         if (htmlRoot) {
             htmlRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
         }
@@ -283,9 +286,32 @@ public:
         return false;
     }
 
+    void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale) {
+        if (htmlRoot) {
+            htmlRoot->ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, wheelDelta, canvasOrigin, scale);
+        }
+    }
+
+    HtmlNode* FindHtmlNode(const std::string& idOrTagOrClass) {
+        if (!htmlRoot) return nullptr;
+        std::function<HtmlNode*(HtmlNode*)> search = [&](HtmlNode* node) -> HtmlNode* {
+            if (!node) return nullptr;
+            if (node->id == idOrTagOrClass || node->tag == idOrTagOrClass) return node;
+            for (const auto& cls : node->classes) {
+                if (cls == idOrTagOrClass || ("." + cls) == idOrTagOrClass) return node;
+            }
+            for (auto& ch : node->children) {
+                HtmlNode* res = search(ch.get());
+                if (res) return res;
+            }
+            return nullptr;
+        };
+        return search(htmlRoot.get());
+    }
+
     void RenderHtml(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale) const {
         if (htmlRoot) {
-            htmlRoot->Render(imDrawListPtr, canvasOrigin, scale);
+            htmlRoot->Render(imDrawListPtr, canvasOrigin, scale, &htmlSheet);
         }
     }
 

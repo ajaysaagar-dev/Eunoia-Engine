@@ -104,7 +104,16 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     // Center design canvas in viewport
     glm::vec2 canvasOrigin = screenMin + (targetSize - ui.canvasResolution * scale) * 0.5f;
 
-    // 1. Render HTML + Tailwind CSS structure
+    // Process mouse interactivity (hover, click, scroll)
+    ImGuiIO& io = ImGui::GetIO();
+    glm::vec2 mousePos(io.MousePos.x, io.MousePos.y);
+    bool isMouseDown = io.MouseDown[0];
+    bool isMousePressed = io.MouseClicked[0];
+    bool isMouseReleased = io.MouseReleased[0];
+    float mouseWheel = io.MouseWheel;
+    const_cast<UserInterface&>(ui).ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, scale);
+
+    // 1. Render HTML + CSS structure
     if (ui.htmlRoot) {
         ui.RenderHtml(drawList, canvasOrigin, scale);
     }

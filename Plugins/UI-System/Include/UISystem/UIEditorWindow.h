@@ -305,7 +305,16 @@ public:
             // Clip rendering to canvas bounds
             drawList->PushClipRect(cMin, cMax, true);
 
-            // Render HTML + Tailwind CSS Tree
+            // Process interactivity in editor preview canvas (hover, clicks, scroll)
+            ImGuiIO& io = ImGui::GetIO();
+            glm::vec2 mousePos(io.MousePos.x, io.MousePos.y);
+            bool isMouseDown = io.MouseDown[0] && !isPanning;
+            bool isMousePressed = io.MouseClicked[0] && !isPanning;
+            bool isMouseReleased = io.MouseReleased[0] && !isPanning;
+            float mouseWheel = io.MouseWheel;
+            ui.ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, currentScale);
+
+            // Render HTML + CSS Tree
             if (ui.htmlRoot) {
                 ui.RenderHtml(drawList, canvasOrigin, currentScale);
             }
@@ -341,7 +350,6 @@ public:
 
             // Canvas Interaction (Pan & Zoom)
             bool isHovered = ImGui::IsWindowHovered();
-            ImGuiIO& io = ImGui::GetIO();
 
             if (isHovered) {
                 // Zoom with scroll wheel
