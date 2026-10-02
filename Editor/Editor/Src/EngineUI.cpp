@@ -698,40 +698,7 @@ static void LaunchVSCodeWorkspace(const std::string& filePath) {
         g_pEngineUI->SetupProjectDependencies(targetWorkspace);
     }
 
-    // Candidate direct paths to VS Code
-    std::vector<std::filesystem::path> candidateCodePaths;
-    const char* localApp = getenv("LOCALAPPDATA");
-    if (localApp) {
-        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd");
-        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "Code.exe");
-    }
-    const char* progFiles = getenv("ProgramFiles");
-    if (progFiles) {
-        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "bin" / "code.cmd");
-        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "Code.exe");
-    }
-
-    bool launchedDirect = false;
-    for (const auto& cp : candidateCodePaths) {
-        std::error_code ec;
-        if (std::filesystem::exists(cp, ec)) {
-            std::string args = "\"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
-            HINSTANCE hInst = ShellExecuteA(NULL, "open", cp.string().c_str(), args.c_str(), NULL, SW_SHOWNORMAL);
-            if ((INT_PTR)hInst > 32) {
-                launchedDirect = true;
-                break;
-            }
-        }
-    }
-
-    if (!launchedDirect) {
-        // Fallback to: code "<targetWorkspace>" "<absFilePath>" via cmd.exe
-        std::string cmdParams = "/c code \"" + targetWorkspace.string() + "\" \"" + absFilePath.string() + "\"";
-        HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", cmdParams.c_str(), NULL, SW_HIDE);
-        if ((INT_PTR)hInst <= 32) {
-            ShellExecuteA(NULL, "open", absFilePath.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
-        }
-    }
+    EunoiaUI::LaunchVSCodeSilently(absFilePath, targetWorkspace);
 }
 
 EngineUI::EngineUI() {
@@ -8402,8 +8369,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                     if (sPath.find(".assetmeta") != std::string::npos ||
                         sPath.find(".meta") != std::string::npos ||
+                        sPath.find(".html") != std::string::npos ||
                         vPath.find(".assetmeta") != std::string::npos ||
                         vPath.find(".meta") != std::string::npos ||
+                        vPath.find(".html") != std::string::npos ||
                         oName.find(".assetmeta") != std::string::npos ||
                         oName.find(".meta") != std::string::npos) {
                         continue;

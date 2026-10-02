@@ -61,9 +61,20 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
 UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::string& path) {
     auto ui = std::make_shared<UserInterface>(name);
     ui->filePath = path;
-    // Default created user interface in content browser has NO default elements (completely empty canvas)
     ui->canvasResolution = glm::vec2(1920.0f, 1080.0f);
     ui->elements.clear();
+
+    // Create the HTML file with modern Tailwind CSS layout
+    std::string hPath = path;
+    size_t dotPos = hPath.rfind('.');
+    if (dotPos != std::string::npos) {
+        hPath = hPath.substr(0, dotPos) + ".html";
+    } else {
+        hPath += ".html";
+    }
+    ui->htmlPath = hPath;
+    ui->htmlSource = HtmlTailwindParser::GetDefaultTailwindHtml(name);
+    ui->SaveToHtml(hPath);
 
     ui->SaveToFile(path);
     UserInterface* ptr = ui.get();
@@ -81,6 +92,9 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     glm::vec2 targetSize = screenMax - screenMin;
     if (targetSize.x <= 1.0f || targetSize.y <= 1.0f) return;
 
+    // Check for realtime updates from HTML file on disk
+    const_cast<UserInterface&>(ui).CheckAndReloadHtml();
+
     float scaleX = targetSize.x / ui.canvasResolution.x;
     float scaleY = targetSize.y / ui.canvasResolution.y;
     // Uniform scale preserving aspect ratio
@@ -90,7 +104,12 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     // Center design canvas in viewport
     glm::vec2 canvasOrigin = screenMin + (targetSize - ui.canvasResolution * scale) * 0.5f;
 
-    // Render elements according to hierarchy & computed layout
+    // 1. Render HTML + Tailwind CSS structure
+    if (ui.htmlRoot) {
+        ui.RenderHtml(drawList, canvasOrigin, scale);
+    }
+
+    // 2. Render native elements if present
     for (const auto& el : ui.elements) {
         if (!el.visible) continue;
 

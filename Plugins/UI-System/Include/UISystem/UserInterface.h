@@ -1,6 +1,7 @@
 #pragma once
 
 #include "UITypes.h"
+#include "HtmlTailwindParser.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -9,6 +10,7 @@
 #include <iomanip>
 #include <algorithm>
 #include <unordered_set>
+#include <filesystem>
 #include <nlohmann/json.hpp>
 
 namespace EunoiaUI {
@@ -17,6 +19,11 @@ class UserInterface {
 public:
     std::string name = "New User Interface";
     std::string filePath = "";
+    std::string htmlPath = "";
+    std::string htmlSource = "";
+    std::shared_ptr<HtmlNode> htmlRoot = nullptr;
+    std::filesystem::file_time_type lastHtmlWriteTime{};
+
     glm::vec2 canvasResolution{ 1920.0f, 1080.0f };
     std::vector<UIElement> elements;
     bool isVisible = true;
@@ -222,11 +229,79 @@ public:
         return false;
     }
 
+    std::string GetHtmlPath() const {
+        if (!htmlPath.empty()) return htmlPath;
+        if (!filePath.empty()) {
+            std::filesystem::path p = filePath;
+            p.replace_extension(".html");
+            return p.string();
+        }
+        return "";
+    }
+
+    bool LoadFromHtml(const std::string& path) {
+        std::ifstream in(path);
+        if (!in.is_open()) return false;
+        std::stringstream ss;
+        ss << in.rdbuf();
+        htmlSource = ss.str();
+        htmlPath = path;
+        htmlRoot = HtmlTailwindParser::Parse(htmlSource);
+        if (htmlRoot) {
+            htmlRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
+        }
+        std::error_code ec;
+        lastHtmlWriteTime = std::filesystem::last_write_time(path, ec);
+        return true;
+    }
+
+    bool SaveToHtml(const std::string& path = "") {
+        std::string target = path.empty() ? GetHtmlPath() : path;
+        if (target.empty()) return false;
+        if (htmlSource.empty()) {
+            htmlSource = HtmlTailwindParser::GetDefaultTailwindHtml(name);
+        }
+        std::ofstream out(target);
+        if (!out.is_open()) return false;
+        out << htmlSource;
+        htmlPath = target;
+        std::error_code ec;
+        lastHtmlWriteTime = std::filesystem::last_write_time(target, ec);
+        return true;
+    }
+
+    bool CheckAndReloadHtml() {
+        std::string target = GetHtmlPath();
+        if (target.empty()) return false;
+        std::error_code ec;
+        if (!std::filesystem::exists(target, ec)) return false;
+        auto curTime = std::filesystem::last_write_time(target, ec);
+        if (ec) return false;
+        if (curTime != lastHtmlWriteTime) {
+            return LoadFromHtml(target);
+        }
+        return false;
+    }
+
+    void RenderHtml(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale) const {
+        if (htmlRoot) {
+            htmlRoot->Render(imDrawListPtr, canvasOrigin, scale);
+        }
+    }
+
     bool SaveToFile(const std::string& path) {
         nlohmann::json root;
         root["name"] = name;
         root["canvasResolution"] = { canvasResolution.x, canvasResolution.y };
         root["isVisible"] = isVisible;
+
+        std::string hPath = GetHtmlPath();
+        if (hPath.empty()) {
+            std::filesystem::path p = path;
+            p.replace_extension(".html");
+            hPath = p.string();
+        }
+        root["htmlPath"] = hPath;
 
         nlohmann::json elemArray = nlohmann::json::array();
         for (const auto& el : elements) {
@@ -276,6 +351,10 @@ public:
         if (!out.is_open()) return false;
         out << std::setw(4) << root << std::endl;
         filePath = path;
+
+        // Automatically ensure corresponding HTML file is saved as well
+        SaveToHtml(hPath);
+
         return true;
     }
 
@@ -293,6 +372,7 @@ public:
                 canvasResolution.y = root["canvasResolution"][1].get<float>();
             }
             if (root.contains("isVisible")) isVisible = root["isVisible"].get<bool>();
+            if (root.contains("htmlPath")) htmlPath = root["htmlPath"].get<std::string>();
 
             elements.clear();
             if (root.contains("elements") && root["elements"].is_array()) {
@@ -369,6 +449,17 @@ public:
                 }
             }
             filePath = path;
+
+            // Load HTML file
+            std::string hPath = GetHtmlPath();
+            std::error_code ec;
+            if (std::filesystem::exists(hPath, ec)) {
+                LoadFromHtml(hPath);
+            } else {
+                SaveToHtml(hPath);
+                LoadFromHtml(hPath);
+            }
+
             return true;
         } catch (...) {
             return false;

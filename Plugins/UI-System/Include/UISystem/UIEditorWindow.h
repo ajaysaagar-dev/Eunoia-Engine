@@ -2,17 +2,111 @@
 
 #include "UserInterface.h"
 #include "UISystem.h"
+#include "HtmlTailwindParser.h"
 #include <imgui.h>
 #include <imgui_internal.h>
+#if __has_include(<imgui_impl_glfw.h>)
+#include <imgui_impl_glfw.h>
+#endif
+#if __has_include(<imgui_impl_opengl3.h>)
+#include <imgui_impl_opengl3.h>
+#endif
+#include <GLFW/glfw3.h>
+
+#ifdef _WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <windows.h>
+#endif
+
 #include <string>
 #include <vector>
-#include <unordered_map>
-#include <unordered_set>
 #include <memory>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
+#include <iostream>
 
 namespace EunoiaUI {
+
+inline void LaunchVSCodeSilently(const std::filesystem::path& targetFile, const std::filesystem::path& targetWorkspace = {}) {
+    std::filesystem::path workspace = targetWorkspace;
+    if (workspace.empty()) {
+        workspace = targetFile.parent_path();
+        while (!workspace.empty() && workspace != workspace.root_path()) {
+            if (std::filesystem::exists(workspace / ".vscode") || std::filesystem::exists(workspace / "Content") || std::filesystem::exists(workspace / "CMakeLists.txt")) {
+                break;
+            }
+            workspace = workspace.parent_path();
+        }
+        if (workspace.empty() || workspace == workspace.root_path()) {
+            workspace = targetFile.parent_path();
+        }
+    }
+
+#ifdef _WIN32
+    std::vector<std::filesystem::path> candidateCodePaths;
+    const char* localApp = getenv("LOCALAPPDATA");
+    if (localApp) {
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "Code.exe");
+        candidateCodePaths.push_back(std::filesystem::path(localApp) / "Programs" / "Microsoft VS Code" / "bin" / "code.cmd");
+    }
+    const char* progFiles = getenv("ProgramFiles");
+    if (progFiles) {
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "Code.exe");
+        candidateCodePaths.push_back(std::filesystem::path(progFiles) / "Microsoft VS Code" / "bin" / "code.cmd");
+    }
+    const char* progFilesX86 = getenv("ProgramFiles(x86)");
+    if (progFilesX86) {
+        candidateCodePaths.push_back(std::filesystem::path(progFilesX86) / "Microsoft VS Code" / "Code.exe");
+        candidateCodePaths.push_back(std::filesystem::path(progFilesX86) / "Microsoft VS Code" / "bin" / "code.cmd");
+    }
+    const char* userProfile = getenv("USERPROFILE");
+    if (userProfile) {
+        candidateCodePaths.push_back(std::filesystem::path(userProfile) / "AppData" / "Local" / "Programs" / "Microsoft VS Code" / "Code.exe");
+    }
+
+    bool launched = false;
+    for (const auto& cp : candidateCodePaths) {
+        std::error_code ec;
+        if (std::filesystem::exists(cp, ec)) {
+            std::string cmdLine = "\"" + cp.string() + "\" \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+            STARTUPINFOA si = { sizeof(STARTUPINFOA) };
+            si.dwFlags = STARTF_USESHOWWINDOW;
+            si.wShowWindow = SW_HIDE;
+            PROCESS_INFORMATION pi = {};
+            std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+            cmdBuf.push_back('\0');
+            if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                launched = true;
+                break;
+            }
+        }
+    }
+
+    if (!launched) {
+        std::string cmdLine = "cmd.exe /c code \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+        STARTUPINFOA si = { sizeof(STARTUPINFOA) };
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi = {};
+        std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+        cmdBuf.push_back('\0');
+        if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            launched = true;
+        } else {
+            ShellExecuteA(NULL, "open", targetFile.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+        }
+    }
+#else
+    std::string cmd = "code \"" + workspace.string() + "\" \"" + targetFile.string() + "\" &";
+    system(cmd.c_str());
+#endif
+}
 
 class UIEditorWindow {
 public:
@@ -20,795 +114,410 @@ public:
     std::string filePath;
     bool isOpen = true;
     bool isDirty = false;
+    bool autoSave = true;
 
     // Canvas navigation
-    float zoom = 0.65f;
-    ImVec2 pan = { 40.0f, 40.0f };
+    float zoom = 0.85f;
+    ImVec2 pan = { 0.0f, 0.0f };
     bool isPanning = false;
     ImVec2 panStart = { 0.0f, 0.0f };
     ImVec2 panInitial = { 0.0f, 0.0f };
 
-    // Selection & Manipulation
-    std::string selectedElemId = ""; // empty means Canvas (Root) is selected
-    bool isDraggingElement = false;
-    ImVec2 dragOffset = { 0.0f, 0.0f };
-    int resizeHandle = 0; // 0=none, 1=TL, 2=TR, 3=BR, 4=BL
+    std::string lastReloadStatus = "Synced";
 
     UIEditorWindow(const std::string& path, const std::string& name = "") {
         filePath = path;
         if (!path.empty()) {
             if (!ui.LoadFromFile(path)) {
                 ui.name = name.empty() ? "New UI" : name;
+                ui.SaveToHtml();
+                ui.SaveToFile(path);
             }
         } else {
             ui.name = name.empty() ? "New UI" : name;
         }
     }
 
-    void Render() {
-        if (!isOpen) return;
-
-        std::string winTitle = "🎨 UI Editor - " + ui.name + (isDirty ? " *" : "") + "###UIEditor_" + filePath;
-        ImGui::SetNextWindowSize(ImVec2(1080, 720), ImGuiCond_FirstUseEver);
-
-        if (!ImGui::Begin(winTitle.c_str(), &isOpen, ImGuiWindowFlags_MenuBar)) {
-            ImGui::End();
-            return;
+    void OpenHtmlInEditor() {
+        std::string hPath = ui.GetHtmlPath();
+        if (hPath.empty() && !filePath.empty()) {
+            std::filesystem::path p = filePath;
+            p.replace_extension(".html");
+            hPath = p.string();
         }
-
-        // Menu Bar
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("💾 Save", "Ctrl+S")) {
-                    Save();
-                }
-                if (ImGui::MenuItem("❌ Close")) {
-                    isOpen = false;
-                }
-                ImGui::EndMenu();
+        if (!hPath.empty()) {
+            std::error_code ec;
+            if (!std::filesystem::exists(hPath, ec)) {
+                ui.SaveToHtml(hPath);
             }
-            if (ImGui::BeginMenu("Add")) {
-                if (ImGui::MenuItem("🔲 Border")) {
-                    AddElement(UIElementType::Border, "", selectedElemId);
-                }
-                if (ImGui::MenuItem("🔤 Text")) {
-                    AddElement(UIElementType::Text, "", selectedElemId);
-                }
-                ImGui::EndMenu();
-            }
-            ImGui::EndMenuBar();
+            LaunchVSCodeSilently(hPath);
         }
-
-        // Top Toolbar
-        RenderToolbar();
-
-        // 3-Pane Layout: Left (Palette & Hierarchy) | Center (Canvas) | Right (Inspector)
-        float leftWidth = 260.0f;
-        float rightWidth = 300.0f;
-        float centerWidth = ImGui::GetContentRegionAvail().x - leftWidth - rightWidth - 16.0f;
-        if (centerWidth < 200.0f) centerWidth = 200.0f;
-        float paneHeight = ImGui::GetContentRegionAvail().y;
-
-        // --- LEFT PANE (Palette + Hierarchy Tree) ---
-        ImGui::BeginChild("UILeftPane", ImVec2(leftWidth, paneHeight), true);
-        RenderLeftPaletteAndHierarchy();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        // --- CENTER PANE (Visual Interactive Canvas) ---
-        ImGui::BeginChild("UICenterCanvas", ImVec2(centerWidth, paneHeight), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-        RenderCanvas();
-        ImGui::EndChild();
-
-        ImGui::SameLine();
-
-        // --- RIGHT PANE (Inspector / Details) ---
-        ImGui::BeginChild("UIRightInspector", ImVec2(rightWidth, paneHeight), true);
-        RenderRightInspector();
-        ImGui::EndChild();
-
-        ImGui::End();
     }
 
     void Save() {
         if (!filePath.empty()) {
-            if (ui.SaveToFile(filePath)) {
-                isDirty = false;
-            }
+            ui.SaveToFile(filePath);
+            isDirty = false;
         }
     }
 
-    UIElement* AddElement(UIElementType type, const std::string& name = "", const std::string& parentId = "") {
-        UIElement* elem = ui.AddElement(type, name, parentId);
-        if (elem) {
-            selectedElemId = elem->id;
-            isDirty = true;
+    void RenderUIEditorContent() {
+        // Real-time file watcher check on the HTML file
+        if (ui.CheckAndReloadHtml()) {
+            lastReloadStatus = "Updated from HTML just now";
+            if (autoSave) {
+                Save();
+            }
         }
-        return elem;
+
+        // Top Control Header Bar
+        RenderTopToolbar();
+
+        // Canvas Area (Fills entire main view)
+        RenderCanvasView();
     }
 
-private:
-    void RenderToolbar() {
-        if (ImGui::Button("💾 Save")) {
-            Save();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("➕ Border")) {
-            AddElement(UIElementType::Border, "", selectedElemId);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("➕ Text")) {
-            AddElement(UIElementType::Text, "", selectedElemId);
-        }
-        ImGui::SameLine();
-        if (!selectedElemId.empty()) {
-            if (ImGui::Button("🗑 Delete")) {
-                ui.RemoveElement(selectedElemId);
-                selectedElemId = "";
-                isDirty = true;
-            }
+    void RenderTopToolbar() {
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 6.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12.0f, 6.0f));
+
+        if (ImGui::BeginChild("UIEditorHeaderBar", ImVec2(0, 48.0f), true, ImGuiWindowFlags_NoScrollbar)) {
+            // Left: Asset Title & Status
+            ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
+            ImGui::TextColored(ImVec4(0.12f, 0.72f, 1.0f, 1.0f), "🎨 UI Canvas Designer:");
             ImGui::SameLine();
-            if (ImGui::Button("📋 Duplicate")) {
-                UIElement* orig = ui.FindElement(selectedElemId);
-                if (orig) {
-                    UIElement* dup = ui.AddElement(orig->type, orig->name + "_Copy", orig->parentId);
-                    if (dup) {
-                        *dup = *orig;
-                        dup->id = "elem_" + std::to_string(rand() % 100000) + "_" + std::to_string(ui.elements.size());
-                        dup->name = orig->name + "_Copy";
-                        dup->position += glm::vec2(20.0f, 20.0f);
-                        dup->childIds.clear();
-                        selectedElemId = dup->id;
-                        isDirty = true;
-                    }
-                }
-            }
+            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", ui.name.c_str());
             ImGui::SameLine();
-        }
+            ImGui::TextDisabled("|");
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "● HTML + TailwindCSS Live");
 
-        ImGui::SeparatorEx(ImGuiSeparatorFlags_Vertical);
-        ImGui::SameLine();
+            ImGui::SameLine();
+            float availW = ImGui::GetContentRegionAvail().x;
+            float buttonsW = 560.0f;
+            if (availW > buttonsW) {
+                ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - buttonsW));
+            }
 
-        // Zoom controls
-        ImGui::SetNextItemWidth(80.0f);
-        if (ImGui::SliderFloat("Zoom", &zoom, 0.2f, 2.0f, "%.2fx")) {
-            if (zoom < 0.2f) zoom = 0.2f;
+            // [Edit UI] button (Cyan theme)
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.02f, 0.50f, 0.75f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.08f, 0.65f, 0.95f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.01f, 0.40f, 0.60f, 1.0f));
+            if (ImGui::Button("📝 Edit UI (VS Code)", ImVec2(160.0f, 28.0f))) {
+                OpenHtmlInEditor();
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Open corresponding HTML and Tailwind CSS in VS Code.\nLive edits will immediately reflect on this canvas in real-time.");
+            }
+
+            ImGui::SameLine();
+
+            // [Save] button
+            if (ImGui::Button("💾 Save", ImVec2(80.0f, 28.0f))) {
+                Save();
+            }
+
+            ImGui::SameLine();
+
+            // Autosave checkbox
+            ImGui::Checkbox("⚡ Autosave", &autoSave);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Automatically save UI asset whenever HTML file is updated.");
+            }
+
+            ImGui::SameLine();
+
+            // Resolution Presets
+            const char* resOptions[] = { "1920 x 1080 (FHD)", "1280 x 720 (HD)", "2560 x 1440 (2K)", "3840 x 2160 (4K)" };
+            int currentResIdx = 0;
+            if (ui.canvasResolution.x == 1280.0f) currentResIdx = 1;
+            else if (ui.canvasResolution.x == 2560.0f) currentResIdx = 2;
+            else if (ui.canvasResolution.x == 3840.0f) currentResIdx = 3;
+
+            ImGui::SetNextItemWidth(140.0f);
+            if (ImGui::Combo("##ResSelect", &currentResIdx, resOptions, 4)) {
+                if (currentResIdx == 0) ui.canvasResolution = { 1920.0f, 1080.0f };
+                else if (currentResIdx == 1) ui.canvasResolution = { 1280.0f, 720.0f };
+                else if (currentResIdx == 2) ui.canvasResolution = { 2560.0f, 1440.0f };
+                else if (currentResIdx == 3) ui.canvasResolution = { 3840.0f, 2160.0f };
+                if (ui.htmlRoot) {
+                    ui.htmlRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, ui.canvasResolution.x, ui.canvasResolution.y));
+                }
+                isDirty = true;
+                if (autoSave) Save();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("↺ Fit", ImVec2(40.0f, 28.0f))) {
+                pan = { 0.0f, 0.0f };
+                zoom = 0.85f;
+            }
         }
-        ImGui::SameLine();
-        if (ImGui::Button("100%")) {
-            zoom = 1.0f;
-            pan = ImVec2(40.0f, 40.0f);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Fit")) {
-            zoom = 0.5f;
-            pan = ImVec2(20.0f, 20.0f);
-        }
-        ImGui::Separator();
+        ImGui::EndChild();
+        ImGui::PopStyleVar(2);
     }
 
-    void RenderLeftPaletteAndHierarchy() {
-        // --- PALETTE ---
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "PALETTE (Drag to Canvas)");
-        ImGui::Separator();
+    void RenderCanvasView() {
+        ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        if (ImGui::BeginChild("UICanvasMainArea", ImVec2(0, 0), true, flags)) {
+            ImDrawList* drawList = ImGui::GetWindowDrawList();
+            ImVec2 canvasAreaPos = ImGui::GetCursorScreenPos();
+            ImVec2 canvasAreaSize = ImGui::GetContentRegionAvail();
 
-        // Draggable Border item
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.20f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.32f, 0.45f, 1.0f));
-        ImGui::Button("🔲 Border", ImVec2(-1, 30));
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            int typeVal = (int)UIElementType::Border;
-            ImGui::SetDragDropPayload("UI_PALETTE_ITEM", &typeVal, sizeof(int));
-            ImGui::Text("Drop Border onto Canvas or Hierarchy");
-            ImGui::EndDragDropSource();
-        }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            AddElement(UIElementType::Border, "", selectedElemId);
-        }
-
-        // Draggable Text item
-        ImGui::Button("🔤 Text", ImVec2(-1, 30));
-        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-            int typeVal = (int)UIElementType::Text;
-            ImGui::SetDragDropPayload("UI_PALETTE_ITEM", &typeVal, sizeof(int));
-            ImGui::Text("Drop Text onto Canvas or Hierarchy");
-            ImGui::EndDragDropSource();
-        }
-        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(0)) {
-            AddElement(UIElementType::Text, "", selectedElemId);
-        }
-        ImGui::PopStyleColor(2);
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        // --- HIERARCHY TREE ---
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "HIERARCHY TREE");
-        ImGui::Separator();
-
-        ImGui::BeginChild("HierarchyTreeScroll", ImVec2(0, 0), false);
-
-        // Canvas (Root) Node
-        bool isCanvasSelected = selectedElemId.empty();
-        ImGuiTreeNodeFlags canvasFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_DefaultOpen | (isCanvasSelected ? ImGuiTreeNodeFlags_Selected : 0);
-        bool canvasOpen = ImGui::TreeNodeEx("CanvasRootNode", canvasFlags, "🖥 Canvas (Root) [%.0fx%.0f]", ui.canvasResolution.x, ui.canvasResolution.y);
-        
-        if (ImGui::IsItemClicked()) {
-            selectedElemId = ""; // Select Canvas root
-        }
-
-        // Drop target onto Canvas Root
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
-                std::string draggedId((const char*)payload->Data, payload->DataSize);
-                ui.SetParent(draggedId, ""); // Unparent to root
-                isDirty = true;
-            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
-                int typeVal = *(const int*)payload->Data;
-                AddElement((UIElementType)typeVal, "", "");
+            if (canvasAreaSize.x <= 10.0f || canvasAreaSize.y <= 10.0f) {
+                ImGui::EndChild();
+                return;
             }
-            ImGui::EndDragDropTarget();
-        }
 
-        if (canvasOpen) {
-            // Render root-level elements (those without parent)
-            for (auto& elem : ui.elements) {
-                if (elem.parentId.empty() || !ui.FindElement(elem.parentId)) {
-                    DrawHierarchyNode(elem);
+            // Background Grid (Figma / UE5 style canvas)
+            ImU32 bgCol = IM_COL32(18, 20, 26, 255);
+            ImU32 gridCol = IM_COL32(32, 36, 48, 160);
+            ImU32 gridSubCol = IM_COL32(26, 30, 40, 100);
+
+            drawList->AddRectFilled(canvasAreaPos, ImVec2(canvasAreaPos.x + canvasAreaSize.x, canvasAreaPos.y + canvasAreaSize.y), bgCol);
+
+            float gridSize = 32.0f * zoom;
+            if (gridSize >= 8.0f) {
+                for (float x = std::fmod(pan.x, gridSize); x < canvasAreaSize.x; x += gridSize) {
+                    drawList->AddLine(ImVec2(canvasAreaPos.x + x, canvasAreaPos.y), ImVec2(canvasAreaPos.x + x, canvasAreaPos.y + canvasAreaSize.y), gridSubCol, 1.0f);
+                }
+                for (float y = std::fmod(pan.y, gridSize); y < canvasAreaSize.y; y += gridSize) {
+                    drawList->AddLine(ImVec2(canvasAreaPos.x, canvasAreaPos.y + y), ImVec2(canvasAreaPos.x + canvasAreaSize.x, canvasAreaPos.y + y), gridSubCol, 1.0f);
                 }
             }
-            ImGui::TreePop();
-        }
 
-        // Empty area drop target to unparent
-        ImVec2 avail = ImGui::GetContentRegionAvail();
-        if (avail.y > 20.0f) {
-            ImGui::Dummy(ImVec2(avail.x, avail.y));
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
-                    std::string draggedId((const char*)payload->Data, payload->DataSize);
-                    ui.SetParent(draggedId, "");
-                    isDirty = true;
-                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
-                    int typeVal = *(const int*)payload->Data;
-                    AddElement((UIElementType)typeVal, "", "");
+            // Canvas Framing & Auto-centering
+            float baseScale = std::min((canvasAreaSize.x - 60.0f) / ui.canvasResolution.x, (canvasAreaSize.y - 60.0f) / ui.canvasResolution.y);
+            if (baseScale <= 0.0f) baseScale = 0.5f;
+
+            float currentScale = baseScale * zoom;
+            glm::vec2 canvasDisplaySize = ui.canvasResolution * currentScale;
+
+            glm::vec2 canvasOrigin(
+                canvasAreaPos.x + (canvasAreaSize.x - canvasDisplaySize.x) * 0.5f + pan.x,
+                canvasAreaPos.y + (canvasAreaSize.y - canvasDisplaySize.y) * 0.5f + pan.y
+            );
+
+            ImVec2 cMin(canvasOrigin.x, canvasOrigin.y);
+            ImVec2 cMax(canvasOrigin.x + canvasDisplaySize.x, canvasOrigin.y + canvasDisplaySize.y);
+
+            // Canvas Drop Shadow
+            drawList->AddRectFilled(ImVec2(cMin.x + 8.0f, cMin.y + 12.0f), ImVec2(cMax.x + 8.0f, cMax.y + 12.0f), IM_COL32(0, 0, 0, 160), 12.0f);
+
+            // Canvas Frame Background
+            drawList->AddRectFilled(cMin, cMax, IM_COL32(10, 12, 16, 255), 8.0f);
+
+            // Canvas Outline Border
+            drawList->AddRect(cMin, cMax, IM_COL32(30, 140, 220, 200), 8.0f, 0, 2.0f);
+
+            // Clip rendering to canvas bounds
+            drawList->PushClipRect(cMin, cMax, true);
+
+            // Render HTML + Tailwind CSS Tree
+            if (ui.htmlRoot) {
+                ui.RenderHtml(drawList, canvasOrigin, currentScale);
+            }
+
+            // Render any native elements
+            for (const auto& el : ui.elements) {
+                if (!el.visible) continue;
+                glm::vec4 worldRect = ui.GetElementWorldRect(el);
+                glm::vec2 elemPos = canvasOrigin + glm::vec2(worldRect.x, worldRect.y) * currentScale;
+                glm::vec2 elemSize = glm::vec2(worldRect.z, worldRect.w) * currentScale;
+
+                ImVec2 pMin(elemPos.x, elemPos.y);
+                ImVec2 pMax(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
+
+                if (el.type == UIElementType::Border) {
+                    ImU32 bgCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
+                    ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255), (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255));
+                    if (el.filled) drawList->AddRectFilled(pMin, pMax, bgCol, el.cornerRounding * currentScale);
+                    if (el.borderThickness > 0.0f) drawList->AddRect(pMin, pMax, bdCol, el.cornerRounding * currentScale, 0, el.borderThickness * currentScale);
+                } else if (el.type == UIElementType::Text) {
+                    ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255), (int)(el.textColor.b * 255), (int)(el.textColor.a * 255));
+                    float fontSize = el.fontSize * currentScale;
+                    drawList->AddText(nullptr, fontSize, pMin, txtCol, el.text.c_str());
                 }
-                ImGui::EndDragDropTarget();
+            }
+
+            drawList->PopClipRect();
+
+            // Canvas Info Tag
+            char infoTag[128];
+            snprintf(infoTag, sizeof(infoTag), "Canvas: %.0f x %.0f  |  Scale: %.0f%%", ui.canvasResolution.x, ui.canvasResolution.y, zoom * 100.0f);
+            drawList->AddText(ImVec2(canvasAreaPos.x + 16.0f, canvasAreaPos.y + canvasAreaSize.y - 28.0f), IM_COL32(160, 175, 195, 200), infoTag);
+
+            // Canvas Interaction (Pan & Zoom)
+            bool isHovered = ImGui::IsWindowHovered();
+            ImGuiIO& io = ImGui::GetIO();
+
+            if (isHovered) {
+                // Zoom with scroll wheel
+                if (io.MouseWheel != 0.0f) {
+                    float zoomDelta = io.MouseWheel * 0.10f;
+                    zoom = std::clamp(zoom + zoomDelta, 0.20f, 4.0f);
+                }
+
+                // Pan with Right Mouse Button or Middle Mouse Button
+                if (ImGui::IsMouseClicked(ImGuiMouseButton_Right) || ImGui::IsMouseClicked(ImGuiMouseButton_Middle)) {
+                    isPanning = true;
+                    panStart = io.MousePos;
+                    panInitial = pan;
+                }
+            }
+
+            if (isPanning) {
+                if (ImGui::IsMouseDown(ImGuiMouseButton_Right) || ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
+                    pan.x = panInitial.x + (io.MousePos.x - panStart.x);
+                    pan.y = panInitial.y + (io.MousePos.y - panStart.y);
+                } else {
+                    isPanning = false;
+                }
             }
         }
-
         ImGui::EndChild();
     }
-
-    void DrawHierarchyNode(UIElement& elem) {
-        ImGui::PushID(elem.id.c_str());
-
-        // Visibility eye button
-        if (ImGui::Button(elem.visible ? "👁" : "🚫", ImVec2(22, 20))) {
-            elem.visible = !elem.visible;
-            isDirty = true;
-        }
-        ImGui::SameLine();
-
-        bool hasChildren = !elem.childIds.empty();
-        ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_OpenOnDoubleClick | ImGuiTreeNodeFlags_SpanAvailWidth;
-        if (!hasChildren) nodeFlags |= ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-        if (selectedElemId == elem.id) nodeFlags |= ImGuiTreeNodeFlags_Selected;
-        if (elem.isExpanded) nodeFlags |= ImGuiTreeNodeFlags_DefaultOpen;
-
-        const char* icon = (elem.type == UIElementType::Border) ? "🔲" : "🔤";
-        std::string label = std::string(icon) + " " + elem.name;
-
-        bool nodeOpen = ImGui::TreeNodeEx(elem.id.c_str(), nodeFlags, "%s", label.c_str());
-
-        if (ImGui::IsItemClicked()) {
-            selectedElemId = elem.id;
-        }
-
-        // Drag Source (to re-parent or move)
-        if (ImGui::BeginDragDropSource()) {
-            ImGui::SetDragDropPayload("UI_HIERARCHY_ITEM", elem.id.c_str(), elem.id.size() + 1);
-            ImGui::Text("Move %s", elem.name.c_str());
-            ImGui::EndDragDropSource();
-        }
-
-        // Drag Target (to become parent of dragged item)
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_HIERARCHY_ITEM")) {
-                std::string draggedId((const char*)payload->Data, payload->DataSize);
-                if (draggedId != elem.id) {
-                    ui.SetParent(draggedId, elem.id);
-                    isDirty = true;
-                }
-            } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
-                int typeVal = *(const int*)payload->Data;
-                AddElement((UIElementType)typeVal, "", elem.id);
-            }
-            ImGui::EndDragDropTarget();
-        }
-
-        // Right-Click Context Menu
-        if (ImGui::BeginPopupContextItem()) {
-            if (ImGui::MenuItem("➕ Add Child Border")) {
-                AddElement(UIElementType::Border, "", elem.id);
-            }
-            if (ImGui::MenuItem("➕ Add Child Text")) {
-                AddElement(UIElementType::Text, "", elem.id);
-            }
-            ImGui::Separator();
-            if (!elem.parentId.empty()) {
-                if (ImGui::MenuItem("📤 Unparent (Move to Root)")) {
-                    ui.SetParent(elem.id, "");
-                    isDirty = true;
-                }
-            }
-            if (ImGui::MenuItem("📋 Duplicate")) {
-                UIElement* dup = ui.AddElement(elem.type, elem.name + "_Copy", elem.parentId);
-                if (dup) {
-                    *dup = elem;
-                    dup->id = "elem_" + std::to_string(rand() % 100000);
-                    dup->name = elem.name + "_Copy";
-                    dup->position += glm::vec2(20.0f, 20.0f);
-                    dup->childIds.clear();
-                    selectedElemId = dup->id;
-                    isDirty = true;
-                }
-            }
-            if (ImGui::MenuItem("🗑 Delete")) {
-                ui.RemoveElement(elem.id);
-                if (selectedElemId == elem.id) selectedElemId = "";
-                isDirty = true;
-            }
-            ImGui::EndPopup();
-        }
-
-        if (hasChildren && nodeOpen) {
-            for (const auto& chId : elem.childIds) {
-                UIElement* child = ui.FindElement(chId);
-                if (child) {
-                    DrawHierarchyNode(*child);
-                }
-            }
-            ImGui::TreePop();
-        }
-
-        ImGui::PopID();
-    }
-
-    void RenderCanvas() {
-        ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-        ImVec2 canvasSize = ImGui::GetContentRegionAvail();
-        ImDrawList* drawList = ImGui::GetWindowDrawList();
-
-        // Canvas clipping
-        drawList->PushClipRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), true);
-
-        // Canvas Background Grid
-        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 20, 24, 255));
-        float gridStep = 40.0f * zoom;
-        if (gridStep > 8.0f) {
-            for (float x = std::fmod(pan.x, gridStep); x < canvasSize.x; x += gridStep) {
-                drawList->AddLine(ImVec2(canvasPos.x + x, canvasPos.y), ImVec2(canvasPos.x + x, canvasPos.y + canvasSize.y), IM_COL32(30, 30, 38, 255));
-            }
-            for (float y = std::fmod(pan.y, gridStep); y < canvasSize.y; y += gridStep) {
-                drawList->AddLine(ImVec2(canvasPos.x, canvasPos.y + y), ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + y), IM_COL32(30, 30, 38, 255));
-            }
-        }
-
-        // Virtual Screen Boundary (e.g. 1920x1080) — Transparent interior with crisp border
-        ImVec2 screenOrigin = ImVec2(canvasPos.x + pan.x, canvasPos.y + pan.y);
-        ImVec2 screenEnd = ImVec2(screenOrigin.x + ui.canvasResolution.x * zoom, screenOrigin.y + ui.canvasResolution.y * zoom);
-        drawList->AddRectFilled(screenOrigin, screenEnd, IM_COL32(12, 12, 16, 220));
-        drawList->AddRect(screenOrigin, screenEnd, IM_COL32(70, 70, 90, 255), 0.0f, 0, 1.5f);
-
-        // Resolution Tag
-        char resBuf[64];
-        snprintf(resBuf, sizeof(resBuf), "🖥 Canvas: %.0f x %.0f", ui.canvasResolution.x, ui.canvasResolution.y);
-        drawList->AddText(ImVec2(screenOrigin.x + 8.0f, screenOrigin.y + 6.0f), IM_COL32(140, 140, 165, 255), resBuf);
-
-        // Handle Pan with Middle Mouse / Right Mouse Drag
-        ImGuiIO& io = ImGui::GetIO();
-        bool isHovered = ImGui::IsWindowHovered();
-
-        if (isHovered && (ImGui::IsMouseDown(ImGuiMouseButton_Middle) || (ImGui::IsMouseDown(ImGuiMouseButton_Right) && !isDraggingElement))) {
-            if (!isPanning) {
-                isPanning = true;
-                panStart = io.MousePos;
-                panInitial = pan;
-            } else {
-                pan = ImVec2(panInitial.x + (io.MousePos.x - panStart.x), panInitial.y + (io.MousePos.y - panStart.y));
-            }
-        } else {
-            isPanning = false;
-        }
-
-        // Mouse Wheel Zoom
-        if (isHovered && io.MouseWheel != 0.0f) {
-            float zoomDelta = io.MouseWheel * 0.08f;
-            float newZoom = std::clamp(zoom + zoomDelta, 0.2f, 2.5f);
-            ImVec2 mouseRel = ImVec2(io.MousePos.x - canvasPos.x, io.MousePos.y - canvasPos.y);
-            pan.x -= (mouseRel.x - pan.x) * (newZoom / zoom - 1.0f);
-            pan.y -= (mouseRel.y - pan.y) * (newZoom / zoom - 1.0f);
-            zoom = newZoom;
-        }
-
-        // Render UI Elements on Canvas using hierarchical world rects
-        UIElement* selectedElem = nullptr;
-        for (auto& el : ui.elements) {
-            if (!el.visible) continue;
-            if (el.id == selectedElemId) selectedElem = &el;
-
-            glm::vec4 wRect = ui.GetElementWorldRect(el);
-            ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
-            ImVec2 elemSize(wRect.z * zoom, wRect.w * zoom);
-            ImVec2 elemEnd(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
-
-            if (el.type == UIElementType::Border) {
-                ImU32 bgCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
-                ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255), (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255));
-                if (el.filled) {
-                    drawList->AddRectFilled(elemPos, elemEnd, bgCol, el.cornerRounding * zoom);
-                }
-                if (el.borderThickness > 0.0f) {
-                    drawList->AddRect(elemPos, elemEnd, bdCol, el.cornerRounding * zoom, 0, el.borderThickness * zoom);
-                }
-            } else if (el.type == UIElementType::Text) {
-                ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255), (int)(el.textColor.b * 255), (int)(el.textColor.a * 255));
-                ImU32 shdCol = IM_COL32((int)(el.shadowColor.r * 255), (int)(el.shadowColor.g * 255), (int)(el.shadowColor.b * 255), (int)(el.shadowColor.a * 255));
-
-                float fontSize = el.fontSize * zoom;
-                ImVec2 textSize = ImGui::CalcTextSize(el.text.c_str());
-                ImVec2 textPos = elemPos;
-                if (el.textAlignment == 1) {
-                    textPos.x = elemPos.x + (elemSize.x - textSize.x) * 0.5f;
-                } else if (el.textAlignment == 2) {
-                    textPos.x = elemEnd.x - textSize.x;
-                }
-
-                if (el.shadow) {
-                    ImVec2 shdPos(textPos.x + el.shadowOffset.x * zoom, textPos.y + el.shadowOffset.y * zoom);
-                    drawList->AddText(nullptr, fontSize, shdPos, shdCol, el.text.c_str());
-                }
-                drawList->AddText(nullptr, fontSize, textPos, txtCol, el.text.c_str());
-            }
-        }
-
-        // Selection Outline & Gizmo for Selected Element
-        if (selectedElem) {
-            glm::vec4 wRect = ui.GetElementWorldRect(*selectedElem);
-            ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
-            ImVec2 elemSize(wRect.z * zoom, wRect.w * zoom);
-            ImVec2 elemEnd(elemPos.x + elemSize.x, elemPos.y + elemSize.y);
-
-            // Selection box
-            drawList->AddRect(elemPos, elemEnd, IM_COL32(50, 160, 255, 255), 0.0f, 0, 2.0f);
-
-            // Corner resize handles
-            float handleSize = 6.0f;
-            drawList->AddRectFilled(ImVec2(elemEnd.x - handleSize, elemEnd.y - handleSize), ImVec2(elemEnd.x + handleSize, elemEnd.y + handleSize), IM_COL32(255, 255, 255, 255));
-            drawList->AddRect(ImVec2(elemEnd.x - handleSize, elemEnd.y - handleSize), ImVec2(elemEnd.x + handleSize, elemEnd.y + handleSize), IM_COL32(50, 160, 255, 255), 0.0f, 0, 1.5f);
-
-            // Parent rect & Anchor visualization
-            glm::vec4 parentRect(0.0f, 0.0f, ui.canvasResolution.x, ui.canvasResolution.y);
-            if (!selectedElem->parentId.empty()) {
-                const UIElement* p = ui.FindElement(selectedElem->parentId);
-                if (p) parentRect = ui.GetElementWorldRect(*p);
-            }
-            ImVec2 pMin(screenOrigin.x + parentRect.x * zoom, screenOrigin.y + parentRect.y * zoom);
-            ImVec2 pSize(parentRect.z * zoom, parentRect.w * zoom);
-
-            ImVec2 anchorMinPos(pMin.x + selectedElem->anchorMin.x * pSize.x, pMin.y + selectedElem->anchorMin.y * pSize.y);
-            ImVec2 anchorMaxPos(pMin.x + selectedElem->anchorMax.x * pSize.x, pMin.y + selectedElem->anchorMax.y * pSize.y);
-
-            drawList->AddCircleFilled(anchorMinPos, 4.0f, IM_COL32(255, 200, 50, 255));
-            if (anchorMinPos.x != anchorMaxPos.x || anchorMinPos.y != anchorMaxPos.y) {
-                drawList->AddCircleFilled(anchorMaxPos, 4.0f, IM_COL32(255, 200, 50, 255));
-                drawList->AddLine(anchorMinPos, anchorMaxPos, IM_COL32(255, 200, 50, 180), 1.0f);
-            }
-        }
-
-        // Handle Element Selection & Dragging
-        if (isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-            bool clickedElem = false;
-            // Iterate in reverse for topmost element
-            for (int i = (int)ui.elements.size() - 1; i >= 0; --i) {
-                auto& el = ui.elements[i];
-                if (!el.visible) continue;
-
-                glm::vec4 wRect = ui.GetElementWorldRect(el);
-                ImVec2 elemPos(screenOrigin.x + wRect.x * zoom, screenOrigin.y + wRect.y * zoom);
-                ImVec2 elemEnd(elemPos.x + wRect.z * zoom, elemPos.y + wRect.w * zoom);
-
-                // Check resize handle click if already selected
-                if (el.id == selectedElemId) {
-                    float handleSize = 8.0f;
-                    if (io.MousePos.x >= elemEnd.x - handleSize && io.MousePos.x <= elemEnd.x + handleSize &&
-                        io.MousePos.y >= elemEnd.y - handleSize && io.MousePos.y <= elemEnd.y + handleSize) {
-                        resizeHandle = 3; // BR resize
-                        isDraggingElement = true;
-                        clickedElem = true;
-                        break;
-                    }
-                }
-
-                if (io.MousePos.x >= elemPos.x && io.MousePos.x <= elemEnd.x &&
-                    io.MousePos.y >= elemPos.y && io.MousePos.y <= elemEnd.y) {
-                    selectedElemId = el.id;
-                    isDraggingElement = true;
-                    resizeHandle = 0;
-                    dragOffset = ImVec2((io.MousePos.x - elemPos.x) / zoom, (io.MousePos.y - elemPos.y) / zoom);
-                    clickedElem = true;
-                    break;
-                }
-            }
-            if (!clickedElem) {
-                // Clicked on empty canvas background -> select Canvas Root
-                selectedElemId = "";
-            }
-        }
-
-        // Process Dragging / Resizing
-        if (isDraggingElement && selectedElem && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
-            glm::vec4 parentRect(0.0f, 0.0f, ui.canvasResolution.x, ui.canvasResolution.y);
-            if (!selectedElem->parentId.empty()) {
-                const UIElement* p = ui.FindElement(selectedElem->parentId);
-                if (p) parentRect = ui.GetElementWorldRect(*p);
-            }
-
-            if (resizeHandle == 3) {
-                // Resize bottom-right
-                glm::vec4 curRect = ui.GetElementWorldRect(*selectedElem);
-                float mouseCanvasX = (io.MousePos.x - screenOrigin.x) / zoom;
-                float mouseCanvasY = (io.MousePos.y - screenOrigin.y) / zoom;
-                float newW = mouseCanvasX - curRect.x;
-                float newH = mouseCanvasY - curRect.y;
-                if (newW > 10.0f) selectedElem->size.x = std::round(newW);
-                if (newH > 10.0f) selectedElem->size.y = std::round(newH);
-                isDirty = true;
-            } else {
-                // Move element in parent coordinate space
-                float mouseCanvasX = (io.MousePos.x - screenOrigin.x) / zoom;
-                float mouseCanvasY = (io.MousePos.y - screenOrigin.y) / zoom;
-
-                float targetElemLeft = mouseCanvasX - dragOffset.x;
-                float targetElemTop = mouseCanvasY - dragOffset.y;
-
-                float anchorX = parentRect.x + selectedElem->anchorMin.x * parentRect.z;
-                float anchorY = parentRect.y + selectedElem->anchorMin.y * parentRect.w;
-
-                selectedElem->position.x = std::round(targetElemLeft - anchorX + selectedElem->pivot.x * selectedElem->size.x);
-                selectedElem->position.y = std::round(targetElemTop - anchorY + selectedElem->pivot.y * selectedElem->size.y);
-                isDirty = true;
-            }
-        } else {
-            isDraggingElement = false;
-            resizeHandle = 0;
-        }
-
-        // Accept Drag and Drop from Palette onto Canvas
-        if (ImGui::BeginDragDropTargetCustom(ImRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y)), ImGui::GetID("UICenterCanvas"))) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("UI_PALETTE_ITEM")) {
-                int typeVal = *(const int*)payload->Data;
-                UIElementType type = (UIElementType)typeVal;
-                UIElement* newElem = ui.AddElement(type);
-                if (newElem) {
-                    float dropX = (io.MousePos.x - screenOrigin.x) / zoom;
-                    float dropY = (io.MousePos.y - screenOrigin.y) / zoom;
-                    newElem->position = glm::vec2(std::round(dropX), std::round(dropY));
-                    selectedElemId = newElem->id;
-                    isDirty = true;
-                }
-            }
-            ImGui::EndDragDropTarget();
-        }
-
-        drawList->PopClipRect();
-    }
-
-    void RenderRightInspector() {
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "DETAILS / INSPECTOR");
-        ImGui::Separator();
-
-        if (selectedElemId.empty()) {
-            // --- CANVAS ROOT PROPERTIES ---
-            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.5f, 1.0f), "🖥 CANVAS (ROOT CONTAINER)");
-            ImGui::Spacing();
-
-            char nameBuf[128];
-            strncpy(nameBuf, ui.name.c_str(), sizeof(nameBuf) - 1);
-            nameBuf[sizeof(nameBuf) - 1] = '\0';
-            if (ImGui::InputText("UI Asset Name", nameBuf, sizeof(nameBuf))) {
-                ui.name = nameBuf;
-                isDirty = true;
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "CANVAS RESOLUTION");
-
-            // Preset Combo
-            const char* resPresets[] = {
-                "1920 x 1080 (Full HD / 16:9)",
-                "1280 x 720 (HD / 16:9)",
-                "2560 x 1440 (2K QHD / 16:9)",
-                "3840 x 2160 (4K UHD / 16:9)",
-                "1080 x 1920 (Portrait / 9:16)",
-                "Custom"
-            };
-
-            int currentResIdx = 5; // Custom
-            if (ui.canvasResolution.x == 1920.0f && ui.canvasResolution.y == 1080.0f) currentResIdx = 0;
-            else if (ui.canvasResolution.x == 1280.0f && ui.canvasResolution.y == 720.0f) currentResIdx = 1;
-            else if (ui.canvasResolution.x == 2560.0f && ui.canvasResolution.y == 1440.0f) currentResIdx = 2;
-            else if (ui.canvasResolution.x == 3840.0f && ui.canvasResolution.y == 2160.0f) currentResIdx = 3;
-            else if (ui.canvasResolution.x == 1080.0f && ui.canvasResolution.y == 1920.0f) currentResIdx = 4;
-
-            if (ImGui::Combo("Preset", &currentResIdx, resPresets, 6)) {
-                switch (currentResIdx) {
-                    case 0: ui.canvasResolution = { 1920.0f, 1080.0f }; break;
-                    case 1: ui.canvasResolution = { 1280.0f, 720.0f }; break;
-                    case 2: ui.canvasResolution = { 2560.0f, 1440.0f }; break;
-                    case 3: ui.canvasResolution = { 3840.0f, 2160.0f }; break;
-                    case 4: ui.canvasResolution = { 1080.0f, 1920.0f }; break;
-                }
-                isDirty = true;
-            }
-
-            if (ImGui::DragFloat2("Resolution (W, H)", &ui.canvasResolution.x, 10.0f, 320.0f, 7680.0f, "%.0f px")) {
-                if (ui.canvasResolution.x < 100.0f) ui.canvasResolution.x = 100.0f;
-                if (ui.canvasResolution.y < 100.0f) ui.canvasResolution.y = 100.0f;
-                isDirty = true;
-            }
-
-            ImGui::Spacing();
-            ImGui::Separator();
-            ImGui::TextDisabled("Total Elements: %d", (int)ui.elements.size());
-            return;
-        }
-
-        UIElement* elem = ui.FindElement(selectedElemId);
-        if (!elem) {
-            selectedElemId = "";
-            return;
-        }
-
-        // Element Name & Type
-        char nameBuf[128];
-        strncpy(nameBuf, elem->name.c_str(), sizeof(nameBuf) - 1);
-        nameBuf[sizeof(nameBuf) - 1] = '\0';
-        if (ImGui::InputText("Name", nameBuf, sizeof(nameBuf))) {
-            elem->name = nameBuf;
-            isDirty = true;
-        }
-
-        ImGui::Text("Type: %s", UIElementTypeToString(elem->type));
-        if (ImGui::Checkbox("Visible", &elem->visible)) isDirty = true;
-        if (ImGui::DragInt("Z-Order", &elem->zOrder, 1, -100, 100)) isDirty = true;
-
-        // Parent Information
-        std::string parentName = "(Root Canvas)";
-        if (!elem->parentId.empty()) {
-            UIElement* p = ui.FindElement(elem->parentId);
-            if (p) parentName = p->name + " (" + elem->parentId + ")";
-        }
-        ImGui::Text("Parent: %s", parentName.c_str());
-        if (!elem->parentId.empty()) {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Unparent")) {
-                ui.SetParent(elem->id, "");
-                isDirty = true;
-            }
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "ANCHORS & LAYOUT");
-
-        // Anchor Presets Selector (All 16 presets)
-        const char* anchorPresetNames[] = {
-            "Top-Left",
-            "Top-Center",
-            "Top-Right",
-            "Center-Left",
-            "Center",
-            "Center-Right",
-            "Bottom-Left",
-            "Bottom-Center",
-            "Bottom-Right",
-            "Stretch Horizontal (Top)",
-            "Stretch Horizontal (Middle)",
-            "Stretch Horizontal (Bottom)",
-            "Stretch Vertical (Left)",
-            "Stretch Vertical (Center)",
-            "Stretch Vertical (Right)",
-            "Stretch Full (Both)",
-            "Custom"
-        };
-
-        int presetIdx = (int)elem->anchorPreset;
-        if (ImGui::Combo("Anchor Preset", &presetIdx, anchorPresetNames, 17)) {
-            elem->anchorPreset = (UIAnchorPreset)presetIdx;
-            if (elem->anchorPreset != UIAnchorPreset::Custom) {
-                AnchorPresetToMinMax(elem->anchorPreset, elem->anchorMin, elem->anchorMax, elem->pivot);
-            }
-            isDirty = true;
-        }
-
-        bool isHorizStretch = (std::abs(elem->anchorMin.x - elem->anchorMax.x) > 0.001f);
-        bool isVertStretch = (std::abs(elem->anchorMin.y - elem->anchorMax.y) > 0.001f);
-
-        // Position & Size controls (hierarchy parent-relative)
-        if (!isHorizStretch && !isVertStretch) {
-            // Point anchor
-            if (ImGui::DragFloat2("Position (X, Y)", &elem->position.x, 1.0f)) isDirty = true;
-            if (ImGui::DragFloat2("Size (W, H)", &elem->size.x, 1.0f, 1.0f, 4000.0f)) isDirty = true;
-        } else {
-            // Stretch mode
-            if (isHorizStretch) {
-                if (ImGui::DragFloat("Left Offset", &elem->position.x, 1.0f)) isDirty = true;
-                if (ImGui::DragFloat("Right Offset", &elem->size.x, 1.0f)) isDirty = true;
-            } else {
-                if (ImGui::DragFloat("Position X", &elem->position.x, 1.0f)) isDirty = true;
-                if (ImGui::DragFloat("Width", &elem->size.x, 1.0f, 1.0f, 4000.0f)) isDirty = true;
-            }
-
-            if (isVertStretch) {
-                if (ImGui::DragFloat("Top Offset", &elem->position.y, 1.0f)) isDirty = true;
-                if (ImGui::DragFloat("Bottom Offset", &elem->size.y, 1.0f)) isDirty = true;
-            } else {
-                if (ImGui::DragFloat("Position Y", &elem->position.y, 1.0f)) isDirty = true;
-                if (ImGui::DragFloat("Height", &elem->size.y, 1.0f, 1.0f, 4000.0f)) isDirty = true;
-            }
-        }
-
-        if (ImGui::DragFloat2("Pivot (Norm)", &elem->pivot.x, 0.01f, 0.0f, 1.0f)) isDirty = true;
-        if (ImGui::DragFloat2("Anchor Min", &elem->anchorMin.x, 0.01f, 0.0f, 1.0f)) {
-            elem->anchorPreset = UIAnchorPreset::Custom;
-            isDirty = true;
-        }
-        if (ImGui::DragFloat2("Anchor Max", &elem->anchorMax.x, 0.01f, 0.0f, 1.0f)) {
-            elem->anchorPreset = UIAnchorPreset::Custom;
-            isDirty = true;
-        }
-
-        ImGui::Spacing();
-        ImGui::Separator();
-
-        // Type-Specific Properties
-        if (elem->type == UIElementType::Border) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "BORDER PROPERTIES");
-            if (ImGui::ColorEdit4("Background Color", &elem->backgroundColor.r)) isDirty = true;
-            if (ImGui::ColorEdit4("Border Color", &elem->borderColor.r)) isDirty = true;
-            if (ImGui::DragFloat("Border Thickness", &elem->borderThickness, 0.2f, 0.0f, 30.0f, "%.1f px")) isDirty = true;
-            if (ImGui::DragFloat("Corner Rounding", &elem->cornerRounding, 0.5f, 0.0f, 50.0f, "%.1f px")) isDirty = true;
-            if (ImGui::Checkbox("Filled", &elem->filled)) isDirty = true;
-        } else if (elem->type == UIElementType::Text) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "TEXT PROPERTIES");
-
-            char textBuf[1024];
-            strncpy(textBuf, elem->text.c_str(), sizeof(textBuf) - 1);
-            textBuf[sizeof(textBuf) - 1] = '\0';
-            if (ImGui::InputTextMultiline("Text Content", textBuf, sizeof(textBuf), ImVec2(-1, 60))) {
-                elem->text = textBuf;
-                isDirty = true;
-            }
-
-            if (ImGui::SliderFloat("Font Size", &elem->fontSize, 8.0f, 72.0f, "%.1f px")) isDirty = true;
-            if (ImGui::ColorEdit4("Text Color", &elem->textColor.r)) isDirty = true;
-
-            const char* alignments[] = { "Left", "Center", "Right" };
-            if (ImGui::Combo("Alignment", &elem->textAlignment, alignments, 3)) isDirty = true;
-
-            if (ImGui::Checkbox("Drop Shadow", &elem->shadow)) isDirty = true;
-            if (elem->shadow) {
-                if (ImGui::ColorEdit4("Shadow Color", &elem->shadowColor.r)) isDirty = true;
-                if (ImGui::DragFloat2("Shadow Offset", &elem->shadowOffset.x, 0.5f, -20.0f, 20.0f, "%.1f px")) isDirty = true;
-            }
-        }
-    }
 };
+
+inline void RunStandaloneUIEditor(const std::string& filePath, const std::string& name = "") {
+    // Create dedicated secondary GLFW window for UI Editor
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+
+    const int WIN_W = 1280;
+    const int WIN_H = 800;
+
+    std::string winTitle = "Eunoia Engine - UI Editor";
+    if (!name.empty()) winTitle += " - " + name;
+    else if (!filePath.empty()) winTitle += " - " + std::filesystem::path(filePath).stem().string();
+
+    GLFWwindow* uiWindow = glfwCreateWindow(WIN_W, WIN_H, winTitle.c_str(), nullptr, nullptr);
+    if (!uiWindow) {
+        std::cerr << "[UIEditor] Failed to create standalone UI Editor window!\n";
+        return;
+    }
+
+    glfwMakeContextCurrent(uiWindow);
+    glfwSwapInterval(1);
+
+    // Save previous ImGui context
+    ImGuiContext* prevContext = ImGui::GetCurrentContext();
+
+    IMGUI_CHECKVERSION();
+    ImGuiContext* uiContext = ImGui::CreateContext();
+    ImGui::SetCurrentContext(uiContext);
+    ImGuiIO& io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    io.IniFilename = nullptr;
+
+    // Load fonts
+    ImFontConfig fontConfig;
+    fontConfig.OversampleH = 1;
+    fontConfig.OversampleV = 1;
+    ImFont* mainFont = nullptr;
+    if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
+        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
+    } else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
+        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
+    }
+    if (mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
+        ImFontConfig symbolConfig;
+        symbolConfig.MergeMode = true;
+        symbolConfig.OversampleH = 2;
+        symbolConfig.OversampleV = 2;
+        static const ImWchar symbolRanges[] = { 0x2000, 0x2BFF, 0 };
+        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", 18.0f, &symbolConfig, symbolRanges);
+    }
+    if (!mainFont) {
+        io.Fonts->AddFontDefault();
+        io.FontGlobalScale = 1.25f;
+    }
+
+    // Modern Dark Theme
+    ImGuiStyle& style = ImGui::GetStyle();
+    style.WindowRounding = 0.0f;
+    style.FrameRounding = 4.0f;
+    style.PopupRounding = 4.0f;
+    style.ScrollbarRounding = 4.0f;
+    style.GrabRounding = 4.0f;
+    style.TabRounding = 4.0f;
+    style.WindowBorderSize = 0.0f;
+    style.FrameBorderSize = 0.0f;
+    style.WindowPadding = ImVec2(10.0f, 10.0f);
+    style.FramePadding = ImVec2(8.0f, 6.0f);
+    style.ItemSpacing = ImVec2(8.0f, 6.0f);
+
+    ImVec4* colors = style.Colors;
+    colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.11f, 0.15f, 1.0f);
+    colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.13f, 0.18f, 1.0f);
+    colors[ImGuiCol_Header] = ImVec4(0.15f, 0.20f, 0.30f, 1.0f);
+    colors[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.30f, 0.45f, 1.0f);
+    colors[ImGuiCol_HeaderActive] = ImVec4(0.10f, 0.40f, 0.70f, 1.0f);
+    colors[ImGuiCol_Button] = ImVec4(0.18f, 0.20f, 0.28f, 1.0f);
+    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.30f, 0.42f, 1.0f);
+    colors[ImGuiCol_ButtonActive] = ImVec4(0.10f, 0.45f, 0.80f, 1.0f);
+    colors[ImGuiCol_FrameBg] = ImVec4(0.14f, 0.16f, 0.22f, 1.0f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.20f, 0.24f, 0.32f, 1.0f);
+    colors[ImGuiCol_FrameBgActive] = ImVec4(0.24f, 0.30f, 0.40f, 1.0f);
+
+    ImGui_ImplGlfw_InitForOpenGL(uiWindow, true);
+    ImGui_ImplOpenGL3_Init("#version 330");
+
+    UIEditorWindow editor(filePath, name);
+
+    // Standalone loop
+    while (!glfwWindowShouldClose(uiWindow)) {
+        glfwPollEvents();
+
+        int displayW = 0, displayH = 0;
+        glfwGetFramebufferSize(uiWindow, &displayW, &displayH);
+        if (displayW <= 0 || displayH <= 0) continue;
+
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowPos(ImVec2(0, 0));
+        ImGui::SetNextWindowSize(ImVec2((float)displayW, (float)displayH));
+        ImGuiWindowFlags winFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
+                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
+        if (ImGui::Begin("UIEditorMainWindow", nullptr, winFlags)) {
+            editor.RenderUIEditorContent();
+        }
+        ImGui::End();
+        ImGui::PopStyleVar();
+
+        ImGui::Render();
+        glViewport(0, 0, displayW, displayH);
+        glClearColor(0.08f, 0.09f, 0.12f, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
+        glfwSwapBuffers(uiWindow);
+    }
+
+    // Auto save on exit
+    editor.Save();
+
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext(uiContext);
+
+    glfwDestroyWindow(uiWindow);
+
+    // Restore previous ImGui context
+    if (prevContext) {
+        ImGui::SetCurrentContext(prevContext);
+    }
+}
 
 class UIEditorManager {
 public:
@@ -818,33 +527,19 @@ public:
     }
 
     void Open(const std::string& filePath, const std::string& name = "") {
-        for (auto& editor : m_editors) {
-            if (editor->filePath == filePath) {
-                editor->isOpen = true;
-                return;
-            }
-        }
-        m_editors.push_back(std::make_unique<UIEditorWindow>(filePath, name));
+        RunStandaloneUIEditor(filePath, name);
     }
 
     void RenderAll() {
-        for (auto it = m_editors.begin(); it != m_editors.end();) {
-            if ((*it)->isOpen) {
-                (*it)->Render();
-                ++it;
-            } else {
-                it = m_editors.erase(it);
-            }
-        }
+        // UI Editor runs in its own separate window
     }
 
     bool HasOpenEditors() const {
-        return !m_editors.empty();
+        return false;
     }
 
 private:
     UIEditorManager() = default;
-    std::vector<std::unique_ptr<UIEditorWindow>> m_editors;
 };
 
 } // namespace EunoiaUI
