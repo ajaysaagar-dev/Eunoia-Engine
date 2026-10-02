@@ -10,6 +10,74 @@
 namespace Eunoia {
 namespace RayTrace {
 
+GameObjectHitProxy::operator GameObject&() const {
+    return *ptr;
+}
+
+GameObject& GameObjectHitProxy::operator*() const {
+    return *ptr;
+}
+
+std::string GameObjectHitProxy::NameAccessor::str() const {
+    return (parent && parent->ptr) ? parent->ptr->name : "";
+}
+
+const char* GameObjectHitProxy::NameAccessor::c_str() const {
+    return (parent && parent->ptr) ? parent->ptr->name.c_str() : "";
+}
+
+int GameObjectHitProxy::GetId() const {
+    return ptr ? ptr->id : -1;
+}
+
+glm::vec3 GameObjectHitProxy::GetPosition() const {
+    return ptr ? ptr->position : glm::vec3(0.0f);
+}
+
+glm::vec3 GameObjectHitProxy::GetRotation() const {
+    return ptr ? ptr->rotation : glm::vec3(0.0f);
+}
+
+glm::vec3 GameObjectHitProxy::GetScale() const {
+    return ptr ? ptr->scale : glm::vec3(1.0f);
+}
+
+void RayTraceHit::SetHit(bool hit, ::GameObject* obj, const glm::vec3& pt, const glm::vec3& n, float dist, float frac, int objId, int modIdx, const std::string& modName, CollisionShapeType shape) {
+    Status = hit;
+    status = hit;
+    hasHit = hit;
+    GameObject = GameObjectHitProxy(obj);
+    gameObject = obj;
+    Point = pt;
+    point = pt;
+    Normal = n;
+    normal = n;
+    Distance = dist;
+    distance = dist;
+    Fraction = frac;
+    fraction = frac;
+    ObjectId = objId;
+    objectId = objId;
+    ModifierIndex = modIdx;
+    modifierIndex = modIdx;
+    ModifierName = modName;
+    modifierName = modName;
+    ShapeType = shape;
+    shapeType = shape;
+}
+
+::GameObject& RayTraceHit::operator*() const {
+    return *gameObject;
+}
+
+RayTraceHit::operator ::GameObject&() const {
+    return *gameObject;
+}
+
+::GameObject& RayTraceHit::Get() const {
+    return *gameObject;
+}
+
 RayTraceSystem& RayTraceSystem::Get() {
     static RayTraceSystem instance;
     return instance;
@@ -400,15 +468,18 @@ bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& s
         float worldDist = glm::length(worldHitPt - start);
 
         if (worldDist <= maxDist) {
-            outHit.hasHit = true;
-            outHit.gameObject = const_cast<GameObject*>(&obj);
-            outHit.objectId = obj.id;
-            outHit.modifierIndex = bestModIdx;
-            outHit.modifierName = bestModName;
-            outHit.shapeType = bestShape;
-            outHit.point = worldHitPt;
-            outHit.normal = glm::normalize(normalMat * bestLocalNormal);
-            outHit.distance = worldDist;
+            outHit.SetHit(
+                true,
+                const_cast<GameObject*>(&obj),
+                worldHitPt,
+                glm::normalize(normalMat * bestLocalNormal),
+                worldDist,
+                worldDist / maxDist,
+                obj.id,
+                bestModIdx,
+                bestModName,
+                bestShape
+            );
             return true;
         }
     }
@@ -459,6 +530,7 @@ RayTraceHit RayTraceSystem::LineTrace(const Scene& scene, const glm::vec3& start
                 closestDist = hit.distance;
                 closestHit = hit;
                 closestHit.fraction = hit.distance / maxDist;
+                closestHit.Fraction = closestHit.fraction;
             }
         }
     }
