@@ -21,6 +21,9 @@
 
 namespace EunoiaUI {
 
+// Forward declarations
+class HtmlNode;
+
 // ============================================================================
 // CSS COLOR PARSER
 // ============================================================================
@@ -309,8 +312,8 @@ struct CssStyle {
     bool hasTop = false, hasLeft = false, hasRight = false, hasBottom = false;
 
     // Interactivity & Cursor
-    std::string cursor = "default"; // "pointer", "default", "text"
-    std::string overflow = "visible"; // "hidden", "visible", "auto", "scroll"
+    std::string cursor = "default";
+    std::string overflow = "visible";
     float opacity = 1.0f;
     int zIndex = 0;
     bool isButton = false;
@@ -320,7 +323,7 @@ struct CssStyle {
 
     static float ParseUnit(const std::string& valStr, float refSize = 1080.0f) {
         std::string s = CssColor::Trim(valStr);
-        if (s.empty() || s == "auto") return 0.0f;
+        if (s.empty() || s == "auto" || s == "max-content" || s == "fit-content" || s == "min-content") return 0.0f;
         try {
             if (s.rfind("px") != std::string::npos) {
                 return std::stof(s.substr(0, s.find("px")));
@@ -377,9 +380,13 @@ struct CssStyle {
         // Dimensions
         else if (prop == "width") {
             std::string v = CssColor::ToLower(val);
-            if (v == "auto") { width = -1.0f; isWidthPercent = false; }
-            else if (v == "100%" || v == "100vw") { isWidthPercent = true; widthPercent = 1.0f; }
-            else if (v.back() == '%') {
+            if (v == "auto" || v == "max-content" || v == "fit-content" || v == "min-content") {
+                width = -1.0f;
+                isWidthPercent = false;
+            } else if (v == "100%" || v == "100vw") {
+                isWidthPercent = true;
+                widthPercent = 1.0f;
+            } else if (v.back() == '%') {
                 try { isWidthPercent = true; widthPercent = std::stof(v.substr(0, v.size() - 1)) / 100.0f; } catch (...) {}
             } else {
                 width = ParseUnit(val, 1920.0f);
@@ -387,9 +394,13 @@ struct CssStyle {
             }
         } else if (prop == "height") {
             std::string v = CssColor::ToLower(val);
-            if (v == "auto") { height = -1.0f; isHeightPercent = false; }
-            else if (v == "100%" || v == "100vh") { isHeightPercent = true; heightPercent = 1.0f; }
-            else if (v.back() == '%') {
+            if (v == "auto" || v == "max-content" || v == "fit-content" || v == "min-content") {
+                height = -1.0f;
+                isHeightPercent = false;
+            } else if (v == "100%" || v == "100vh") {
+                isHeightPercent = true;
+                heightPercent = 1.0f;
+            } else if (v.back() == '%') {
                 try { isHeightPercent = true; heightPercent = std::stof(v.substr(0, v.size() - 1)) / 100.0f; } catch (...) {}
             } else {
                 height = ParseUnit(val, 1080.0f);
@@ -651,117 +662,7 @@ private:
 };
 
 // ============================================================================
-// CSS STYLESHEET (RULES MAP WITH PSEUDO-CLASSES)
-// ============================================================================
-class CssStyleSheet {
-public:
-    std::unordered_map<std::string, std::string> rules;       // selector -> css string
-    std::unordered_map<std::string, std::string> hoverRules;  // selector without ':hover' -> css string
-    std::unordered_map<std::string, std::string> activeRules; // selector without ':active' -> css string
-
-    void ParseCss(const std::string& cssSource) {
-        size_t pos = 0;
-        size_t len = cssSource.size();
-
-        while (pos < len) {
-            // Skip comments /* ... */
-            if (pos + 1 < len && cssSource[pos] == '/' && cssSource[pos + 1] == '*') {
-                size_t endComment = cssSource.find("*/", pos + 2);
-                if (endComment != std::string::npos) pos = endComment + 2;
-                else break;
-                continue;
-            }
-
-            size_t openBrace = cssSource.find('{', pos);
-            if (openBrace == std::string::npos) break;
-
-            std::string selectorsStr = cssSource.substr(pos, openBrace - pos);
-            size_t closeBrace = cssSource.find('}', openBrace);
-            if (closeBrace == std::string::npos) break;
-
-            std::string declarations = cssSource.substr(openBrace + 1, closeBrace - openBrace - 1);
-            pos = closeBrace + 1;
-
-            // Split multiple selectors e.g. "h1, .title, #header"
-            std::istringstream selStream(selectorsStr);
-            std::string singleSel;
-            while (std::getline(selStream, singleSel, ',')) {
-                singleSel = CssColor::Trim(singleSel);
-                if (singleSel.empty()) continue;
-
-                if (singleSel.rfind(":hover") != std::string::npos) {
-                    std::string base = singleSel.substr(0, singleSel.find(":hover"));
-                    hoverRules[base] += " " + declarations;
-                } else if (singleSel.rfind(":active") != std::string::npos) {
-                    std::string base = singleSel.substr(0, singleSel.find(":active"));
-                    activeRules[base] += " " + declarations;
-                } else {
-                    rules[singleSel] += " " + declarations;
-                }
-            }
-        }
-    }
-
-    void ApplyToNode(const std::string& tag, const std::string& id, const std::vector<std::string>& classList, CssStyle& outStyle) const {
-        auto itUniv = rules.find("*");
-        if (itUniv != rules.end()) outStyle.ApplyCssBlock(itUniv->second);
-
-        std::string tagLower = CssColor::ToLower(tag);
-        auto itTag = rules.find(tagLower);
-        if (itTag != rules.end()) outStyle.ApplyCssBlock(itTag->second);
-
-        for (const auto& cls : classList) {
-            std::string clsQuery = "." + cls;
-            auto itCls = rules.find(clsQuery);
-            if (itCls != rules.end()) outStyle.ApplyCssBlock(itCls->second);
-        }
-
-        if (!id.empty()) {
-            std::string idQuery = "#" + id;
-            auto itId = rules.find(idQuery);
-            if (itId != rules.end()) outStyle.ApplyCssBlock(itId->second);
-        }
-    }
-
-    void ApplyHoverToNode(const std::string& tag, const std::string& id, const std::vector<std::string>& classList, CssStyle& outStyle) const {
-        std::string tagLower = CssColor::ToLower(tag);
-        auto itTag = hoverRules.find(tagLower);
-        if (itTag != hoverRules.end()) outStyle.ApplyCssBlock(itTag->second);
-
-        for (const auto& cls : classList) {
-            std::string clsQuery = "." + cls;
-            auto itCls = hoverRules.find(clsQuery);
-            if (itCls != hoverRules.end()) outStyle.ApplyCssBlock(itCls->second);
-        }
-
-        if (!id.empty()) {
-            std::string idQuery = "#" + id;
-            auto itId = hoverRules.find(idQuery);
-            if (itId != hoverRules.end()) outStyle.ApplyCssBlock(itId->second);
-        }
-    }
-
-    void ApplyActiveToNode(const std::string& tag, const std::string& id, const std::vector<std::string>& classList, CssStyle& outStyle) const {
-        std::string tagLower = CssColor::ToLower(tag);
-        auto itTag = activeRules.find(tagLower);
-        if (itTag != activeRules.end()) outStyle.ApplyCssBlock(itTag->second);
-
-        for (const auto& cls : classList) {
-            std::string clsQuery = "." + cls;
-            auto itCls = activeRules.find(clsQuery);
-            if (itCls != activeRules.end()) outStyle.ApplyCssBlock(itCls->second);
-        }
-
-        if (!id.empty()) {
-            std::string idQuery = "#" + id;
-            auto itId = activeRules.find(idQuery);
-            if (itId != activeRules.end()) outStyle.ApplyCssBlock(itId->second);
-        }
-    }
-};
-
-// ============================================================================
-// HTML DOM NODE WITH FULL INTERACTIVITY & CSS ENGINE
+// HTML DOM NODE CLASS (FORWARD DECLARATION & INTERFACE)
 // ============================================================================
 class HtmlNode {
 public:
@@ -792,30 +693,6 @@ public:
         std::string cls;
         while (iss >> cls) {
             classes.push_back(cls);
-        }
-    }
-
-    void ApplyCascade(const CssStyleSheet& styleSheet, const std::string& inlineStyle) {
-        if (tag == "h1") { style.fontSize = 32.0f; style.fontWeight = 700; }
-        else if (tag == "h2") { style.fontSize = 24.0f; style.fontWeight = 700; }
-        else if (tag == "h3") { style.fontSize = 20.0f; style.fontWeight = 600; }
-        else if (tag == "p" || tag == "span" || tag == "label") { style.fontSize = 16.0f; }
-        else if (tag == "button" || tag == "a") {
-            style.isButton = true;
-            style.cursor = "pointer";
-            if (tag == "button") {
-                style.backgroundColor = glm::vec4(0.08f, 0.45f, 0.75f, 1.0f);
-                style.textColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
-                style.cornerRounding = 8.0f;
-                style.paddingTop = style.paddingBottom = 8.0f;
-                style.paddingLeft = style.paddingRight = 16.0f;
-            }
-        }
-
-        styleSheet.ApplyToNode(tag, id, classes, style);
-
-        if (!inlineStyle.empty()) {
-            style.ApplyCssBlock(inlineStyle);
         }
     }
 
@@ -924,9 +801,9 @@ public:
                 for (auto& ch : children) if (!ch->style.isAbsolute) nonAbsCount++;
                 float totalContentH = totalChildrenH + cGap * std::max(0, nonAbsCount - 1);
 
-                if (style.justifyContent == 1) { // Center
+                if (style.justifyContent == 1) {
                     curY = contentRect.y + std::max(0.0f, (contentRect.w - totalContentH) * 0.5f);
-                } else if (style.justifyContent == 2) { // End
+                } else if (style.justifyContent == 2) {
                     curY = contentRect.y + std::max(0.0f, contentRect.w - totalContentH);
                 }
 
@@ -1018,7 +895,6 @@ public:
         maxScrollY = std::max(0.0f, totalContentHeight - contentRect.w);
     }
 
-    // Interactive Browser-like Input Handling
     void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale) {
         if (style.isHidden) return;
 
@@ -1036,7 +912,6 @@ public:
 #endif
             if (wheelDelta != 0.0f && maxScrollY > 0.0f) {
                 scrollY = std::clamp(scrollY - wheelDelta * 40.0f, 0.0f, maxScrollY);
-                // Trigger relayout on scroll change
                 if (parent) {
                     ComputeLayout(parent->computedRect);
                 }
@@ -1063,118 +938,313 @@ public:
         }
     }
 
-    void Render(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale, const CssStyleSheet* sheet = nullptr) const {
-#if EUNOIA_HAS_IMGUI
-        if (style.isHidden) return;
-        ImDrawList* dl = reinterpret_cast<ImDrawList*>(imDrawListPtr);
-        if (!dl) return;
+    void Render(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale, const void* sheetPtr = nullptr) const;
+};
 
-        glm::vec2 pMin = canvasOrigin + glm::vec2(computedRect.x, computedRect.y) * scale;
-        glm::vec2 pMax = pMin + glm::vec2(computedRect.z, computedRect.w) * scale;
-        ImVec2 imMin(pMin.x, pMin.y);
-        ImVec2 imMax(pMax.x, pMax.y);
+// ============================================================================
+// CSS SELECTOR MATCHING & STYLESHEET
+// ============================================================================
+struct CssRule {
+    std::string selector;
+    std::string declarations;
+    bool isHover = false;
+    bool isActive = false;
+};
 
-        // Effective dynamic styling (supports :hover and :active states)
-        CssStyle effStyle = style;
-        if (sheet) {
-            if (isHovered) {
-                sheet->ApplyHoverToNode(tag, id, classes, effStyle);
+class CssStyleSheet {
+public:
+    std::vector<CssRule> rules;
+
+    void ParseCss(const std::string& cssSource) {
+        size_t pos = 0;
+        size_t len = cssSource.size();
+
+        while (pos < len) {
+            if (pos + 1 < len && cssSource[pos] == '/' && cssSource[pos + 1] == '*') {
+                size_t endComment = cssSource.find("*/", pos + 2);
+                if (endComment != std::string::npos) pos = endComment + 2;
+                else break;
+                continue;
             }
-            if (isPressed) {
-                sheet->ApplyActiveToNode(tag, id, classes, effStyle);
+
+            size_t openBrace = cssSource.find('{', pos);
+            if (openBrace == std::string::npos) break;
+
+            std::string selectorsStr = cssSource.substr(pos, openBrace - pos);
+            size_t closeBrace = cssSource.find('}', openBrace);
+            if (closeBrace == std::string::npos) break;
+
+            std::string declarations = cssSource.substr(openBrace + 1, closeBrace - openBrace - 1);
+            pos = closeBrace + 1;
+
+            std::istringstream selStream(selectorsStr);
+            std::string singleSel;
+            while (std::getline(selStream, singleSel, ',')) {
+                singleSel = CssColor::Trim(singleSel);
+                if (singleSel.empty()) continue;
+
+                CssRule rule;
+                if (singleSel.rfind(":hover") != std::string::npos) {
+                    rule.selector = CssColor::Trim(singleSel.substr(0, singleSel.find(":hover")));
+                    rule.isHover = true;
+                } else if (singleSel.rfind(":active") != std::string::npos) {
+                    rule.selector = CssColor::Trim(singleSel.substr(0, singleSel.find(":active")));
+                    rule.isActive = true;
+                } else {
+                    rule.selector = singleSel;
+                }
+                rule.declarations = declarations;
+                rules.push_back(rule);
             }
         }
+    }
 
-        // Automatic button visual feedback if no explicit hover CSS
-        if ((effStyle.isButton || tag == "button") && isHovered) {
-            if (isPressed) {
-                effStyle.backgroundColor *= 0.82f;
+    static bool MatchesSinglePart(const HtmlNode* node, const std::string& part) {
+        if (!node || part.empty() || part == "*") return true;
+
+        std::string tag;
+        std::vector<std::string> classes;
+        std::string id;
+
+        size_t i = 0;
+        while (i < part.size()) {
+            if (part[i] == '.') {
+                i++;
+                size_t start = i;
+                while (i < part.size() && part[i] != '.' && part[i] != '#') i++;
+                classes.push_back(part.substr(start, i - start));
+            } else if (part[i] == '#') {
+                i++;
+                size_t start = i;
+                while (i < part.size() && part[i] != '.' && part[i] != '#') i++;
+                id = part.substr(start, i - start);
             } else {
-                effStyle.backgroundColor = glm::min(glm::vec4(1.0f), effStyle.backgroundColor * 1.20f + glm::vec4(0.06f, 0.06f, 0.06f, 0.0f));
+                size_t start = i;
+                while (i < part.size() && part[i] != '.' && part[i] != '#') i++;
+                tag = part.substr(start, i - start);
             }
         }
 
-        float rounding = effStyle.cornerRounding * scale;
-        if (rounding > 999.0f) rounding = std::min(computedRect.z, computedRect.w) * 0.5f * scale;
-
-        // 1. Box Shadow
-        if (effStyle.hasShadow && effStyle.shadowColor.a > 0.0f) {
-            ImVec2 shdMin(imMin.x + effStyle.shadowOffset.x * scale, imMin.y + effStyle.shadowOffset.y * scale);
-            ImVec2 shdMax(imMax.x + effStyle.shadowOffset.x * scale, imMax.y + effStyle.shadowOffset.y * scale);
-            ImU32 shdCol = IM_COL32((int)(effStyle.shadowColor.r * 255), (int)(effStyle.shadowColor.g * 255), (int)(effStyle.shadowColor.b * 255), (int)(effStyle.shadowColor.a * effStyle.opacity * 255));
-            dl->AddRectFilled(shdMin, shdMax, shdCol, rounding);
+        if (!tag.empty() && tag != "*" && CssColor::ToLower(node->tag) != CssColor::ToLower(tag)) {
+            return false;
         }
-
-        // 2. Background
-        if (effStyle.backgroundColor.a > 0.0f) {
-            ImU32 bgCol = IM_COL32((int)(effStyle.backgroundColor.r * 255), (int)(effStyle.backgroundColor.g * 255), (int)(effStyle.backgroundColor.b * 255), (int)(effStyle.backgroundColor.a * effStyle.opacity * 255));
-            dl->AddRectFilled(imMin, imMax, bgCol, rounding);
+        if (!id.empty() && node->id != id) {
+            return false;
         }
-
-        // 3. Border
-        if (effStyle.borderThickness > 0.0f && effStyle.borderColor.a > 0.0f) {
-            ImU32 bdCol = IM_COL32((int)(effStyle.borderColor.r * 255), (int)(effStyle.borderColor.g * 255), (int)(effStyle.borderColor.b * 255), (int)(effStyle.borderColor.a * effStyle.opacity * 255));
-            dl->AddRect(imMin, imMax, bdCol, rounding, 0, effStyle.borderThickness * scale);
-        }
-
-        // 4. Text Content
-        if (!textContent.empty()) {
-            std::string displayText = textContent;
-            if (effStyle.textTransform == 1) {
-                std::transform(displayText.begin(), displayText.end(), displayText.begin(), ::toupper);
-            } else if (effStyle.textTransform == 2) {
-                std::transform(displayText.begin(), displayText.end(), displayText.begin(), ::tolower);
+        for (const auto& cls : classes) {
+            bool found = false;
+            for (const auto& nodeCls : node->classes) {
+                if (nodeCls == cls) { found = true; break; }
             }
+            if (!found) return false;
+        }
+        return true;
+    }
 
-            float fontSize = effStyle.fontSize * scale;
-            ImU32 txtCol = IM_COL32((int)(effStyle.textColor.r * 255), (int)(effStyle.textColor.g * 255), (int)(effStyle.textColor.b * 255), (int)(effStyle.textColor.a * effStyle.opacity * 255));
+    static bool MatchesSelector(const HtmlNode* targetNode, const std::string& selector) {
+        if (!targetNode || selector.empty()) return false;
+        if (selector == "*") return true;
 
-            ImVec2 txtSize = ImGui::CalcTextSize(displayText.c_str());
-            float scaledTxtW = txtSize.x * (fontSize / 18.0f);
-            float scaledTxtH = txtSize.y * (fontSize / 18.0f);
+        std::vector<std::string> tokens;
+        std::vector<char> combinators;
 
-            ImVec2 txtPos = imMin;
-            txtPos.x += effStyle.paddingLeft * scale;
-            txtPos.y += effStyle.paddingTop * scale;
-
-            if (effStyle.textAlignment == 1 || tag == "button") {
-                txtPos.x = imMin.x + ((imMax.x - imMin.x) - scaledTxtW) * 0.5f;
-            } else if (effStyle.textAlignment == 2) {
-                txtPos.x = imMax.x - effStyle.paddingRight * scale - scaledTxtW;
+        std::string curToken;
+        for (size_t i = 0; i < selector.size(); ++i) {
+            char c = selector[i];
+            if (c == '>') {
+                if (!curToken.empty()) {
+                    tokens.push_back(CssColor::Trim(curToken));
+                    curToken.clear();
+                }
+                combinators.push_back('>');
+            } else if (std::isspace(static_cast<unsigned char>(c))) {
+                if (!curToken.empty()) {
+                    tokens.push_back(CssColor::Trim(curToken));
+                    curToken.clear();
+                    combinators.push_back(' ');
+                }
+            } else {
+                curToken += c;
             }
+        }
+        if (!curToken.empty()) {
+            tokens.push_back(CssColor::Trim(curToken));
+        }
 
-            if (tag == "button") {
-                txtPos.y = imMin.y + ((imMax.y - imMin.y) - scaledTxtH) * 0.5f;
+        if (tokens.empty()) return false;
+
+        if (!MatchesSinglePart(targetNode, tokens.back())) {
+            return false;
+        }
+
+        if (tokens.size() == 1) return true;
+
+        const HtmlNode* curNode = targetNode;
+        for (int t = (int)tokens.size() - 2; t >= 0; --t) {
+            char comb = (t + 1 < (int)combinators.size()) ? combinators[t + 1] : ' ';
+            if (comb == '>') {
+                curNode = curNode->parent;
+                if (!curNode || !MatchesSinglePart(curNode, tokens[t])) {
+                    return false;
+                }
+            } else {
+                bool matchedAncestor = false;
+                curNode = curNode->parent;
+                while (curNode) {
+                    if (MatchesSinglePart(curNode, tokens[t])) {
+                        matchedAncestor = true;
+                        break;
+                    }
+                    curNode = curNode->parent;
+                }
+                if (!matchedAncestor) return false;
             }
-
-            dl->AddText(nullptr, fontSize, txtPos, txtCol, displayText.c_str());
         }
 
-        // 5. Render Children with clipping for scrollable / overflow containers
-        bool needClip = (effStyle.overflow == "hidden" || effStyle.overflow == "auto" || effStyle.overflow == "scroll");
-        if (needClip) {
-            dl->PushClipRect(imMin, imMax, true);
-        }
+        return true;
+    }
 
-        for (const auto& ch : children) {
-            ch->Render(imDrawListPtr, canvasOrigin, scale, sheet);
-        }
-
-        if (needClip) {
-            // Sleek web-browser scrollbar indicator
-            if (maxScrollY > 0.0f) {
-                float scrollTrackH = (imMax.y - imMin.y);
-                float thumbH = std::max(24.0f * scale, scrollTrackH * (scrollTrackH / (scrollTrackH + maxScrollY * scale)));
-                float thumbY = imMin.y + (scrollY / maxScrollY) * (scrollTrackH - thumbH);
-                ImVec2 thumbMin(imMax.x - 6.0f * scale, thumbY);
-                ImVec2 thumbMax(imMax.x - 2.0f * scale, thumbY + thumbH);
-                dl->AddRectFilled(thumbMin, thumbMax, IM_COL32(180, 200, 230, isHovered ? 140 : 80), 3.0f * scale);
+    void ApplyToNode(const HtmlNode* node, CssStyle& outStyle) const {
+        for (const auto& rule : rules) {
+            if (!rule.isHover && !rule.isActive) {
+                if (MatchesSelector(node, rule.selector)) {
+                    outStyle.ApplyCssBlock(rule.declarations);
+                }
             }
-            dl->PopClipRect();
         }
-#endif
+    }
+
+    void ApplyHoverToNode(const HtmlNode* node, CssStyle& outStyle) const {
+        for (const auto& rule : rules) {
+            if (rule.isHover) {
+                if (MatchesSelector(node, rule.selector)) {
+                    outStyle.ApplyCssBlock(rule.declarations);
+                }
+            }
+        }
+    }
+
+    void ApplyActiveToNode(const HtmlNode* node, CssStyle& outStyle) const {
+        for (const auto& rule : rules) {
+            if (rule.isActive) {
+                if (MatchesSelector(node, rule.selector)) {
+                    outStyle.ApplyCssBlock(rule.declarations);
+                }
+            }
+        }
     }
 };
+
+inline void HtmlNode::Render(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale, const void* sheetPtr) const {
+#if EUNOIA_HAS_IMGUI
+    if (style.isHidden) return;
+    ImDrawList* dl = reinterpret_cast<ImDrawList*>(imDrawListPtr);
+    if (!dl) return;
+
+    const CssStyleSheet* sheet = reinterpret_cast<const CssStyleSheet*>(sheetPtr);
+
+    glm::vec2 pMin = canvasOrigin + glm::vec2(computedRect.x, computedRect.y) * scale;
+    glm::vec2 pMax = pMin + glm::vec2(computedRect.z, computedRect.w) * scale;
+    ImVec2 imMin(pMin.x, pMin.y);
+    ImVec2 imMax(pMax.x, pMax.y);
+
+    CssStyle effStyle = style;
+    if (sheet) {
+        if (isHovered) {
+            sheet->ApplyHoverToNode(this, effStyle);
+        }
+        if (isPressed) {
+            sheet->ApplyActiveToNode(this, effStyle);
+        }
+    }
+
+    if ((effStyle.isButton || tag == "button") && isHovered) {
+        if (isPressed) {
+            effStyle.backgroundColor *= 0.82f;
+        } else {
+            effStyle.backgroundColor = glm::min(glm::vec4(1.0f), effStyle.backgroundColor * 1.20f + glm::vec4(0.06f, 0.06f, 0.06f, 0.0f));
+        }
+    }
+
+    float rounding = effStyle.cornerRounding * scale;
+    if (rounding > 999.0f) rounding = std::min(computedRect.z, computedRect.w) * 0.5f * scale;
+
+    // 1. Box Shadow
+    if (effStyle.hasShadow && effStyle.shadowColor.a > 0.0f) {
+        ImVec2 shdMin(imMin.x + effStyle.shadowOffset.x * scale, imMin.y + effStyle.shadowOffset.y * scale);
+        ImVec2 shdMax(imMax.x + effStyle.shadowOffset.x * scale, imMax.y + effStyle.shadowOffset.y * scale);
+        ImU32 shdCol = IM_COL32((int)(effStyle.shadowColor.r * 255), (int)(effStyle.shadowColor.g * 255), (int)(effStyle.shadowColor.b * 255), (int)(effStyle.shadowColor.a * effStyle.opacity * 255));
+        dl->AddRectFilled(shdMin, shdMax, shdCol, rounding);
+    }
+
+    // 2. Background
+    if (effStyle.backgroundColor.a > 0.0f) {
+        ImU32 bgCol = IM_COL32((int)(effStyle.backgroundColor.r * 255), (int)(effStyle.backgroundColor.g * 255), (int)(effStyle.backgroundColor.b * 255), (int)(effStyle.backgroundColor.a * effStyle.opacity * 255));
+        dl->AddRectFilled(imMin, imMax, bgCol, rounding);
+    }
+
+    // 3. Border
+    if (effStyle.borderThickness > 0.0f && effStyle.borderColor.a > 0.0f) {
+        ImU32 bdCol = IM_COL32((int)(effStyle.borderColor.r * 255), (int)(effStyle.borderColor.g * 255), (int)(effStyle.borderColor.b * 255), (int)(effStyle.borderColor.a * effStyle.opacity * 255));
+        dl->AddRect(imMin, imMax, bdCol, rounding, 0, effStyle.borderThickness * scale);
+    }
+
+    // 4. Text Content
+    if (!textContent.empty()) {
+        std::string displayText = textContent;
+        if (effStyle.textTransform == 1) {
+            std::transform(displayText.begin(), displayText.end(), displayText.begin(), ::toupper);
+        } else if (effStyle.textTransform == 2) {
+            std::transform(displayText.begin(), displayText.end(), displayText.begin(), ::tolower);
+        }
+
+        float fontSize = effStyle.fontSize * scale;
+        ImU32 txtCol = IM_COL32((int)(effStyle.textColor.r * 255), (int)(effStyle.textColor.g * 255), (int)(effStyle.textColor.b * 255), (int)(effStyle.textColor.a * effStyle.opacity * 255));
+
+        ImVec2 txtSize = ImGui::CalcTextSize(displayText.c_str());
+        float scaledTxtW = txtSize.x * (fontSize / 18.0f);
+        float scaledTxtH = txtSize.y * (fontSize / 18.0f);
+
+        ImVec2 txtPos = imMin;
+        txtPos.x += effStyle.paddingLeft * scale;
+        txtPos.y += effStyle.paddingTop * scale;
+
+        if (effStyle.textAlignment == 1 || tag == "button") {
+            txtPos.x = imMin.x + ((imMax.x - imMin.x) - scaledTxtW) * 0.5f;
+        } else if (effStyle.textAlignment == 2) {
+            txtPos.x = imMax.x - effStyle.paddingRight * scale - scaledTxtW;
+        }
+
+        if (tag == "button") {
+            txtPos.y = imMin.y + ((imMax.y - imMin.y) - scaledTxtH) * 0.5f;
+        }
+
+        dl->AddText(nullptr, fontSize, txtPos, txtCol, displayText.c_str());
+    }
+
+    // 5. Render Children with clipping for scrollable / overflow containers
+    bool needClip = (effStyle.overflow == "hidden" || effStyle.overflow == "auto" || effStyle.overflow == "scroll");
+    if (needClip) {
+        dl->PushClipRect(imMin, imMax, true);
+    }
+
+    for (const auto& ch : children) {
+        ch->Render(imDrawListPtr, canvasOrigin, scale, sheetPtr);
+    }
+
+    if (needClip) {
+        if (maxScrollY > 0.0f) {
+            float scrollTrackH = (imMax.y - imMin.y);
+            float thumbH = std::max(24.0f * scale, scrollTrackH * (scrollTrackH / (scrollTrackH + maxScrollY * scale)));
+            float thumbY = imMin.y + (scrollY / maxScrollY) * (scrollTrackH - thumbH);
+            ImVec2 thumbMin(imMax.x - 6.0f * scale, thumbY);
+            ImVec2 thumbMax(imMax.x - 2.0f * scale, thumbY + thumbH);
+            dl->AddRectFilled(thumbMin, thumbMax, IM_COL32(180, 200, 230, isHovered ? 140 : 80), 3.0f * scale);
+        }
+        dl->PopClipRect();
+    }
+#endif
+}
 
 // ============================================================================
 // SINGLE HTML + CSS PARSER ENGINE
@@ -1215,6 +1285,7 @@ public:
         size_t pos = 0;
         HtmlNode* currentParent = root.get();
         std::vector<HtmlNode*> nodeStack = { root.get() };
+        std::vector<std::pair<HtmlNode*, std::string>> allNodes;
 
         while (pos < htmlSource.size()) {
             size_t openTag = htmlSource.find('<', pos);
@@ -1303,7 +1374,7 @@ public:
                 root->tag = "body";
                 root->id = idStr;
                 root->ParseClasses(classStr);
-                root->ApplyCascade(styleSheet, inlineStyle);
+                allNodes.push_back({ root.get(), inlineStyle });
                 continue;
             }
 
@@ -1319,13 +1390,40 @@ public:
 
             std::string styleAttr = ExtractAttribute(tagContent, "style");
 
-            node->ApplyCascade(styleSheet, styleAttr);
-
             currentParent->children.push_back(node);
+            allNodes.push_back({ node.get(), styleAttr });
 
             if (!selfClosing && tagName != "hr" && tagName != "img" && tagName != "input" && tagName != "br") {
                 nodeStack.push_back(node.get());
                 currentParent = node.get();
+            }
+        }
+
+        // Step 3: Apply CSS Cascade now that complete DOM tree hierarchy is built
+        for (auto& item : allNodes) {
+            HtmlNode* node = item.first;
+            const std::string& inlineStyle = item.second;
+
+            if (node->tag == "h1") { node->style.fontSize = 32.0f; node->style.fontWeight = 700; }
+            else if (node->tag == "h2") { node->style.fontSize = 24.0f; node->style.fontWeight = 700; }
+            else if (node->tag == "h3") { node->style.fontSize = 20.0f; node->style.fontWeight = 600; }
+            else if (node->tag == "p" || node->tag == "span" || node->tag == "label") { node->style.fontSize = 16.0f; }
+            else if (node->tag == "button" || node->tag == "a") {
+                node->style.isButton = true;
+                node->style.cursor = "pointer";
+                if (node->tag == "button") {
+                    node->style.backgroundColor = glm::vec4(0.08f, 0.45f, 0.75f, 1.0f);
+                    node->style.textColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);
+                    node->style.cornerRounding = 8.0f;
+                    node->style.paddingTop = node->style.paddingBottom = 8.0f;
+                    node->style.paddingLeft = node->style.paddingRight = 16.0f;
+                }
+            }
+
+            styleSheet.ApplyToNode(node, node->style);
+
+            if (!inlineStyle.empty()) {
+                node->style.ApplyCssBlock(inlineStyle);
             }
         }
 
