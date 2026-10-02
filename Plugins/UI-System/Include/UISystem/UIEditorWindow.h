@@ -61,9 +61,16 @@ inline void LaunchVSCodeSilently(const std::filesystem::path& targetFile, const 
     for (const auto& cp : candidateCodePaths) {
         std::error_code ec;
         if (std::filesystem::exists(cp, ec)) {
-            std::string args = "\"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
-            HINSTANCE hInst = ShellExecuteA(NULL, "open", cp.string().c_str(), args.c_str(), workspace.string().c_str(), SW_SHOWNORMAL);
-            if ((uintptr_t)hInst > 32) {
+            std::string cmdLine = "\"" + cp.string() + "\" \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+            STARTUPINFOA si = { sizeof(si) };
+            PROCESS_INFORMATION pi = { 0 };
+            DWORD creationFlags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
+            std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+            cmdBuf.push_back('\0');
+
+            if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, creationFlags, NULL, workspace.string().c_str(), &si, &pi)) {
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
                 launched = true;
                 break;
             }
@@ -71,9 +78,19 @@ inline void LaunchVSCodeSilently(const std::filesystem::path& targetFile, const 
     }
 
     if (!launched) {
-        std::string params = "/c code \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
-        HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", params.c_str(), workspace.string().c_str(), SW_HIDE);
-        if ((uintptr_t)hInst > 32) {
+        // Fallback using cmd start to create a fully detached process
+        std::string cmdLine = "cmd.exe /c start \"\" code \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+        STARTUPINFOA si = { sizeof(si) };
+        si.dwFlags |= STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi = { 0 };
+        DWORD creationFlags = CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS;
+        std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
+        cmdBuf.push_back('\0');
+
+        if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, creationFlags, NULL, workspace.string().c_str(), &si, &pi)) {
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
             launched = true;
         }
     }
