@@ -641,6 +641,50 @@ struct GameObject {
     bool hasPhysics = false;
     PhysicsModifier physics;
 
+    // Tags system (Support for all GameObjects, Actors, Empty Actors)
+    std::vector<std::string> tags;
+
+    const std::vector<std::string>& GetTags() const { return tags; }
+    std::vector<std::string>& GetTags() { return tags; }
+    std::vector<std::string> getTags() const { return tags; }
+
+    bool HasTag(const std::string& tag) const {
+        for (const auto& t : tags) {
+            if (t == tag) return true;
+        }
+        return false;
+    }
+    bool hasTag(const std::string& tag) const { return HasTag(tag); }
+
+    void AddTag(const std::string& tag) {
+        if (tag.empty()) return;
+        if (!HasTag(tag)) {
+            tags.push_back(tag);
+        }
+    }
+    void addTag(const std::string& tag) { AddTag(tag); }
+
+    bool RemoveTag(const std::string& tag) {
+        for (auto it = tags.begin(); it != tags.end(); ++it) {
+            if (*it == tag) {
+                tags.erase(it);
+                return true;
+            }
+        }
+        return false;
+    }
+    bool removeTag(const std::string& tag) { return RemoveTag(tag); }
+
+    void RemoveAllTag() { tags.clear(); }
+    void RemoveAllTags() { tags.clear(); }
+    void removeAllTag() { tags.clear(); }
+    void removeAllTags() { tags.clear(); }
+    void ClearTags() { tags.clear(); }
+    void clearTags() { tags.clear(); }
+
+    void SetTags(const std::vector<std::string>& newTags) { tags = newTags; }
+    void setTags(const std::vector<std::string>& newTags) { tags = newTags; }
+
     void AddPhysicsModifier() {
         hasPhysics = true;
         physics.enabled = true;
@@ -793,6 +837,7 @@ struct GameObject {
         modifiers = std::move(other.modifiers);
         hasPhysics = other.hasPhysics;
         physics = std::move(other.physics);
+        tags = std::move(other.tags);
         scene = other.scene;
         Transform.gameObject = this;
         behaviours = std::move(other.behaviours);
@@ -806,6 +851,7 @@ struct GameObject {
         name = other.name;
         type = other.type;
         mobility = other.mobility;
+        tags = other.tags;
         position = other.position;
         rotation = other.rotation;
         scale = other.scale;

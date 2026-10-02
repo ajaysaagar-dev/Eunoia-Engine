@@ -88,6 +88,20 @@ struct GameObjectHitProxy {
     glm::vec3 GetPosition() const;
     glm::vec3 GetRotation() const;
     glm::vec3 GetScale() const;
+
+    // Tags forwards (supporting .GameObject.GetTags(), .GameObject.AddTag(...), etc.)
+    std::vector<std::string> GetTags() const;
+    std::vector<std::string> getTags() const;
+    bool HasTag(const std::string& tag) const;
+    bool hasTag(const std::string& tag) const;
+    void AddTag(const std::string& tag);
+    void addTag(const std::string& tag);
+    bool RemoveTag(const std::string& tag);
+    bool removeTag(const std::string& tag);
+    void RemoveAllTag();
+    void RemoveAllTags();
+    void removeAllTag();
+    void removeAllTags();
 };
 
 struct RayTraceHit {
@@ -209,6 +223,20 @@ struct RayTraceHit {
     bool IsValid() const {
         return Status && (gameObject != nullptr);
     }
+
+    // Tag helpers on Hit
+    std::vector<std::string> GetTags() const { return GameObject.GetTags(); }
+    std::vector<std::string> getTags() const { return GameObject.GetTags(); }
+    bool HasTag(const std::string& tag) const { return GameObject.HasTag(tag); }
+    bool hasTag(const std::string& tag) const { return GameObject.HasTag(tag); }
+    void AddTag(const std::string& tag) { GameObject.AddTag(tag); }
+    void addTag(const std::string& tag) { GameObject.AddTag(tag); }
+    bool RemoveTag(const std::string& tag) { return GameObject.RemoveTag(tag); }
+    bool removeTag(const std::string& tag) { return GameObject.RemoveTag(tag); }
+    void RemoveAllTag() { GameObject.RemoveAllTag(); }
+    void RemoveAllTags() { GameObject.RemoveAllTags(); }
+    void removeAllTag() { GameObject.RemoveAllTag(); }
+    void removeAllTags() { GameObject.RemoveAllTags(); }
 };
 
 } // namespace RayTrace

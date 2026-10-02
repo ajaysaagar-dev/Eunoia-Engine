@@ -1471,6 +1471,19 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                           std::to_string(m_lastDynamicHit.Normal.y) + ", " +
                           std::to_string(m_lastDynamicHit.Normal.z) + ")");
         }
+        if (item.appendHitTags) {
+            if (m_lastDynamicHit.Status && m_lastDynamicHit.GameObject) {
+                const auto& tags = m_lastDynamicHit.GameObject.GetTags();
+                msg += "[";
+                for (size_t ti = 0; ti < tags.size(); ++ti) {
+                    msg += "\"" + tags[ti] + "\"";
+                    if (ti + 1 < tags.size()) msg += ", ";
+                }
+                msg += "]";
+            } else {
+                msg += "[]";
+            }
+        }
         if (!item.varName.empty()) {
             if (m_floatStorage.find(item.varName) != m_floatStorage.end()) msg += std::to_string(GetFloat(item.varName));
             else if (m_intStorage.find(item.varName) != m_intStorage.end()) msg += std::to_string(GetInt(item.varName));
@@ -3301,6 +3314,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         item.appendHitDistance = true;
                     } else if (lowerInner.find("hit.normal") != std::string::npos) {
                         item.appendHitNormal = true;
+                    } else if (lowerInner.find("hit.gameobject.gettags") != std::string::npos ||
+                               lowerInner.find("hit.gameobject.tags") != std::string::npos ||
+                               lowerInner.find("gameobject.gettags") != std::string::npos ||
+                               lowerInner.find("hit.gettags") != std::string::npos ||
+                               lowerInner.find("hit.tags") != std::string::npos) {
+                        item.appendHitTags = true;
                     } else if (lowerInner.find("hit.gameobject") != std::string::npos ||
                                lowerInner.find("hit.actor") != std::string::npos) {
                         item.appendHitName = true;
@@ -3339,7 +3358,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         }
                     } else {
                         if (item.appendDeltaTime) item.textPrefix = "DeltaTime: ";
-                        else if (item.appendHitName || item.appendHitId || item.appendHitPoint || item.appendHitStatus || item.appendHitDistance || item.appendHitNormal) item.textPrefix = "";
+                        else if (item.appendHitName || item.appendHitId || item.appendHitPoint || item.appendHitStatus || item.appendHitDistance || item.appendHitNormal || item.appendHitTags) item.textPrefix = "";
                         else if (!item.varName.empty()) item.textPrefix = item.varName + ": ";
                         else item.textPrefix = inner;
                     }
@@ -3573,7 +3592,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     if (m_lineTraceActions.empty()) {
         bool needsHit = false;
         for (const auto& pr : m_updatePrintMessages) {
-            if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal) {
+            if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal || pr.appendHitTags) {
                 needsHit = true;
                 break;
             }
@@ -3707,4 +3726,37 @@ double EunoiaBehaviour::GetMouseDeltaX(bool negate) const {
 double EunoiaBehaviour::GetMouseDeltaY(bool negate) const {
     return InputSystem::Get().GetMouseDeltaY(negate);
 }
+
+// ============================================================================
+// Tag System Helpers on Behaviour
+// ============================================================================
+
+std::vector<std::string> EunoiaBehaviour::GetTags() const {
+    return m_owner ? m_owner->GetTags() : std::vector<std::string>{};
+}
+
+bool EunoiaBehaviour::HasTag(const std::string& tag) const {
+    return m_owner ? m_owner->HasTag(tag) : false;
+}
+
+void EunoiaBehaviour::AddTag(const std::string& tag) {
+    if (m_owner) m_owner->AddTag(tag);
+}
+
+bool EunoiaBehaviour::RemoveTag(const std::string& tag) {
+    return m_owner ? m_owner->RemoveTag(tag) : false;
+}
+
+void EunoiaBehaviour::RemoveAllTag() {
+    if (m_owner) m_owner->RemoveAllTag();
+}
+
+std::vector<GameObject*> EunoiaBehaviour::FindObjectsWithTag(const std::string& tag) const {
+    return m_scene ? m_scene->FindObjectsWithTag(tag) : std::vector<GameObject*>{};
+}
+
+GameObject* EunoiaBehaviour::FindObjectWithTag(const std::string& tag) const {
+    return m_scene ? m_scene->FindObjectWithTag(tag) : nullptr;
+}
+
 

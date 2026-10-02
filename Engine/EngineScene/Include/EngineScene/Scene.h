@@ -155,6 +155,39 @@ public:
         return FindObject(id);
     }
 
+    std::vector<GameObject*> FindObjectsWithTag(const std::string& tag) {
+        std::vector<GameObject*> result;
+        for (auto& obj : objects) {
+            if (obj.HasTag(tag)) result.push_back(&obj);
+        }
+        return result;
+    }
+
+    std::vector<const GameObject*> FindObjectsWithTag(const std::string& tag) const {
+        std::vector<const GameObject*> result;
+        for (const auto& obj : objects) {
+            if (obj.HasTag(tag)) result.push_back(&obj);
+        }
+        return result;
+    }
+
+    GameObject* FindObjectWithTag(const std::string& tag) {
+        for (auto& obj : objects) {
+            if (obj.HasTag(tag)) return &obj;
+        }
+        return nullptr;
+    }
+
+    const GameObject* FindObjectWithTag(const std::string& tag) const {
+        for (const auto& obj : objects) {
+            if (obj.HasTag(tag)) return &obj;
+        }
+        return nullptr;
+    }
+
+    GameObject* FindWithTag(const std::string& tag) { return FindObjectWithTag(tag); }
+    const GameObject* FindWithTag(const std::string& tag) const { return FindObjectWithTag(tag); }
+
     glm::mat4 GetWorldMatrix(const GameObject& obj, int depth = 0) const {
         glm::mat4 local = obj.GetLocalMatrix();
         if (depth > 64) return local;

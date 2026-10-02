@@ -4473,7 +4473,18 @@ void EngineUI::RenderOutliner(Scene& scene) {
             for (auto& obj : scene.objects) {
                 std::string nameStr = obj.name;
                 std::transform(nameStr.begin(), nameStr.end(), nameStr.begin(), ::tolower);
-                if (nameStr.find(filterStr) == std::string::npos) continue;
+                bool matches = (nameStr.find(filterStr) != std::string::npos);
+                if (!matches) {
+                    for (const auto& t : obj.tags) {
+                        std::string tLow = t;
+                        std::transform(tLow.begin(), tLow.end(), tLow.begin(), ::tolower);
+                        if (tLow.find(filterStr) != std::string::npos) {
+                            matches = true;
+                            break;
+                        }
+                    }
+                }
+                if (!matches) continue;
 
                 ImGui::PushID(obj.id);
 
@@ -4977,6 +4988,83 @@ void EngineUI::RenderDetails(Scene& scene) {
             if (transformChanged && (obj->isLight || IsLightPrimitive(obj->type))) {
                 scene.SyncLightPositionsFromActors();
             }
+        }
+
+        // 2. Tags Section (Supported for all objects, actors, and empty actors)
+        char tagsHeader[64];
+        snprintf(tagsHeader, sizeof(tagsHeader), "🏷️  Tags (%d)###TagsCategory", (int)obj->tags.size());
+        if (ImGui::CollapsingHeader(tagsHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::PushID("TagsSection");
+
+            static char s_newTagBuf[128] = "";
+            bool addRequested = false;
+
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+            if (ImGui::InputTextWithHint("##NewTagInput", "Enter tag name...", s_newTagBuf, sizeof(s_newTagBuf), ImGuiInputTextFlags_EnterReturnsTrue)) {
+                addRequested = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("➕ Add", ImVec2(62.0f, 0.0f))) {
+                addRequested = true;
+            }
+
+            if (addRequested) {
+                std::string newTagStr = s_newTagBuf;
+                size_t b = newTagStr.find_first_not_of(" \t\r\n");
+                size_t e = newTagStr.find_last_not_of(" \t\r\n");
+                if (b != std::string::npos && e != std::string::npos) {
+                    newTagStr = newTagStr.substr(b, e - b + 1);
+                    obj->AddTag(newTagStr);
+                    s_newTagBuf[0] = '\0';
+                }
+            }
+
+            if (obj->tags.empty()) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("No tags assigned to this actor.");
+                ImGui::Spacing();
+            } else {
+                ImGui::Spacing();
+                int tagToRemove = -1;
+                for (size_t ti = 0; ti < obj->tags.size(); ++ti) {
+                    ImGui::PushID((int)ti);
+
+                    ImGui::AlignTextToFramePadding();
+                    ImGui::TextColored(ImVec4(0.35f, 0.75f, 1.0f, 1.0f), "[%d]", (int)ti);
+                    ImGui::SameLine();
+
+                    char tagBuf[128];
+                    strncpy(tagBuf, obj->tags[ti].c_str(), sizeof(tagBuf));
+                    tagBuf[sizeof(tagBuf) - 1] = '\0';
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 32.0f);
+                    if (ImGui::InputText("##TagEdit", tagBuf, sizeof(tagBuf))) {
+                        obj->tags[ti] = tagBuf;
+                    }
+                    ImGui::SameLine();
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 0.8f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
+                    if (ImGui::Button("X##RemoveTag", ImVec2(24.0f, 0.0f))) {
+                        tagToRemove = (int)ti;
+                    }
+                    ImGui::PopStyleColor(2);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Remove this tag");
+                    }
+
+                    ImGui::PopID();
+                }
+
+                if (tagToRemove >= 0 && tagToRemove < (int)obj->tags.size()) {
+                    obj->tags.erase(obj->tags.begin() + tagToRemove);
+                }
+
+                ImGui::Spacing();
+                if (ImGui::Button("🗑️ Clear All Tags", ImVec2(ImGui::GetContentRegionAvail().x, 22.0f))) {
+                    obj->RemoveAllTag();
+                }
+            }
+
+            ImGui::PopID();
         }
 
         // Light Component Category (dev.md)

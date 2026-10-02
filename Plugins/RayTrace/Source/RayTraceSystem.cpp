@@ -42,6 +42,54 @@ glm::vec3 GameObjectHitProxy::GetScale() const {
     return ptr ? ptr->scale : glm::vec3(1.0f);
 }
 
+std::vector<std::string> GameObjectHitProxy::GetTags() const {
+    return ptr ? ptr->GetTags() : std::vector<std::string>{};
+}
+
+std::vector<std::string> GameObjectHitProxy::getTags() const {
+    return GetTags();
+}
+
+bool GameObjectHitProxy::HasTag(const std::string& tag) const {
+    return ptr ? ptr->HasTag(tag) : false;
+}
+
+bool GameObjectHitProxy::hasTag(const std::string& tag) const {
+    return HasTag(tag);
+}
+
+void GameObjectHitProxy::AddTag(const std::string& tag) {
+    if (ptr) ptr->AddTag(tag);
+}
+
+void GameObjectHitProxy::addTag(const std::string& tag) {
+    AddTag(tag);
+}
+
+bool GameObjectHitProxy::RemoveTag(const std::string& tag) {
+    return ptr ? ptr->RemoveTag(tag) : false;
+}
+
+bool GameObjectHitProxy::removeTag(const std::string& tag) {
+    return RemoveTag(tag);
+}
+
+void GameObjectHitProxy::RemoveAllTag() {
+    if (ptr) ptr->RemoveAllTag();
+}
+
+void GameObjectHitProxy::RemoveAllTags() {
+    RemoveAllTag();
+}
+
+void GameObjectHitProxy::removeAllTag() {
+    RemoveAllTag();
+}
+
+void GameObjectHitProxy::removeAllTags() {
+    RemoveAllTag();
+}
+
 void RayTraceHit::SetHit(bool hit, ::GameObject* obj, const glm::vec3& pt, const glm::vec3& n, float dist, float frac, int objId, int modIdx, const std::string& modName, CollisionShapeType shape) {
     Status = hit;
     status = hit;

@@ -492,6 +492,26 @@ public:
     Scene* GetScene() const { return m_scene; }
     void SetScene(Scene* scene) { m_scene = scene; }
 
+    // Tag Helpers on Behaviour / Owner (GetTags, AddTag, RemoveTag, RemoveAllTag, HasTag)
+    std::vector<std::string> GetTags() const;
+    std::vector<std::string> getTags() const { return GetTags(); }
+    bool HasTag(const std::string& tag) const;
+    bool hasTag(const std::string& tag) const { return HasTag(tag); }
+    void AddTag(const std::string& tag);
+    void addTag(const std::string& tag) { AddTag(tag); }
+    bool RemoveTag(const std::string& tag);
+    bool removeTag(const std::string& tag) { return RemoveTag(tag); }
+    void RemoveAllTag();
+    void RemoveAllTags() { RemoveAllTag(); }
+    void removeAllTag() { RemoveAllTag(); }
+    void removeAllTags() { RemoveAllTag(); }
+    void ClearTags() { RemoveAllTag(); }
+    void clearTags() { RemoveAllTag(); }
+
+    std::vector<GameObject*> FindObjectsWithTag(const std::string& tag) const;
+    GameObject* FindObjectWithTag(const std::string& tag) const;
+    GameObject* FindWithTag(const std::string& tag) const { return FindObjectWithTag(tag); }
+
     // -------------------------------------------------------------------------
     // GetBehaviour<T>() / HasBehaviour<T>() — access sibling behaviours on the
     // same owner (dev.md Section 62, 63)

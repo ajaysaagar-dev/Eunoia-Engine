@@ -240,6 +240,7 @@ public:
         bool appendHitNormal = false;
         bool appendHitDistance = false;
         bool appendHitStatus = false;
+        bool appendHitTags = false;
         std::string varName;
         int printKey = -1;
     };

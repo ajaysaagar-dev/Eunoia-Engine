@@ -127,6 +127,14 @@ namespace Detail {
     inline void Append(std::ostringstream& ss, const glm::vec4& v) {
         ss << "(" << v.x << ", " << v.y << ", " << v.z << ", " << v.w << ")";
     }
+    inline void Append(std::ostringstream& ss, const std::vector<std::string>& vec) {
+        ss << "[";
+        for (size_t i = 0; i < vec.size(); ++i) {
+            ss << "\"" << vec[i] << "\"";
+            if (i + 1 < vec.size()) ss << ", ";
+        }
+        ss << "]";
+    }
     template<typename T>
     inline void Append(std::ostringstream& ss, T* ptr) {
         if (!ptr) ss << "null";

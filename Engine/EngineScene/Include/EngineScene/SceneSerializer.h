@@ -224,6 +224,13 @@ public:
             file << "      \"autoRotate\": " << BoolStr(obj.autoRotate) << ",\n";
             file << "      \"autoRotateSpeed\": " << WriteVec3(obj.autoRotateSpeed) << ",\n";
 
+            // Tags
+            file << "      \"tags\": [\n";
+            for (size_t ti = 0; ti < obj.tags.size(); ++ti) {
+                file << "        " << QuoteStr(obj.tags[ti]) << (ti + 1 < obj.tags.size() ? "," : "") << "\n";
+            }
+            file << "      ],\n";
+
             // Hierarchy, Imported Mesh & Light Proxy
             file << "      \"isImportedMesh\": " << BoolStr(obj.isImportedMesh) << ",\n";
             file << "      \"meshFilePath\": " << QuoteStr(obj.meshFilePath) << ",\n";
@@ -1073,6 +1080,26 @@ public:
         p = actorBlock.find("\"visible\""); if (p != std::string::npos) obj.visible = ParseBoolAt(actorBlock, p, true);
         p = actorBlock.find("\"autoRotate\""); if (p != std::string::npos) obj.autoRotate = ParseBoolAt(actorBlock, p, false);
         p = actorBlock.find("\"autoRotateSpeed\""); if (p != std::string::npos) obj.autoRotateSpeed = ParseVec3(actorBlock, p);
+
+        // Parse tags
+        size_t tagsPos = actorBlock.find("\"tags\"");
+        if (tagsPos != std::string::npos) {
+            size_t arrStart = actorBlock.find('[', tagsPos);
+            size_t arrEnd = actorBlock.find(']', arrStart);
+            if (arrStart != std::string::npos && arrEnd != std::string::npos && arrEnd > arrStart) {
+                std::string tagsSub = actorBlock.substr(arrStart + 1, arrEnd - arrStart - 1);
+                size_t q1 = 0;
+                while ((q1 = tagsSub.find('"', q1)) != std::string::npos) {
+                    size_t q2 = tagsSub.find('"', q1 + 1);
+                    if (q2 == std::string::npos) break;
+                    std::string tStr = tagsSub.substr(q1 + 1, q2 - q1 - 1);
+                    if (!tStr.empty()) {
+                        obj.AddTag(tStr);
+                    }
+                    q1 = q2 + 1;
+                }
+            }
+        }
 
         // Parse hierarchy, imported mesh & light proxy
         p = actorBlock.find("\"isImportedMesh\""); if (p != std::string::npos) obj.isImportedMesh = ParseBoolAt(actorBlock, p, false);
