@@ -148,7 +148,11 @@ public:
         AddUI,
         RemoveUI,
         RemoveAllUI,
-        CallMethod
+        CallMethod,
+        StartTimer,
+        StartInterval,
+        StopTimer,
+        ClearAllTimers
     };
 
     struct ScriptAction {
@@ -156,6 +160,7 @@ public:
         std::string varName;
         std::string valueStr;
         std::string target;
+        float duration = 0.0f;
     };
 
     struct ScriptBranch {

@@ -33,6 +33,23 @@ inline float worldDeltaSeconds = 0.0f;
 inline float WorldDeltaTime = 0.0f;
 #define WORLD_DELTA_SECONDS WorldDeltaSeconds
 
+// ============================================================================
+// Timer System Types
+// ============================================================================
+using TimerHandle = uint32_t;
+inline constexpr uint32_t INVALID_TIMER_HANDLE = 0;
+
+struct BehaviourTimer {
+    uint32_t id = 0;
+    std::function<void()> callback;
+    std::string functionName;
+    float duration = 0.0f;
+    float timeRemaining = 0.0f;
+    bool isInterval = false;
+    bool isPaused = false;
+    bool markedForRemoval = false;
+};
+
 enum class BehaviourPropertyType {
     Bool,
     Int,
@@ -675,6 +692,261 @@ public:
     double GetMouseDeltaX(bool negate = false) const;
     double GetMouseDeltaY(bool negate = false) const;
 
+    // -------------------------------------------------------------------------
+    // Timer System (StartTimer, StartInterval, StopTimer, ClearTimer, etc.)
+    // -------------------------------------------------------------------------
+    uint32_t StartTimer(std::function<void()> callback, float seconds) {
+        if (seconds < 0.0f) seconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = callback;
+        timer.duration = seconds;
+        timer.timeRemaining = seconds;
+        timer.isInterval = false;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    uint32_t StartTimer(const std::string& functionName, float seconds) {
+        if (seconds < 0.0f) seconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.functionName = functionName;
+        timer.callback = [this, functionName]() {
+            this->InvokeFunction(functionName);
+        };
+        timer.duration = seconds;
+        timer.timeRemaining = seconds;
+        timer.isInterval = false;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    template<typename ClassType>
+    uint32_t StartTimer(void (ClassType::*method)(), float seconds) {
+        if (seconds < 0.0f) seconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = [this, method]() {
+            if (auto* self = dynamic_cast<ClassType*>(this)) {
+                (self->*method)();
+            } else {
+                auto* s = static_cast<ClassType*>(this);
+                (s->*method)();
+            }
+        };
+        timer.duration = seconds;
+        timer.timeRemaining = seconds;
+        timer.isInterval = false;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    uint32_t StartTimer(void (*func)(), float seconds) {
+        if (seconds < 0.0f) seconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = [func]() {
+            if (func) func();
+        };
+        timer.duration = seconds;
+        timer.timeRemaining = seconds;
+        timer.isInterval = false;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    uint32_t StartInterval(std::function<void()> callback, float intervalSeconds) {
+        if (intervalSeconds < 0.0f) intervalSeconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = callback;
+        timer.duration = intervalSeconds;
+        timer.timeRemaining = intervalSeconds;
+        timer.isInterval = true;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    uint32_t StartInterval(const std::string& functionName, float intervalSeconds) {
+        if (intervalSeconds < 0.0f) intervalSeconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.functionName = functionName;
+        timer.callback = [this, functionName]() {
+            this->InvokeFunction(functionName);
+        };
+        timer.duration = intervalSeconds;
+        timer.timeRemaining = intervalSeconds;
+        timer.isInterval = true;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    template<typename ClassType>
+    uint32_t StartInterval(void (ClassType::*method)(), float intervalSeconds) {
+        if (intervalSeconds < 0.0f) intervalSeconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = [this, method]() {
+            if (auto* self = dynamic_cast<ClassType*>(this)) {
+                (self->*method)();
+            } else {
+                auto* s = static_cast<ClassType*>(this);
+                (s->*method)();
+            }
+        };
+        timer.duration = intervalSeconds;
+        timer.timeRemaining = intervalSeconds;
+        timer.isInterval = true;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    uint32_t StartInterval(void (*func)(), float intervalSeconds) {
+        if (intervalSeconds < 0.0f) intervalSeconds = 0.0f;
+        BehaviourTimer timer;
+        timer.id = s_nextTimerId++;
+        timer.callback = [func]() {
+            if (func) func();
+        };
+        timer.duration = intervalSeconds;
+        timer.timeRemaining = intervalSeconds;
+        timer.isInterval = true;
+        timer.isPaused = false;
+        m_timers.push_back(timer);
+        return timer.id;
+    }
+
+    void StopTimer(uint32_t timerId) {
+        for (auto& t : m_timers) {
+            if (t.id == timerId) {
+                t.markedForRemoval = true;
+                break;
+            }
+        }
+    }
+    void ClearTimer(uint32_t timerId) { StopTimer(timerId); }
+    void StopInterval(uint32_t timerId) { StopTimer(timerId); }
+    void ClearInterval(uint32_t timerId) { StopTimer(timerId); }
+
+    void ClearAllTimers() {
+        m_timers.clear();
+    }
+
+    void PauseTimer(uint32_t timerId) {
+        for (auto& t : m_timers) {
+            if (t.id == timerId) {
+                t.isPaused = true;
+                break;
+            }
+        }
+    }
+
+    void ResumeTimer(uint32_t timerId) {
+        for (auto& t : m_timers) {
+            if (t.id == timerId) {
+                t.isPaused = false;
+                break;
+            }
+        }
+    }
+
+    bool IsTimerActive(uint32_t timerId) const {
+        for (const auto& t : m_timers) {
+            if (t.id == timerId && !t.markedForRemoval) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    bool IsTimerPaused(uint32_t timerId) const {
+        for (const auto& t : m_timers) {
+            if (t.id == timerId && !t.markedForRemoval) {
+                return t.isPaused;
+            }
+        }
+        return false;
+    }
+
+    float GetTimerRemaining(uint32_t timerId) const {
+        for (const auto& t : m_timers) {
+            if (t.id == timerId && !t.markedForRemoval) {
+                return t.timeRemaining;
+            }
+        }
+        return 0.0f;
+    }
+
+    float GetTimerElapsed(uint32_t timerId) const {
+        for (const auto& t : m_timers) {
+            if (t.id == timerId && !t.markedForRemoval) {
+                return t.duration - t.timeRemaining;
+            }
+        }
+        return 0.0f;
+    }
+
+    void UpdateTimers(float dt) {
+        if (m_timers.empty()) return;
+
+        std::vector<std::function<void()>> toFire;
+
+        for (size_t i = 0; i < m_timers.size(); ++i) {
+            auto& t = m_timers[i];
+            if (t.markedForRemoval || t.isPaused) continue;
+
+            t.timeRemaining -= dt;
+            if (t.timeRemaining <= 0.0f) {
+                if (t.callback) {
+                    toFire.push_back(t.callback);
+                }
+                if (t.isInterval) {
+                    t.timeRemaining = t.duration;
+                } else {
+                    t.markedForRemoval = true;
+                }
+            }
+        }
+
+        m_timers.erase(
+            std::remove_if(m_timers.begin(), m_timers.end(), [](const BehaviourTimer& t) {
+                return t.markedForRemoval;
+            }),
+            m_timers.end()
+        );
+
+        for (auto& cb : toFire) {
+            if (cb) {
+                cb();
+            }
+        }
+    }
+
+    // Lowercase / Camelcase aliases
+    uint32_t startTimer(std::function<void()> cb, float s) { return StartTimer(cb, s); }
+    uint32_t startTimer(const std::string& fn, float s) { return StartTimer(fn, s); }
+    uint32_t startInterval(std::function<void()> cb, float s) { return StartInterval(cb, s); }
+    uint32_t startInterval(const std::string& fn, float s) { return StartInterval(fn, s); }
+    void stopTimer(uint32_t id) { StopTimer(id); }
+    void clearTimer(uint32_t id) { ClearTimer(id); }
+    void stopInterval(uint32_t id) { StopInterval(id); }
+    void clearInterval(uint32_t id) { ClearInterval(id); }
+    void clearAllTimers() { ClearAllTimers(); }
+    void pauseTimer(uint32_t id) { PauseTimer(id); }
+    void resumeTimer(uint32_t id) { ResumeTimer(id); }
+    bool isTimerActive(uint32_t id) const { return IsTimerActive(id); }
+    float getTimerRemaining(uint32_t id) const { return GetTimerRemaining(id); }
+    float getTimerElapsed(uint32_t id) const { return GetTimerElapsed(id); }
+
     // On-screen Print function (prints in game view screen top-left with time)
     template<typename T>
     void Print(const T& value, float time) {
@@ -707,7 +979,8 @@ protected:
           m_hasStarted(other.m_hasStarted),
           m_className(other.m_className),
           m_displayName(other.m_displayName),
-          m_properties(other.m_properties) {
+          m_properties(other.m_properties),
+          m_timers(other.m_timers) {
         GetRespectiveObject.behaviour = this;
         Transform.Init(this);
         CursorState.behaviour = this;
@@ -724,6 +997,7 @@ protected:
             m_className = other.m_className;
             m_displayName = other.m_displayName;
             m_properties = other.m_properties;
+            m_timers = other.m_timers;
             GetRespectiveObject.behaviour = this;
             Transform = other.Transform;
             Transform.Init(this);
@@ -740,6 +1014,8 @@ protected:
     std::string m_className = "EunoiaBehaviour";
     std::string m_displayName = "Eunoia Behaviour";
     std::vector<BehaviourProperty> m_properties;
+    std::vector<BehaviourTimer> m_timers;
+    inline static uint32_t s_nextTimerId = 1;
 
     friend struct RespectiveObjectAccessor;
     friend struct BehaviourTransformProperty;

@@ -1229,6 +1229,34 @@ void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::u
                 ExecuteMethod(act.target, visited);
                 break;
             }
+            case ScriptStatementType::StartTimer: {
+                float dur = act.duration;
+                if (dur <= 0.0f && !act.valueStr.empty()) {
+                    dur = GetFloat(act.valueStr, 0.0f);
+                }
+                StartTimer(act.target, dur);
+                break;
+            }
+            case ScriptStatementType::StartInterval: {
+                float dur = act.duration;
+                if (dur <= 0.0f && !act.valueStr.empty()) {
+                    dur = GetFloat(act.valueStr, 0.0f);
+                }
+                StartInterval(act.target, dur);
+                break;
+            }
+            case ScriptStatementType::StopTimer: {
+                for (auto& t : m_timers) {
+                    if (t.functionName == act.target) {
+                        t.markedForRemoval = true;
+                    }
+                }
+                break;
+            }
+            case ScriptStatementType::ClearAllTimers: {
+                ClearAllTimers();
+                break;
+            }
         }
     };
 
@@ -1378,6 +1406,7 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
     SyncStorageFromProperties();
 
     float dt = (::WorldDeltaSeconds > 0.0f) ? ::WorldDeltaSeconds : deltaTime;
+    UpdateTimers(dt);
 
     // Execute real-time dynamic Print statements inside Update()
     for (const auto& item : m_updatePrintMessages) {
@@ -2829,6 +2858,70 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             if (currentMethodName == "Start") m_startPrintMessages.push_back(outAct.target);
                             return true;
                         }
+                    }
+                }
+
+                // Timer functions (StartTimer, StartInterval, SetTimer, SetInterval)
+                if (sLow.find("starttimer(") != std::string::npos || sLow.find("startinterval(") != std::string::npos ||
+                    sLow.find("settimer(") != std::string::npos || sLow.find("setinterval(") != std::string::npos) {
+                    bool isInterval = (sLow.find("interval") != std::string::npos);
+                    size_t p1 = s.find('(');
+                    size_t p2 = s.rfind(')');
+                    if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                        std::string argsStr = s.substr(p1 + 1, p2 - p1 - 1);
+                        size_t comma = argsStr.find(',');
+                        if (comma != std::string::npos) {
+                            std::string funcArg = argsStr.substr(0, comma);
+                            std::string timeArg = argsStr.substr(comma + 1);
+
+                            size_t fa1 = funcArg.find_first_not_of(" \t&'\"");
+                            size_t fa2 = funcArg.find_last_not_of(" \t'\"()");
+                            std::string cleanFunc = (fa1 != std::string::npos && fa2 != std::string::npos) ? funcArg.substr(fa1, fa2 - fa1 + 1) : "";
+                            size_t colons = cleanFunc.rfind("::");
+                            if (colons != std::string::npos) cleanFunc = cleanFunc.substr(colons + 2);
+                            size_t arrow = cleanFunc.rfind("->");
+                            if (arrow != std::string::npos) cleanFunc = cleanFunc.substr(arrow + 2);
+                            size_t dot = cleanFunc.rfind(".");
+                            if (dot != std::string::npos) cleanFunc = cleanFunc.substr(dot + 1);
+
+                            size_t ta1 = timeArg.find_first_not_of(" \t");
+                            size_t ta2 = timeArg.find_last_not_of(" \t");
+                            std::string cleanTime = (ta1 != std::string::npos && ta2 != std::string::npos) ? timeArg.substr(ta1, ta2 - ta1 + 1) : "";
+
+                            float seconds = 0.0f;
+                            try {
+                                std::string numClean = cleanTime;
+                                if (!numClean.empty() && (numClean.back() == 'f' || numClean.back() == 'F')) numClean.pop_back();
+                                seconds = std::stof(numClean);
+                            } catch (...) {
+                                seconds = 0.0f;
+                            }
+
+                            outAct.type = isInterval ? DynamicScriptBehaviour::ScriptStatementType::StartInterval : DynamicScriptBehaviour::ScriptStatementType::StartTimer;
+                            outAct.target = cleanFunc;
+                            outAct.valueStr = cleanTime;
+                            outAct.duration = seconds;
+                            return true;
+                        }
+                    }
+                }
+
+                if (sLow.find("clearalltimers()") != std::string::npos) {
+                    outAct.type = DynamicScriptBehaviour::ScriptStatementType::ClearAllTimers;
+                    return true;
+                }
+
+                if (sLow.find("stoptimer(") != std::string::npos || sLow.find("cleartimer(") != std::string::npos ||
+                    sLow.find("stopinterval(") != std::string::npos || sLow.find("clearinterval(") != std::string::npos) {
+                    size_t p1 = s.find('(');
+                    size_t p2 = s.rfind(')');
+                    if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                        std::string arg = s.substr(p1 + 1, p2 - p1 - 1);
+                        size_t a1 = arg.find_first_not_of(" \t&'\"");
+                        size_t a2 = arg.find_last_not_of(" \t'\"()");
+                        outAct.type = DynamicScriptBehaviour::ScriptStatementType::StopTimer;
+                        outAct.target = (a1 != std::string::npos && a2 != std::string::npos) ? arg.substr(a1, a2 - a1 + 1) : "";
+                        return true;
                     }
                 }
 

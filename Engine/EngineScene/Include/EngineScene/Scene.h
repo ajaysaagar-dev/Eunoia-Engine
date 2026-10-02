@@ -1316,6 +1316,7 @@ public:
         for (auto& obj : objects) {
             for (auto& b : obj.behaviours) {
                 if (!b) continue;
+                b->ClearAllTimers();
                 if (b->IsEnabled()) {
                     b->OnDisable();
                 }
@@ -1397,6 +1398,7 @@ public:
                 for (auto& b : obj.behaviours) {
                     if (b && b->IsEnabled()) {
                         b->RefreshPropertiesFromSource();
+                        b->UpdateTimers(dt);
                         b->Update(dt);
                     }
                 }
