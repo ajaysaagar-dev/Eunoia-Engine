@@ -714,6 +714,29 @@ public:
         return obj;
     }
 
+    GameObject& AddUserInterface(glm::vec3 pos = {0.0f, 1.5f, 0.0f}, const std::string& assetPath = "", int parentId = -1) {
+        if (onPreChange) onPreChange("Add User Interface");
+        int id = nextId++;
+        std::string name = "UserInterface_" + std::to_string(id);
+        objects.emplace_back(id, name, PrimitiveType::UserInterface, pos);
+        GameObject& obj = objects.back();
+
+        obj.isUserInterface = true;
+        obj.ui3d.enabled = true;
+        obj.ui3d.uiAssetPath = assetPath;
+        obj.ui3d.space = EunoiaUI::UI3DSpaceType::World;
+        obj.ui3d.size = glm::vec2(2.0f, 1.125f);
+        obj.twoSided = true;
+
+        obj.parentId = parentId;
+        if (parentId != -1) {
+            GameObject* parent = FindObject(parentId);
+            if (parent) parent->childIds.push_back(id);
+        }
+
+        selectedId = id;
+        return obj;
+    }
 
     // Create a brand-new Light + its actor
     GameObject& AddNewLight(PrimitiveType lightType = PrimitiveType::PointLight, glm::vec3 pos = {0.0f, 2.5f, 0.0f}, int parentId = -1) {

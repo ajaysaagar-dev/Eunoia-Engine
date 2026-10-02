@@ -37,6 +37,7 @@
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
 #include <UISystem/UIEditorWindow.h>
 #include <UISystem/UISystem.h>
+#include <UISystem3D/UISystem3D.h>
 #include <Collisions/CollisionTypes.h>
 #include <Collisions/CollisionSystem.h>
 
@@ -3941,6 +3942,16 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
     EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
     EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y), glm::vec2(vpRect.width, vpRect.height));
 
+    // Render 3D World-Space and Screen-Space User Interfaces
+    ImDrawList* bgDrawList = ImGui::GetBackgroundDrawList();
+    if (bgDrawList) {
+        EunoiaUI::UISystem3DManager::Get().RenderAllScene3DUI(
+            bgDrawList, scene, camera,
+            glm::vec4(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y, vpRect.width, vpRect.height),
+            isGameView
+        );
+    }
+
     // Viewport top-left: Render on-screen Print messages
     RenderScreenPrintOverlay(overlayX, overlayY + 36.0f);
 
@@ -4669,6 +4680,10 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 cam.name = "Camera Actor";
                 AddLog("LogActor", "Spawned Camera Actor via Outliner Context Menu", 2);
             }
+            if (ImGui::MenuItem("🖥 User Interface")) {
+                scene.AddUserInterface();
+                AddLog("LogActor", "Spawned User Interface Actor", 2);
+            }
             if (ImGui::BeginMenu("💧 Water Body")) {
                 if (ImGui::MenuItem("🌊 Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      {0,0,0}, "Ocean");       AddLog("LogActor", "Spawned Ocean Water Body", 2); }
                 if (ImGui::MenuItem("🌊 Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        {0,0,0}, "Sea");         AddLog("LogActor", "Spawned Sea Water Body", 2); }
@@ -4732,6 +4747,10 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 GameObject& cam = scene.AddObject(PrimitiveType::Camera, {0.0f, 2.0f, -4.0f});
                 cam.name = "Camera Actor";
                 AddLog("LogActor", "Spawned Camera Actor via Outliner", 2);
+            }
+            if (ImGui::MenuItem("🖥 User Interface")) {
+                scene.AddUserInterface();
+                AddLog("LogActor", "Spawned User Interface Actor via Outliner", 2);
             }
             if (ImGui::BeginMenu("💧 Water Body")) {
                 if (ImGui::MenuItem("🌊 Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      {0,0,0}, "Ocean");       AddLog("LogActor", "Spawned Ocean Water Body", 2); }
@@ -4921,6 +4940,8 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextColored(ImVec4(0.00f, 0.60f, 1.00f, 1.0f), "[WaterBodyComponent]");
         } else if (obj->isCamera || obj->type == PrimitiveType::Camera) {
             ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
+        } else if (obj->isUserInterface || obj->type == PrimitiveType::UserInterface) {
+            ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "[UserInterface3DComponent]");
         } else if (obj->type == PrimitiveType::Empty) {
             ImGui::TextColored(ImVec4(0.35f, 0.80f, 1.00f, 1.0f), "[EmptyActor]");
         } else {
@@ -5566,8 +5587,118 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
+        // =========================================================
+        // USER INTERFACE 3D COMPONENT
+        // =========================================================
+        if (obj->isUserInterface || obj->type == PrimitiveType::UserInterface || !obj->ui3d.uiAssetPath.empty()) {
+            UserInterface3DComponent& uiComp = obj->ui3d;
+
+            if (ImGui::CollapsingHeader("🖥 User Interface 3D", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::Checkbox("UI Enabled", &uiComp.enabled);
+                ImGui::Spacing();
+
+                // 1. Project UI Asset Selector dropdown
+                ImGui::Text("User Interface Asset");
+                std::string currentPreview = "None (Select 3D User Interface)";
+                if (!uiComp.uiAssetPath.empty()) {
+                    currentPreview = std::filesystem::path(uiComp.uiAssetPath).filename().string();
+                }
+
+                if (ImGui::BeginCombo("##UI3DAssetCombo", currentPreview.c_str())) {
+                    if (ImGui::Selectable("None", uiComp.uiAssetPath.empty())) {
+                        UndoManager::Get().RecordSnapshot(scene, "Clear UI Asset");
+                        uiComp.uiAssetPath = "";
+                    }
+                    ImGui::Separator();
+
+                    // Scan project content directory for all .eui3d and .eui files
+                    if (!contentRootPath.empty() && std::filesystem::exists(contentRootPath)) {
+                        std::error_code rec;
+                        for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, rec);
+                             it != std::filesystem::recursive_directory_iterator(); it.increment(rec)) {
+                            if (rec) break;
+                            if (it->is_regular_file()) {
+                                std::string ext = it->path().extension().string();
+                                if (ext == ".eui3d" || ext == ".eui") {
+                                    std::string uiPath = it->path().string();
+                                    std::string uiFilename = it->path().filename().string();
+                                    bool isSel = (!uiComp.uiAssetPath.empty() && (uiComp.uiAssetPath == uiPath || std::filesystem::path(uiComp.uiAssetPath).filename() == it->path().filename()));
+                                    if (ImGui::Selectable(uiFilename.c_str(), isSel)) {
+                                        UndoManager::Get().RecordSnapshot(scene, "Select UI Asset: " + uiFilename);
+                                        uiComp.uiAssetPath = uiPath;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                // Drag & drop target for UI assets
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        std::string dragItem = (const char*)payload->Data;
+                        if (dragItem.rfind("ASSET:", 0) == 0) {
+                            std::string srcRel = dragItem.substr(6);
+                            if (srcRel.find(".eui3d") != std::string::npos || srcRel.find(".eui") != std::string::npos) {
+                                std::filesystem::path fullDisk = contentRootPath / srcRel;
+                                UndoManager::Get().RecordSnapshot(scene, "Drop UI Asset");
+                                uiComp.uiAssetPath = fullDisk.string();
+                            }
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                if (!uiComp.uiAssetPath.empty()) {
+                    ImGui::SameLine();
+                    if (ImGui::Button("✏️ Edit UI")) {
+                        OpenUIEditor(uiComp.uiAssetPath);
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // 2. Space dropdown (World vs Screen)
+                ImGui::Text("Space");
+                const char* spaceNames[] = { "World", "Screen" };
+                int currentSpace = (int)uiComp.space;
+                if (ImGui::Combo("##UI3DSpaceMode", &currentSpace, spaceNames, 2)) {
+                    UndoManager::Get().RecordSnapshot(scene, "Change UI Space Mode");
+                    uiComp.space = (EunoiaUI::UI3DSpaceType)currentSpace;
+                }
+                if (ImGui::IsItemHovered()) {
+                    if (uiComp.space == EunoiaUI::UI3DSpaceType::World) {
+                        ImGui::SetTooltip("World: UI is placed in 3D world space and rotates with actor transform.");
+                    } else {
+                        ImGui::SetTooltip("Screen: UI is billboarded and always targets towards camera's view.");
+                    }
+                }
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // 3. Size & Resolution
+                ImGui::TextDisabled("3D Dimensions & Canvas");
+                ImGui::DragFloat2("World Size (W x H)##UI3DSize", &uiComp.size.x, 0.05f, 0.1f, 100.0f, "%.2f m");
+                ImGui::DragFloat2("Canvas Res (px)##UI3DRes", &uiComp.canvasResolution.x, 10.0f, 100.0f, 7680.0f, "%.0f px");
+
+                ImGui::Spacing();
+                ImGui::Separator();
+
+                // 4. Appearance
+                ImGui::TextDisabled("Appearance");
+                ImGui::Checkbox("Two-Sided##UI3DTwoSided", &uiComp.twoSided);
+                ImGui::SliderFloat("Opacity##UI3DOpacity", &uiComp.opacity, 0.0f, 1.0f, "%.2f");
+                ImGui::ColorEdit4("Background Color##UI3DBG", &uiComp.backgroundColor.r, ImGuiColorEditFlags_AlphaBar);
+                ImGui::ColorEdit4("Border Color##UI3DBorder", &uiComp.borderColor.r, ImGuiColorEditFlags_AlphaBar);
+                ImGui::DragFloat("Border Width##UI3DBorderW", &uiComp.borderWidth, 0.1f, 0.0f, 20.0f, "%.1f px");
+            }
+        }
+
         // Primitive Shape Settings Category (dev.md)
-        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
+        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
             char shapeHeader[128];
             snprintf(shapeHeader, sizeof(shapeHeader), "%s Parameters", GetPrimitiveTypeName(obj->type));
             if (ImGui::CollapsingHeader(shapeHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -5667,7 +5798,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 2. Static Mesh Category (only for mesh actors)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
             char meshAsset[64];
             snprintf(meshAsset, sizeof(meshAsset), "SM_%s", GetPrimitiveTypeName(obj->type));
             ImGui::TextDisabled("Static Mesh Asset:");
@@ -5676,7 +5807,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 3. Materials Category (Element 0) (mesh actors or parent actors with children)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && (obj->type != PrimitiveType::Empty || !obj->childIds.empty()) && ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && (obj->type != PrimitiveType::Empty || !obj->childIds.empty()) && ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::TextDisabled("Element 0: Material Slot");
             if (!obj->childIds.empty()) {
                 ImGui::SameLine();
@@ -8607,6 +8738,83 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
+                // User Interface 3D asset creation modal
+                if (showNewUI3DPopup) {
+                    ImGui::OpenPopup("Create User Interface 3D##UI3DModal");
+                    showNewUI3DPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create User Interface 3D##UI3DModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter User Interface 3D Name (.eui3d):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##UI3DNameInput", newUI3DNameBuf, sizeof(newUI3DNameBuf));
+
+                    std::string inputName = newUI3DNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "✓ Will create: %s.eui3d in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path uiDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(uiDir, bec);
+
+                        std::filesystem::path eui3dPath = uiDir / (inputName + ".eui3d");
+                        EunoiaUI::UISystem3DManager::Get().CreateNewUI3D(inputName, eui3dPath.string());
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path metaPath = uiDir / (inputName + ".eui3d.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: User Interface 3D\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        // Register in AssetRegistry immediately
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::UserInterface3D;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(eui3dPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".eui3d") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenUIEditor(eui3dPath.string());
+                        AddLog("LogContent", "Created User Interface 3D: " + inputName + ".eui3d in " + targetDir, 2);
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Two-Pane Content Browser Layout (Left: Virtual Folders, Right: Assets)
                 float leftFolderPaneW = 200.0f;
                 ImGui::BeginChild("CBFolderTreePane", ImVec2(leftFolderPaneW, 0), true);
@@ -8726,6 +8934,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             popupTargetVirtualDir = vDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                        }
+                        if (ImGui::MenuItem("🔮 New User Interface 3D")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewUI3DPopup = true;
+                            snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("📥 Import Model...")) {
@@ -8983,7 +9196,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (item.meta.type == AssetType::Water) {
                                     std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
                                     OpenWaterEditor(fullWater.string());
-                                } else if (item.meta.type == AssetType::UserInterface) {
+                                } else if (item.meta.type == AssetType::UserInterface || item.meta.type == AssetType::UserInterface3D) {
                                     std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
                                     OpenUIEditor(fullUI.string());
                                     AddLog("LogContent", "Opened User Interface: " + item.meta.objectName, 2);
@@ -9121,6 +9334,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewUIPopup = true;
                                     snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                                 }
+                                if (ImGui::MenuItem("🔮 New User Interface 3D")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewUI3DPopup = true;
+                                    snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("📥 Import Model...")) {
                                     popupTargetVirtualDir = item.subDir;
@@ -9221,8 +9439,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::UserInterface) {
-                                    if (ImGui::MenuItem("🎨 Open in UI Editor")) {
+                                if (item.meta.type == AssetType::UserInterface || item.meta.type == AssetType::UserInterface3D) {
+                                    if (ImGui::MenuItem(item.meta.type == AssetType::UserInterface3D ? "🔮 Open in UI 3D Editor" : "🎨 Open in UI Editor")) {
                                         std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
                                         OpenUIEditor(fullUI.string());
                                     }
@@ -9441,11 +9659,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewUIPopup = true;
                         snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                     }
+                    if (ImGui::MenuItem("🔮 New User Interface 3D")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewUI3DPopup = true;
+                        snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
+                    }
                     if (ImGui::BeginMenu("➕ Create")) {
                         if (ImGui::MenuItem("🎨 User Interface (.eui)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                        }
+                        if (ImGui::MenuItem("🔮 User Interface 3D (.eui3d)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewUI3DPopup = true;
+                            snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
                         }
                         if (ImGui::MenuItem("🎮 Visual Behaviour (.ebehaviour)")) {
                             popupTargetVirtualDir = currentVirtualDir;
@@ -12458,7 +12686,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                     if (payload->DataSize == sizeof(AssetID)) {
                                         AssetID aid = *(const AssetID*)payload->Data;
                                         const AssetMetadata* meta = AssetRegistry::Get().Find(aid);
-                                        if (meta && meta->type == AssetType::UserInterface) {
+                                        if (meta && (meta->type == AssetType::UserInterface || meta->type == AssetType::UserInterface3D)) {
                                             std::filesystem::path fullDisk = contentRootPath / meta->sourcePath;
                                             UndoManager::Get().RecordSnapshot(scene, "Drop UI Reference: " + prop.name);
                                             prop.assetPath = fullDisk.string();

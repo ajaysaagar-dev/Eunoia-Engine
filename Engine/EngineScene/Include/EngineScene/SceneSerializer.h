@@ -344,6 +344,18 @@ public:
             file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
             file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
 
+            file << "      \"isUserInterface\": " << BoolStr(obj.isUserInterface || obj.type == PrimitiveType::UserInterface) << ",\n";
+            file << "      \"uiAssetPath\": \"" << obj.ui3d.uiAssetPath << "\",\n";
+            file << "      \"uiSpace\": " << (int)obj.ui3d.space << ",\n";
+            file << "      \"uiSize\": [" << obj.ui3d.size.x << ", " << obj.ui3d.size.y << "],\n";
+            file << "      \"uiCanvasResolution\": [" << obj.ui3d.canvasResolution.x << ", " << obj.ui3d.canvasResolution.y << "],\n";
+            file << "      \"uiTwoSided\": " << BoolStr(obj.ui3d.twoSided) << ",\n";
+            file << "      \"uiOpacity\": " << obj.ui3d.opacity << ",\n";
+            file << "      \"uiInteractable\": " << BoolStr(obj.ui3d.interactable) << ",\n";
+            file << "      \"uiBackgroundColor\": [" << obj.ui3d.backgroundColor.r << ", " << obj.ui3d.backgroundColor.g << ", " << obj.ui3d.backgroundColor.b << ", " << obj.ui3d.backgroundColor.a << "],\n";
+            file << "      \"uiBorderColor\": [" << obj.ui3d.borderColor.r << ", " << obj.ui3d.borderColor.g << ", " << obj.ui3d.borderColor.b << ", " << obj.ui3d.borderColor.a << "],\n";
+            file << "      \"uiBorderWidth\": " << obj.ui3d.borderWidth << ",\n";
+
             file << "      \"hasPhysics\": " << BoolStr(obj.hasPhysics) << ",\n";
             if (obj.hasPhysics) {
                 file << "      \"physicsEnabled\": " << BoolStr(obj.physics.enabled) << ",\n";
@@ -573,6 +585,7 @@ private:
         if (s == "SkyLight" || s == "Sky Light" || s == "AmbientLight" || s == "Ambient Light" || s == "HemisphereLight" || s == "Hemisphere Light") return PrimitiveType::SkyLight;
         if (s == "TubeLight" || s == "Tube Light" || s == "DiscLight" || s == "Disc Light") return PrimitiveType::AreaLight;
         if (s == "Camera") return PrimitiveType::Camera;
+        if (s == "UserInterface" || s == "User Interface" || s == "UI" || s == "UserInterface3D" || s == "UI3D") return PrimitiveType::UserInterface;
         return PrimitiveType::Cube;
     }
 
@@ -1226,6 +1239,27 @@ public:
         p = actorBlock.find("\"waterChoppiness\""); if (p != std::string::npos) obj.water.choppiness = ParseFloatAt(actorBlock, p, 0.7f);
         p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
         p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
+
+        // Parse 3D User Interface Properties
+        p = actorBlock.find("\"isUserInterface\""); if (p != std::string::npos) obj.isUserInterface = ParseBoolAt(actorBlock, p, false);
+        if (obj.type == PrimitiveType::UserInterface) obj.isUserInterface = true;
+        p = actorBlock.find("\"uiAssetPath\""); if (p != std::string::npos) obj.ui3d.uiAssetPath = ParseStringAt(actorBlock, p, "");
+        p = actorBlock.find("\"uiSpace\""); if (p != std::string::npos) obj.ui3d.space = (EunoiaUI::UI3DSpaceType)ParseIntAt(actorBlock, p, 0);
+        p = actorBlock.find("\"uiSize\""); if (p != std::string::npos) {
+            glm::vec4 v = ParseVec4(actorBlock, p);
+            obj.ui3d.size = glm::vec2(v.x, v.y);
+        }
+        p = actorBlock.find("\"uiCanvasResolution\""); if (p != std::string::npos) {
+            glm::vec4 v = ParseVec4(actorBlock, p);
+            obj.ui3d.canvasResolution = glm::vec2(v.x, v.y);
+        }
+        p = actorBlock.find("\"uiTwoSided\""); if (p != std::string::npos) obj.ui3d.twoSided = ParseBoolAt(actorBlock, p, true);
+        p = actorBlock.find("\"uiOpacity\""); if (p != std::string::npos) obj.ui3d.opacity = ParseFloatAt(actorBlock, p, 1.0f);
+        p = actorBlock.find("\"uiInteractable\""); if (p != std::string::npos) obj.ui3d.interactable = ParseBoolAt(actorBlock, p, true);
+        p = actorBlock.find("\"uiBackgroundColor\""); if (p != std::string::npos) obj.ui3d.backgroundColor = ParseVec4(actorBlock, p);
+        p = actorBlock.find("\"uiBorderColor\""); if (p != std::string::npos) obj.ui3d.borderColor = ParseVec4(actorBlock, p);
+        p = actorBlock.find("\"uiBorderWidth\""); if (p != std::string::npos) obj.ui3d.borderWidth = ParseFloatAt(actorBlock, p, 2.0f);
+
         // Parse Physics Modifier
         p = actorBlock.find("\"hasPhysics\"");
         if (p != std::string::npos) {

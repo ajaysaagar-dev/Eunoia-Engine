@@ -12,7 +12,7 @@ namespace Collisions {
 
 void CollisionSystem::SetupDefaultModifiers(GameObject& obj) {
     obj.modifiers.clear();
-    if (obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || obj.type == PrimitiveType::Camera || obj.type == PrimitiveType::Empty || obj.type == PrimitiveType::ImportedMesh || obj.isImportedMesh) {
+    if (obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || obj.type == PrimitiveType::Camera || obj.isUserInterface || obj.type == PrimitiveType::UserInterface || obj.type == PrimitiveType::Empty || obj.type == PrimitiveType::ImportedMesh || obj.isImportedMesh) {
         obj.collision.enabled = false;
         obj.collision.shapeType = CollisionShapeType::None;
         return;

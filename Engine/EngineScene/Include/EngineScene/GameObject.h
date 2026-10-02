@@ -12,6 +12,7 @@
 #include <LightsBaking/LightBakeTypes.h>
 #include <Collisions/CollisionTypes.h>
 #include <Physics/PhysicsTypes.h>
+#include <UISystem3D/UI3DTypes.h>
 
 enum class LightType {
     Directional,
@@ -174,7 +175,8 @@ enum class PrimitiveType {
     AreaLight,
     SkyLight,
     Camera,
-    WaterBody
+    WaterBody,
+    UserInterface
 };
 
 inline const char* GetPrimitiveTypeName(PrimitiveType type) {
@@ -204,6 +206,7 @@ inline const char* GetPrimitiveTypeName(PrimitiveType type) {
         case PrimitiveType::SkyLight:         return "Sky Light";
         case PrimitiveType::Camera:           return "Camera";
         case PrimitiveType::WaterBody:        return "Water Body";
+        case PrimitiveType::UserInterface:    return "User Interface";
         default:                              return "Object";
     }
 }
@@ -633,6 +636,8 @@ struct GameObject {
     CameraComponent camera;
     bool isWaterBody = false;
     WaterBodyComponent water;
+    bool isUserInterface = false;
+    EunoiaUI::UserInterface3DComponent ui3d;
     PrimitiveParams params;
 
     PrimitiveMesh mesh;
@@ -838,6 +843,8 @@ struct GameObject {
         camera = other.camera;
         isWaterBody = other.isWaterBody;
         water = other.water;
+        isUserInterface = other.isUserInterface;
+        ui3d = std::move(other.ui3d);
         params = other.params;
         mesh = std::move(other.mesh);
         collision = std::move(other.collision);
@@ -906,6 +913,8 @@ struct GameObject {
         camera = other.camera;
         isWaterBody = other.isWaterBody;
         water = other.water;
+        isUserInterface = other.isUserInterface;
+        ui3d = other.ui3d;
         params = other.params;
         mesh = other.mesh;
         collision = other.collision;
@@ -972,6 +981,12 @@ struct GameObject {
         if (type == PrimitiveType::Camera) {
             isCamera = true;
         }
+        if (type == PrimitiveType::UserInterface) {
+            isUserInterface = true;
+            ui3d.enabled = true;
+            params.width = ui3d.size.x;
+            params.height = ui3d.size.y;
+        }
         if (IsLightPrimitive(type)) {
             isLight = true;
             switch (type) {
@@ -1002,7 +1017,7 @@ struct GameObject {
 
         // Initialize default modifiers (by default respective shape added; 3D models and lights/cameras have NO modifiers by default)
         modifiers.clear();
-        if (!IsLightPrimitive(type) && !IsCameraPrimitive(type) && type != PrimitiveType::Empty && type != PrimitiveType::ImportedMesh && !isImportedMesh) {
+        if (!IsLightPrimitive(type) && !IsCameraPrimitive(type) && type != PrimitiveType::Empty && type != PrimitiveType::UserInterface && type != PrimitiveType::ImportedMesh && !isImportedMesh) {
             CollisionModifier mod;
             if (type == PrimitiveType::Sphere || type == PrimitiveType::UVSphere || type == PrimitiveType::Icosphere) {
                 mod.name = "Sphere Collision";
@@ -1097,10 +1112,11 @@ struct GameObject {
             case PrimitiveType::Prism:
                 mesh = GeometryBuilder::CreatePrism(params.radius, params.height, params.sides);
                 break;
+            case PrimitiveType::UserInterface:
             case PrimitiveType::ImportedMesh:
             case PrimitiveType::Empty:
             default:
-                if (IsLightPrimitive(type) || IsCameraPrimitive(type) || type == PrimitiveType::Empty || type == PrimitiveType::ImportedMesh) {
+                if (IsLightPrimitive(type) || IsCameraPrimitive(type) || type == PrimitiveType::Empty || type == PrimitiveType::UserInterface || type == PrimitiveType::ImportedMesh) {
                     mesh.vertices.clear();
                     mesh.indices.clear();
                 }

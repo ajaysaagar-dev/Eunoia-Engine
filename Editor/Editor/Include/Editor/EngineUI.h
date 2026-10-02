@@ -501,6 +501,8 @@ public:
     // UI Editor & Asset File I/O
     bool showNewUIPopup = false;
     char newUINameBuf[64] = "UI_NewInterface";
+    bool showNewUI3DPopup = false;
+    char newUI3DNameBuf[64] = "UI3D_NewInterface";
     void OpenUIEditor(const std::string& path);
 
     // Behaviours & Play Mode (dev.md)

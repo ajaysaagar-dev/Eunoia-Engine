@@ -23,6 +23,8 @@ enum class AssetType {
     Water,
     UserInterface,
     UI = UserInterface,
+    UserInterface3D,
+    UI3D = UserInterface3D,
     Data
 };
 
@@ -45,6 +47,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Skybox:          return "Skybox";
         case AssetType::Water:           return "Water Body";
         case AssetType::UserInterface:   return "User Interface";
+        case AssetType::UserInterface3D: return "User Interface 3D";
         case AssetType::Data:            return "Data";
         default:                         return "Unknown";
     }
@@ -69,6 +72,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "behaviour" || s == "behaviorscript" || s == "behavior script") return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "water")        return AssetType::Water;
+    if (s == "userinterface3d" || s == "user_interface_3d" || s == "user interface 3d" || s == "ui3d" || s == "eui3d") return AssetType::UserInterface3D;
     if (s == "userinterface" || s == "user_interface" || s == "user interface" || s == "ui" || s == "eui") return AssetType::UserInterface;
     if (s == "data")         return AssetType::Data;
     return AssetType::Unknown;
@@ -90,6 +94,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "water") {
         return AssetType::Water;
+    }
+    if (e == "eui3d" || e == "ui3d") {
+        return AssetType::UserInterface3D;
     }
     if (e == "eui" || e == "ui") {
         return AssetType::UserInterface;
@@ -140,6 +147,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::Skybox:          return "🌌";
         case AssetType::Water:           return "🌊";
         case AssetType::UserInterface:   return "🖥";
+        case AssetType::UserInterface3D: return "🔮";
         case AssetType::Data:            return "📊";
         default:                         return "📄";
     }
