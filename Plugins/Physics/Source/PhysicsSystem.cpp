@@ -72,8 +72,21 @@ static glm::vec3 GetObjectHalfExtents(const GameObject& obj) {
 static glm::mat3 ComputeBodyInertiaInv(const GameObject& obj) {
     float m = std::max(0.001f, obj.physics.mass);
     glm::vec3 h = GetObjectHalfExtents(obj);
-    glm::vec3 size = h * 2.0f;
 
+    bool isSphere = (obj.type == PrimitiveType::Sphere || obj.type == PrimitiveType::UVSphere || obj.type == PrimitiveType::Icosphere ||
+                    (!obj.modifiers.empty() && obj.modifiers[0].shapeType == CollisionShapeType::Sphere));
+    if (isSphere) {
+        float r = h.x;
+        float i = 0.4f * m * r * r;
+        float invI = 1.0f / std::max(1e-4f, i);
+        return glm::mat3(
+            invI, 0.0f, 0.0f,
+            0.0f, invI, 0.0f,
+            0.0f, 0.0f, invI
+        );
+    }
+
+    glm::vec3 size = h * 2.0f;
     float ix = (1.0f / 12.0f) * m * (size.y * size.y + size.z * size.z);
     float iy = (1.0f / 12.0f) * m * (size.x * size.x + size.z * size.z);
     float iz = (1.0f / 12.0f) * m * (size.x * size.x + size.y * size.y);
@@ -188,8 +201,8 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             glm::vec3 linearAcc = grav + (phys.accumulatedForce / mass);
             phys.velocity += linearAcc * subDt;
 
-            // Linear damping
-            phys.velocity *= std::clamp(1.0f - phys.linearDamping * subDt, 0.0f, 1.0f);
+            // Unconditionally stable damping (matches D3D12Renderer)
+            phys.velocity *= 1.0f / (1.0f + subDt * std::max(0.0f, phys.linearDamping));
 
             // Constraints
             if (phys.lockPositionX) phys.velocity.x = 0.0f;
@@ -197,7 +210,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             if (phys.lockPositionZ) phys.velocity.z = 0.0f;
 
             // Angular damping
-            phys.angularVelocity *= std::clamp(1.0f - phys.angularDamping * subDt, 0.0f, 1.0f);
+            phys.angularVelocity *= 1.0f / (1.0f + subDt * std::max(0.0f, phys.angularDamping));
 
             if (phys.lockRotationX) phys.angularVelocity.x = 0.0f;
             if (phys.lockRotationY) phys.angularVelocity.y = 0.0f;
@@ -279,10 +292,19 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                         float Kt2 = (1.0f / massA) + glm::dot(rCrossT2, IA_inv * rCrossT2);
                         cc.effTangent2Mass = 1.0f / std::max(1e-4f, Kt2);
 
-                        // Baumgarte stabilization velocity bias
+                        // Baumgarte stabilization velocity bias & restitution
                         const float baumgarte = 0.25f;
                         const float slop = 0.001f;
-                        cc.velocityBias = (baumgarte / subDt) * std::max(0.0f, penetration - slop);
+                        float penBias = (baumgarte / subDt) * std::max(0.0f, penetration - slop);
+
+                        // Relative velocity along normal before impulse
+                        glm::vec3 vPoint = obj.physics.velocity + glm::cross(obj.physics.angularVelocity, cc.rA);
+                        float vRelN = glm::dot(vPoint, cc.normal);
+                        float bounceBias = 0.0f;
+                        if (vRelN < -0.3f && cc.restitution > 0.01f) {
+                            bounceBias = -cc.restitution * vRelN;
+                        }
+                        cc.velocityBias = penBias + bounceBias;
 
                         constraints.push_back(cc);
                     }
@@ -389,7 +411,17 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
 
                 const float baumgarte = 0.25f;
                 const float slop = 0.001f;
-                cc.velocityBias = (baumgarte / subDt) * std::max(0.0f, minPen - slop);
+                float penBias = (baumgarte / subDt) * std::max(0.0f, minPen - slop);
+
+                // Relative velocity along normal before impulse
+                glm::vec3 vPtA = dynA ? (objA.physics.velocity + glm::cross(objA.physics.angularVelocity, cc.rA)) : glm::vec3(0.0f);
+                glm::vec3 vPtB = dynB ? (objB.physics.velocity + glm::cross(objB.physics.angularVelocity, cc.rB)) : glm::vec3(0.0f);
+                float vRelN = glm::dot(vPtA - vPtB, cc.normal);
+                float bounceBias = 0.0f;
+                if (vRelN < -0.3f && cc.restitution > 0.01f) {
+                    bounceBias = -cc.restitution * vRelN;
+                }
+                cc.velocityBias = penBias + bounceBias;
 
                 constraints.push_back(cc);
             }
