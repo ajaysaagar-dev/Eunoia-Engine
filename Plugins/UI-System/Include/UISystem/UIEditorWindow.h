@@ -103,6 +103,7 @@ class UIEditorWindow {
 public:
     UserInterface ui;
     std::string filePath;
+    std::string name;
     bool isOpen = true;
     bool isDirty = false;
     bool autoSave = true;
@@ -116,16 +117,23 @@ public:
 
     std::string lastReloadStatus = "Synced";
 
-    UIEditorWindow(const std::string& path, const std::string& name = "") {
+    UIEditorWindow(const std::string& path, const std::string& inName = "") {
         filePath = path;
+        if (!inName.empty()) {
+            name = inName;
+        } else if (!path.empty()) {
+            name = std::filesystem::path(path).filename().string();
+        } else {
+            name = "New UI";
+        }
         if (!path.empty()) {
             if (!ui.LoadFromFile(path)) {
-                ui.name = name.empty() ? "New UI" : name;
+                ui.name = name;
                 ui.SaveToHtml();
                 ui.SaveToFile(path);
             }
         } else {
-            ui.name = name.empty() ? "New UI" : name;
+            ui.name = name;
         }
     }
 
@@ -386,42 +394,91 @@ public:
         return instance;
     }
 
+    int activeTabIndex = 0; // 0 = Main Editor, 1..N = UI Editors
+
     void Open(const std::string& filePath, const std::string& name = "") {
-        for (auto& editor : m_editors) {
-            if (editor->filePath == filePath) {
-                editor->isOpen = true;
+        for (size_t i = 0; i < m_editors.size(); ++i) {
+            if (m_editors[i]->filePath == filePath) {
+                m_editors[i]->isOpen = true;
+                activeTabIndex = (int)i + 1;
                 return;
             }
         }
         m_editors.push_back(std::make_unique<UIEditorWindow>(filePath, name));
+        activeTabIndex = (int)m_editors.size();
+    }
+
+    void Close(size_t index) {
+        if (index < m_editors.size()) {
+            if (m_editors[index]->autoSave || m_editors[index]->isDirty) {
+                m_editors[index]->Save();
+            }
+            m_editors.erase(m_editors.begin() + index);
+            if (activeTabIndex > (int)m_editors.size()) {
+                activeTabIndex = (int)m_editors.size();
+            }
+        }
+    }
+
+    bool IsMainEditorActive() const {
+        return activeTabIndex == 0 || m_editors.empty();
+    }
+
+    UIEditorWindow* GetActiveEditor() {
+        if (activeTabIndex > 0 && activeTabIndex <= (int)m_editors.size()) {
+            return m_editors[activeTabIndex - 1].get();
+        }
+        return nullptr;
+    }
+
+    const std::vector<std::unique_ptr<UIEditorWindow>>& GetEditors() const {
+        return m_editors;
+    }
+
+    size_t GetOpenEditorCount() const {
+        return m_editors.size();
+    }
+
+    void SwitchToMainEditor() {
+        activeTabIndex = 0;
+    }
+
+    void SwitchToEditor(int index) {
+        if (index >= 0 && index <= (int)m_editors.size()) {
+            activeTabIndex = index;
+        }
+    }
+
+    void RenderActiveTabWorkspace(const glm::vec2& pos, const glm::vec2& size) {
+        UIEditorWindow* activeEditor = GetActiveEditor();
+        if (activeEditor && activeEditor->isOpen) {
+            ImGui::SetNextWindowPos(ImVec2(pos.x, pos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(size.x, size.y), ImGuiCond_Always);
+            ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                    ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                                    ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar |
+                                    ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings;
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.07f, 0.08f, 0.10f, 1.0f));
+
+            std::string winId = "##UIEditorWorkspace_" + activeEditor->filePath;
+            if (ImGui::Begin(winId.c_str(), nullptr, flags)) {
+                activeEditor->RenderUIEditorContent();
+            }
+            ImGui::End();
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(3);
+        }
     }
 
     void RenderAll() {
-        for (auto it = m_editors.begin(); it != m_editors.end();) {
-            if ((*it)->isOpen) {
-                std::string winTitle = "🎨 UI Editor - " + (*it)->ui.name;
-                if ((*it)->isDirty) winTitle += " *";
-                winTitle += "###UIEditorWin_" + (*it)->filePath;
-
-                ImGui::SetNextWindowSize(ImVec2(1180, 720), ImGuiCond_FirstUseEver);
-                ImGui::SetNextWindowPos(ImVec2(100, 70), ImGuiCond_FirstUseEver);
-
-                bool stillOpen = true;
-                if (ImGui::Begin(winTitle.c_str(), &stillOpen, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
-                    (*it)->RenderUIEditorContent();
-                }
-                ImGui::End();
-
-                if (!stillOpen) {
-                    if ((*it)->autoSave || (*it)->isDirty) {
-                        (*it)->Save();
-                    }
-                    (*it)->isOpen = false;
-                }
-                ++it;
-            } else {
-                it = m_editors.erase(it);
-            }
+        // Render active tab workspace if a UI tab is selected
+        if (!IsMainEditorActive()) {
+            // Managed directly in EngineUI layout
         }
     }
 

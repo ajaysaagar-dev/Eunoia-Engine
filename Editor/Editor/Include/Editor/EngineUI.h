@@ -657,6 +657,7 @@ private:
     void RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit);
     void RenderCustomTitleBar(Scene& scene, bool& outShouldExit);
     void RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit);
+    void RenderWorkspaceTabBar(Scene& scene);
     void RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs);
     void RenderOutliner(Scene& scene);
     void DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_set<int>& visitedIds, int depth = 0);
