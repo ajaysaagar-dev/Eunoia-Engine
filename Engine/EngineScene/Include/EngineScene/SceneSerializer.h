@@ -1262,7 +1262,7 @@ public:
                     ss >> obj.collision.planeSize.x >> comma >> obj.collision.planeSize.y;
                 }
             }
-            if (obj.collision.enabled && obj.collision.shapeType != CollisionShapeType::None && obj.modifiers.empty()) {
+            if (obj.collision.enabled && obj.collision.shapeType != CollisionShapeType::None && obj.modifiers.empty() && !obj.isImportedMesh && obj.type != PrimitiveType::ImportedMesh) {
                 obj.modifiers.push_back(obj.collision);
             }
         }
