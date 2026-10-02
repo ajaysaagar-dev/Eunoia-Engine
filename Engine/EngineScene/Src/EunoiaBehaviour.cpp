@@ -1073,12 +1073,20 @@ void DynamicScriptBehaviour::CopyPropertiesFrom(const EunoiaBehaviour& other) {
 }
 
 void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::unordered_set<std::string>& visited) {
-    if (visited.find(methodName) != visited.end()) return;
-    visited.insert(methodName);
+    std::string cleanMethod = methodName;
+    size_t paren = cleanMethod.find('(');
+    if (paren != std::string::npos) cleanMethod = cleanMethod.substr(0, paren);
+    size_t nb = cleanMethod.find_first_not_of(" \t\r\n");
+    size_t ne = cleanMethod.find_last_not_of(" \t\r\n");
+    if (nb == std::string::npos) return;
+    cleanMethod = cleanMethod.substr(nb, ne - nb + 1);
 
-    auto it = m_methods.find(methodName);
+    if (visited.find(cleanMethod) != visited.end()) return;
+    visited.insert(cleanMethod);
+
+    auto it = m_methods.find(cleanMethod);
     if (it == m_methods.end()) {
-        std::string lowerMethod = methodName;
+        std::string lowerMethod = cleanMethod;
         std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
         for (auto& pair : m_methods) {
             std::string k = pair.first;

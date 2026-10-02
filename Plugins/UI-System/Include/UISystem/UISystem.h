@@ -38,6 +38,11 @@ public:
     // Active UIs list
     const std::vector<UserInterface*>& GetActiveUIs() const { return m_activeUIs; }
 
+    // Scene Context & Event Dispatching
+    void SetCurrentScene(void* scenePtr) { m_currentScene = scenePtr; }
+    void* GetCurrentScene() const { return m_currentScene; }
+    void DispatchEvent(const UIEventBinding& binding);
+
     // Runtime Viewport Rendering
     void RenderActiveUIs(const glm::vec2& viewportPos, const glm::vec2& viewportSize);
     void RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, const glm::vec2& screenMax, const UserInterface& ui);
@@ -46,6 +51,7 @@ private:
     UISystemManager() = default;
     ~UISystemManager() override = default;
 
+    void* m_currentScene = nullptr;
     std::vector<UserInterface*> m_activeUIs;
     std::unordered_map<std::string, std::shared_ptr<UserInterface>> m_loadedUIs;
 };

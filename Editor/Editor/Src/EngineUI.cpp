@@ -2771,6 +2771,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         ImGuiViewport* mainVp = ImGui::GetMainViewport();
 
         // Render Active Runtime UIs added via UISystem.Add(UI)
+        EunoiaUI::UISystemManager::Get().SetCurrentScene(&scene);
         EunoiaUI::UISystemManager::Get().RenderActiveUIs(glm::vec2(mainVp->WorkPos.x, mainVp->WorkPos.y), glm::vec2(mainVp->WorkSize.x, mainVp->WorkSize.y));
 
         // Game View top-left: Render on-screen Print messages (Print(value, time))

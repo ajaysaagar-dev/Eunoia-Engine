@@ -243,13 +243,25 @@ inline std::vector<std::string> ExtractScriptFunctions(const std::string& script
 inline void ExecuteScriptFunction(Scene* scene, const UIEventBinding& binding) {
     if (!scene || binding.targetFunction.empty()) return;
 
-    for (auto& obj : scene->objects) {
-        if (binding.targetActorId >= 0) {
-            if (obj.id != binding.targetActorId) continue;
-        } else if (!binding.targetActorName.empty()) {
-            if (obj.name != binding.targetActorName) continue;
+    GameObject* targetObj = nullptr;
+    if (binding.targetActorId >= 0) {
+        for (auto& obj : scene->objects) {
+            if (obj.id == binding.targetActorId) {
+                targetObj = &obj;
+                break;
+            }
         }
+    }
+    if (!targetObj && !binding.targetActorName.empty()) {
+        for (auto& obj : scene->objects) {
+            if (obj.name == binding.targetActorName) {
+                targetObj = &obj;
+                break;
+            }
+        }
+    }
 
+    auto executeOnObj = [&](GameObject& obj) -> bool {
         for (auto& b : obj.behaviours) {
             if (!b) continue;
             if (!binding.behaviourClass.empty() && b->GetClassName() != binding.behaviourClass) continue;
@@ -257,17 +269,31 @@ inline void ExecuteScriptFunction(Scene* scene, const UIEventBinding& binding) {
             std::string fn = binding.targetFunction;
             size_t p = fn.find('(');
             std::string cleanFn = (p != std::string::npos) ? fn.substr(0, p) : fn;
+            size_t nb = cleanFn.find_first_not_of(" \t\r\n");
+            size_t ne = cleanFn.find_last_not_of(" \t\r\n");
+            if (nb != std::string::npos) cleanFn = cleanFn.substr(nb, ne - nb + 1);
 
             if (cleanFn == "Start") {
                 b->Start();
             } else if (cleanFn == "Update") {
                 b->Update(0.016f);
+            } else {
+                b->InvokeFunction(cleanFn);
             }
 
-            std::string logMsg = "UI Event [" + binding.eventName + "] triggered on " + obj.name + " (" + b->GetClassName() + ")::" + fn;
+            std::string logMsg = "UI Event [" + binding.eventName + "] triggered on " + obj.name + " (" + b->GetClassName() + ")::" + cleanFn;
             AddEngineLog("LogUI", logMsg.c_str(), 2);
-            return;
+            return true;
         }
+        return false;
+    };
+
+    if (targetObj) {
+        if (executeOnObj(*targetObj)) return;
+    }
+
+    for (auto& obj : scene->objects) {
+        if (executeOnObj(obj)) return;
     }
 }
 #endif
@@ -505,7 +531,12 @@ public:
             bool isMousePressed = io.MouseClicked[0] && !isPanning;
             bool isMouseReleased = io.MouseReleased[0] && !isPanning;
             float mouseWheel = io.MouseWheel;
-            ui.ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, currentScale);
+            auto eventDispatcher = [scene](const UIEventBinding& binding) {
+#if __has_include(<EngineScene/Scene.h>)
+                ExecuteScriptFunction(scene, binding);
+#endif
+            };
+            ui.ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, currentScale, eventDispatcher);
 
             // Selection Hit-Testing on Canvas click
             bool isHovered = ImGui::IsWindowHovered();

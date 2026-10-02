@@ -311,9 +311,9 @@ public:
         return false;
     }
 
-    void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale) {
+    void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale, const std::function<void(const UIEventBinding&)>& onTriggerEvent = nullptr) {
         if (htmlRoot) {
-            htmlRoot->ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, wheelDelta, canvasOrigin, scale);
+            htmlRoot->ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, wheelDelta, canvasOrigin, scale, onTriggerEvent);
         }
     }
 

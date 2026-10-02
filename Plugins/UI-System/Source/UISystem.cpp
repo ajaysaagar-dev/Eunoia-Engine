@@ -8,11 +8,81 @@
 #define EUNOIA_HAS_IMGUI 0
 #endif
 
+#if __has_include(<EngineScene/Scene.h>)
+#include <EngineScene/Scene.h>
+#include <EngineScene/EunoiaBehaviour.h>
+#include <EngineScene/BehaviourRegistry.h>
+#include <EngineCore/Log.h>
+#define EUNOIA_HAS_SCENE 1
+#else
+#define EUNOIA_HAS_SCENE 0
+#endif
+
 namespace EunoiaUI {
 
 UISystemManager& UISystemManager::Get() {
     static UISystemManager instance;
     return instance;
+}
+
+void UISystemManager::DispatchEvent(const UIEventBinding& binding) {
+#if EUNOIA_HAS_SCENE
+    if (!m_currentScene || binding.targetFunction.empty()) return;
+    Scene* scene = reinterpret_cast<Scene*>(m_currentScene);
+
+    GameObject* targetObj = nullptr;
+    if (binding.targetActorId >= 0) {
+        for (auto& obj : scene->objects) {
+            if (obj.id == binding.targetActorId) {
+                targetObj = &obj;
+                break;
+            }
+        }
+    }
+    if (!targetObj && !binding.targetActorName.empty()) {
+        for (auto& obj : scene->objects) {
+            if (obj.name == binding.targetActorName) {
+                targetObj = &obj;
+                break;
+            }
+        }
+    }
+
+    auto executeOnObj = [&](GameObject& obj) -> bool {
+        for (auto& b : obj.behaviours) {
+            if (!b) continue;
+            if (!binding.behaviourClass.empty() && b->GetClassName() != binding.behaviourClass) continue;
+
+            std::string fn = binding.targetFunction;
+            size_t p = fn.find('(');
+            std::string cleanFn = (p != std::string::npos) ? fn.substr(0, p) : fn;
+            size_t nb = cleanFn.find_first_not_of(" \t\r\n");
+            size_t ne = cleanFn.find_last_not_of(" \t\r\n");
+            if (nb != std::string::npos) cleanFn = cleanFn.substr(nb, ne - nb + 1);
+
+            if (cleanFn == "Start") {
+                b->Start();
+            } else if (cleanFn == "Update") {
+                b->Update(0.016f);
+            } else {
+                b->InvokeFunction(cleanFn);
+            }
+
+            std::string logMsg = "UI Event [" + binding.eventName + "] triggered on " + obj.name + " (" + b->GetClassName() + ")::" + cleanFn;
+            AddEngineLog("LogUI", logMsg.c_str(), 2);
+            return true;
+        }
+        return false;
+    };
+
+    if (targetObj) {
+        if (executeOnObj(*targetObj)) return;
+    }
+
+    for (auto& obj : scene->objects) {
+        if (executeOnObj(obj)) return;
+    }
+#endif
 }
 
 void UISystemManager::Add(UserInterface* ui) {
@@ -111,7 +181,10 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     bool isMousePressed = io.MouseClicked[0];
     bool isMouseReleased = io.MouseReleased[0];
     float mouseWheel = io.MouseWheel;
-    const_cast<UserInterface&>(ui).ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, scale);
+    auto eventDispatcher = [this](const UIEventBinding& binding) {
+        this->DispatchEvent(binding);
+    };
+    const_cast<UserInterface&>(ui).ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, scale, eventDispatcher);
 
     // 1. Render HTML + CSS structure
     if (ui.htmlRoot) {

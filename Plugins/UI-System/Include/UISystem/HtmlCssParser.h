@@ -930,14 +930,27 @@ public:
         maxScrollY = std::max(0.0f, totalContentHeight - contentRect.w);
     }
 
-    void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale) {
+    void ProcessInput(const glm::vec2& mousePos, bool isMouseDown, bool isMousePressed, bool isMouseReleased, float wheelDelta, const glm::vec2& canvasOrigin, float scale, const std::function<void(const UIEventBinding&)>& onTriggerEvent = nullptr) {
         if (style.isHidden) return;
 
         glm::vec2 pMin = canvasOrigin + glm::vec2(computedRect.x, computedRect.y) * scale;
         glm::vec2 pMax = pMin + glm::vec2(computedRect.z, computedRect.w) * scale;
 
         bool inBounds = (mousePos.x >= pMin.x && mousePos.x <= pMax.x && mousePos.y >= pMin.y && mousePos.y <= pMax.y);
+        bool wasHovered = isHovered;
         isHovered = inBounds;
+
+        if (!wasHovered && isHovered) {
+            auto itEnter = eventBindings.find("onmouseenter");
+            if (itEnter != eventBindings.end() && onTriggerEvent) {
+                onTriggerEvent(itEnter->second);
+            }
+        } else if (wasHovered && !isHovered) {
+            auto itLeave = eventBindings.find("onmouseleave");
+            if (itLeave != eventBindings.end() && onTriggerEvent) {
+                onTriggerEvent(itLeave->second);
+            }
+        }
 
         if (isHovered) {
 #if EUNOIA_HAS_IMGUI
@@ -945,6 +958,11 @@ public:
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
 #endif
+            auto itHover = eventBindings.find("onhover");
+            if (itHover != eventBindings.end() && onTriggerEvent) {
+                onTriggerEvent(itHover->second);
+            }
+
             if (wheelDelta != 0.0f && maxScrollY > 0.0f) {
                 scrollY = std::clamp(scrollY - wheelDelta * 40.0f, 0.0f, maxScrollY);
                 if (parent) {
@@ -954,12 +972,20 @@ public:
 
             if (isMousePressed) {
                 isPressed = true;
+                auto itPress = eventBindings.find("onpress");
+                if (itPress != eventBindings.end() && onTriggerEvent) {
+                    onTriggerEvent(itPress->second);
+                }
             }
 
             if (isMouseReleased && isPressed) {
                 isClicked = true;
                 if (onClick) {
                     onClick();
+                }
+                auto itClick = eventBindings.find("onclick");
+                if (itClick != eventBindings.end() && onTriggerEvent) {
+                    onTriggerEvent(itClick->second);
                 }
             }
         }
@@ -969,7 +995,7 @@ public:
         }
 
         for (auto& ch : children) {
-            ch->ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, wheelDelta, canvasOrigin, scale);
+            ch->ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, wheelDelta, canvasOrigin, scale, onTriggerEvent);
         }
     }
 
