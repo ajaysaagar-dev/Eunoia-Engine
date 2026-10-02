@@ -17,6 +17,7 @@
 #include <EngineScene/BehaviourRegistry.h>
 #include <EnginePlatform/InputSystem.h>
 #include <LightsBaking/LightBakeManager.h>
+#include <Collisions/CollisionSystem.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -1584,13 +1585,18 @@ struct RenderBatch {
             outBatches.push_back(b);
         }
 
-        // 3. Highlight Selected Object: ONLY on the meshes edge as a vivid green outline
+        // 3. Highlight Selected Object: Outline + Collision Wireframe
         if (selectedId != -1) {
             GameObject* selObj = FindObject(selectedId);
             if (selObj && selObj->visible) {
                 uint32_t outlineStart = (uint32_t)outIndices.size();
                 glm::vec3 greenOutlineColor{0.0f, 1.0f, 0.25f};
                 AppendObjectEdgeOutline(outVertices, outIndices, *selObj, cameraPos, greenOutlineColor);
+
+                if (!selObj->modifiers.empty()) {
+                    Collisions::CollisionSystem::Get().AppendCollisionWireframe(outVertices, outIndices, *selObj, cameraPos, GetWorldMatrix(*selObj));
+                }
+
                 uint32_t outlineCount = (uint32_t)outIndices.size() - outlineStart;
                 if (outlineCount > 0) {
                     RenderBatch b;

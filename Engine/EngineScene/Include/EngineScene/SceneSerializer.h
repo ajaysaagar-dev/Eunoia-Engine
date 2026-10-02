@@ -337,6 +337,29 @@ public:
             file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
             file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
 
+            // Modifiers (Collisions, etc.)
+            file << "      \"modifiers\": [\n";
+            for (size_t mi = 0; mi < obj.modifiers.size(); ++mi) {
+                const auto& mod = obj.modifiers[mi];
+                file << "        {\n";
+                file << "          \"name\": " << QuoteStr(mod.name) << ",\n";
+                file << "          \"enabled\": " << BoolStr(mod.enabled) << ",\n";
+                file << "          \"shape\": " << (int)mod.shapeType << ",\n";
+                file << "          \"isTrigger\": " << BoolStr(mod.isTrigger) << ",\n";
+                file << "          \"boxExtents\": " << WriteVec3(mod.boxExtents) << ",\n";
+                file << "          \"radius\": " << mod.radius << ",\n";
+                file << "          \"height\": " << mod.height << ",\n";
+                file << "          \"planeSize\": [" << mod.planeSize.x << ", " << mod.planeSize.y << "],\n";
+                file << "          \"centerOffset\": " << WriteVec3(mod.centerOffset) << ",\n";
+                file << "          \"friction\": " << mod.friction << ",\n";
+                file << "          \"restitution\": " << mod.restitution << ",\n";
+                file << "          \"preset\": " << QuoteStr(mod.preset) << ",\n";
+                file << "          \"showWireframe\": " << BoolStr(mod.showWireframe) << ",\n";
+                file << "          \"wireframeColor\": [" << mod.wireframeColor.r << ", " << mod.wireframeColor.g << ", " << mod.wireframeColor.b << ", " << mod.wireframeColor.a << "],\n";
+                file << "          \"isDefaultFit\": " << BoolStr(mod.isDefaultFit) << "\n";
+                file << "        }" << (mi + 1 < obj.modifiers.size() ? "," : "") << "\n";
+            }
+            file << "      ],\n";
 
             // Attached Behaviours (dev.md Section 14)
             file << "      \"behaviours\": [\n";
@@ -1158,6 +1181,91 @@ public:
         p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
         p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
         p = actorBlock.find("\"waterDebugMode\""); if (p != std::string::npos) obj.water.debugMode = ParseIntAt(actorBlock, p, 0);
+
+        // Parse Modifiers array
+        size_t modArrPos = actorBlock.find("\"modifiers\"");
+        if (modArrPos != std::string::npos) {
+            size_t mStart = actorBlock.find('[', modArrPos);
+            size_t mEnd = (mStart != std::string::npos) ? FindMatchingBracket(actorBlock, mStart) : std::string::npos;
+            if (mStart != std::string::npos && mEnd != std::string::npos) {
+                obj.modifiers.clear();
+                std::string modArray = actorBlock.substr(mStart, mEnd - mStart + 1);
+                size_t mSearchPos = 0;
+                while (true) {
+                    size_t mObjStart = modArray.find('{', mSearchPos);
+                    if (mObjStart == std::string::npos) break;
+                    size_t mObjEnd = FindMatchingBrace(modArray, mObjStart);
+                    if (mObjEnd == std::string::npos) break;
+
+                    std::string mBlock = modArray.substr(mObjStart, mObjEnd - mObjStart + 1);
+                    CollisionModifier mod;
+                    size_t mp;
+                    mp = mBlock.find("\"name\""); if (mp != std::string::npos) mod.name = ParseStringAt(mBlock, mp, "Box Collision");
+                    mp = mBlock.find("\"enabled\""); if (mp != std::string::npos) mod.enabled = ParseBoolAt(mBlock, mp, true);
+                    mp = mBlock.find("\"shape\""); if (mp != std::string::npos) mod.shapeType = (CollisionShapeType)ParseIntAt(mBlock, mp, 1);
+                    mp = mBlock.find("\"isTrigger\""); if (mp != std::string::npos) mod.isTrigger = ParseBoolAt(mBlock, mp, false);
+                    mp = mBlock.find("\"boxExtents\""); if (mp != std::string::npos) mod.boxExtents = ParseVec3(mBlock, mp);
+                    mp = mBlock.find("\"radius\""); if (mp != std::string::npos) mod.radius = ParseFloatAt(mBlock, mp, 0.5f);
+                    mp = mBlock.find("\"height\""); if (mp != std::string::npos) mod.height = ParseFloatAt(mBlock, mp, 1.0f);
+                    mp = mBlock.find("\"centerOffset\""); if (mp != std::string::npos) mod.centerOffset = ParseVec3(mBlock, mp);
+                    mp = mBlock.find("\"friction\""); if (mp != std::string::npos) mod.friction = ParseFloatAt(mBlock, mp, 0.5f);
+                    mp = mBlock.find("\"restitution\""); if (mp != std::string::npos) mod.restitution = ParseFloatAt(mBlock, mp, 0.0f);
+                    mp = mBlock.find("\"preset\""); if (mp != std::string::npos) mod.preset = ParseStringAt(mBlock, mp, "Default");
+                    mp = mBlock.find("\"showWireframe\""); if (mp != std::string::npos) mod.showWireframe = ParseBoolAt(mBlock, mp, true);
+                    mp = mBlock.find("\"isDefaultFit\""); if (mp != std::string::npos) mod.isDefaultFit = ParseBoolAt(mBlock, mp, true);
+                    mp = mBlock.find("\"wireframeColor\""); if (mp != std::string::npos) mod.wireframeColor = ParseVec4(mBlock, mp);
+                    mp = mBlock.find("\"planeSize\"");
+                    if (mp != std::string::npos) {
+                        size_t lb = mBlock.find('[', mp);
+                        size_t rb = mBlock.find(']', lb);
+                        if (lb != std::string::npos && rb != std::string::npos) {
+                            std::string arr = mBlock.substr(lb + 1, rb - lb - 1);
+                            std::stringstream ss(arr);
+                            char comma;
+                            ss >> mod.planeSize.x >> comma >> mod.planeSize.y;
+                        }
+                    }
+
+                    obj.modifiers.push_back(mod);
+                    mSearchPos = mObjEnd + 1;
+                }
+                if (!obj.modifiers.empty()) {
+                    obj.collision = obj.modifiers[0];
+                }
+            }
+        } else {
+            // Legacy single collision fallback if older scene file
+            p = actorBlock.find("\"collisionEnabled\""); if (p != std::string::npos) obj.collision.enabled = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"collisionShape\""); if (p != std::string::npos) obj.collision.shapeType = (CollisionShapeType)ParseIntAt(actorBlock, p, (int)obj.collision.shapeType);
+            p = actorBlock.find("\"collisionIsTrigger\""); if (p != std::string::npos) obj.collision.isTrigger = ParseBoolAt(actorBlock, p, false);
+            p = actorBlock.find("\"collisionBoxExtents\""); if (p != std::string::npos) obj.collision.boxExtents = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"collisionRadius\""); if (p != std::string::npos) obj.collision.radius = ParseFloatAt(actorBlock, p, obj.collision.radius);
+            p = actorBlock.find("\"collisionHeight\""); if (p != std::string::npos) obj.collision.height = ParseFloatAt(actorBlock, p, obj.collision.height);
+            p = actorBlock.find("\"collisionCenterOffset\""); if (p != std::string::npos) obj.collision.centerOffset = ParseVec3(actorBlock, p);
+            p = actorBlock.find("\"collisionFriction\""); if (p != std::string::npos) obj.collision.friction = ParseFloatAt(actorBlock, p, 0.5f);
+            p = actorBlock.find("\"collisionRestitution\""); if (p != std::string::npos) obj.collision.restitution = ParseFloatAt(actorBlock, p, 0.0f);
+            p = actorBlock.find("\"collisionPreset\""); if (p != std::string::npos) obj.collision.preset = ParseStringAt(actorBlock, p, "Default");
+            p = actorBlock.find("\"collisionShowWireframe\""); if (p != std::string::npos) obj.collision.showWireframe = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"collisionIsDefaultFit\""); if (p != std::string::npos) obj.collision.isDefaultFit = ParseBoolAt(actorBlock, p, true);
+            p = actorBlock.find("\"collisionWireframeColor\"");
+            if (p != std::string::npos) {
+                obj.collision.wireframeColor = ParseVec4(actorBlock, p);
+            }
+            p = actorBlock.find("\"collisionPlaneSize\"");
+            if (p != std::string::npos) {
+                size_t lb = actorBlock.find('[', p);
+                size_t rb = actorBlock.find(']', lb);
+                if (lb != std::string::npos && rb != std::string::npos) {
+                    std::string arr = actorBlock.substr(lb + 1, rb - lb - 1);
+                    std::stringstream ss(arr);
+                    char comma;
+                    ss >> obj.collision.planeSize.x >> comma >> obj.collision.planeSize.y;
+                }
+            }
+            if (obj.collision.enabled && obj.collision.shapeType != CollisionShapeType::None && obj.modifiers.empty()) {
+                obj.modifiers.push_back(obj.collision);
+            }
+        }
 
         // Parse Attached Behaviours (dev.md Section 14)
         size_t behPos = actorBlock.find("\"behaviours\"");

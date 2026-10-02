@@ -1,0 +1,11 @@
+{
+    "name": "Collisions",
+    "version": "1.0.0",
+    "description": "Collision detection, shape representations, details panel editing, and viewport visualization system for Eunoia Engine.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "physics",
+    "core": true,
+    "dependencies": ["engine", "scene"],
+    "provides": ["ICollisionService"]
+}

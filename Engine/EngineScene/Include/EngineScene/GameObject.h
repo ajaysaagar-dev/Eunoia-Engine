@@ -10,6 +10,7 @@
 #include <EngineScene/EunoiaBehaviour.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <LightsBaking/LightBakeTypes.h>
+#include <Collisions/CollisionTypes.h>
 
 enum class LightType {
     Directional,
@@ -634,6 +635,55 @@ struct GameObject {
     PrimitiveParams params;
 
     PrimitiveMesh mesh;
+    CollisionComponent collision;
+    std::vector<CollisionModifier> modifiers;
+
+    CollisionModifier& AddModifier(CollisionShapeType shape) {
+        CollisionModifier mod(shape);
+        switch (shape) {
+            case CollisionShapeType::Box:
+                mod.boxExtents = glm::vec3(std::max(0.1f, params.width * 0.5f), std::max(0.1f, params.height * 0.5f), std::max(0.1f, params.depth * 0.5f));
+                break;
+            case CollisionShapeType::Sphere:
+                mod.radius = std::max(0.1f, params.radius);
+                break;
+            case CollisionShapeType::Capsule:
+                mod.radius = std::max(0.1f, params.radius);
+                mod.height = std::max(0.2f, params.height);
+                break;
+            case CollisionShapeType::Cylinder:
+                mod.radius = std::max(0.1f, params.radius);
+                mod.height = std::max(0.2f, params.height);
+                break;
+            case CollisionShapeType::Cone:
+                mod.radius = std::max(0.1f, params.radius);
+                mod.height = std::max(0.2f, params.height);
+                break;
+            case CollisionShapeType::Plane:
+                mod.planeSize = glm::vec2(std::max(0.2f, params.width), std::max(0.2f, params.depth > 0.0f ? params.depth : params.height));
+                break;
+            case CollisionShapeType::Mesh:
+                mod.boxExtents = glm::vec3(0.5f);
+                break;
+            default:
+                break;
+        }
+        mod.name = std::string(GetCollisionShapeTypeName(shape)) + " " + std::to_string(modifiers.size() + 1);
+        modifiers.push_back(mod);
+        if (modifiers.size() == 1) collision = mod;
+        return modifiers.back();
+    }
+
+    bool RemoveModifier(size_t index) {
+        if (index >= modifiers.size()) return false;
+        modifiers.erase(modifiers.begin() + index);
+        if (!modifiers.empty()) collision = modifiers[0];
+        else {
+            collision.enabled = false;
+            collision.shapeType = CollisionShapeType::None;
+        }
+        return true;
+    }
 
     // Attached Behaviours (dev.md Section 1, 2)
     std::vector<std::shared_ptr<EunoiaBehaviour>> behaviours;
@@ -716,6 +766,8 @@ struct GameObject {
         water = other.water;
         params = other.params;
         mesh = std::move(other.mesh);
+        collision = std::move(other.collision);
+        modifiers = std::move(other.modifiers);
         scene = other.scene;
         Transform.gameObject = this;
         behaviours = std::move(other.behaviours);
@@ -778,6 +830,8 @@ struct GameObject {
         water = other.water;
         params = other.params;
         mesh = other.mesh;
+        collision = other.collision;
+        modifiers = other.modifiers;
         scene = other.scene;
         Transform.gameObject = this;
         behaviours.clear();
@@ -865,6 +919,50 @@ struct GameObject {
         else if (type == PrimitiveType::Triangle) { params.width = 1.2f; params.height = 1.2f; }
         else if (type == PrimitiveType::Pyramid) { params.width = 1.0f; params.depth = 1.0f; params.height = 1.2f; params.sides = 4; }
         else if (type == PrimitiveType::Prism) { params.radius = 0.6f; params.height = 1.2f; params.sides = 3; }
+
+        // Initialize default modifiers (by default respective shape added; 3D models and lights/cameras have NO modifiers by default)
+        modifiers.clear();
+        if (!IsLightPrimitive(type) && !IsCameraPrimitive(type) && type != PrimitiveType::Empty && type != PrimitiveType::ImportedMesh && !isImportedMesh) {
+            CollisionModifier mod;
+            if (type == PrimitiveType::Sphere || type == PrimitiveType::UVSphere || type == PrimitiveType::Icosphere) {
+                mod.name = "Sphere Collision";
+                mod.shapeType = CollisionShapeType::Sphere;
+                mod.radius = params.radius;
+            } else if (type == PrimitiveType::Capsule) {
+                mod.name = "Capsule Collision";
+                mod.shapeType = CollisionShapeType::Capsule;
+                mod.radius = params.radius;
+                mod.height = params.height;
+            } else if (type == PrimitiveType::Cylinder) {
+                mod.name = "Cylinder Collision";
+                mod.shapeType = CollisionShapeType::Cylinder;
+                mod.radius = params.radius;
+                mod.height = params.height;
+            } else if (type == PrimitiveType::Cone) {
+                mod.name = "Cone Collision";
+                mod.shapeType = CollisionShapeType::Cone;
+                mod.radius = params.radius;
+                mod.height = params.height;
+            } else if (type == PrimitiveType::Plane || type == PrimitiveType::Quad) {
+                mod.name = "Plane Collision";
+                mod.shapeType = CollisionShapeType::Plane;
+                mod.planeSize = glm::vec2(params.width, params.depth > 0.0f ? params.depth : params.height);
+            } else if (type == PrimitiveType::WaterBody) {
+                mod.name = "Plane Collision";
+                mod.shapeType = CollisionShapeType::Plane;
+                mod.planeSize = glm::vec2(water.width, water.length);
+                mod.isTrigger = true;
+            } else {
+                mod.name = "Box Collision";
+                mod.shapeType = CollisionShapeType::Box;
+                mod.boxExtents = glm::vec3(params.width * 0.5f, params.height * 0.5f, params.depth * 0.5f);
+            }
+            modifiers.push_back(mod);
+            collision = mod;
+        } else {
+            collision.enabled = false;
+            collision.shapeType = CollisionShapeType::None;
+        }
 
         RebuildMesh();
     }

@@ -37,6 +37,8 @@
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
 #include <UISystem/UIEditorWindow.h>
 #include <UISystem/UISystem.h>
+#include <Collisions/CollisionTypes.h>
+#include <Collisions/CollisionSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -541,9 +543,9 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
         }
     }
 
-    // 1b. Copy Plugins Include headers (UI-System, etc.)
+    // 1b. Copy Plugins Include headers (UI-System, Collisions, etc.)
     std::vector<std::string> pluginModules = {
-        "UI-System", "Mesh-Cluster-Culling", "water", "skybox"
+        "UI-System", "Collisions", "Mesh-Cluster-Culling", "water", "skybox"
     };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
@@ -5885,6 +5887,189 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::Text("  Visible Clusters: %u", cStats.visibleClusters);
                 ImGui::Text("  Culled Clusters: %u", cStats.culledClusters);
                 ImGui::Text("  Culling Ratio: %.2f%%", cStats.cullingRatio);
+            }
+        }
+
+        // 4.8 Modifiers Section (includes Collisions and other modifiers)
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty) {
+            char modHeaderTitle[64];
+            snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", (int)obj->modifiers.size());
+            if (ImGui::CollapsingHeader(modHeaderTitle, ImGuiTreeNodeFlags_DefaultOpen)) {
+                // Add Modifier button and popup
+                if (ImGui::Button("➕ Add Modifier", ImVec2(ImGui::GetContentRegionAvail().x, 28.0f))) {
+                    ImGui::OpenPopup("AddModifierPopup");
+                }
+
+                if (ImGui::BeginPopup("AddModifierPopup")) {
+                    ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "COLLISION MODIFIERS");
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("📦  Box Collision")) {
+                        obj->AddModifier(CollisionShapeType::Box);
+                        AddLog("LogPhysics", "Added Box Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("🌐  Sphere Collision")) {
+                        obj->AddModifier(CollisionShapeType::Sphere);
+                        AddLog("LogPhysics", "Added Sphere Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("💊  Capsule Collision")) {
+                        obj->AddModifier(CollisionShapeType::Capsule);
+                        AddLog("LogPhysics", "Added Capsule Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("🥫  Cylinder Collision")) {
+                        obj->AddModifier(CollisionShapeType::Cylinder);
+                        AddLog("LogPhysics", "Added Cylinder Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("📐  Cone Collision")) {
+                        obj->AddModifier(CollisionShapeType::Cone);
+                        AddLog("LogPhysics", "Added Cone Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("🔲  Plane Collision")) {
+                        obj->AddModifier(CollisionShapeType::Plane);
+                        AddLog("LogPhysics", "Added Plane Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("🔷  Mesh Collision")) {
+                        obj->AddModifier(CollisionShapeType::Mesh);
+                        AddLog("LogPhysics", "Added Mesh Collision to " + obj->name, 0);
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (obj->modifiers.empty()) {
+                    ImGui::Spacing();
+                    ImGui::TextDisabled("No modifiers attached to this object.");
+                    ImGui::TextDisabled("Click '+ Add Modifier' to add collision modifiers.");
+                    ImGui::Spacing();
+                } else {
+                    int modifierToRemove = -1;
+
+                    for (size_t mi = 0; mi < obj->modifiers.size(); ++mi) {
+                        auto& mod = obj->modifiers[mi];
+                        ImGui::PushID((int)mi);
+
+                        ImGui::Spacing();
+                        ImGui::Separator();
+
+                        // Header with enabled toggle, name, and remove button
+                        ImGui::Checkbox("##ModEnabled", &mod.enabled);
+                        ImGui::SameLine();
+
+                        char modHeaderLabel[128];
+                        snprintf(modHeaderLabel, sizeof(modHeaderLabel), "%s##Header%d", mod.name.c_str(), (int)mi);
+                        bool isModOpen = ImGui::TreeNodeEx(modHeaderLabel, ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x + 20.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 0.8f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::SmallButton("X##RemoveMod")) {
+                            modifierToRemove = (int)mi;
+                        }
+                        ImGui::PopStyleColor(2);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Remove this modifier");
+                        }
+
+                        if (isModOpen) {
+                            ImGui::Indent(8.0f);
+
+                            // Modifier Name edit
+                            char nameBuf[128];
+                            strncpy(nameBuf, mod.name.c_str(), sizeof(nameBuf));
+                            nameBuf[sizeof(nameBuf) - 1] = '\0';
+                            if (ImGui::InputText("Modifier Name", nameBuf, sizeof(nameBuf))) {
+                                mod.name = nameBuf;
+                            }
+
+                            // Shape Type selector
+                            const char* shapeNames[] = {
+                                "None", "Box Collision", "Sphere Collision", "Capsule Collision",
+                                "Cylinder Collision", "Cone Collision", "Plane Collision", "Mesh Collision"
+                            };
+                            int currentShapeIdx = (int)mod.shapeType;
+                            if (ImGui::Combo("Shape", &currentShapeIdx, shapeNames, 8)) {
+                                mod.shapeType = (CollisionShapeType)currentShapeIdx;
+                                mod.isDefaultFit = false;
+                            }
+
+                            ImGui::Checkbox("Is Trigger", &mod.isTrigger);
+
+                            // Center Offset
+                            ImGui::DragFloat3("Center Offset", &mod.centerOffset.x, 0.02f, -100.0f, 100.0f, "%.2f");
+
+                            // Shape-specific extents
+                            switch (mod.shapeType) {
+                                case CollisionShapeType::Box:
+                                case CollisionShapeType::Mesh:
+                                    ImGui::DragFloat3("Half-Extents", &mod.boxExtents.x, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Sphere:
+                                    ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Capsule:
+                                    ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    ImGui::DragFloat("Height", &mod.height, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Cylinder:
+                                    ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    ImGui::DragFloat("Height", &mod.height, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Cone:
+                                    ImGui::DragFloat("Radius", &mod.radius, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    ImGui::DragFloat("Height", &mod.height, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    break;
+
+                                case CollisionShapeType::Plane:
+                                    ImGui::DragFloat2("Plane Size", &mod.planeSize.x, 0.05f, 0.1f, 10000.0f, "%.2f");
+                                    break;
+
+                                default:
+                                    break;
+                            }
+
+                            // Physics Presets & Properties
+                            const char* presets[] = { "Default", "BlockAll", "OverlapAll", "TriggerOnly", "NoCollision" };
+                            int curPresetIdx = 0;
+                            for (int p = 0; p < 5; ++p) {
+                                if (mod.preset == presets[p]) { curPresetIdx = p; break; }
+                            }
+                            if (ImGui::Combo("Preset", &curPresetIdx, presets, 5)) {
+                                mod.ApplyPreset(presets[curPresetIdx]);
+                            }
+
+                            ImGui::SliderFloat("Friction", &mod.friction, 0.0f, 1.0f, "%.2f");
+                            ImGui::SliderFloat("Restitution", &mod.restitution, 0.0f, 1.0f, "%.2f");
+
+                            // Visualization
+                            ImGui::Checkbox("Show Wireframe", &mod.showWireframe);
+                            ImGui::SameLine();
+                            ImGui::ColorEdit4("Color##ModWireColor", &mod.wireframeColor.x, ImGuiColorEditFlags_NoInputs);
+
+                            // Auto-fit & Reset buttons
+                            if (ImGui::Button("Auto-Fit", ImVec2(ImGui::GetContentRegionAvail().x * 0.48f, 24.0f))) {
+                                Collisions::CollisionSystem::Get().AutoFitModifier(*obj, mod);
+                                AddLog("LogPhysics", "Auto-fitted bounds for " + mod.name, 0);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Reset Defaults", ImVec2(ImGui::GetContentRegionAvail().x, 24.0f))) {
+                                Collisions::CollisionSystem::Get().ResetModifierToDefault(*obj, mod);
+                                AddLog("LogPhysics", "Reset " + mod.name + " to defaults", 0);
+                            }
+
+                            ImGui::Unindent(8.0f);
+                            ImGui::TreePop();
+                        }
+
+                        ImGui::PopID();
+                    }
+
+                    if (modifierToRemove >= 0 && modifierToRemove < (int)obj->modifiers.size()) {
+                        AddLog("LogPhysics", "Removed modifier: " + obj->modifiers[modifierToRemove].name, 0);
+                        obj->RemoveModifier((size_t)modifierToRemove);
+                    }
+                }
             }
         }
 
