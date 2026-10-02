@@ -64,7 +64,7 @@ UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::
     ui->canvasResolution = glm::vec2(1920.0f, 1080.0f);
     ui->elements.clear();
 
-    // Create the HTML file with modern Tailwind CSS layout
+    // Create the HTML file with modern CSS layout
     std::string hPath = path;
     size_t dotPos = hPath.rfind('.');
     if (dotPos != std::string::npos) {
@@ -73,7 +73,7 @@ UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::
         hPath += ".html";
     }
     ui->htmlPath = hPath;
-    ui->htmlSource = HtmlTailwindParser::GetDefaultTailwindHtml(name);
+    ui->htmlSource = HtmlCssParser::GetDefaultHtml(name);
     ui->SaveToHtml(hPath);
 
     ui->SaveToFile(path);

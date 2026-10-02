@@ -2,7 +2,7 @@
 
 #include "UserInterface.h"
 #include "UISystem.h"
-#include "HtmlTailwindParser.h"
+#include "HtmlCssParser.h"
 #include <imgui.h>
 #include <imgui_internal.h>
 
@@ -181,7 +181,7 @@ public:
             ImGui::SameLine();
             ImGui::TextDisabled("|");
             ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "● HTML + TailwindCSS Live");
+            ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "● HTML + CSS Live");
 
             ImGui::SameLine();
             float availW = ImGui::GetContentRegionAvail().x;
@@ -199,7 +199,7 @@ public:
             }
             ImGui::PopStyleColor(3);
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Open corresponding HTML and Tailwind CSS in VS Code.\nLive edits will immediately reflect on this canvas in real-time.");
+                ImGui::SetTooltip("Open corresponding HTML and CSS in VS Code.\nLive edits will immediately reflect on this canvas in real-time.");
             }
 
             ImGui::SameLine();

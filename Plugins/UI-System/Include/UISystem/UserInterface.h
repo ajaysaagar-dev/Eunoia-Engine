@@ -1,7 +1,7 @@
 #pragma once
 
 #include "UITypes.h"
-#include "HtmlTailwindParser.h"
+#include "HtmlCssParser.h"
 #include <string>
 #include <vector>
 #include <memory>
@@ -246,7 +246,7 @@ public:
         ss << in.rdbuf();
         htmlSource = ss.str();
         htmlPath = path;
-        htmlRoot = HtmlTailwindParser::Parse(htmlSource);
+        htmlRoot = HtmlCssParser::Parse(htmlSource);
         if (htmlRoot) {
             htmlRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
         }
@@ -259,7 +259,7 @@ public:
         std::string target = path.empty() ? GetHtmlPath() : path;
         if (target.empty()) return false;
         if (htmlSource.empty()) {
-            htmlSource = HtmlTailwindParser::GetDefaultTailwindHtml(name);
+            htmlSource = HtmlCssParser::GetDefaultHtml(name);
         }
         std::ofstream out(target);
         if (!out.is_open()) return false;
