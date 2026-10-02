@@ -4967,6 +4967,8 @@ bool RecoverD3D12Device(HWND hwnd)
 	g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
 	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+	DX12GpuTexture eyeIcon = GetOrLoadGPUTexture("Resources/Icons/Outliner/Eye.png", g_fallbackWhite);
+	g_engineUI.outlinerEyeIconGpuHandle = eyeIcon.gpuHandle.ptr;
 
 	DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
 	g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
@@ -5380,6 +5382,8 @@ int main(int argc, char** argv)
 		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
 		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
 		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+		DX12GpuTexture eyeIcon = GetOrLoadGPUTexture("Resources/Icons/Outliner/Eye.png", g_fallbackWhite);
+		g_engineUI.outlinerEyeIconGpuHandle = eyeIcon.gpuHandle.ptr;
 
 		DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
 		g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;

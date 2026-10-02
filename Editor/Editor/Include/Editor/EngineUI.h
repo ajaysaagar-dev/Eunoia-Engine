@@ -575,6 +575,7 @@ public:
     uint64_t skyLightIconGpuHandle = 0;
     uint64_t cameraIconGpuHandle = 0;
     uint64_t engineIconGpuHandle = 0;
+    uint64_t outlinerEyeIconGpuHandle = 0;
 
     // Content Browser Icons (from Resources/Icons/Content Browser/*.png)
     uint64_t cbFolderIconGpuHandle = 0;

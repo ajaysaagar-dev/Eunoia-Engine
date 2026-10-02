@@ -818,6 +818,19 @@ bool LightBakeManager::BakeLight(Scene& scene, GameObject& lightObj, const std::
     uint32_t res = (uint32_t)lightObj.light.bakeResolution;
     std::filesystem::path bakeDir = GetCookedBakeDir(projectRoot, lightObj.light.lightGuid);
 
+    // Delete any previous baked map files for this particular light from Cooked folder
+    std::error_code ec;
+    std::filesystem::path root = projectRoot.empty() ? "C:/Projects/Eunoia-Engine/Projects/Unknown-13-Test" : projectRoot;
+    if (!lightObj.light.bakedLightmapPath.empty()) {
+        std::filesystem::remove(root / lightObj.light.bakedLightmapPath, ec);
+    }
+    if (!lightObj.light.bakedShadowmapPath.empty()) {
+        std::filesystem::remove(root / lightObj.light.bakedShadowmapPath, ec);
+    }
+    if (std::filesystem::exists(bakeDir, ec)) {
+        std::filesystem::remove_all(bakeDir, ec);
+    }
+
     outStatus = "Baking Light: " + lightObj.name + "...";
     if (m_progressCb) m_progressCb("Calculating illumination and static shadows...", 0.3f);
 
@@ -920,6 +933,13 @@ bool LightBakeManager::ClearBake(Scene& scene, GameObject& lightObj, const std::
 
     std::filesystem::path bakeDir = GetCookedBakeDir(projectRoot, lightObj.light.lightGuid);
     std::error_code ec;
+    std::filesystem::path root = projectRoot.empty() ? "C:/Projects/Eunoia-Engine/Projects/Unknown-13-Test" : projectRoot;
+    if (!lightObj.light.bakedLightmapPath.empty()) {
+        std::filesystem::remove(root / lightObj.light.bakedLightmapPath, ec);
+    }
+    if (!lightObj.light.bakedShadowmapPath.empty()) {
+        std::filesystem::remove(root / lightObj.light.bakedShadowmapPath, ec);
+    }
     std::filesystem::remove_all(bakeDir, ec);
 
     lightObj.light.bakeState = LightBakeState::Realtime;

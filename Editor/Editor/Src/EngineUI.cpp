@@ -2831,8 +2831,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         // Active UI Editor Tab Full Workspace
         float titleBarH = 32.0f * uiScale;
         float menuBarH = 36.0f * uiScale;
-        float tabBarH = 32.0f * uiScale;
-        float topBarH = titleBarH + menuBarH + tabBarH;
+        float topBarH = titleBarH + menuBarH;
         ImGuiViewport* vpWorkspace = ImGui::GetMainViewport();
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
@@ -3004,10 +3003,6 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(18.0f * uiScale, 18.0f * uiScale));
             ImGui::SameLine(0.0f, 6.0f);
         }
-        ImGui::TextColored(ImVec4(0.12f, 0.72f, 1.00f, 1.0f), "[Eunoia]");
-        ImGui::SameLine();
-        ImGui::TextDisabled("|");
-        ImGui::SameLine();
 
         // 2. Project Name & Active Level
         std::string titleStr = "Eunoia Engine";
@@ -3033,9 +3028,9 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         float btnH = titleBarH;
         float btnW = btnAreaW / 3.0f;
 
-        // 4. Workspace Tabs in Middle of Title Bar (Matches ref.png)
+        // 4. Workspace Tabs on Left Side of Title Bar
         float currentX = ImGui::GetCursorPosX();
-        float tabStartX = std::max(currentX + 16.0f * uiScale, topBarW * 0.36f);
+        float tabStartX = currentX + 16.0f * uiScale;
         float tabRightLimit = topBarW - btnAreaW - 8.0f * uiScale;
 
         if (tabStartX < tabRightLimit) {
@@ -3296,6 +3291,10 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     AddLog("LogWorld", "Loaded Default Level", 0);
                 }
                 ImGui::Separator();
+                if (ImGui::MenuItem("⚡ Compile", "F7", false, !isCompilingScripts)) {
+                    TriggerCompileScripts(&scene);
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Exit", "Alt+F4")) {
                     outShouldExit = true;
                 }
@@ -3512,6 +3511,53 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::MenuItem("⚙ Quality Settings Window...", nullptr, &showQualitySettings);
                     ImGui::EndMenu();
                 }
+
+                ImGui::Separator();
+                if (ImGui::MenuItem("🎬 Post Processing Settings...", nullptr, showPostProcessingModal)) {
+                    showPostProcessingModal = true;
+                }
+                if (ImGui::BeginMenu("🎬 Post Processing")) {
+                    if (ImGui::Checkbox("Enable Post Processing", &scene.enablePostProcessing)) {
+                        AddLog("LogWorld", scene.enablePostProcessing ? "Enabled Level Post Processing" : "Disabled Level Post Processing", 0);
+                    }
+                    ImGui::Separator();
+
+                    ImGui::TextDisabled("Exposure & Brightness:");
+                    ImGui::SliderFloat("EV Compensation", &scene.postExposureEV, -5.0f, 5.0f, "%.2f EV");
+                    ImGui::SliderFloat("Exposure Multiplier", &scene.postExposureMultiplier, 0.0f, 5.0f, "%.2f");
+                    ImGui::Separator();
+
+                    ImGui::TextDisabled("Color Grading & Tonemapping:");
+                    const char* tonemappers[] = { "None / Linear", "ACES Filmic (UE5 Standard)", "Reinhard" };
+                    ImGui::Combo("Tonemapper", &scene.postTonemapper, tonemappers, IM_ARRAYSIZE(tonemappers));
+                    ImGui::SliderFloat("Saturation", &scene.postSaturation, 0.0f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("Contrast", &scene.postContrast, 0.5f, 2.0f, "%.2f");
+                    ImGui::SliderFloat("Gamma", &scene.postGamma, 0.5f, 2.0f, "%.2f");
+                    ImGui::ColorEdit3("Color Filter", &scene.postColorFilter.x);
+                    ImGui::SliderFloat("Temperature", &scene.postColorTemperature, 2000.0f, 12000.0f, "%.0f K");
+                    ImGui::SliderFloat("Tint", &scene.postColorTint, -1.0f, 1.0f, "%.2f");
+
+                    ImGui::Separator();
+                    if (ImGui::Button("Reset to Defaults##ResetQuickPP")) {
+                        scene.enablePostProcessing = false;
+                        scene.postExposureEV = 0.0f;
+                        scene.postExposureMultiplier = 1.0f;
+                        scene.postTonemapper = 1;
+                        scene.postSaturation = 1.0f;
+                        scene.postContrast = 1.0f;
+                        scene.postGamma = 1.0f;
+                        scene.postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
+                        scene.postColorTemperature = 6500.0f;
+                        scene.postColorTint = 0.0f;
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Full Settings##OpenFullPP")) {
+                        showPostProcessingModal = true;
+                    }
+
+                    ImGui::EndMenu();
+                }
+
                 ImGui::EndMenu();
             }
 
@@ -3585,52 +3631,6 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("🌌 Skybox Settings...", nullptr, showSkyboxSettingsModal)) {
                     showSkyboxSettingsModal = true;
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("🎬 Post Processing Settings...", nullptr, showPostProcessingModal)) {
-                    showPostProcessingModal = true;
-                }
-                if (ImGui::BeginMenu("🎬 Post Processing")) {
-                    if (ImGui::Checkbox("Enable Post Processing", &scene.enablePostProcessing)) {
-                        AddLog("LogWorld", scene.enablePostProcessing ? "Enabled Level Post Processing" : "Disabled Level Post Processing", 0);
-                    }
-                    ImGui::Separator();
-
-                    ImGui::TextDisabled("Exposure & Brightness:");
-                    ImGui::SliderFloat("EV Compensation", &scene.postExposureEV, -5.0f, 5.0f, "%.2f EV");
-                    ImGui::SliderFloat("Exposure Multiplier", &scene.postExposureMultiplier, 0.0f, 5.0f, "%.2f");
-                    ImGui::Separator();
-
-                    ImGui::TextDisabled("Color Grading & Tonemapping:");
-                    const char* tonemappers[] = { "None / Linear", "ACES Filmic (UE5 Standard)", "Reinhard" };
-                    ImGui::Combo("Tonemapper", &scene.postTonemapper, tonemappers, IM_ARRAYSIZE(tonemappers));
-                    ImGui::SliderFloat("Saturation", &scene.postSaturation, 0.0f, 2.0f, "%.2f");
-                    ImGui::SliderFloat("Contrast", &scene.postContrast, 0.5f, 2.0f, "%.2f");
-                    ImGui::SliderFloat("Gamma", &scene.postGamma, 0.5f, 2.0f, "%.2f");
-                    ImGui::ColorEdit3("Color Filter", &scene.postColorFilter.x);
-                    ImGui::SliderFloat("Temperature", &scene.postColorTemperature, 2000.0f, 12000.0f, "%.0f K");
-                    ImGui::SliderFloat("Tint", &scene.postColorTint, -1.0f, 1.0f, "%.2f");
-
-                    ImGui::Separator();
-                    if (ImGui::Button("Reset to Defaults##ResetQuickPP")) {
-                        scene.enablePostProcessing = false;
-                        scene.postExposureEV = 0.0f;
-                        scene.postExposureMultiplier = 1.0f;
-                        scene.postTonemapper = 1;
-                        scene.postSaturation = 1.0f;
-                        scene.postContrast = 1.0f;
-                        scene.postGamma = 1.0f;
-                        scene.postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
-                        scene.postColorTemperature = 6500.0f;
-                        scene.postColorTint = 0.0f;
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Full Settings##OpenFullPP")) {
-                        showPostProcessingModal = true;
-                    }
-
-                    ImGui::EndMenu();
-                }
-
                 ImGui::EndMenu();
             }
 
@@ -3783,59 +3783,42 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
 
             ImGui::TextDisabled("|");
 
-            // Quick Add Actor button
-            if (ImGui::Button("+ Add Actor")) {
-                ImGui::OpenPopup("QuickAddPopup");
-            }
-            if (ImGui::BeginPopup("QuickAddPopup")) {
-                ImGui::TextDisabled("PRIMITIVES");
-                if (ImGui::MenuItem("Cube")) { scene.AddObject(PrimitiveType::Cube); AddLog("LogActor", "Spawned Cube", 2); }
-                if (ImGui::MenuItem("Plane")) { scene.AddObject(PrimitiveType::Plane); AddLog("LogActor", "Spawned Plane", 2); }
-                if (ImGui::MenuItem("Sphere")) { scene.AddObject(PrimitiveType::Sphere); AddLog("LogActor", "Spawned Sphere", 2); }
-                if (ImGui::MenuItem("Cylinder")) { scene.AddObject(PrimitiveType::Cylinder); AddLog("LogActor", "Spawned Cylinder", 2); }
-                if (ImGui::MenuItem("Pyramid / Cone")) { scene.AddObject(PrimitiveType::Pyramid); AddLog("LogActor", "Spawned Pyramid", 2); }
-                if (ImGui::MenuItem("Torus")) { scene.AddObject(PrimitiveType::Torus); AddLog("LogActor", "Spawned Torus", 2); }
-                if (ImGui::MenuItem("Camera")) { GameObject& cam = scene.AddObject(PrimitiveType::Camera, {0.0f, 2.0f, -4.0f}); cam.name = "Camera Actor"; AddLog("LogActor", "Spawned Camera", 2); }
-                ImGui::Separator();
-                ImGui::TextDisabled("CUSTOM MESH");
-                if (ImGui::MenuItem("Import 3D Mesh (OBJ/GLTF)...")) {
-                    ImportMeshWithSavePrompt(scene);
+            bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive();
+
+            if (isMainEditor) {
+                ImGui::TextDisabled("|");
+
+                // Transform Gizmo Tools (Shown in Level Editor)
+                auto DrawToolBtn = [&](const char* label, int op, const char* tooltip) {
+                    bool active = (currentGizmoOperation == op);
+                    if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.50f, 0.90f, 1.0f));
+                    if (ImGui::Button(label)) currentGizmoOperation = op;
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+                    if (active) ImGui::PopStyleColor();
+                };
+
+                DrawToolBtn("Move (W)", ImGuizmo::TRANSLATE, "Translate Tool (W)");
+                DrawToolBtn("Rotate (E)", ImGuizmo::ROTATE, "Rotate Tool (E)");
+                DrawToolBtn("Scale (R)", ImGuizmo::SCALE, "Scale Tool (R)");
+
+                const char* spaceStr = (currentGizmoMode == ImGuizmo::WORLD) ? "World (Q)" : "Local (Q)";
+                if (ImGui::Button(spaceStr)) {
+                    currentGizmoMode = (currentGizmoMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
                 }
-                ImGui::EndPopup();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle World / Local Coordinate Space (Q)");
+
+                const char* pivotStr = gizmoUseCenter ? "Center (Z)" : "Pivot (Z)";
+                if (ImGui::Button(pivotStr)) {
+                    gizmoUseCenter = !gizmoUseCenter;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Gizmo Position: Pivot Point / Geometric Center (Z)");
+
+                ImGui::Checkbox("Snap", &useSnap);
             }
 
             ImGui::TextDisabled("|");
 
-            // Transform Gizmo Tools
-            auto DrawToolBtn = [&](const char* label, int op, const char* tooltip) {
-                bool active = (currentGizmoOperation == op);
-                if (active) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f, 0.50f, 0.90f, 1.0f));
-                if (ImGui::Button(label)) currentGizmoOperation = op;
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
-                if (active) ImGui::PopStyleColor();
-            };
-
-            DrawToolBtn("Move (W)", ImGuizmo::TRANSLATE, "Translate Tool (W)");
-            DrawToolBtn("Rotate (E)", ImGuizmo::ROTATE, "Rotate Tool (E)");
-            DrawToolBtn("Scale (R)", ImGuizmo::SCALE, "Scale Tool (R)");
-
-            const char* spaceStr = (currentGizmoMode == ImGuizmo::WORLD) ? "World (Q)" : "Local (Q)";
-            if (ImGui::Button(spaceStr)) {
-                currentGizmoMode = (currentGizmoMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle World / Local Coordinate Space (Q)");
-
-            const char* pivotStr = gizmoUseCenter ? "Center (Z)" : "Pivot (Z)";
-            if (ImGui::Button(pivotStr)) {
-                gizmoUseCenter = !gizmoUseCenter;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Gizmo Position: Pivot Point / Geometric Center (Z)");
-
-            ImGui::Checkbox("Snap", &useSnap);
-
-            ImGui::TextDisabled("|");
-
-            // Play Mode Controls (In-Editor Full Screen Fit)
+            // Play Mode Controls (Available in any window tab)
             bool isPlayActive = scene.isPlayMode;
 
             ImGui::PushStyleColor(ImGuiCol_Button, isPlayActive ? ImVec4(0.18f, 0.75f, 0.32f, 1.0f) : ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
@@ -3858,31 +3841,6 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("Exit Play Mode [Ctrl+Delete]");
                 ImGui::PopStyleColor();
             }
-
-            ImGui::SameLine();
-            if (isCompilingScripts) {
-                ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "⏳ Compiling...");
-            } else {
-                if (ImGui::Button("⚡ Compile")) {
-                    TriggerCompileScripts(&scene);
-                }
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile Behaviour Scripts and update standalone game binary (F7)");
-            }
-
-            if (ImGui::Button("Reset View")) {
-                camera.SetPreset("Perspective");
-            }
-
-            ImGui::TextDisabled("|");
-            if (ImGui::Button("🔍 Ref Viewer")) {
-                OpenReferenceViewer();
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open Asset Reference / Dependency Viewer (dev.md Section 33)");
-
-            if (ImGui::Button("📦 Cook")) {
-                OpenCookModal();
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Cook & Package Project Assets (dev.md Section 24, 25)");
 
             // Right side info
             float rightWidth = 250.0f;
@@ -4277,9 +4235,36 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
 
     ImGui::PushID(obj.id);
 
-    // Visibility eye
-    if (ImGui::SmallButton(obj.visible ? "eye" : " - ")) {
-        obj.visible = !obj.visible;
+    // Hover detection for the row
+    ImVec2 rowPos = ImGui::GetCursorScreenPos();
+    float rowHeight = ImGui::GetFrameHeight();
+    ImVec2 rowMin(ImGui::GetWindowPos().x, rowPos.y);
+    ImVec2 rowMax(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), rowPos.y + rowHeight);
+    bool isRowHovered = ImGui::IsMouseHoveringRect(rowMin, rowMax);
+
+    // Visibility eye icon
+    if (outlinerEyeIconGpuHandle) {
+        ImVec4 eyeTint;
+        if (obj.visible) {
+            eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 0.0f);
+        } else {
+            eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 0.85f) : ImVec4(1.0f, 1.0f, 1.0f, 0.35f);
+        }
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.25f, 0.35f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.15f, 0.25f, 0.7f));
+        if (ImGui::ImageButton("##EyeBtn", (ImTextureID)outlinerEyeIconGpuHandle, ImVec2(14.0f, 14.0f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), eyeTint)) {
+            obj.visible = !obj.visible;
+        }
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
+        }
+        ImGui::PopStyleColor(3);
+    } else {
+        if (ImGui::SmallButton(obj.visible ? "eye" : " - ")) {
+            obj.visible = !obj.visible;
+        }
     }
     ImGui::SameLine();
 
@@ -4298,24 +4283,8 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
     }
 
-    char label[128];
-    if (obj.isLight || IsLightPrimitive(obj.type)) {
-        snprintf(label, sizeof(label), "[%s] %s", GetLightTypeName(obj.light.type), obj.name.c_str());
-    } else if (obj.isCamera || obj.type == PrimitiveType::Camera) {
-        if (scene.activeLevelCameraId == obj.id) {
-            snprintf(label, sizeof(label), "[Camera*] %s (Active)", obj.name.c_str());
-        } else {
-            snprintf(label, sizeof(label), "[Camera] %s", obj.name.c_str());
-        }
-    } else if (obj.isWaterBody || obj.type == PrimitiveType::WaterBody) {
-        snprintf(label, sizeof(label), "%s [Water Body]", obj.name.c_str());
-    } else if (obj.type == PrimitiveType::Empty) {
-        snprintf(label, sizeof(label), "[Empty] %s", obj.name.c_str());
-    } else {
-        snprintf(label, sizeof(label), "%s (%s)", obj.name.c_str(), GetPrimitiveTypeName(obj.type));
-    }
-
-    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)obj.id, nodeFlags, "%s", label);
+    // Only show the object's name in the outliner
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)obj.id, nodeFlags, "%s", obj.name.c_str());
     if (isSelected) {
         ImGui::PopStyleColor(3);
     }
@@ -4500,8 +4469,6 @@ void EngineUI::RenderOutliner(Scene& scene) {
         ImGui::InputTextWithHint("##Filter", "Search Actors...", outlinerFilter, sizeof(outlinerFilter));
         ImGui::Separator();
 
-        ImGui::TextDisabled("Level: MainWorld (%d actors)", (int)scene.objects.size());
-
         // Outliner Actor List Table
         ImGui::BeginChild("OutlinerList", ImVec2(0, -44), true);
 
@@ -4516,23 +4483,45 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 if (nameStr.find(filterStr) == std::string::npos) continue;
 
                 ImGui::PushID(obj.id);
-                if (ImGui::SmallButton(obj.visible ? "eye" : " - ")) {
-                    obj.visible = !obj.visible;
+
+                ImVec2 rowPos = ImGui::GetCursorScreenPos();
+                float rowHeight = ImGui::GetFrameHeight();
+                ImVec2 rowMin(ImGui::GetWindowPos().x, rowPos.y);
+                ImVec2 rowMax(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), rowPos.y + rowHeight);
+                bool isRowHovered = ImGui::IsMouseHoveringRect(rowMin, rowMax);
+
+                if (outlinerEyeIconGpuHandle) {
+                    ImVec4 eyeTint;
+                    if (obj.visible) {
+                        eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 0.0f);
+                    } else {
+                        eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 0.85f) : ImVec4(1.0f, 1.0f, 1.0f, 0.35f);
+                    }
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.25f, 0.35f, 0.5f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.15f, 0.25f, 0.7f));
+                    if (ImGui::ImageButton("##FilterEyeBtn", (ImTextureID)outlinerEyeIconGpuHandle, ImVec2(14.0f, 14.0f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), eyeTint)) {
+                        obj.visible = !obj.visible;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
+                    }
+                    ImGui::PopStyleColor(3);
+                } else {
+                    if (ImGui::SmallButton(obj.visible ? "eye" : " - ")) {
+                        obj.visible = !obj.visible;
+                    }
                 }
                 ImGui::SameLine();
 
                 bool isSelected = (selectedActorIds.count(obj.id) > 0 || scene.selectedId == obj.id);
-                char itemLabel[128];
-                if (obj.isLight || IsLightPrimitive(obj.type)) snprintf(itemLabel, sizeof(itemLabel), "[%s] %s", GetLightTypeName(obj.light.type), obj.name.c_str());
-                else if (obj.type == PrimitiveType::Empty) snprintf(itemLabel, sizeof(itemLabel), "[Empty] %s", obj.name.c_str());
-                else snprintf(itemLabel, sizeof(itemLabel), "%s (%s)", obj.name.c_str(), GetPrimitiveTypeName(obj.type));
-
                 if (isSelected) {
                     ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.14f, 0.45f, 0.85f, 0.75f));
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.20f, 0.52f, 0.95f, 0.85f));
                     ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.22f, 0.58f, 1.00f, 0.95f));
                 }
-                ImGui::Selectable(itemLabel, isSelected);
+                ImGui::Selectable(obj.name.c_str(), isSelected);
                 bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
                 float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
                 float dragThreshold = ImGui::GetIO().MouseDragThreshold;
@@ -4589,19 +4578,39 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 ImGui::PopID();
             }
         } else {
-            // Hierarchical tree view: render all root actors (parentId == -1)
-            std::unordered_set<int> visitedIds;
-            std::vector<int> rootIds;
-            for (const auto& obj : scene.objects) {
-                if (obj.parentId == -1) {
-                    rootIds.push_back(obj.id);
-                }
+            // Hierarchical tree view: Level name as Root of all in the respective level
+            std::string levelName = "Untitled Level";
+            if (!currentLevelFilePath.empty()) {
+                levelName = std::filesystem::path(currentLevelFilePath).stem().string();
             }
-            for (int rid : rootIds) {
-                GameObject* rootObj = scene.FindObject(rid);
-                if (rootObj) {
-                    DrawOutlinerNode(*rootObj, scene, visitedIds, 0);
+
+            ImGuiTreeNodeFlags levelFlags = ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+            bool levelNodeOpen = ImGui::TreeNodeEx("##LevelRootNode", levelFlags, "🌐 %s (%d actors)", levelName.c_str(), (int)scene.objects.size());
+
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OUTLINER_ACTOR")) {
+                    int draggedId = *(const int*)payload->Data;
+                    m_pendingReparentChild = draggedId;
+                    m_pendingReparentParent = -1;
                 }
+                ImGui::EndDragDropTarget();
+            }
+
+            if (levelNodeOpen) {
+                std::unordered_set<int> visitedIds;
+                std::vector<int> rootIds;
+                for (const auto& obj : scene.objects) {
+                    if (obj.parentId == -1) {
+                        rootIds.push_back(obj.id);
+                    }
+                }
+                for (int rid : rootIds) {
+                    GameObject* rootObj = scene.FindObject(rid);
+                    if (rootObj) {
+                        DrawOutlinerNode(*rootObj, scene, visitedIds, 0);
+                    }
+                }
+                ImGui::TreePop();
             }
         }
 
@@ -4893,16 +4902,20 @@ void EngineUI::RenderDetails(Scene& scene) {
         ImGui::PushID(obj->id);
 
         // Actor Header Banner
-        if (obj->isLight) {
-            ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "[PointLightComponent]");
-        } else if (obj->isWaterBody) {
+        if (obj->isLight || IsLightPrimitive(obj->type)) {
+            char lightTypeStr[64];
+            snprintf(lightTypeStr, sizeof(lightTypeStr), "[%sComponent]", GetLightTypeName(obj->light.type));
+            ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "%s", lightTypeStr);
+        } else if (obj->isWaterBody || obj->type == PrimitiveType::WaterBody) {
             ImGui::TextColored(ImVec4(0.00f, 0.60f, 1.00f, 1.0f), "[WaterBodyComponent]");
         } else if (obj->isCamera || obj->type == PrimitiveType::Camera) {
             ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
         } else if (obj->type == PrimitiveType::Empty) {
             ImGui::TextColored(ImVec4(0.35f, 0.80f, 1.00f, 1.0f), "[EmptyActor]");
         } else {
-            ImGui::TextColored(ImVec4(0.08f, 0.65f, 1.00f, 1.0f), "[StaticMeshActor]");
+            char meshTypeStr[64];
+            snprintf(meshTypeStr, sizeof(meshTypeStr), "[StaticMeshActor (%s)]", GetPrimitiveTypeName(obj->type));
+            ImGui::TextColored(ImVec4(0.08f, 0.65f, 1.00f, 1.0f), "%s", meshTypeStr);
         }
         ImGui::SameLine();
         char nameBuf[128];

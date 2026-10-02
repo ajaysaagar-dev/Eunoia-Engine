@@ -174,10 +174,6 @@ public:
             ImGui::TextColored(ImVec4(0.12f, 0.72f, 1.0f, 1.0f), "🎨 UI Canvas Designer:");
             ImGui::SameLine();
             ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", ui.name.c_str());
-            ImGui::SameLine();
-            ImGui::TextDisabled("|");
-            ImGui::SameLine();
-            ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.40f, 1.0f), "● HTML + CSS Live");
 
             ImGui::SameLine();
             float availW = ImGui::GetContentRegionAvail().x;
