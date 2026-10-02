@@ -758,7 +758,19 @@ void EunoiaBehaviour::ResolveReferences(Scene& scene) {
         }
 
         if (prop.targetId == -1) {
-            *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
+            if (m_owner && (prop.name == "Camera" || prop.name == "camera" || prop.name == "cam" || prop.name == "Cam")) {
+                GameObject* foundCam = nullptr;
+                for (auto& obj : scene.objects) {
+                    if (obj.parentId == m_owner->id && (obj.isCamera || obj.type == PrimitiveType::Camera || obj.name.find("Camera") != std::string::npos || obj.name.find("Cam") != std::string::npos)) {
+                        foundCam = &obj;
+                        break;
+                    }
+                }
+                if (!foundCam) foundCam = m_owner;
+                *reinterpret_cast<GameObject**>(prop.dataPtr) = foundCam;
+            } else {
+                *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
+            }
             prop.isMissing = false;
             continue;
         }
@@ -1413,26 +1425,59 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         RayTrace.behaviour = this;
         RayTraceSystem::Get().SetActiveScene(m_scene);
         for (const auto& trace : m_lineTraceActions) {
-            glm::vec3 startPos = m_owner->position;
-            glm::vec3 rotRad = glm::radians(m_owner->rotation);
-            glm::mat4 rMat(1.0f);
-            rMat = glm::rotate(rMat, rotRad.x, glm::vec3(1, 0, 0));
-            rMat = glm::rotate(rMat, rotRad.y, glm::vec3(0, 1, 0));
-            rMat = glm::rotate(rMat, rotRad.z, glm::vec3(0, 0, 1));
-            glm::vec3 forwardDir = glm::normalize(glm::vec3(rMat * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
-            glm::vec3 endPos = startPos + forwardDir * trace.traceDistance;
+            glm::vec3 startPos = m_owner->GetWorldLocation();
+            glm::vec3 forwardDir = m_owner->GetForwardVector();
 
             std::string sLow = trace.startVar;
             std::transform(sLow.begin(), sLow.end(), sLow.begin(), ::tolower);
-            if (sLow.find("transform.location") != std::string::npos || sLow.find("transform.position") != std::string::npos) {
-                startPos = m_owner->position;
+            if (sLow.find("camera") != std::string::npos || sLow.find("cam") != std::string::npos) {
+                GameObject* camObj = nullptr;
+                void* refPtr = GetRef("Camera");
+                if (refPtr) camObj = reinterpret_cast<GameObject*>(refPtr);
+                else {
+                    for (auto& obj : m_scene->objects) {
+                        if (obj.parentId == m_owner->id && (obj.isCamera || obj.type == PrimitiveType::Camera || obj.name.find("Camera") != std::string::npos || obj.name.find("Cam") != std::string::npos)) {
+                            camObj = &obj;
+                            break;
+                        }
+                    }
+                }
+                if (!camObj) camObj = m_owner;
+                if (camObj) {
+                    startPos = camObj->GetWorldLocation();
+                    forwardDir = camObj->GetForwardVector();
+                }
+            } else if (sLow.find("transform.location") != std::string::npos || sLow.find("transform.position") != std::string::npos || sLow.find("getworldlocation") != std::string::npos) {
+                startPos = m_owner->GetWorldLocation();
             }
+
+            glm::vec3 endPos = startPos + forwardDir * trace.traceDistance;
+
             std::string eLow = trace.endVar;
             std::transform(eLow.begin(), eLow.end(), eLow.begin(), ::tolower);
-            if (eLow.find("forward") != std::string::npos) {
+            if (eLow.find("camera") != std::string::npos || eLow.find("cam") != std::string::npos) {
+                GameObject* camObj = nullptr;
+                void* refPtr = GetRef("Camera");
+                if (refPtr) camObj = reinterpret_cast<GameObject*>(refPtr);
+                else {
+                    for (auto& obj : m_scene->objects) {
+                        if (obj.parentId == m_owner->id && (obj.isCamera || obj.type == PrimitiveType::Camera || obj.name.find("Camera") != std::string::npos || obj.name.find("Cam") != std::string::npos)) {
+                            camObj = &obj;
+                            break;
+                        }
+                    }
+                }
+                if (!camObj) camObj = m_owner;
+                if (camObj) {
+                    forwardDir = camObj->GetForwardVector();
+                    endPos = startPos + forwardDir * trace.traceDistance;
+                }
+            } else if (eLow.find("forward") != std::string::npos) {
                 endPos = startPos + forwardDir * trace.traceDistance;
             } else if (eLow.find("down") != std::string::npos) {
                 endPos = startPos + glm::vec3(0.0f, -trace.traceDistance, 0.0f);
+            } else if (eLow.find("up") != std::string::npos) {
+                endPos = startPos + glm::vec3(0.0f, trace.traceDistance, 0.0f);
             }
 
             m_lastDynamicHit = RayTrace.LineTrace(startPos, endPos, m_owner);
@@ -1441,6 +1486,8 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
     // Execute real-time dynamic Print statements inside Update()
     for (const auto& item : m_updatePrintMessages) {
+        if (item.requireHitStatus && !m_lastDynamicHit.Status) continue;
+        if (item.requireNoHit && m_lastDynamicHit.Status) continue;
         std::string msg = item.textPrefix;
         if (item.appendDeltaTime) {
             msg += std::to_string(dt);
@@ -2774,11 +2821,17 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         int braceDepth = 0;
         std::vector<DynamicScriptBehaviour::DynamicKeyCondition> keys;
         std::vector<DynamicScriptBehaviour::DynamicBoolCondition> bools;
+        bool requireHitStatus = false;
+        bool requireNoHit = false;
     };
     std::vector<ConditionScope> conditionStack;
     std::vector<DynamicScriptBehaviour::DynamicKeyCondition> pendingSingleLineKeys;
     std::vector<DynamicScriptBehaviour::DynamicBoolCondition> pendingSingleLineBools;
+    bool pendingSingleLineRequireHitStatus = false;
+    bool pendingSingleLineRequireNoHit = false;
     bool hasPendingSingleLineCondition = false;
+    bool lastIfWasHitCondition = false;
+    bool lastIfHitConditionNegated = false;
     int updateMethodBraceDepth = 0;
 
     m_methods.clear();
@@ -2837,7 +2890,11 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         conditionStack.clear();
                         pendingSingleLineKeys.clear();
                         pendingSingleLineBools.clear();
+                        pendingSingleLineRequireHitStatus = false;
+                        pendingSingleLineRequireNoHit = false;
                         hasPendingSingleLineCondition = false;
+                        lastIfWasHitCondition = false;
+                        lastIfHitConditionNegated = false;
                         updateMethodBraceDepth = currentMethodBraceDepth;
                     } else if (mName == "Start") {
                         inStartMethod = true;
@@ -3213,9 +3270,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 scope.braceDepth = updateMethodBraceDepth + openBracesOnLine;
                 scope.keys = pendingSingleLineKeys;
                 scope.bools = pendingSingleLineBools;
+                scope.requireHitStatus = pendingSingleLineRequireHitStatus;
+                scope.requireNoHit = pendingSingleLineRequireNoHit;
                 conditionStack.push_back(scope);
                 pendingSingleLineKeys.clear();
                 pendingSingleLineBools.clear();
+                pendingSingleLineRequireHitStatus = false;
+                pendingSingleLineRequireNoHit = false;
                 hasPendingSingleLineCondition = false;
             }
 
@@ -3242,23 +3303,61 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             }
 
-            // Check if this line introduces an if (...) with key or bool checks
+            std::string lLower = l;
+            std::transform(lLower.begin(), lLower.end(), lLower.begin(), ::tolower);
+
+            // Check if this line introduces an if (...) with key or bool checks or Hit.Status
             size_t ifPos = l.find("if (");
             if (ifPos == std::string::npos) ifPos = l.find("if(");
-            if (ifPos != std::string::npos) {
+            if (ifPos != std::string::npos && (ifPos == 0 || l[ifPos - 1] == ' ' || l[ifPos - 1] == '\t' || l[ifPos - 1] == '}' || l[ifPos - 1] == ';')) {
                 auto lineKeys = extractKeyConditions(l);
                 auto lineBools = extractBoolConditions(l);
-                if (!lineKeys.empty() || !lineBools.empty()) {
+                bool isHitCheck = (lLower.find("hit.status") != std::string::npos || lLower.find("hit.gameobject") != std::string::npos);
+                bool isNegatedHit = (lLower.find("!hit.status") != std::string::npos || lLower.find("hit.status == false") != std::string::npos || lLower.find("!hit.gameobject") != std::string::npos);
+
+                if (!lineKeys.empty() || !lineBools.empty() || isHitCheck) {
+                    if (isHitCheck) {
+                        lastIfWasHitCondition = true;
+                        lastIfHitConditionNegated = isNegatedHit;
+                    } else {
+                        lastIfWasHitCondition = false;
+                    }
+
                     if (openBracesOnLine > 0) {
                         ConditionScope scope;
                         scope.braceDepth = updateMethodBraceDepth;
                         scope.keys = lineKeys;
                         scope.bools = lineBools;
+                        if (isHitCheck) {
+                            if (isNegatedHit) scope.requireNoHit = true;
+                            else scope.requireHitStatus = true;
+                        }
                         conditionStack.push_back(scope);
                     } else {
                         pendingSingleLineKeys = lineKeys;
                         pendingSingleLineBools = lineBools;
+                        if (isHitCheck) {
+                            if (isNegatedHit) pendingSingleLineRequireNoHit = true;
+                            else pendingSingleLineRequireHitStatus = true;
+                        }
                         hasPendingSingleLineCondition = true;
+                    }
+                }
+            } else if (lLower.find("else") != std::string::npos && lLower.find("else if") == std::string::npos && lLower.find("else  if") == std::string::npos) {
+                size_t elsePos = lLower.find("else");
+                if (elsePos == 0 || l[elsePos - 1] == ' ' || l[elsePos - 1] == '\t' || l[elsePos - 1] == '}' || l[elsePos - 1] == ';') {
+                    if (lastIfWasHitCondition) {
+                        if (openBracesOnLine > 0) {
+                            ConditionScope scope;
+                            scope.braceDepth = updateMethodBraceDepth;
+                            if (lastIfHitConditionNegated) scope.requireHitStatus = true;
+                            else scope.requireNoHit = true;
+                            conditionStack.push_back(scope);
+                        } else {
+                            if (lastIfHitConditionNegated) pendingSingleLineRequireHitStatus = true;
+                            else pendingSingleLineRequireNoHit = true;
+                            hasPendingSingleLineCondition = true;
+                        }
                     }
                 }
             }
@@ -3273,6 +3372,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 if (hasPendingSingleLineCondition) {
                     pendingSingleLineKeys.clear();
                     pendingSingleLineBools.clear();
+                    pendingSingleLineRequireHitStatus = false;
+                    pendingSingleLineRequireNoHit = false;
                     hasPendingSingleLineCondition = false;
                 }
             };
@@ -3288,6 +3389,20 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     std::transform(lowerInner.begin(), lowerInner.end(), lowerInner.begin(), ::tolower);
 
                     DynamicScriptBehaviour::DynamicUpdatePrint item;
+                    for (const auto& sc : conditionStack) {
+                        if (sc.requireHitStatus) item.requireHitStatus = true;
+                        if (sc.requireNoHit) item.requireNoHit = true;
+                    }
+                    if (pendingSingleLineRequireHitStatus) item.requireHitStatus = true;
+                    if (pendingSingleLineRequireNoHit) item.requireNoHit = true;
+                    if (hasPendingSingleLineCondition) {
+                        pendingSingleLineKeys.clear();
+                        pendingSingleLineBools.clear();
+                        pendingSingleLineRequireHitStatus = false;
+                        pendingSingleLineRequireNoHit = false;
+                        hasPendingSingleLineCondition = false;
+                    }
+
                     if (lowerInner.find("deltatime") != std::string::npos ||
                         lowerInner.find("delta_time") != std::string::npos ||
                         lowerInner.find("worlddeltaseconds") != std::string::npos ||
@@ -3583,7 +3698,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 conditionStack.clear();
                 pendingSingleLineKeys.clear();
                 pendingSingleLineBools.clear();
+                pendingSingleLineRequireHitStatus = false;
+                pendingSingleLineRequireNoHit = false;
                 hasPendingSingleLineCondition = false;
+                lastIfWasHitCondition = false;
             }
         }
 

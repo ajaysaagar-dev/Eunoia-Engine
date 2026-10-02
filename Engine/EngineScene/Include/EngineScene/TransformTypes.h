@@ -51,13 +51,17 @@ struct TransformVector3 {
     TransformVector3 operator+(const TransformVector3& o) const { return {x + o.x, y + o.y, z + o.z}; }
     TransformVector3 operator-(const TransformVector3& o) const { return {x - o.x, y - o.y, z - o.z}; }
     TransformVector3 operator*(float s) const { return {x * s, y * s, z * s}; }
+    TransformVector3 operator*(double s) const { return {x * (float)s, y * (float)s, z * (float)s}; }
     TransformVector3 operator/(float s) const { return {x / s, y / s, z / s}; }
+    TransformVector3 operator/(double s) const { return {x / (float)s, y / (float)s, z / (float)s}; }
     TransformVector3 operator-() const { return {-x, -y, -z}; }
 
     TransformVector3& operator+=(const TransformVector3& o) { x += o.x; y += o.y; z += o.z; return *this; }
     TransformVector3& operator-=(const TransformVector3& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
     TransformVector3& operator*=(float s) { x *= s; y *= s; z *= s; return *this; }
+    TransformVector3& operator*=(double s) { x *= (float)s; y *= (float)s; z *= (float)s; return *this; }
     TransformVector3& operator/=(float s) { x /= s; y /= s; z /= s; return *this; }
+    TransformVector3& operator/=(double s) { x /= (float)s; y /= (float)s; z /= (float)s; return *this; }
 
     bool operator==(const TransformVector3& o) const { return x == o.x && y == o.y && z == o.z; }
     bool operator!=(const TransformVector3& o) const { return !(*this == o); }
@@ -68,6 +72,9 @@ struct TransformVector3 {
         return (l > 1e-6f) ? (*this / l) : TransformVector3(0.0f, 0.0f, 0.0f);
     }
 };
+
+inline TransformVector3 operator*(float s, const TransformVector3& v) { return v * s; }
+inline TransformVector3 operator*(double s, const TransformVector3& v) { return v * s; }
 
 inline std::ostream& operator<<(std::ostream& os, const TransformVector3& v) {
     return os << "(" << v.x << ", " << v.y << ", " << v.z << ")";

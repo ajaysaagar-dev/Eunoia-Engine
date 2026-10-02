@@ -241,6 +241,8 @@ public:
         bool appendHitDistance = false;
         bool appendHitStatus = false;
         bool appendHitTags = false;
+        bool requireHitStatus = false;
+        bool requireNoHit = false;
         std::string varName;
         int printKey = -1;
     };
