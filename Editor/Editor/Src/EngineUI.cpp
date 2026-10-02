@@ -545,7 +545,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
 
     // 1b. Copy Plugins Include headers (UI-System, Collisions, etc.)
     std::vector<std::string> pluginModules = {
-        "UI-System", "Collisions", "Mesh-Cluster-Culling", "water", "skybox"
+        "UI-System", "Collisions", "Physics", "Mesh-Cluster-Culling", "water", "skybox"
     };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
@@ -5890,10 +5890,11 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
-        // 4.8 Modifiers Section (includes Collisions and other modifiers)
+        // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
         if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty) {
             char modHeaderTitle[64];
-            snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", (int)obj->modifiers.size());
+            int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0);
+            snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", totalMods);
             if (ImGui::CollapsingHeader(modHeaderTitle, ImGuiTreeNodeFlags_DefaultOpen)) {
                 // Add Modifier button and popup
                 if (ImGui::Button("➕ Add Modifier", ImVec2(ImGui::GetContentRegionAvail().x, 28.0f))) {
@@ -5931,17 +5932,31 @@ void EngineUI::RenderDetails(Scene& scene) {
                         obj->AddModifier(CollisionShapeType::Mesh);
                         AddLog("LogPhysics", "Added Mesh Collision to " + obj->name, 0);
                     }
+
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "PHYSICS MODIFIERS");
+                    ImGui::Separator();
+                    if (!obj->hasPhysics) {
+                        if (ImGui::MenuItem("⚛️   Physics Modifier")) {
+                            obj->AddPhysicsModifier();
+                            AddLog("LogPhysics", "Added Physics Modifier to " + obj->name, 0);
+                        }
+                    } else {
+                        ImGui::TextDisabled("  ⚛️ Physics Modifier already added");
+                    }
+
                     ImGui::EndPopup();
                 }
 
-                if (obj->modifiers.empty()) {
+                if (obj->modifiers.empty() && !obj->hasPhysics) {
                     ImGui::Spacing();
                     ImGui::TextDisabled("No modifiers attached to this object.");
-                    ImGui::TextDisabled("Click '+ Add Modifier' to add collision modifiers.");
+                    ImGui::TextDisabled("Click '+ Add Modifier' to add collision or physics modifiers.");
                     ImGui::Spacing();
                 } else {
                     int modifierToRemove = -1;
 
+                    // 1. Render Collision Modifiers
                     for (size_t mi = 0; mi < obj->modifiers.size(); ++mi) {
                         auto& mod = obj->modifiers[mi];
                         ImGui::PushID((int)mi);
@@ -5965,7 +5980,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                         }
                         ImGui::PopStyleColor(2);
                         if (ImGui::IsItemHovered()) {
-                            ImGui::SetTooltip("Remove this modifier");
+                            ImGui::SetTooltip("Remove this collision modifier");
                         }
 
                         if (isModOpen) {
@@ -6068,6 +6083,101 @@ void EngineUI::RenderDetails(Scene& scene) {
                     if (modifierToRemove >= 0 && modifierToRemove < (int)obj->modifiers.size()) {
                         AddLog("LogPhysics", "Removed modifier: " + obj->modifiers[modifierToRemove].name, 0);
                         obj->RemoveModifier((size_t)modifierToRemove);
+                    }
+
+                    // 2. Render Physics Modifier (if attached)
+                    if (obj->hasPhysics) {
+                        ImGui::PushID("PhysicsModifierCard");
+                        ImGui::Spacing();
+                        ImGui::Separator();
+
+                        // Header with enabled toggle, name, and remove button
+                        ImGui::Checkbox("##PhysModEnabled", &obj->physics.enabled);
+                        ImGui::SameLine();
+
+                        bool isPhysOpen = ImGui::TreeNodeEx("⚛️   Physics Modifier##PhysHeader", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x + 20.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 0.8f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::SmallButton("X##RemovePhysMod")) {
+                            obj->RemovePhysicsModifier();
+                            AddLog("LogPhysics", "Removed Physics Modifier from " + obj->name, 0);
+                        }
+                        ImGui::PopStyleColor(2);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Remove Physics Modifier");
+                        }
+
+                        if (isPhysOpen) {
+                            ImGui::Indent(8.0f);
+
+                            // Gravity properties
+                            ImGui::Checkbox("Use Gravity", &obj->physics.useGravity);
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("When enabled, gravitational acceleration pulls this object downward during Play Mode.");
+                            }
+
+                            if (obj->physics.useGravity) {
+                                ImGui::DragFloat("Gravity Multiplier", &obj->physics.gravityMultiplier, 0.05f, 0.0f, 100.0f, "%.2fx");
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("Multiplies global gravity (e.g. 1.0 = normal 9.81 m/s², 2.0 = double gravity).");
+                                }
+                            }
+
+                            // Mass property
+                            ImGui::DragFloat("Mass (kg)", &obj->physics.mass, 0.1f, 0.01f, 100000.0f, "%.2f kg");
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Mass of the object in kilograms. Affects inertia and collision momentum transfer.");
+                            }
+
+                            // Dynamics & Drag
+                            ImGui::DragFloat("Linear Damping (Drag)", &obj->physics.linearDamping, 0.005f, 0.0f, 1.0f, "%.3f");
+                            ImGui::DragFloat("Angular Damping", &obj->physics.angularDamping, 0.005f, 0.0f, 1.0f, "%.3f");
+
+                            // Restitution & Friction
+                            ImGui::SliderFloat("Bounciness", &obj->physics.bounciness, 0.0f, 1.0f, "%.2f");
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Restitution: 0.0 = no bounce, 1.0 = superball.");
+                            }
+                            ImGui::SliderFloat("Friction", &obj->physics.friction, 0.0f, 1.0f, "%.2f");
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Surface friction coefficient.");
+                            }
+
+                            // Kinematic toggle
+                            ImGui::Checkbox("Is Kinematic", &obj->physics.isKinematic);
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("When true, object transform is driven manually/by scripts and ignores physics forces.");
+                            }
+
+                            // Constraints
+                            ImGui::Spacing();
+                            ImGui::TextDisabled("Freeze Position:");
+                            ImGui::SameLine();
+                            ImGui::Checkbox("X##FrzX", &obj->physics.lockPositionX);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Y##FrzY", &obj->physics.lockPositionY);
+                            ImGui::SameLine();
+                            ImGui::Checkbox("Z##FrzZ", &obj->physics.lockPositionZ);
+
+                            // Runtime Debug info
+                            ImGui::Spacing();
+                            ImGui::Separator();
+                            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Simulation Info:");
+                            ImGui::Text("  Velocity: (%.2f, %.2f, %.2f) m/s", obj->physics.velocity.x, obj->physics.velocity.y, obj->physics.velocity.z);
+                            ImGui::Text("  Grounded: %s", obj->physics.isGrounded ? "Yes" : "No");
+
+                            if (ImGui::Button("Reset Velocity", ImVec2(ImGui::GetContentRegionAvail().x, 24.0f))) {
+                                obj->physics.ResetVelocity();
+                                AddLog("LogPhysics", "Reset velocity for " + obj->name, 0);
+                            }
+
+                            ImGui::Unindent(8.0f);
+                            ImGui::TreePop();
+                        }
+
+                        ImGui::PopID();
                     }
                 }
             }

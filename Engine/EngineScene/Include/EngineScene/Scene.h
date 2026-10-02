@@ -18,6 +18,7 @@
 #include <EnginePlatform/InputSystem.h>
 #include <LightsBaking/LightBakeManager.h>
 #include <Collisions/CollisionSystem.h>
+#include <Physics/PhysicsSystem.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -1291,6 +1292,8 @@ public:
 
         ResolveAllBehaviourReferences();
 
+        Eunoia::Physics::PhysicsSystem::Get().ResetSimulation(*this);
+
         for (auto& obj : objects) {
             for (auto& b : obj.behaviours) {
                 if (!b) continue;
@@ -1312,6 +1315,7 @@ public:
     void StopPlayMode() {
         if (!isPlayMode) return;
         InputSystem::Get().SetCursorLocked(false);
+        Eunoia::Physics::PhysicsSystem::Get().ResetSimulation(*this);
 
         // Cleanup runtime state
         for (auto& obj : objects) {
@@ -1382,7 +1386,7 @@ public:
                 obj.scene = this;
             }
 
-            // 1. FixedUpdate
+            // 1. FixedUpdate & Physics Simulation
             fixedTimeAccumulator += dt;
             const float fixedStep = 1.0f / 60.0f;
             while (fixedTimeAccumulator >= fixedStep) {
@@ -1391,6 +1395,8 @@ public:
                         if (b && b->IsEnabled()) b->FixedUpdate(fixedStep);
                     }
                 }
+                // Step physics simulation
+                Eunoia::Physics::PhysicsSystem::Get().StepSimulation(*this, fixedStep);
                 fixedTimeAccumulator -= fixedStep;
             }
 

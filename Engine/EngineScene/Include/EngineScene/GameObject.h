@@ -11,6 +11,7 @@
 #include <EngineScene/BehaviourRegistry.h>
 #include <LightsBaking/LightBakeTypes.h>
 #include <Collisions/CollisionTypes.h>
+#include <Physics/PhysicsTypes.h>
 
 enum class LightType {
     Directional,
@@ -637,6 +638,23 @@ struct GameObject {
     PrimitiveMesh mesh;
     CollisionComponent collision;
     std::vector<CollisionModifier> modifiers;
+    bool hasPhysics = false;
+    PhysicsModifier physics;
+
+    void AddPhysicsModifier() {
+        hasPhysics = true;
+        physics.enabled = true;
+        physics.useGravity = true;
+        physics.gravityMultiplier = 1.0f;
+        physics.mass = 1.0f;
+        physics.ResetVelocity();
+    }
+
+    void RemovePhysicsModifier() {
+        hasPhysics = false;
+        physics.enabled = false;
+        physics.ResetVelocity();
+    }
 
     CollisionModifier& AddModifier(CollisionShapeType shape) {
         CollisionModifier mod(shape);
@@ -768,6 +786,8 @@ struct GameObject {
         mesh = std::move(other.mesh);
         collision = std::move(other.collision);
         modifiers = std::move(other.modifiers);
+        hasPhysics = other.hasPhysics;
+        physics = std::move(other.physics);
         scene = other.scene;
         Transform.gameObject = this;
         behaviours = std::move(other.behaviours);
@@ -832,6 +852,8 @@ struct GameObject {
         mesh = other.mesh;
         collision = other.collision;
         modifiers = other.modifiers;
+        hasPhysics = other.hasPhysics;
+        physics = other.physics;
         scene = other.scene;
         Transform.gameObject = this;
         behaviours.clear();

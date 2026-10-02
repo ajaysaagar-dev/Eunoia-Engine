@@ -337,7 +337,24 @@ public:
             file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
             file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
 
-            // Modifiers (Collisions, etc.)
+            file << "      \"hasPhysics\": " << BoolStr(obj.hasPhysics) << ",\n";
+            if (obj.hasPhysics) {
+                file << "      \"physicsEnabled\": " << BoolStr(obj.physics.enabled) << ",\n";
+                file << "      \"physicsUseGravity\": " << BoolStr(obj.physics.useGravity) << ",\n";
+                file << "      \"physicsGravityMultiplier\": " << obj.physics.gravityMultiplier << ",\n";
+                file << "      \"physicsMass\": " << obj.physics.mass << ",\n";
+                file << "      \"physicsLinearDamping\": " << obj.physics.linearDamping << ",\n";
+                file << "      \"physicsAngularDamping\": " << obj.physics.angularDamping << ",\n";
+                file << "      \"physicsBounciness\": " << obj.physics.bounciness << ",\n";
+                file << "      \"physicsFriction\": " << obj.physics.friction << ",\n";
+                file << "      \"physicsIsKinematic\": " << BoolStr(obj.physics.isKinematic) << ",\n";
+                file << "      \"physicsLockPosX\": " << BoolStr(obj.physics.lockPositionX) << ",\n";
+                file << "      \"physicsLockPosY\": " << BoolStr(obj.physics.lockPositionY) << ",\n";
+                file << "      \"physicsLockPosZ\": " << BoolStr(obj.physics.lockPositionZ) << ",\n";
+                file << "      \"physicsLockRotX\": " << BoolStr(obj.physics.lockRotationX) << ",\n";
+                file << "      \"physicsLockRotY\": " << BoolStr(obj.physics.lockRotationY) << ",\n";
+                file << "      \"physicsLockRotZ\": " << BoolStr(obj.physics.lockRotationZ) << ",\n";
+            }
             file << "      \"modifiers\": [\n";
             for (size_t mi = 0; mi < obj.modifiers.size(); ++mi) {
                 const auto& mod = obj.modifiers[mi];
@@ -1180,7 +1197,28 @@ public:
         p = actorBlock.find("\"waterChoppiness\""); if (p != std::string::npos) obj.water.choppiness = ParseFloatAt(actorBlock, p, 0.7f);
         p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
         p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
-        p = actorBlock.find("\"waterDebugMode\""); if (p != std::string::npos) obj.water.debugMode = ParseIntAt(actorBlock, p, 0);
+        // Parse Physics Modifier
+        p = actorBlock.find("\"hasPhysics\"");
+        if (p != std::string::npos) {
+            obj.hasPhysics = ParseBoolAt(actorBlock, p, false);
+            if (obj.hasPhysics) {
+                p = actorBlock.find("\"physicsEnabled\""); if (p != std::string::npos) obj.physics.enabled = ParseBoolAt(actorBlock, p, true);
+                p = actorBlock.find("\"physicsUseGravity\""); if (p != std::string::npos) obj.physics.useGravity = ParseBoolAt(actorBlock, p, true);
+                p = actorBlock.find("\"physicsGravityMultiplier\""); if (p != std::string::npos) obj.physics.gravityMultiplier = ParseFloatAt(actorBlock, p, 1.0f);
+                p = actorBlock.find("\"physicsMass\""); if (p != std::string::npos) obj.physics.mass = ParseFloatAt(actorBlock, p, 1.0f);
+                p = actorBlock.find("\"physicsLinearDamping\""); if (p != std::string::npos) obj.physics.linearDamping = ParseFloatAt(actorBlock, p, 0.05f);
+                p = actorBlock.find("\"physicsAngularDamping\""); if (p != std::string::npos) obj.physics.angularDamping = ParseFloatAt(actorBlock, p, 0.05f);
+                p = actorBlock.find("\"physicsBounciness\""); if (p != std::string::npos) obj.physics.bounciness = ParseFloatAt(actorBlock, p, 0.2f);
+                p = actorBlock.find("\"physicsFriction\""); if (p != std::string::npos) obj.physics.friction = ParseFloatAt(actorBlock, p, 0.6f);
+                p = actorBlock.find("\"physicsIsKinematic\""); if (p != std::string::npos) obj.physics.isKinematic = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockPosX\""); if (p != std::string::npos) obj.physics.lockPositionX = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockPosY\""); if (p != std::string::npos) obj.physics.lockPositionY = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockPosZ\""); if (p != std::string::npos) obj.physics.lockPositionZ = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockRotX\""); if (p != std::string::npos) obj.physics.lockRotationX = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockRotY\""); if (p != std::string::npos) obj.physics.lockRotationY = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsLockRotZ\""); if (p != std::string::npos) obj.physics.lockRotationZ = ParseBoolAt(actorBlock, p, false);
+            }
+        }
 
         // Parse Modifiers array
         size_t modArrPos = actorBlock.find("\"modifiers\"");
