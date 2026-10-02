@@ -2835,7 +2835,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         ImGuiViewport* vpWorkspace = ImGui::GetMainViewport();
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
-        EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize);
+        EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
     }
 
     if (showHelpModal) {

@@ -661,6 +661,15 @@ private:
     }
 };
 
+struct UIEventBinding {
+    std::string eventName = "onclick"; // onclick, onhover, onmouseenter, onmouseleave, onpress
+    int targetActorId = -1;
+    std::string targetActorName = "";
+    std::string behaviourClass = "";
+    std::string scriptPath = "";
+    std::string targetFunction = "";
+};
+
 // ============================================================================
 // HTML DOM NODE CLASS (FORWARD DECLARATION & INTERFACE)
 // ============================================================================
@@ -677,7 +686,7 @@ public:
     HtmlNode* parent = nullptr;
     glm::vec4 computedRect{ 0.0f, 0.0f, 0.0f, 0.0f }; // x, y, width, height
 
-    // Interactivity State
+    // Interactivity State & Event Bindings
     bool isHovered = false;
     bool isPressed = false;
     bool isClicked = false;
@@ -685,6 +694,32 @@ public:
     float maxScrollY = 0.0f;
     float totalContentHeight = 0.0f;
     std::function<void()> onClick = nullptr;
+    std::unordered_map<std::string, UIEventBinding> eventBindings;
+
+    std::string GetSelectorKey() const {
+        if (!id.empty()) return "#" + id;
+        std::string key = tag;
+        if (!classListStr.empty()) key += "." + classListStr;
+        if (!textContent.empty()) {
+            std::string t = textContent;
+            if (t.size() > 24) t = t.substr(0, 24);
+            key += "{" + t + "}";
+        }
+        return key;
+    }
+
+    HtmlNode* HitTest(const glm::vec2& localPos) {
+        if (style.isHidden) return nullptr;
+        bool inBounds = (localPos.x >= computedRect.x && localPos.x <= (computedRect.x + computedRect.z) &&
+                         localPos.y >= computedRect.y && localPos.y <= (computedRect.y + computedRect.w));
+        if (!inBounds) return nullptr;
+
+        for (auto it = children.rbegin(); it != children.rend(); ++it) {
+            HtmlNode* hit = (*it)->HitTest(localPos);
+            if (hit) return hit;
+        }
+        return this;
+    }
 
     void ParseClasses(const std::string& clsStr) {
         classListStr = clsStr;

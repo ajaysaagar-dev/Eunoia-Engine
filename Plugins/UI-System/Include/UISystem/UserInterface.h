@@ -281,7 +281,32 @@ public:
         auto curTime = std::filesystem::last_write_time(target, ec);
         if (ec) return false;
         if (curTime != lastHtmlWriteTime) {
-            return LoadFromHtml(target);
+            // Collect existing event bindings before reload
+            std::unordered_map<std::string, std::unordered_map<std::string, UIEventBinding>> oldBindings;
+            std::function<void(HtmlNode*)> collect = [&](HtmlNode* n) {
+                if (!n) return;
+                if (!n->eventBindings.empty()) {
+                    oldBindings[n->GetSelectorKey()] = n->eventBindings;
+                }
+                for (auto& ch : n->children) collect(ch.get());
+            };
+            if (htmlRoot) collect(htmlRoot.get());
+
+            bool res = LoadFromHtml(target);
+
+            // Reapply event bindings after parse
+            if (res && htmlRoot && !oldBindings.empty()) {
+                std::function<void(HtmlNode*)> reapply = [&](HtmlNode* n) {
+                    if (!n) return;
+                    auto it = oldBindings.find(n->GetSelectorKey());
+                    if (it != oldBindings.end()) {
+                        n->eventBindings = it->second;
+                    }
+                    for (auto& ch : n->children) reapply(ch.get());
+                };
+                reapply(htmlRoot.get());
+            }
+            return res;
         }
         return false;
     }
@@ -372,6 +397,30 @@ public:
             elemArray.push_back(e);
         }
         root["elements"] = elemArray;
+
+        // Serialize HTML DOM Event Bindings
+        nlohmann::json bindingsObj = nlohmann::json::object();
+        std::function<void(HtmlNode*)> collectBindings = [&](HtmlNode* n) {
+            if (!n) return;
+            if (!n->eventBindings.empty()) {
+                std::string sel = n->GetSelectorKey();
+                nlohmann::json evMap = nlohmann::json::object();
+                for (const auto& kv : n->eventBindings) {
+                    nlohmann::json eb;
+                    eb["eventName"] = kv.second.eventName;
+                    eb["targetActorId"] = kv.second.targetActorId;
+                    eb["targetActorName"] = kv.second.targetActorName;
+                    eb["behaviourClass"] = kv.second.behaviourClass;
+                    eb["scriptPath"] = kv.second.scriptPath;
+                    eb["targetFunction"] = kv.second.targetFunction;
+                    evMap[kv.first] = eb;
+                }
+                bindingsObj[sel] = evMap;
+            }
+            for (auto& ch : n->children) collectBindings(ch.get());
+        };
+        if (htmlRoot) collectBindings(htmlRoot.get());
+        root["eventBindings"] = bindingsObj;
 
         std::ofstream out(path);
         if (!out.is_open()) return false;
@@ -484,6 +533,30 @@ public:
             } else {
                 SaveToHtml(hPath);
                 LoadFromHtml(hPath);
+            }
+
+            // Restore HTML DOM Event Bindings
+            if (root.contains("eventBindings") && root["eventBindings"].is_object() && htmlRoot) {
+                const auto& bObj = root["eventBindings"];
+                std::function<void(HtmlNode*)> applyBindings = [&](HtmlNode* n) {
+                    if (!n) return;
+                    std::string sel = n->GetSelectorKey();
+                    if (bObj.contains(sel) && bObj[sel].is_object()) {
+                        const auto& evMap = bObj[sel];
+                        for (auto it = evMap.begin(); it != evMap.end(); ++it) {
+                            UIEventBinding eb;
+                            if (it.value().contains("eventName")) eb.eventName = it.value()["eventName"].get<std::string>();
+                            if (it.value().contains("targetActorId")) eb.targetActorId = it.value()["targetActorId"].get<int>();
+                            if (it.value().contains("targetActorName")) eb.targetActorName = it.value()["targetActorName"].get<std::string>();
+                            if (it.value().contains("behaviourClass")) eb.behaviourClass = it.value()["behaviourClass"].get<std::string>();
+                            if (it.value().contains("scriptPath")) eb.scriptPath = it.value()["scriptPath"].get<std::string>();
+                            if (it.value().contains("targetFunction")) eb.targetFunction = it.value()["targetFunction"].get<std::string>();
+                            n->eventBindings[it.key()] = eb;
+                        }
+                    }
+                    for (auto& ch : n->children) applyBindings(ch.get());
+                };
+                applyBindings(htmlRoot.get());
             }
 
             return true;
