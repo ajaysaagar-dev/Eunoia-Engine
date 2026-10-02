@@ -1395,7 +1395,10 @@ public:
             // 2. Update
             for (auto& obj : objects) {
                 for (auto& b : obj.behaviours) {
-                    if (b && b->IsEnabled()) b->Update(dt);
+                    if (b && b->IsEnabled()) {
+                        b->RefreshPropertiesFromSource();
+                        b->Update(dt);
+                    }
                 }
                 obj.Update(dt);
             }

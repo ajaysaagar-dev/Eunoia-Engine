@@ -517,8 +517,10 @@ public:
     virtual std::unique_ptr<EunoiaBehaviour> Clone() const { return nullptr; }
 
     // Copies registered properties and target references from another behaviour instance of the same type
-    void CopyPropertiesFrom(const EunoiaBehaviour& other) {
-        RegisterProperties();
+    virtual void CopyPropertiesFrom(const EunoiaBehaviour& other) {
+        if (m_properties.empty()) {
+            RegisterProperties();
+        }
         for (const auto& src : other.m_properties) {
             for (auto& dst : m_properties) {
                 if (dst.name == src.name) {

@@ -81,8 +81,43 @@ public:
         clone->m_startUIAddTargets = m_startUIAddTargets;
         clone->m_startUIRemoveTargets = m_startUIRemoveTargets;
         clone->m_startUIRemoveAll = m_startUIRemoveAll;
-        clone->RegisterProperties();
-        clone->CopyPropertiesFrom(*this);
+        clone->m_properties = m_properties;
+        for (auto& p : clone->m_properties) {
+            switch (p.type) {
+                case BehaviourPropertyType::Bool:
+                    p.dataPtr = &clone->m_boolStorage[p.name];
+                    break;
+                case BehaviourPropertyType::Int:
+                    p.dataPtr = &clone->m_intStorage[p.name];
+                    break;
+                case BehaviourPropertyType::Int64:
+                    p.dataPtr = &clone->m_int64Storage[p.name];
+                    break;
+                case BehaviourPropertyType::Float:
+                    p.dataPtr = &clone->m_floatStorage[p.name];
+                    break;
+                case BehaviourPropertyType::Double:
+                    p.dataPtr = &clone->m_doubleStorage[p.name];
+                    break;
+                case BehaviourPropertyType::String:
+                    p.dataPtr = &clone->m_stringStorage[p.name];
+                    break;
+                case BehaviourPropertyType::Vec2:
+                    p.dataPtr = &clone->m_vec2Storage[p.name];
+                    break;
+                case BehaviourPropertyType::Vec3:
+                case BehaviourPropertyType::Color3:
+                    p.dataPtr = &clone->m_vec3Storage[p.name];
+                    break;
+                case BehaviourPropertyType::Vec4:
+                case BehaviourPropertyType::Color4:
+                    p.dataPtr = &clone->m_vec4Storage[p.name];
+                    break;
+                case BehaviourPropertyType::ObjectRef:
+                    p.dataPtr = &clone->m_refStorage[p.name];
+                    break;
+            }
+        }
         clone->Transform.Init(clone.get());
         clone->GetRespectiveObject.behaviour = clone.get();
         clone->CursorState.behaviour = clone.get();
@@ -90,6 +125,7 @@ public:
         return clone;
     }
 
+    void CopyPropertiesFrom(const EunoiaBehaviour& other) override;
     void RegisterProperties() override;
     void ParsePropertiesFromCpp(const std::string& cppPath, bool preserveExistingValues = true);
     void RefreshPropertiesFromSource() override;
@@ -98,6 +134,19 @@ public:
 
     void Start() override;
     void Update(float deltaTime) override;
+
+    // Direct typed getters for robust runtime reflection
+    float GetFloat(const std::string& name, float defaultVal = 0.0f) const;
+    bool GetBool(const std::string& name, bool defaultVal = false) const;
+    int GetInt(const std::string& name, int defaultVal = 0) const;
+    int64_t GetInt64(const std::string& name, int64_t defaultVal = 0) const;
+    double GetDouble(const std::string& name, double defaultVal = 0.0) const;
+    std::string GetString(const std::string& name, const std::string& defaultVal = "") const;
+    glm::vec2 GetVec2(const std::string& name, const glm::vec2& defaultVal = glm::vec2(0.0f)) const;
+    glm::vec3 GetVec3(const std::string& name, const glm::vec3& defaultVal = glm::vec3(0.0f)) const;
+    glm::vec4 GetVec4(const std::string& name, const glm::vec4& defaultVal = glm::vec4(0.0f)) const;
+    void* GetRef(const std::string& name) const;
+    void SyncStorageFromProperties();
 
     // Stable storage pools for dynamically reflected properties
     std::map<std::string, float> m_floatStorage;
