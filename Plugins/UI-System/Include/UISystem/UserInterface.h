@@ -242,72 +242,88 @@ public:
     CssStyleSheet htmlSheet;
 
     bool LoadFromHtml(const std::string& path) {
-        std::ifstream in(path);
-        if (!in.is_open()) return false;
-        std::stringstream ss;
-        ss << in.rdbuf();
-        htmlSource = ss.str();
-        htmlPath = path;
-        htmlSheet = CssStyleSheet();
-        htmlRoot = HtmlCssParser::Parse(htmlSource, &htmlSheet);
-        if (htmlRoot) {
-            htmlRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
-        }
-        std::error_code ec;
-        lastHtmlWriteTime = std::filesystem::last_write_time(path, ec);
-        return true;
+        try {
+            std::error_code ec;
+            if (!std::filesystem::exists(path, ec)) return false;
+
+            std::ifstream in(path);
+            if (!in.is_open()) return false;
+            std::stringstream ss;
+            ss << in.rdbuf();
+            std::string content = ss.str();
+            if (content.empty()) return false;
+
+            CssStyleSheet newSheet;
+            auto newRoot = HtmlCssParser::Parse(content, &newSheet);
+            if (newRoot) {
+                newRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
+                htmlSource = std::move(content);
+                htmlPath = path;
+                htmlSheet = std::move(newSheet);
+                htmlRoot = std::move(newRoot);
+                lastHtmlWriteTime = std::filesystem::last_write_time(path, ec);
+                return true;
+            }
+        } catch (...) {}
+        return false;
     }
 
     bool SaveToHtml(const std::string& path = "") {
-        std::string target = path.empty() ? GetHtmlPath() : path;
-        if (target.empty()) return false;
-        if (htmlSource.empty()) {
-            htmlSource = HtmlCssParser::GetDefaultHtml(name);
+        try {
+            std::string target = path.empty() ? GetHtmlPath() : path;
+            if (target.empty()) return false;
+            if (htmlSource.empty()) {
+                htmlSource = HtmlCssParser::GetDefaultHtml(name);
+            }
+            std::ofstream out(target);
+            if (!out.is_open()) return false;
+            out << htmlSource;
+            htmlPath = target;
+            std::error_code ec;
+            lastHtmlWriteTime = std::filesystem::last_write_time(target, ec);
+            return true;
+        } catch (...) {
+            return false;
         }
-        std::ofstream out(target);
-        if (!out.is_open()) return false;
-        out << htmlSource;
-        htmlPath = target;
-        std::error_code ec;
-        lastHtmlWriteTime = std::filesystem::last_write_time(target, ec);
-        return true;
     }
 
     bool CheckAndReloadHtml() {
-        std::string target = GetHtmlPath();
-        if (target.empty()) return false;
-        std::error_code ec;
-        if (!std::filesystem::exists(target, ec)) return false;
-        auto curTime = std::filesystem::last_write_time(target, ec);
-        if (ec) return false;
-        if (curTime != lastHtmlWriteTime) {
-            // Collect existing event bindings before reload
-            std::unordered_map<std::string, std::unordered_map<std::string, UIEventBinding>> oldBindings;
-            std::function<void(HtmlNode*)> collect = [&](HtmlNode* n) {
-                if (!n) return;
-                if (!n->eventBindings.empty()) {
-                    oldBindings[n->GetSelectorKey()] = n->eventBindings;
-                }
-                for (auto& ch : n->children) collect(ch.get());
-            };
-            if (htmlRoot) collect(htmlRoot.get());
-
-            bool res = LoadFromHtml(target);
-
-            // Reapply event bindings after parse
-            if (res && htmlRoot && !oldBindings.empty()) {
-                std::function<void(HtmlNode*)> reapply = [&](HtmlNode* n) {
+        try {
+            std::string target = GetHtmlPath();
+            if (target.empty()) return false;
+            std::error_code ec;
+            if (!std::filesystem::exists(target, ec)) return false;
+            auto curTime = std::filesystem::last_write_time(target, ec);
+            if (ec) return false;
+            if (curTime != lastHtmlWriteTime) {
+                // Collect existing event bindings before reload
+                std::unordered_map<std::string, std::unordered_map<std::string, UIEventBinding>> oldBindings;
+                std::function<void(HtmlNode*)> collect = [&](HtmlNode* n) {
                     if (!n) return;
-                    auto it = oldBindings.find(n->GetSelectorKey());
-                    if (it != oldBindings.end()) {
-                        n->eventBindings = it->second;
+                    if (!n->eventBindings.empty()) {
+                        oldBindings[n->GetSelectorKey()] = n->eventBindings;
                     }
-                    for (auto& ch : n->children) reapply(ch.get());
+                    for (auto& ch : n->children) collect(ch.get());
                 };
-                reapply(htmlRoot.get());
+                if (htmlRoot) collect(htmlRoot.get());
+
+                bool res = LoadFromHtml(target);
+
+                // Reapply event bindings after parse
+                if (res && htmlRoot && !oldBindings.empty()) {
+                    std::function<void(HtmlNode*)> reapply = [&](HtmlNode* n) {
+                        if (!n) return;
+                        auto it = oldBindings.find(n->GetSelectorKey());
+                        if (it != oldBindings.end()) {
+                            n->eventBindings = it->second;
+                        }
+                        for (auto& ch : n->children) reapply(ch.get());
+                    };
+                    reapply(htmlRoot.get());
+                }
+                return res;
             }
-            return res;
-        }
+        } catch (...) {}
         return false;
     }
 
@@ -334,13 +350,27 @@ public:
         return search(htmlRoot.get());
     }
 
+    HtmlNode* FindHtmlNodeBySelector(const std::string& selectorKey) {
+        if (!htmlRoot || selectorKey.empty()) return nullptr;
+        std::function<HtmlNode*(HtmlNode*)> search = [&](HtmlNode* node) -> HtmlNode* {
+            if (!node) return nullptr;
+            if (node->GetSelectorKey() == selectorKey) return node;
+            for (auto& ch : node->children) {
+                HtmlNode* res = search(ch.get());
+                if (res) return res;
+            }
+            return nullptr;
+        };
+        return search(htmlRoot.get());
+    }
+
     void RenderHtml(void* imDrawListPtr, const glm::vec2& canvasOrigin, float scale) const {
         if (htmlRoot) {
             htmlRoot->Render(imDrawListPtr, canvasOrigin, scale, &htmlSheet);
         }
     }
 
-    bool SaveToFile(const std::string& path) {
+    bool SaveToFile(const std::string& path, bool syncHtml = true) {
         nlohmann::json root;
         root["name"] = name;
         root["canvasResolution"] = { canvasResolution.x, canvasResolution.y };
@@ -427,8 +457,10 @@ public:
         out << std::setw(4) << root << std::endl;
         filePath = path;
 
-        // Automatically ensure corresponding HTML file is saved as well
-        SaveToHtml(hPath);
+        // Automatically ensure corresponding HTML file is saved as well if requested
+        if (syncHtml) {
+            SaveToHtml(hPath);
+        }
 
         return true;
     }

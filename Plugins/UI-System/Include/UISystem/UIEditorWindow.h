@@ -358,19 +358,25 @@ public:
         }
     }
 
-    void Save() {
+    void Save(bool syncHtml = true) {
         if (!filePath.empty()) {
-            ui.SaveToFile(filePath);
+            ui.SaveToFile(filePath, syncHtml);
             isDirty = false;
         }
     }
 
     void RenderUIEditorContent(Scene* scene = nullptr) {
         // Real-time file watcher check on the HTML file
+        std::string selectedKey = selectedNode ? selectedNode->GetSelectorKey() : "";
         if (ui.CheckAndReloadHtml()) {
             lastReloadStatus = "Updated from HTML just now";
+            if (!selectedKey.empty()) {
+                selectedNode = ui.FindHtmlNodeBySelector(selectedKey);
+            } else {
+                selectedNode = nullptr;
+            }
             if (autoSave) {
-                Save();
+                Save(false); // Do not overwrite HTML file on disk that VS Code is editing
             }
         }
 

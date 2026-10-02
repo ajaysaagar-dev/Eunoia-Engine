@@ -48,7 +48,7 @@ struct CssColor {
         }
 
         // 1. Hex Color #RGB, #RGBA, #RRGGBB, #RRGGBBAA
-        if (colorStr.front() == '#') {
+        if (!colorStr.empty() && colorStr.front() == '#') {
             std::string hex = colorStr.substr(1);
             try {
                 if (hex.size() == 3) {
@@ -1403,6 +1403,8 @@ public:
                 continue;
             }
 
+            if (tagContent.empty()) continue;
+
             if (tagContent.front() == '/') {
                 std::string closeTagName = tagContent.substr(1);
                 size_t space = closeTagName.find(' ');
@@ -1420,8 +1422,10 @@ public:
                 continue;
             }
 
-            bool selfClosing = (tagContent.back() == '/');
+            bool selfClosing = (!tagContent.empty() && tagContent.back() == '/');
             if (selfClosing) tagContent.pop_back();
+
+            if (tagContent.empty()) continue;
 
             std::istringstream tagStream(tagContent);
             std::string tagName;
