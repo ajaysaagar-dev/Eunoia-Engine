@@ -27,22 +27,6 @@ struct RayTraceParams {
 struct GameObjectHitProxy {
     GameObject* ptr = nullptr;
 
-    GameObjectHitProxy(GameObject* p = nullptr) : ptr(p) {}
-
-    GameObjectHitProxy& operator=(GameObject* p) {
-        ptr = p;
-        return *this;
-    }
-
-    // Implicit conversion to GameObject* and GameObject&
-    operator GameObject*() const { return ptr; }
-    operator GameObject&() const;
-    GameObject* operator->() const { return ptr; }
-    GameObject& operator*() const;
-    bool operator==(std::nullptr_t) const { return ptr == nullptr; }
-    bool operator!=(std::nullptr_t) const { return ptr != nullptr; }
-    explicit operator bool() const { return ptr != nullptr; }
-
     // Direct Name accessor supporting Hit.GameObject.Name
     struct NameAccessor {
         const GameObjectHitProxy* parent = nullptr;
@@ -66,6 +50,38 @@ struct GameObjectHitProxy {
 
     NameAccessor Name{this};
     NameAccessor name{this};
+
+    GameObjectHitProxy(GameObject* p = nullptr) : ptr(p), Name(this), name(this) {}
+    GameObjectHitProxy(const GameObjectHitProxy& other) : ptr(other.ptr), Name(this), name(this) {}
+    GameObjectHitProxy(GameObjectHitProxy&& other) noexcept : ptr(other.ptr), Name(this), name(this) { other.ptr = nullptr; }
+    GameObjectHitProxy& operator=(const GameObjectHitProxy& other) {
+        ptr = other.ptr;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+    GameObjectHitProxy& operator=(GameObjectHitProxy&& other) noexcept {
+        ptr = other.ptr;
+        other.ptr = nullptr;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+    GameObjectHitProxy& operator=(GameObject* p) {
+        ptr = p;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+
+    // Implicit conversion to GameObject* and GameObject&
+    operator GameObject*() const { return ptr; }
+    operator GameObject&() const;
+    GameObject* operator->() const { return ptr; }
+    GameObject& operator*() const;
+    bool operator==(std::nullptr_t) const { return ptr == nullptr; }
+    bool operator!=(std::nullptr_t) const { return ptr != nullptr; }
+    explicit operator bool() const { return ptr != nullptr; }
 
     // Member forwards with dot syntax
     int GetId() const;
@@ -104,7 +120,63 @@ struct RayTraceHit {
     CollisionShapeType ShapeType = CollisionShapeType::None;
     CollisionShapeType shapeType = CollisionShapeType::None;
 
-    RayTraceHit() = default;
+    RayTraceHit() : GameObject(nullptr) {}
+    RayTraceHit(const RayTraceHit& other) {
+        *this = other;
+    }
+    RayTraceHit& operator=(const RayTraceHit& other) {
+        if (this == &other) return *this;
+        Status = other.Status;
+        status = other.status;
+        hasHit = other.hasHit;
+        GameObject = other.GameObject;
+        gameObject = other.gameObject;
+        Point = other.Point;
+        point = other.point;
+        Normal = other.Normal;
+        normal = other.normal;
+        Distance = other.Distance;
+        distance = other.distance;
+        Fraction = other.Fraction;
+        fraction = other.fraction;
+        ObjectId = other.ObjectId;
+        objectId = other.objectId;
+        ModifierIndex = other.ModifierIndex;
+        modifierIndex = other.modifierIndex;
+        ModifierName = other.ModifierName;
+        modifierName = other.modifierName;
+        ShapeType = other.ShapeType;
+        shapeType = other.shapeType;
+        return *this;
+    }
+    RayTraceHit(RayTraceHit&& other) noexcept {
+        *this = std::move(other);
+    }
+    RayTraceHit& operator=(RayTraceHit&& other) noexcept {
+        if (this == &other) return *this;
+        Status = other.Status;
+        status = other.status;
+        hasHit = other.hasHit;
+        GameObject = std::move(other.GameObject);
+        gameObject = other.gameObject;
+        Point = other.Point;
+        point = other.point;
+        Normal = other.Normal;
+        normal = other.normal;
+        Distance = other.Distance;
+        distance = other.distance;
+        Fraction = other.Fraction;
+        fraction = other.fraction;
+        ObjectId = other.ObjectId;
+        objectId = other.objectId;
+        ModifierIndex = other.ModifierIndex;
+        modifierIndex = other.modifierIndex;
+        ModifierName = std::move(other.ModifierName);
+        modifierName = std::move(other.modifierName);
+        ShapeType = other.ShapeType;
+        shapeType = other.shapeType;
+        return *this;
+    }
 
     void SetHit(bool hit, ::GameObject* obj, const glm::vec3& pt, const glm::vec3& n, float dist, float frac, int objId, int modIdx, const std::string& modName, CollisionShapeType shape);
 

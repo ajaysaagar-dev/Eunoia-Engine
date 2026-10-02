@@ -132,6 +132,10 @@ namespace Detail {
         if (!ptr) ss << "null";
         else ss << (const void*)ptr;
     }
+    template<typename T, typename = std::enable_if_t<!std::is_pointer_v<T>>>
+    inline auto Append(std::ostringstream& ss, const T& v) -> decltype(ss << v, void()) {
+        ss << v;
+    }
 
     inline void FormatHelper(std::ostringstream&) {}
 

@@ -1408,11 +1408,68 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
     float dt = (::WorldDeltaSeconds > 0.0f) ? ::WorldDeltaSeconds : deltaTime;
     UpdateTimers(dt);
 
+    // Execute dynamic RayTrace actions
+    if (m_scene && m_owner) {
+        RayTrace.behaviour = this;
+        RayTraceSystem::Get().SetActiveScene(m_scene);
+        for (const auto& trace : m_lineTraceActions) {
+            glm::vec3 startPos = m_owner->position;
+            glm::vec3 rotRad = glm::radians(m_owner->rotation);
+            glm::mat4 rMat(1.0f);
+            rMat = glm::rotate(rMat, rotRad.x, glm::vec3(1, 0, 0));
+            rMat = glm::rotate(rMat, rotRad.y, glm::vec3(0, 1, 0));
+            rMat = glm::rotate(rMat, rotRad.z, glm::vec3(0, 0, 1));
+            glm::vec3 forwardDir = glm::normalize(glm::vec3(rMat * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f)));
+            glm::vec3 endPos = startPos + forwardDir * trace.traceDistance;
+
+            std::string sLow = trace.startVar;
+            std::transform(sLow.begin(), sLow.end(), sLow.begin(), ::tolower);
+            if (sLow.find("transform.location") != std::string::npos || sLow.find("transform.position") != std::string::npos) {
+                startPos = m_owner->position;
+            }
+            std::string eLow = trace.endVar;
+            std::transform(eLow.begin(), eLow.end(), eLow.begin(), ::tolower);
+            if (eLow.find("forward") != std::string::npos) {
+                endPos = startPos + forwardDir * trace.traceDistance;
+            } else if (eLow.find("down") != std::string::npos) {
+                endPos = startPos + glm::vec3(0.0f, -trace.traceDistance, 0.0f);
+            }
+
+            m_lastDynamicHit = RayTrace.LineTrace(startPos, endPos, m_owner);
+        }
+    }
+
     // Execute real-time dynamic Print statements inside Update()
     for (const auto& item : m_updatePrintMessages) {
         std::string msg = item.textPrefix;
         if (item.appendDeltaTime) {
             msg += std::to_string(dt);
+        }
+        if (item.appendHitName) {
+            if (m_lastDynamicHit.Status && m_lastDynamicHit.GameObject) {
+                msg += m_lastDynamicHit.GameObject.Name.str();
+            } else {
+                msg += "None";
+            }
+        }
+        if (item.appendHitId) {
+            msg += m_lastDynamicHit.Status ? std::to_string(m_lastDynamicHit.ObjectId) : "-1";
+        }
+        if (item.appendHitPoint) {
+            msg += m_lastDynamicHit.Status ? ("(" + std::to_string(m_lastDynamicHit.Point.x) + ", " +
+                                                    std::to_string(m_lastDynamicHit.Point.y) + ", " +
+                                                    std::to_string(m_lastDynamicHit.Point.z) + ")") : "(0, 0, 0)";
+        }
+        if (item.appendHitStatus) {
+            msg += (m_lastDynamicHit.Status ? "true" : "false");
+        }
+        if (item.appendHitDistance) {
+            msg += std::to_string(m_lastDynamicHit.Distance);
+        }
+        if (item.appendHitNormal) {
+            msg += ("(" + std::to_string(m_lastDynamicHit.Normal.x) + ", " +
+                          std::to_string(m_lastDynamicHit.Normal.y) + ", " +
+                          std::to_string(m_lastDynamicHit.Normal.z) + ")");
         }
         if (!item.varName.empty()) {
             if (m_floatStorage.find(item.varName) != m_floatStorage.end()) msg += std::to_string(GetFloat(item.varName));
@@ -2444,6 +2501,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     m_startUIRemoveAll = false;
     m_updatePrintMessages.clear();
     m_transformActions.clear();
+    m_lineTraceActions.clear();
     m_hasRotation = false;
     m_hasTranslation = false;
     m_rotateAxis = glm::vec3(0.0f, 1.0f, 0.0f);
@@ -3224,8 +3282,32 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         item.appendDeltaTime = true;
                     }
 
+                    if (lowerInner.find("hit.gameobject.name") != std::string::npos ||
+                        lowerInner.find("gameobject.name") != std::string::npos ||
+                        (lowerInner.find("hit") != std::string::npos && lowerInner.find(".name") != std::string::npos)) {
+                        item.appendHitName = true;
+                    } else if (lowerInner.find("hit.gameobject.objectid") != std::string::npos ||
+                               lowerInner.find("hit.objectid") != std::string::npos ||
+                               (lowerInner.find("hit") != std::string::npos && lowerInner.find(".objectid") != std::string::npos) ||
+                               (lowerInner.find("hit") != std::string::npos && lowerInner.find(".id") != std::string::npos)) {
+                        item.appendHitId = true;
+                    } else if (lowerInner.find("hit.point") != std::string::npos ||
+                               lowerInner.find("hit.location") != std::string::npos ||
+                               lowerInner.find("hit.position") != std::string::npos) {
+                        item.appendHitPoint = true;
+                    } else if (lowerInner.find("hit.status") != std::string::npos) {
+                        item.appendHitStatus = true;
+                    } else if (lowerInner.find("hit.distance") != std::string::npos) {
+                        item.appendHitDistance = true;
+                    } else if (lowerInner.find("hit.normal") != std::string::npos) {
+                        item.appendHitNormal = true;
+                    } else if (lowerInner.find("hit.gameobject") != std::string::npos ||
+                               lowerInner.find("hit.actor") != std::string::npos) {
+                        item.appendHitName = true;
+                    }
+
                     if (lowerInner.find("position") != std::string::npos || lowerInner.find("location") != std::string::npos) {
-                        item.appendPosition = true;
+                        if (!item.appendHitPoint) item.appendPosition = true;
                     }
                     if (lowerInner.find("rotation") != std::string::npos) {
                         item.appendRotation = true;
@@ -3257,6 +3339,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         }
                     } else {
                         if (item.appendDeltaTime) item.textPrefix = "DeltaTime: ";
+                        else if (item.appendHitName || item.appendHitId || item.appendHitPoint || item.appendHitStatus || item.appendHitDistance || item.appendHitNormal) item.textPrefix = "";
                         else if (!item.varName.empty()) item.textPrefix = item.varName + ": ";
                         else item.textPrefix = inner;
                     }
@@ -3418,6 +3501,58 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 m_transformActions.push_back(action);
             }
 
+            // 5. Scan for RayTrace.LineTrace or LineTrace
+            size_t ltPos = l.find("LineTrace(");
+            if (ltPos != std::string::npos) {
+                DynamicLineTraceAction action;
+                size_t openP = l.find('(', ltPos);
+                size_t closeP = l.rfind(')');
+                if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
+                    std::string argsStr = l.substr(openP + 1, closeP - openP - 1);
+                    std::vector<std::string> args;
+                    std::string cur;
+                    int parenDepth = 0;
+                    for (char c : argsStr) {
+                        if (c == '(') parenDepth++;
+                        else if (c == ')') parenDepth--;
+                        else if (c == ',' && parenDepth == 0) {
+                            args.push_back(cur);
+                            cur.clear();
+                            continue;
+                        }
+                        cur += c;
+                    }
+                    if (!cur.empty()) args.push_back(cur);
+
+                    if (!args.empty()) {
+                        action.startVar = args[0];
+                    }
+                    if (args.size() > 1) {
+                        action.endVar = args[1];
+                        size_t numStart = args[1].find_first_of("0123456789");
+                        if (numStart != std::string::npos) {
+                            size_t numEnd = numStart;
+                            while (numEnd < args[1].size() && (std::isdigit(args[1][numEnd]) || args[1][numEnd] == '.' || args[1][numEnd] == 'f' || args[1][numEnd] == 'F')) {
+                                numEnd++;
+                            }
+                            std::string nStr = args[1].substr(numStart, numEnd - numStart);
+                            if (!nStr.empty() && (nStr.back() == 'f' || nStr.back() == 'F')) nStr.pop_back();
+                            try {
+                                float val = std::stof(nStr);
+                                if (val > 0.0f) action.traceDistance = val;
+                            } catch (...) {}
+                        }
+                    }
+                    if (args.size() > 2) {
+                        try {
+                            float val = std::stof(args[2]);
+                            if (val > 0.0f) action.traceDistance = val;
+                        } catch (...) {}
+                    }
+                }
+                m_lineTraceActions.push_back(action);
+            }
+
             // Handle brace cleanup at end of line
             updateMethodBraceDepth -= closeBracesOnLine;
             while (!conditionStack.empty() && conditionStack.back().braceDepth > updateMethodBraceDepth) {
@@ -3433,6 +3568,21 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             }
         }
 
+    }
+
+    if (m_lineTraceActions.empty()) {
+        bool needsHit = false;
+        for (const auto& pr : m_updatePrintMessages) {
+            if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal) {
+                needsHit = true;
+                break;
+            }
+        }
+        if (needsHit) {
+            DynamicLineTraceAction action;
+            action.traceDistance = 1000.0f;
+            m_lineTraceActions.push_back(action);
+        }
     }
 
     if (m_scene) {

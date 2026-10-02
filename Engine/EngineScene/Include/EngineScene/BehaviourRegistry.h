@@ -234,10 +234,29 @@ public:
         bool appendDeltaTime = false;
         bool appendPosition = false;
         bool appendRotation = false;
+        bool appendHitName = false;
+        bool appendHitId = false;
+        bool appendHitPoint = false;
+        bool appendHitNormal = false;
+        bool appendHitDistance = false;
+        bool appendHitStatus = false;
         std::string varName;
         int printKey = -1;
     };
     std::vector<DynamicUpdatePrint> m_updatePrintMessages;
+
+    struct DynamicLineTraceAction {
+        bool enabled = true;
+        std::string startVar;
+        std::string endVar;
+        glm::vec3 constantStart{0.0f};
+        glm::vec3 constantEnd{0.0f};
+        bool autoOriginFromOwner = false;
+        bool autoDirectionForward = false;
+        float traceDistance = 100.0f;
+    };
+    std::vector<DynamicLineTraceAction> m_lineTraceActions;
+    RayTraceHit m_lastDynamicHit;
 
     struct DynamicKeyCondition {
         int key = -1;
