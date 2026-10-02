@@ -36,7 +36,7 @@ public:
     bool LineTraceTest(const Scene& scene, const glm::vec3& start, const glm::vec3& end, const RayTraceParams& params = RayTraceParams());
 
     // Raycast against a single GameObject's collision modifiers
-    bool RaycastGameObject(const GameObject& obj, const glm::vec3& start, const glm::vec3& dirNorm, float maxDist, RayTraceHit& outHit, bool ignoreTriggers = false);
+    bool RaycastGameObject(const GameObject& obj, const glm::vec3& start, const glm::vec3& dirNorm, float maxDist, RayTraceHit& outHit, bool ignoreTriggers = false, const Scene* scene = nullptr);
 
 private:
     RayTraceSystem() = default;

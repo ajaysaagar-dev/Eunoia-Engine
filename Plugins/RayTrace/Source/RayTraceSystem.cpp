@@ -398,12 +398,22 @@ static bool IntersectRayCone(const glm::vec3& ro, const glm::vec3& rd, const glm
     return false;
 }
 
-bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& start, const glm::vec3& dirNorm, float maxDist, RayTraceHit& outHit, bool ignoreTriggers) {
+bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& start, const glm::vec3& dirNorm, float maxDist, RayTraceHit& outHit, bool ignoreTriggers, const Scene* scene) {
     if (obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || IsCameraPrimitive(obj.type)) {
         return false;
     }
 
-    glm::mat4 worldMat = GetObjectWorldMatrix(obj);
+    glm::mat4 worldMat;
+    if (scene) {
+        worldMat = scene->GetWorldMatrix(obj);
+    } else if (m_activeScene) {
+        worldMat = m_activeScene->GetWorldMatrix(obj);
+    } else if (obj.scene) {
+        worldMat = obj.scene->GetWorldMatrix(obj);
+    } else {
+        worldMat = GetObjectWorldMatrix(obj);
+    }
+
     glm::mat4 invWorld = glm::inverse(worldMat);
     glm::mat3 normalMat = glm::transpose(glm::mat3(invWorld));
 
@@ -573,7 +583,7 @@ RayTraceHit RayTraceSystem::LineTrace(const Scene& scene, const glm::vec3& start
         if (params.ignoreObject != nullptr && &obj == params.ignoreObject) continue;
 
         RayTraceHit hit;
-        if (RaycastGameObject(obj, start, dirNorm, searchDist, hit, params.ignoreTriggers)) {
+        if (RaycastGameObject(obj, start, dirNorm, searchDist, hit, params.ignoreTriggers, &scene)) {
             if (hit.distance < closestDist) {
                 closestDist = hit.distance;
                 closestHit = hit;
@@ -609,7 +619,7 @@ std::vector<RayTraceHit> RayTraceSystem::LineTraceMulti(const Scene& scene, cons
         if (params.ignoreObject != nullptr && &obj == params.ignoreObject) continue;
 
         RayTraceHit hit;
-        if (RaycastGameObject(obj, start, dirNorm, searchDist, hit, params.ignoreTriggers)) {
+        if (RaycastGameObject(obj, start, dirNorm, searchDist, hit, params.ignoreTriggers, &scene)) {
             hit.fraction = hit.distance / maxDist;
             hits.push_back(hit);
         }

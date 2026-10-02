@@ -427,29 +427,24 @@ TransformState GameObjectTransform::GetRelativeTransform() const {
 
 TransformVector3 GameObjectTransform::GetForwardVector() const {
     glm::vec3 rot = GetWorldRotationInternal();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f))));
+    float rYaw = glm::radians(rot.y);
+    float rPitch = glm::radians(rot.x);
+    float x = -std::cos(rPitch) * std::sin(rYaw);
+    float y = -std::sin(rPitch);
+    float z = -std::cos(rPitch) * std::cos(rYaw);
+    return TransformVector3(glm::normalize(glm::vec3(x, y, z)));
 }
 
 TransformVector3 GameObjectTransform::GetRightVector() const {
     glm::vec3 rot = GetWorldRotationInternal();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f))));
+    float rYaw = glm::radians(rot.y);
+    return TransformVector3(glm::normalize(glm::vec3(std::cos(rYaw), 0.0f, -std::sin(rYaw))));
 }
 
 TransformVector3 GameObjectTransform::GetUpVector() const {
-    glm::vec3 rot = GetWorldRotationInternal();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f))));
+    glm::vec3 fwd = GetForwardVector();
+    glm::vec3 right = GetRightVector();
+    return TransformVector3(glm::normalize(glm::cross(glm::vec3(right.x, right.y, right.z), glm::vec3(fwd.x, fwd.y, fwd.z))));
 }
 
 void GameObjectTransform::WorldTranslate(const glm::vec3& delta) {
@@ -586,29 +581,24 @@ TransformState BehaviourTransform::GetRelativeTransform() const {
 
 TransformVector3 BehaviourTransform::GetForwardVector() const {
     glm::vec3 rot = WorldRotation();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, 0.0f, -1.0f, 0.0f))));
+    float rYaw = glm::radians(rot.y);
+    float rPitch = glm::radians(rot.x);
+    float x = -std::cos(rPitch) * std::sin(rYaw);
+    float y = -std::sin(rPitch);
+    float z = -std::cos(rPitch) * std::cos(rYaw);
+    return TransformVector3(glm::normalize(glm::vec3(x, y, z)));
 }
 
 TransformVector3 BehaviourTransform::GetRightVector() const {
     glm::vec3 rot = WorldRotation();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f))));
+    float rYaw = glm::radians(rot.y);
+    return TransformVector3(glm::normalize(glm::vec3(std::cos(rYaw), 0.0f, -std::sin(rYaw))));
 }
 
 TransformVector3 BehaviourTransform::GetUpVector() const {
-    glm::vec3 rot = WorldRotation();
-    glm::mat4 rotMat = glm::mat4(1.0f);
-    rotMat = glm::rotate(rotMat, glm::radians(rot.y), glm::vec3(0, 1, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.x), glm::vec3(1, 0, 0));
-    rotMat = glm::rotate(rotMat, glm::radians(rot.z), glm::vec3(0, 0, 1));
-    return TransformVector3(glm::normalize(glm::vec3(rotMat * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f))));
+    glm::vec3 fwd = GetForwardVector();
+    glm::vec3 right = GetRightVector();
+    return TransformVector3(glm::normalize(glm::cross(glm::vec3(right.x, right.y, right.z), glm::vec3(fwd.x, fwd.y, fwd.z))));
 }
 
 // ============================================================================
