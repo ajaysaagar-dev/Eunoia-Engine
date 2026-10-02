@@ -1067,6 +1067,7 @@ void DynamicScriptBehaviour::CopyPropertiesFrom(const EunoiaBehaviour& other) {
         m_vec4Storage = dynOther->m_vec4Storage;
         m_refStorage = dynOther->m_refStorage;
         m_defaultPropertyValues = dynOther->m_defaultPropertyValues;
+        m_methods = dynOther->m_methods;
     }
     EunoiaBehaviour::CopyPropertiesFrom(other);
     SyncStorageFromProperties();
@@ -1100,6 +1101,137 @@ void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::u
     if (it == m_methods.end()) return;
 
     const auto& m = it->second;
+
+    auto executeAction = [&](const ScriptAction& act) {
+        switch (act.type) {
+            case ScriptStatementType::Toggle: {
+                bool cur = GetBool(act.varName, false);
+                bool nextVal = !cur;
+                m_boolStorage[act.varName] = nextVal;
+                for (auto& prop : m_properties) {
+                    if (prop.name == act.varName || prop.displayName == act.varName || NormalizePropName(prop.name) == NormalizePropName(act.varName)) {
+                        if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
+                            *reinterpret_cast<bool*>(prop.dataPtr) = nextVal;
+                        }
+                    }
+                }
+                break;
+            }
+            case ScriptStatementType::Assignment: {
+                std::string vName = act.varName;
+                std::string valStr = act.valueStr;
+                std::string valLower = valStr;
+                std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+
+                if (valLower.rfind("!" + NormalizePropName(vName), 0) == 0 || valLower.rfind("!", 0) == 0) {
+                    bool cur = GetBool(vName, false);
+                    bool nextVal = !cur;
+                    m_boolStorage[vName] = nextVal;
+                    for (auto& prop : m_properties) {
+                        if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                            if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
+                                *reinterpret_cast<bool*>(prop.dataPtr) = nextVal;
+                            }
+                        }
+                    }
+                } else if (valLower == "true" || valLower == "false" || valLower == "1" || valLower == "0") {
+                    bool bVal = (valLower == "true" || valLower == "1");
+                    m_boolStorage[vName] = bVal;
+                    for (auto& prop : m_properties) {
+                        if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                            if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
+                                *reinterpret_cast<bool*>(prop.dataPtr) = bVal;
+                            }
+                        }
+                    }
+                } else {
+                    try {
+                        std::string clean = valStr;
+                        if (!clean.empty() && (clean.back() == 'f' || clean.back() == 'F' || clean.back() == 'd' || clean.back() == 'D')) {
+                            clean.pop_back();
+                        }
+                        float fVal = std::stof(clean);
+                        m_floatStorage[vName] = fVal;
+                        for (auto& prop : m_properties) {
+                            if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                                if (prop.dataPtr && prop.type == BehaviourPropertyType::Float) {
+                                    *reinterpret_cast<float*>(prop.dataPtr) = fVal;
+                                }
+                            }
+                        }
+                    } catch (...) {
+                        std::string sVal = valStr;
+                        if (sVal.size() >= 2 && sVal.front() == '"' && sVal.back() == '"') {
+                            sVal = sVal.substr(1, sVal.size() - 2);
+                        }
+                        m_stringStorage[vName] = sVal;
+                        for (auto& prop : m_properties) {
+                            if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                                if (prop.dataPtr && prop.type == BehaviourPropertyType::String) {
+                                    *reinterpret_cast<std::string*>(prop.dataPtr) = sVal;
+                                }
+                            }
+                        }
+                    }
+                }
+                break;
+            }
+            case ScriptStatementType::Print: {
+                Print(act.target);
+                AddEngineLog("LogBehaviour", "[" + m_className + "] " + act.target, 0);
+                break;
+            }
+            case ScriptStatementType::UnlockCursor: {
+                CursorState.UnLocked();
+                break;
+            }
+            case ScriptStatementType::LockCursor: {
+                CursorState.Locked();
+                break;
+            }
+            case ScriptStatementType::RemoveAllUI: {
+                EunoiaUI::UISystemManager::Get().RemoveAll();
+                break;
+            }
+            case ScriptStatementType::AddUI: {
+                UserInterface* uiPtr = nullptr;
+                for (auto& p : m_properties) {
+                    if (p.name == act.target && p.refType == ObjectRefType::UserInterface) {
+                        if (!p.assetPath.empty()) {
+                            uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(p.assetPath);
+                            if (p.dataPtr) *reinterpret_cast<UserInterface**>(p.dataPtr) = uiPtr;
+                        } else if (p.dataPtr) {
+                            uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                        }
+                        break;
+                    }
+                }
+                if (uiPtr) {
+                    EunoiaUI::UISystemManager::Get().Add(uiPtr);
+                    AddEngineLog("LogUI", "Added UserInterface to viewport: " + uiPtr->name, 2);
+                }
+                break;
+            }
+            case ScriptStatementType::RemoveUI: {
+                UserInterface* uiPtr = nullptr;
+                for (auto& p : m_properties) {
+                    if (p.name == act.target && p.refType == ObjectRefType::UserInterface && p.dataPtr) {
+                        uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                        break;
+                    }
+                }
+                if (uiPtr) {
+                    EunoiaUI::UISystemManager::Get().Remove(uiPtr);
+                }
+                break;
+            }
+            case ScriptStatementType::CallMethod: {
+                ExecuteMethod(act.target, visited);
+                break;
+            }
+        }
+    };
+
     if (m.unlockCursor) CursorState.UnLocked();
     if (m.lockCursor) CursorState.Locked();
     if (m.removeAllUI) EunoiaUI::UISystemManager::Get().RemoveAll();
@@ -1141,50 +1273,21 @@ void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::u
         }
     }
 
-    for (const auto& asgn : m.assignments) {
-        std::string vName = asgn.varName;
-        std::string valStr = asgn.valueStr;
-        std::string valLower = valStr;
-        std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
-
-        if (valLower == "true" || valLower == "false" || valLower == "1" || valLower == "0") {
-            bool bVal = (valLower == "true" || valLower == "1");
-            m_boolStorage[vName] = bVal;
-            for (auto& prop : m_properties) {
-                if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
-                    if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
-                        *reinterpret_cast<bool*>(prop.dataPtr) = bVal;
-                    }
+    for (const auto& branch : m.branches) {
+        if (branch.hasCondition) {
+            bool condVal = GetBool(branch.conditionVar, false);
+            if (condVal == branch.expectedBool) {
+                for (const auto& act : branch.thenActions) {
+                    executeAction(act);
+                }
+            } else {
+                for (const auto& act : branch.elseActions) {
+                    executeAction(act);
                 }
             }
         } else {
-            try {
-                std::string clean = valStr;
-                if (!clean.empty() && (clean.back() == 'f' || clean.back() == 'F' || clean.back() == 'd' || clean.back() == 'D')) {
-                    clean.pop_back();
-                }
-                float fVal = std::stof(clean);
-                m_floatStorage[vName] = fVal;
-                for (auto& prop : m_properties) {
-                    if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
-                        if (prop.dataPtr && prop.type == BehaviourPropertyType::Float) {
-                            *reinterpret_cast<float*>(prop.dataPtr) = fVal;
-                        }
-                    }
-                }
-            } catch (...) {
-                std::string sVal = valStr;
-                if (sVal.size() >= 2 && sVal.front() == '"' && sVal.back() == '"') {
-                    sVal = sVal.substr(1, sVal.size() - 2);
-                }
-                m_stringStorage[vName] = sVal;
-                for (auto& prop : m_properties) {
-                    if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
-                        if (prop.dataPtr && prop.type == BehaviourPropertyType::String) {
-                            *reinterpret_cast<std::string*>(prop.dataPtr) = sVal;
-                        }
-                    }
-                }
+            for (const auto& act : branch.thenActions) {
+                executeAction(act);
             }
         }
     }
@@ -2582,6 +2685,17 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     std::string currentMethodName;
     int currentMethodBraceDepth = 0;
 
+    struct MethodParseState {
+        DynamicScriptBehaviour::ScriptBranch currentBranch;
+        bool inIf = false;
+        bool inElse = false;
+        int ifBraceDepth = 0;
+        int elseBraceDepth = 0;
+        bool singleLineIf = false;
+        bool singleLineElse = false;
+    };
+    MethodParseState methodState;
+
     bool inStartMethod = false;
     bool inUpdateMethod = false;
 
@@ -2616,6 +2730,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 if (!mName.empty() && mName != "if" && mName != "for" && mName != "while" && mName != "switch" && mName != "catch" && mName != "REGISTER_BEHAVIOUR") {
                     currentMethodName = mName;
                     currentMethodBraceDepth = openBracesOnLine - closeBracesOnLine;
+                    methodState = MethodParseState();
                     if (mName == "Update") {
                         inUpdateMethod = true;
                         inStartMethod = false;
@@ -2639,119 +2754,282 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             auto& sm = m_methods[currentMethodName];
             sm.name = currentMethodName;
 
-            std::string lLower = l;
+            std::string lTrim = l;
+            std::string lLower = lTrim;
             std::transform(lLower.begin(), lLower.end(), lLower.begin(), ::tolower);
-            if (lLower.find("cursorstate.unlocked") != std::string::npos || lLower.find("cursorstate.unlock") != std::string::npos) {
-                sm.unlockCursor = true;
-                if (currentMethodName == "Start") m_startUnlockCursor = true;
-            } else if (lLower.find("cursorstate.locked") != std::string::npos || lLower.find("cursorstate.lock") != std::string::npos) {
-                sm.lockCursor = true;
-                if (currentMethodName == "Start") m_startLockCursor = true;
-            }
 
-            if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos) {
-                sm.removeAllUI = true;
-                if (currentMethodName == "Start") m_startUIRemoveAll = true;
-            }
+            auto parseActionFromStr = [&](const std::string& str, DynamicScriptBehaviour::ScriptAction& outAct) -> bool {
+                std::string s = str;
+                size_t b = s.find_first_not_of(" \t\r\n;{}");
+                size_t e = s.find_last_not_of(" \t\r\n;{}");
+                if (b == std::string::npos || e == std::string::npos) return false;
+                s = s.substr(b, e - b + 1);
 
-            size_t addUIPos = l.find("UISystem.Add(");
-            if (addUIPos == std::string::npos) addUIPos = l.find("UISystem::Add(");
-            if (addUIPos == std::string::npos) addUIPos = l.find("AddUI(");
-            if (addUIPos != std::string::npos) {
-                size_t p1 = l.find('(', addUIPos);
-                size_t p2 = l.find(')', p1);
-                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
-                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
-                    size_t vn1 = varName.find_first_not_of(" \t&");
-                    size_t vn2 = varName.find_last_not_of(" \t&");
-                    if (vn1 != std::string::npos && vn2 != std::string::npos) {
-                        varName = varName.substr(vn1, vn2 - vn1 + 1);
-                        sm.uiAddTargets.push_back(varName);
-                        if (currentMethodName == "Start") m_startUIAddTargets.push_back(varName);
+                std::string sLow = s;
+                std::transform(sLow.begin(), sLow.end(), sLow.begin(), ::tolower);
+
+                if (sLow.find("cursorstate.unlocked") != std::string::npos || sLow.find("cursorstate.unlock") != std::string::npos) {
+                    outAct.type = DynamicScriptBehaviour::ScriptStatementType::UnlockCursor;
+                    sm.unlockCursor = true;
+                    if (currentMethodName == "Start") m_startUnlockCursor = true;
+                    return true;
+                }
+                if (sLow.find("cursorstate.locked") != std::string::npos || sLow.find("cursorstate.lock") != std::string::npos) {
+                    outAct.type = DynamicScriptBehaviour::ScriptStatementType::LockCursor;
+                    sm.lockCursor = true;
+                    if (currentMethodName == "Start") m_startLockCursor = true;
+                    return true;
+                }
+                if (sLow.find("uisystem.removeall()") != std::string::npos || sLow.find("removeallui()") != std::string::npos) {
+                    outAct.type = DynamicScriptBehaviour::ScriptStatementType::RemoveAllUI;
+                    sm.removeAllUI = true;
+                    if (currentMethodName == "Start") m_startUIRemoveAll = true;
+                    return true;
+                }
+                if (sLow.find("uisystem.add(") != std::string::npos || sLow.find("uisystem::add(") != std::string::npos || sLow.find("addui(") != std::string::npos) {
+                    size_t p1 = s.find('(');
+                    size_t p2 = s.find(')', p1);
+                    if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                        std::string varName = s.substr(p1 + 1, p2 - p1 - 1);
+                        size_t vn1 = varName.find_first_not_of(" \t&");
+                        size_t vn2 = varName.find_last_not_of(" \t&");
+                        if (vn1 != std::string::npos && vn2 != std::string::npos) {
+                            outAct.type = DynamicScriptBehaviour::ScriptStatementType::AddUI;
+                            outAct.target = varName.substr(vn1, vn2 - vn1 + 1);
+                            sm.uiAddTargets.push_back(outAct.target);
+                            if (currentMethodName == "Start") m_startUIAddTargets.push_back(outAct.target);
+                            return true;
+                        }
                     }
+                }
+                if (sLow.find("uisystem.remove(") != std::string::npos || sLow.find("uisystem::remove(") != std::string::npos || sLow.find("removeui(") != std::string::npos) {
+                    size_t p1 = s.find('(');
+                    size_t p2 = s.find(')', p1);
+                    if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                        std::string varName = s.substr(p1 + 1, p2 - p1 - 1);
+                        size_t vn1 = varName.find_first_not_of(" \t&");
+                        size_t vn2 = varName.find_last_not_of(" \t&");
+                        if (vn1 != std::string::npos && vn2 != std::string::npos) {
+                            outAct.type = DynamicScriptBehaviour::ScriptStatementType::RemoveUI;
+                            outAct.target = varName.substr(vn1, vn2 - vn1 + 1);
+                            sm.uiRemoveTargets.push_back(outAct.target);
+                            if (currentMethodName == "Start") m_startUIRemoveTargets.push_back(outAct.target);
+                            return true;
+                        }
+                    }
+                }
+                if (sLow.find("print(") != std::string::npos) {
+                    size_t q1 = s.find('"');
+                    if (q1 != std::string::npos) {
+                        size_t q2 = s.find('"', q1 + 1);
+                        if (q2 != std::string::npos) {
+                            outAct.type = DynamicScriptBehaviour::ScriptStatementType::Print;
+                            outAct.target = s.substr(q1 + 1, q2 - q1 - 1);
+                            sm.printMessages.push_back(outAct.target);
+                            if (currentMethodName == "Start") m_startPrintMessages.push_back(outAct.target);
+                            return true;
+                        }
+                    }
+                }
+
+                // Variable assignment or toggle (e.g. CanMove = false; CanMove = !CanMove;)
+                size_t eqPos = s.find('=');
+                if (eqPos != std::string::npos && s.find("==") == std::string::npos &&
+                    s.find("!=") == std::string::npos && s.find("<=") == std::string::npos &&
+                    s.find(">=") == std::string::npos) {
+                    std::string left = s.substr(0, eqPos);
+                    std::string right = s.substr(eqPos + 1);
+                    size_t semi = right.find(';');
+                    if (semi != std::string::npos) right = right.substr(0, semi);
+
+                    size_t lb = left.find_last_not_of(" \t\r\n");
+                    size_t la = left.find_first_not_of(" \t\r\n");
+                    if (lb != std::string::npos && la != std::string::npos) {
+                        size_t typeSpace = left.find_last_of(" \t*&", lb);
+                        std::string varName = (typeSpace == std::string::npos) ? left.substr(la, lb - la + 1) : left.substr(typeSpace + 1, lb - typeSpace);
+                        size_t rb = right.find_last_not_of(" \t\r\n");
+                        size_t ra = right.find_first_not_of(" \t\r\n");
+                        std::string valStr = (rb != std::string::npos && ra != std::string::npos) ? right.substr(ra, rb - ra + 1) : "";
+
+                        if (!varName.empty() && !valStr.empty()) {
+                            if (valStr.rfind("!" + varName, 0) == 0 || valStr.rfind("! " + varName, 0) == 0 || valStr.rfind("!", 0) == 0) {
+                                outAct.type = DynamicScriptBehaviour::ScriptStatementType::Toggle;
+                                outAct.varName = varName;
+                                outAct.valueStr = valStr;
+                            } else {
+                                outAct.type = DynamicScriptBehaviour::ScriptStatementType::Assignment;
+                                outAct.varName = varName;
+                                outAct.valueStr = valStr;
+                            }
+                            return true;
+                        }
+                    }
+                }
+
+                // Method call (e.g. PrintName();)
+                size_t cp = s.find("()");
+                if (cp == std::string::npos) cp = s.find("( )");
+                if (cp != std::string::npos && s.find("void ") == std::string::npos && s.find("bool ") == std::string::npos && s.find("int ") == std::string::npos && s.find("float ") == std::string::npos) {
+                    std::string beforeCall = s.substr(0, cp);
+                    size_t cb = beforeCall.find_last_not_of(" \t");
+                    if (cb != std::string::npos) {
+                        size_t ca = beforeCall.find_last_of(" \t;{}.", cb);
+                        std::string calledName = (ca == std::string::npos) ? beforeCall.substr(0, cb + 1) : beforeCall.substr(ca + 1, cb - ca);
+                        if (!calledName.empty() && calledName != currentMethodName &&
+                            calledName != "if" && calledName != "for" && calledName != "while" &&
+                            calledName != "Print" && calledName != "Locked" && calledName != "UnLocked" &&
+                            calledName != "RemoveAll") {
+                            outAct.type = DynamicScriptBehaviour::ScriptStatementType::CallMethod;
+                            outAct.target = calledName;
+                            sm.calledMethods.push_back(calledName);
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            };
+
+            auto addAction = [&](const DynamicScriptBehaviour::ScriptAction& act) {
+                if (methodState.inIf) {
+                    methodState.currentBranch.thenActions.push_back(act);
+                    if (methodState.singleLineIf && methodState.ifBraceDepth <= 0) {
+                        methodState.inIf = false;
+                        methodState.singleLineIf = false;
+                    }
+                } else if (methodState.inElse) {
+                    methodState.currentBranch.elseActions.push_back(act);
+                    if (methodState.singleLineElse && methodState.elseBraceDepth <= 0) {
+                        methodState.inElse = false;
+                        methodState.singleLineElse = false;
+                    }
+                } else {
+                    if (methodState.currentBranch.hasCondition) {
+                        sm.branches.push_back(methodState.currentBranch);
+                        methodState.currentBranch = DynamicScriptBehaviour::ScriptBranch();
+                    }
+                    methodState.currentBranch.thenActions.push_back(act);
+                }
+            };
+
+            // Detect if-statements: if (condition)
+            size_t ifPos = lTrim.find("if (");
+            if (ifPos == std::string::npos) ifPos = lTrim.find("if(");
+            if (ifPos != std::string::npos && (ifPos == 0 || lTrim[ifPos - 1] == ' ' || lTrim[ifPos - 1] == '\t' || lTrim[ifPos - 1] == '}' || lTrim[ifPos - 1] == ';')) {
+                size_t pOpen = lTrim.find('(', ifPos);
+                size_t pClose = lTrim.find(')', pOpen);
+                if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                    std::string condRaw = lTrim.substr(pOpen + 1, pClose - pOpen - 1);
+                    std::string condVar;
+                    bool expectedBool = true;
+
+                    size_t cb = condRaw.find_first_not_of(" \t");
+                    size_t ce = condRaw.find_last_not_of(" \t");
+                    if (cb != std::string::npos && ce != std::string::npos) {
+                        std::string cClean = condRaw.substr(cb, ce - cb + 1);
+                        if (cClean.rfind("!", 0) == 0) {
+                            expectedBool = false;
+                            size_t vb = cClean.find_first_not_of(" \t!", 0);
+                            if (vb != std::string::npos) condVar = cClean.substr(vb);
+                        } else {
+                            size_t eqEq = cClean.find("==");
+                            if (eqEq != std::string::npos) {
+                                std::string leftSide = cClean.substr(0, eqEq);
+                                std::string rightSide = cClean.substr(eqEq + 2);
+                                size_t lb = leftSide.find_first_not_of(" \t");
+                                size_t le = leftSide.find_last_not_of(" \t");
+                                if (lb != std::string::npos && le != std::string::npos) condVar = leftSide.substr(lb, le - lb + 1);
+
+                                std::string rLower = rightSide;
+                                std::transform(rLower.begin(), rLower.end(), rLower.begin(), ::tolower);
+                                if (rLower.find("false") != std::string::npos || rLower.find("0") != std::string::npos) {
+                                    expectedBool = false;
+                                } else {
+                                    expectedBool = true;
+                                }
+                            } else {
+                                condVar = cClean;
+                                expectedBool = true;
+                            }
+                        }
+                    }
+
+                    if (!condVar.empty()) {
+                        if (methodState.currentBranch.hasCondition || !methodState.currentBranch.thenActions.empty()) {
+                            sm.branches.push_back(methodState.currentBranch);
+                            methodState.currentBranch = DynamicScriptBehaviour::ScriptBranch();
+                        }
+                        methodState.currentBranch.hasCondition = true;
+                        methodState.currentBranch.conditionVar = condVar;
+                        methodState.currentBranch.expectedBool = expectedBool;
+                        methodState.inIf = true;
+                        methodState.inElse = false;
+
+                        std::string afterParen = lTrim.substr(pClose + 1);
+                        if (afterParen.find('{') != std::string::npos) {
+                            methodState.ifBraceDepth = 1;
+                            methodState.singleLineIf = false;
+                        } else {
+                            DynamicScriptBehaviour::ScriptAction act;
+                            if (parseActionFromStr(afterParen, act)) {
+                                addAction(act);
+                            } else {
+                                methodState.singleLineIf = true;
+                            }
+                        }
+                    }
+                }
+            } else if (lTrim.find("else") != std::string::npos && (lTrim.rfind("else", 0) == 0 || lTrim.find(" else") != std::string::npos || lTrim.find("}else") != std::string::npos || lTrim.find("} else") != std::string::npos)) {
+                methodState.inIf = false;
+                methodState.inElse = true;
+                size_t elsePos = lTrim.find("else");
+                std::string afterElse = lTrim.substr(elsePos + 4);
+                if (afterElse.find('{') != std::string::npos) {
+                    methodState.elseBraceDepth = 1;
+                    methodState.singleLineElse = false;
+                } else {
+                    DynamicScriptBehaviour::ScriptAction act;
+                    if (parseActionFromStr(afterElse, act)) {
+                        addAction(act);
+                    } else {
+                        methodState.singleLineElse = true;
+                    }
+                }
+            } else {
+                DynamicScriptBehaviour::ScriptAction act;
+                if (parseActionFromStr(lTrim, act)) {
+                    addAction(act);
                 }
             }
 
-            size_t remUIPos = l.find("UISystem.Remove(");
-            if (remUIPos == std::string::npos) remUIPos = l.find("UISystem::Remove(");
-            if (remUIPos == std::string::npos) remUIPos = l.find("RemoveUI(");
-            if (remUIPos != std::string::npos) {
-                size_t p1 = l.find('(', remUIPos);
-                size_t p2 = l.find(')', p1);
-                if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
-                    std::string varName = l.substr(p1 + 1, p2 - p1 - 1);
-                    size_t vn1 = varName.find_first_not_of(" \t&");
-                    size_t vn2 = varName.find_last_not_of(" \t&");
-                    if (vn1 != std::string::npos && vn2 != std::string::npos) {
-                        varName = varName.substr(vn1, vn2 - vn1 + 1);
-                        sm.uiRemoveTargets.push_back(varName);
-                        if (currentMethodName == "Start") m_startUIRemoveTargets.push_back(varName);
-                    }
+            if (methodState.ifBraceDepth > 0) {
+                methodState.ifBraceDepth += openBracesOnLine - closeBracesOnLine;
+                if (methodState.ifBraceDepth <= 0) {
+                    methodState.inIf = false;
+                    methodState.ifBraceDepth = 0;
                 }
             }
-
-            size_t prPos = l.find("Print(");
-            if (prPos != std::string::npos) {
-                size_t q1 = l.find('"', prPos);
-                if (q1 != std::string::npos) {
-                    size_t q2 = l.find('"', q1 + 1);
-                    if (q2 != std::string::npos) {
-                        std::string msg = l.substr(q1 + 1, q2 - q1 - 1);
-                        sm.printMessages.push_back(msg);
-                        if (currentMethodName == "Start") m_startPrintMessages.push_back(msg);
-                    }
-                }
-            }
-
-            // Variable assignments in method (e.g. CanMove = true;, MovementSpeed = 10.0f;)
-            size_t eqPos = l.find('=');
-            if (eqPos != std::string::npos && l.find("==") == std::string::npos &&
-                l.find("!=") == std::string::npos && l.find("<=") == std::string::npos &&
-                l.find(">=") == std::string::npos && l.find("if ") == std::string::npos &&
-                l.find("if(") == std::string::npos) {
-                std::string left = l.substr(0, eqPos);
-                std::string right = l.substr(eqPos + 1);
-                size_t semi = right.find(';');
-                if (semi != std::string::npos) right = right.substr(0, semi);
-
-                size_t lb = left.find_last_not_of(" \t\r\n");
-                size_t la = left.find_first_not_of(" \t\r\n");
-                if (lb != std::string::npos && la != std::string::npos) {
-                    size_t typeSpace = left.find_last_of(" \t*&", lb);
-                    std::string varName = (typeSpace == std::string::npos) ? left.substr(la, lb - la + 1) : left.substr(typeSpace + 1, lb - typeSpace);
-                    size_t rb = right.find_last_not_of(" \t\r\n");
-                    size_t ra = right.find_first_not_of(" \t\r\n");
-                    std::string valStr = (rb != std::string::npos && ra != std::string::npos) ? right.substr(ra, rb - ra + 1) : "";
-                    if (!varName.empty() && !valStr.empty()) {
-                        sm.assignments.push_back({ varName, valStr });
-                    }
-                }
-            }
-
-            // Method calls (e.g. PrintName();, EnableMovement();)
-            size_t callParen = l.find("()");
-            if (callParen == std::string::npos) callParen = l.find("( )");
-            if (callParen != std::string::npos && l.find("void ") == std::string::npos && l.find("bool ") == std::string::npos && l.find("int ") == std::string::npos && l.find("float ") == std::string::npos) {
-                std::string beforeCall = l.substr(0, callParen);
-                size_t cb = beforeCall.find_last_not_of(" \t");
-                if (cb != std::string::npos) {
-                    size_t ca = beforeCall.find_last_of(" \t;{}.", cb);
-                    std::string calledName = (ca == std::string::npos) ? beforeCall.substr(0, cb + 1) : beforeCall.substr(ca + 1, cb - ca);
-                    if (!calledName.empty() && calledName != currentMethodName &&
-                        calledName != "if" && calledName != "for" && calledName != "while" &&
-                        calledName != "Print" && calledName != "Locked" && calledName != "UnLocked" &&
-                        calledName != "RemoveAll") {
-                        sm.calledMethods.push_back(calledName);
-                    }
+            if (methodState.elseBraceDepth > 0) {
+                methodState.elseBraceDepth += openBracesOnLine - closeBracesOnLine;
+                if (methodState.elseBraceDepth <= 0) {
+                    methodState.inElse = false;
+                    methodState.elseBraceDepth = 0;
                 }
             }
 
             if (l.find('{') == std::string::npos && currentMethodBraceDepth <= 0 && l.find('}') != std::string::npos) {
+                if (methodState.currentBranch.hasCondition || !methodState.currentBranch.thenActions.empty() || !methodState.currentBranch.elseActions.empty()) {
+                    sm.branches.push_back(methodState.currentBranch);
+                    methodState.currentBranch = DynamicScriptBehaviour::ScriptBranch();
+                }
                 currentMethodName.clear();
                 inStartMethod = false;
             } else if (l.find('{') != std::string::npos || currentMethodBraceDepth > 0) {
                 currentMethodBraceDepth += openBracesOnLine - closeBracesOnLine;
                 if (currentMethodBraceDepth <= 0) {
+                    if (methodState.currentBranch.hasCondition || !methodState.currentBranch.thenActions.empty() || !methodState.currentBranch.elseActions.empty()) {
+                        sm.branches.push_back(methodState.currentBranch);
+                        methodState.currentBranch = DynamicScriptBehaviour::ScriptBranch();
+                    }
                     currentMethodName.clear();
                     inStartMethod = false;
                 }

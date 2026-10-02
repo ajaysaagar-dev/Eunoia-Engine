@@ -139,15 +139,37 @@ public:
     void Update(float deltaTime) override;
     void InvokeFunction(const std::string& functionName) override;
 
-    struct VarAssignment {
+    enum class ScriptStatementType {
+        Assignment,
+        Toggle,
+        Print,
+        UnlockCursor,
+        LockCursor,
+        AddUI,
+        RemoveUI,
+        RemoveAllUI,
+        CallMethod
+    };
+
+    struct ScriptAction {
+        ScriptStatementType type = ScriptStatementType::Assignment;
         std::string varName;
         std::string valueStr;
+        std::string target;
+    };
+
+    struct ScriptBranch {
+        bool hasCondition = false;
+        std::string conditionVar;
+        bool expectedBool = true;
+        std::vector<ScriptAction> thenActions;
+        std::vector<ScriptAction> elseActions;
     };
 
     struct ScriptMethod {
         std::string name;
+        std::vector<ScriptBranch> branches;
         std::vector<std::string> calledMethods;
-        std::vector<VarAssignment> assignments;
         std::vector<std::string> printMessages;
         std::vector<std::string> uiAddTargets;
         std::vector<std::string> uiRemoveTargets;
