@@ -1072,7 +1072,139 @@ void DynamicScriptBehaviour::CopyPropertiesFrom(const EunoiaBehaviour& other) {
     SyncStorageFromProperties();
 }
 
+void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::unordered_set<std::string>& visited) {
+    if (visited.find(methodName) != visited.end()) return;
+    visited.insert(methodName);
+
+    auto it = m_methods.find(methodName);
+    if (it == m_methods.end()) {
+        std::string lowerMethod = methodName;
+        std::transform(lowerMethod.begin(), lowerMethod.end(), lowerMethod.begin(), ::tolower);
+        for (auto& pair : m_methods) {
+            std::string k = pair.first;
+            std::transform(k.begin(), k.end(), k.begin(), ::tolower);
+            if (k == lowerMethod) {
+                it = m_methods.find(pair.first);
+                break;
+            }
+        }
+    }
+    if (it == m_methods.end()) return;
+
+    const auto& m = it->second;
+    if (m.unlockCursor) CursorState.UnLocked();
+    if (m.lockCursor) CursorState.Locked();
+    if (m.removeAllUI) EunoiaUI::UISystemManager::Get().RemoveAll();
+
+    for (const auto& msg : m.printMessages) {
+        Print(msg);
+        AddEngineLog("LogBehaviour", "[" + m_className + "] " + msg, 0);
+    }
+
+    for (const auto& uiVar : m.uiAddTargets) {
+        UserInterface* uiPtr = nullptr;
+        for (auto& p : m_properties) {
+            if (p.name == uiVar && p.refType == ObjectRefType::UserInterface) {
+                if (!p.assetPath.empty()) {
+                    uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(p.assetPath);
+                    if (p.dataPtr) *reinterpret_cast<UserInterface**>(p.dataPtr) = uiPtr;
+                } else if (p.dataPtr) {
+                    uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                }
+                break;
+            }
+        }
+        if (uiPtr) {
+            EunoiaUI::UISystemManager::Get().Add(uiPtr);
+            AddEngineLog("LogUI", "Added UserInterface to viewport: " + uiPtr->name, 2);
+        }
+    }
+
+    for (const auto& uiVar : m.uiRemoveTargets) {
+        UserInterface* uiPtr = nullptr;
+        for (auto& p : m_properties) {
+            if (p.name == uiVar && p.refType == ObjectRefType::UserInterface && p.dataPtr) {
+                uiPtr = *reinterpret_cast<UserInterface**>(p.dataPtr);
+                break;
+            }
+        }
+        if (uiPtr) {
+            EunoiaUI::UISystemManager::Get().Remove(uiPtr);
+        }
+    }
+
+    for (const auto& asgn : m.assignments) {
+        std::string vName = asgn.varName;
+        std::string valStr = asgn.valueStr;
+        std::string valLower = valStr;
+        std::transform(valLower.begin(), valLower.end(), valLower.begin(), ::tolower);
+
+        if (valLower == "true" || valLower == "false" || valLower == "1" || valLower == "0") {
+            bool bVal = (valLower == "true" || valLower == "1");
+            m_boolStorage[vName] = bVal;
+            for (auto& prop : m_properties) {
+                if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                    if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
+                        *reinterpret_cast<bool*>(prop.dataPtr) = bVal;
+                    }
+                }
+            }
+        } else {
+            try {
+                std::string clean = valStr;
+                if (!clean.empty() && (clean.back() == 'f' || clean.back() == 'F' || clean.back() == 'd' || clean.back() == 'D')) {
+                    clean.pop_back();
+                }
+                float fVal = std::stof(clean);
+                m_floatStorage[vName] = fVal;
+                for (auto& prop : m_properties) {
+                    if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                        if (prop.dataPtr && prop.type == BehaviourPropertyType::Float) {
+                            *reinterpret_cast<float*>(prop.dataPtr) = fVal;
+                        }
+                    }
+                }
+            } catch (...) {
+                std::string sVal = valStr;
+                if (sVal.size() >= 2 && sVal.front() == '"' && sVal.back() == '"') {
+                    sVal = sVal.substr(1, sVal.size() - 2);
+                }
+                m_stringStorage[vName] = sVal;
+                for (auto& prop : m_properties) {
+                    if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
+                        if (prop.dataPtr && prop.type == BehaviourPropertyType::String) {
+                            *reinterpret_cast<std::string*>(prop.dataPtr) = sVal;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    for (const auto& childMethod : m.calledMethods) {
+        ExecuteMethod(childMethod, visited);
+    }
+}
+
+void DynamicScriptBehaviour::OnCreate() {
+    std::unordered_set<std::string> visited;
+    ExecuteMethod("OnCreate", visited);
+}
+
+void DynamicScriptBehaviour::OnEnable() {
+    std::unordered_set<std::string> visited;
+    ExecuteMethod("OnEnable", visited);
+}
+
+void DynamicScriptBehaviour::InvokeFunction(const std::string& functionName) {
+    std::unordered_set<std::string> visited;
+    ExecuteMethod(functionName, visited);
+}
+
 void DynamicScriptBehaviour::Start() {
+    std::unordered_set<std::string> visited;
+    ExecuteMethod("Start", visited);
+
     for (const auto& msg : m_startPrintMessages) {
         Print(msg);
         AddEngineLog("LogBehaviour", "[" + m_className + "] " + msg, 0);
@@ -2438,6 +2570,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     bool hasPendingSingleLineCondition = false;
     int updateMethodBraceDepth = 0;
 
+    m_methods.clear();
+    std::string currentMethodName;
+    int currentMethodBraceDepth = 0;
+
     bool inStartMethod = false;
     bool inUpdateMethod = false;
 
@@ -2449,30 +2585,65 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
 
         if (l.rfind("//", 0) == 0 || l.rfind("/*", 0) == 0) continue;
 
-        if (l.find("void Start(") != std::string::npos || l.find("Start()") != std::string::npos) {
-            inStartMethod = true;
-            inUpdateMethod = false;
-        } else if (l.find("void Update(") != std::string::npos || l.find("Update(float") != std::string::npos) {
-            inUpdateMethod = true;
-            inStartMethod = false;
-            conditionStack.clear();
-            pendingSingleLineKeys.clear();
-            pendingSingleLineBools.clear();
-            hasPendingSingleLineCondition = false;
-            updateMethodBraceDepth = 0;
+        // Count braces on this line
+        int openBracesOnLine = 0;
+        int closeBracesOnLine = 0;
+        bool inStr = false;
+        for (char c : l) {
+            if (c == '"') inStr = !inStr;
+            if (!inStr) {
+                if (c == '{') openBracesOnLine++;
+                else if (c == '}') closeBracesOnLine++;
+            }
         }
 
-        if (inStartMethod) {
+        // Detect start of any method (e.g. void Start(), void Update(float dt), void PrintName(), etc.)
+        size_t openParen = l.find('(');
+        if (openParen != std::string::npos && l.find(';') == std::string::npos && currentMethodName.empty()) {
+            std::string beforeParen = l.substr(0, openParen);
+            size_t nb = beforeParen.find_last_not_of(" \t");
+            if (nb != std::string::npos) {
+                size_t na = beforeParen.find_last_of(" \t:*&", nb);
+                std::string mName = (na == std::string::npos) ? beforeParen.substr(0, nb + 1) : beforeParen.substr(na + 1, nb - na);
+                if (!mName.empty() && mName != "if" && mName != "for" && mName != "while" && mName != "switch" && mName != "catch" && mName != "REGISTER_BEHAVIOUR") {
+                    currentMethodName = mName;
+                    currentMethodBraceDepth = openBracesOnLine - closeBracesOnLine;
+                    if (mName == "Update") {
+                        inUpdateMethod = true;
+                        inStartMethod = false;
+                        conditionStack.clear();
+                        pendingSingleLineKeys.clear();
+                        pendingSingleLineBools.clear();
+                        hasPendingSingleLineCondition = false;
+                        updateMethodBraceDepth = currentMethodBraceDepth;
+                    } else if (mName == "Start") {
+                        inStartMethod = true;
+                        inUpdateMethod = false;
+                    } else {
+                        inStartMethod = false;
+                        inUpdateMethod = false;
+                    }
+                }
+            }
+        }
+
+        if (!currentMethodName.empty() && !inUpdateMethod) {
+            auto& sm = m_methods[currentMethodName];
+            sm.name = currentMethodName;
+
             std::string lLower = l;
             std::transform(lLower.begin(), lLower.end(), lLower.begin(), ::tolower);
             if (lLower.find("cursorstate.unlocked") != std::string::npos || lLower.find("cursorstate.unlock") != std::string::npos) {
-                m_startUnlockCursor = true;
+                sm.unlockCursor = true;
+                if (currentMethodName == "Start") m_startUnlockCursor = true;
             } else if (lLower.find("cursorstate.locked") != std::string::npos || lLower.find("cursorstate.lock") != std::string::npos) {
-                m_startLockCursor = true;
+                sm.lockCursor = true;
+                if (currentMethodName == "Start") m_startLockCursor = true;
             }
 
             if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos) {
-                m_startUIRemoveAll = true;
+                sm.removeAllUI = true;
+                if (currentMethodName == "Start") m_startUIRemoveAll = true;
             }
 
             size_t addUIPos = l.find("UISystem.Add(");
@@ -2487,7 +2658,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     size_t vn2 = varName.find_last_not_of(" \t&");
                     if (vn1 != std::string::npos && vn2 != std::string::npos) {
                         varName = varName.substr(vn1, vn2 - vn1 + 1);
-                        m_startUIAddTargets.push_back(varName);
+                        sm.uiAddTargets.push_back(varName);
+                        if (currentMethodName == "Start") m_startUIAddTargets.push_back(varName);
                     }
                 }
             }
@@ -2504,7 +2676,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     size_t vn2 = varName.find_last_not_of(" \t&");
                     if (vn1 != std::string::npos && vn2 != std::string::npos) {
                         varName = varName.substr(vn1, vn2 - vn1 + 1);
-                        m_startUIRemoveTargets.push_back(varName);
+                        sm.uiRemoveTargets.push_back(varName);
+                        if (currentMethodName == "Start") m_startUIRemoveTargets.push_back(varName);
                     }
                 }
             }
@@ -2515,12 +2688,65 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 if (q1 != std::string::npos) {
                     size_t q2 = l.find('"', q1 + 1);
                     if (q2 != std::string::npos) {
-                        m_startPrintMessages.push_back(l.substr(q1 + 1, q2 - q1 - 1));
+                        std::string msg = l.substr(q1 + 1, q2 - q1 - 1);
+                        sm.printMessages.push_back(msg);
+                        if (currentMethodName == "Start") m_startPrintMessages.push_back(msg);
                     }
                 }
             }
-            if (l.find('}') != std::string::npos && l.find('{') == std::string::npos) {
+
+            // Variable assignments in method (e.g. CanMove = true;, MovementSpeed = 10.0f;)
+            size_t eqPos = l.find('=');
+            if (eqPos != std::string::npos && l.find("==") == std::string::npos &&
+                l.find("!=") == std::string::npos && l.find("<=") == std::string::npos &&
+                l.find(">=") == std::string::npos && l.find("if ") == std::string::npos &&
+                l.find("if(") == std::string::npos) {
+                std::string left = l.substr(0, eqPos);
+                std::string right = l.substr(eqPos + 1);
+                size_t semi = right.find(';');
+                if (semi != std::string::npos) right = right.substr(0, semi);
+
+                size_t lb = left.find_last_not_of(" \t\r\n");
+                size_t la = left.find_first_not_of(" \t\r\n");
+                if (lb != std::string::npos && la != std::string::npos) {
+                    size_t typeSpace = left.find_last_of(" \t*&", lb);
+                    std::string varName = (typeSpace == std::string::npos) ? left.substr(la, lb - la + 1) : left.substr(typeSpace + 1, lb - typeSpace);
+                    size_t rb = right.find_last_not_of(" \t\r\n");
+                    size_t ra = right.find_first_not_of(" \t\r\n");
+                    std::string valStr = (rb != std::string::npos && ra != std::string::npos) ? right.substr(ra, rb - ra + 1) : "";
+                    if (!varName.empty() && !valStr.empty()) {
+                        sm.assignments.push_back({ varName, valStr });
+                    }
+                }
+            }
+
+            // Method calls (e.g. PrintName();, EnableMovement();)
+            size_t callParen = l.find("()");
+            if (callParen == std::string::npos) callParen = l.find("( )");
+            if (callParen != std::string::npos && l.find("void ") == std::string::npos && l.find("bool ") == std::string::npos && l.find("int ") == std::string::npos && l.find("float ") == std::string::npos) {
+                std::string beforeCall = l.substr(0, callParen);
+                size_t cb = beforeCall.find_last_not_of(" \t");
+                if (cb != std::string::npos) {
+                    size_t ca = beforeCall.find_last_of(" \t;{}.", cb);
+                    std::string calledName = (ca == std::string::npos) ? beforeCall.substr(0, cb + 1) : beforeCall.substr(ca + 1, cb - ca);
+                    if (!calledName.empty() && calledName != currentMethodName &&
+                        calledName != "if" && calledName != "for" && calledName != "while" &&
+                        calledName != "Print" && calledName != "Locked" && calledName != "UnLocked" &&
+                        calledName != "RemoveAll") {
+                        sm.calledMethods.push_back(calledName);
+                    }
+                }
+            }
+
+            if (l.find('{') == std::string::npos && currentMethodBraceDepth <= 0 && l.find('}') != std::string::npos) {
+                currentMethodName.clear();
                 inStartMethod = false;
+            } else if (l.find('{') != std::string::npos || currentMethodBraceDepth > 0) {
+                currentMethodBraceDepth += openBracesOnLine - closeBracesOnLine;
+                if (currentMethodBraceDepth <= 0) {
+                    currentMethodName.clear();
+                    inStartMethod = false;
+                }
             }
         }
 

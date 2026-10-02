@@ -575,6 +575,7 @@ public:
     virtual void RefreshPropertiesFromSource() {}
     virtual void ResetToDefaults();
     virtual std::string GetSourceCppPath() const { return ""; }
+    virtual void InvokeFunction(const std::string& functionName) {}
     std::vector<BehaviourProperty>& GetProperties() { return m_properties; }
     const std::vector<BehaviourProperty>& GetProperties() const { return m_properties; }
 

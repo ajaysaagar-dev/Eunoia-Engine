@@ -81,6 +81,7 @@ public:
         clone->m_startUIAddTargets = m_startUIAddTargets;
         clone->m_startUIRemoveTargets = m_startUIRemoveTargets;
         clone->m_startUIRemoveAll = m_startUIRemoveAll;
+        clone->m_methods = m_methods;
         clone->m_properties = m_properties;
         for (auto& p : clone->m_properties) {
             switch (p.type) {
@@ -132,8 +133,30 @@ public:
     void ResetToDefaults() override;
     std::string GetSourceCppPath() const override { return m_sourceCppPath; }
 
+    void OnCreate() override;
+    void OnEnable() override;
     void Start() override;
     void Update(float deltaTime) override;
+    void InvokeFunction(const std::string& functionName) override;
+
+    struct VarAssignment {
+        std::string varName;
+        std::string valueStr;
+    };
+
+    struct ScriptMethod {
+        std::string name;
+        std::vector<std::string> calledMethods;
+        std::vector<VarAssignment> assignments;
+        std::vector<std::string> printMessages;
+        std::vector<std::string> uiAddTargets;
+        std::vector<std::string> uiRemoveTargets;
+        bool unlockCursor = false;
+        bool lockCursor = false;
+        bool removeAllUI = false;
+    };
+    std::unordered_map<std::string, ScriptMethod> m_methods;
+    void ExecuteMethod(const std::string& methodName, std::unordered_set<std::string>& visited);
 
     // Direct typed getters for robust runtime reflection
     float GetFloat(const std::string& name, float defaultVal = 0.0f) const;
