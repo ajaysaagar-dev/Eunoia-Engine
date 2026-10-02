@@ -61,16 +61,9 @@ inline void LaunchVSCodeSilently(const std::filesystem::path& targetFile, const 
     for (const auto& cp : candidateCodePaths) {
         std::error_code ec;
         if (std::filesystem::exists(cp, ec)) {
-            std::string cmdLine = "\"" + cp.string() + "\" \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
-            STARTUPINFOA si = { sizeof(STARTUPINFOA) };
-            si.dwFlags = STARTF_USESHOWWINDOW;
-            si.wShowWindow = SW_HIDE;
-            PROCESS_INFORMATION pi = {};
-            std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
-            cmdBuf.push_back('\0');
-            if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-                CloseHandle(pi.hProcess);
-                CloseHandle(pi.hThread);
+            std::string args = "\"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+            HINSTANCE hInst = ShellExecuteA(NULL, "open", cp.string().c_str(), args.c_str(), workspace.string().c_str(), SW_SHOWNORMAL);
+            if ((uintptr_t)hInst > 32) {
                 launched = true;
                 break;
             }
@@ -78,20 +71,15 @@ inline void LaunchVSCodeSilently(const std::filesystem::path& targetFile, const 
     }
 
     if (!launched) {
-        std::string cmdLine = "cmd.exe /c code \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
-        STARTUPINFOA si = { sizeof(STARTUPINFOA) };
-        si.dwFlags = STARTF_USESHOWWINDOW;
-        si.wShowWindow = SW_HIDE;
-        PROCESS_INFORMATION pi = {};
-        std::vector<char> cmdBuf(cmdLine.begin(), cmdLine.end());
-        cmdBuf.push_back('\0');
-        if (CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
-            CloseHandle(pi.hProcess);
-            CloseHandle(pi.hThread);
+        std::string params = "/c code \"" + workspace.string() + "\" \"" + targetFile.string() + "\"";
+        HINSTANCE hInst = ShellExecuteA(NULL, "open", "cmd.exe", params.c_str(), workspace.string().c_str(), SW_HIDE);
+        if ((uintptr_t)hInst > 32) {
             launched = true;
-        } else {
-            ShellExecuteA(NULL, "open", targetFile.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
         }
+    }
+
+    if (!launched) {
+        ShellExecuteA(NULL, "open", targetFile.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
     }
 #else
     std::string cmd = "code \"" + workspace.string() + "\" \"" + targetFile.string() + "\" &";

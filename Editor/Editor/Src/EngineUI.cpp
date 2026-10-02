@@ -2564,7 +2564,7 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::ApplyUIScale(float scale) {
     uiScale = std::clamp(scale, 0.25f, 2.50f);
-    topBarHeight = 100.0f * uiScale;
+    topBarHeight = 68.0f * uiScale;
     SetupTheme();
 }
 
@@ -2960,7 +2960,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
     RenderCustomTitleBar(scene, outShouldExit);
     RenderMainMenuBar(scene, camera, outShouldExit);
-    RenderWorkspaceTabBar(scene);
 }
 
 void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
@@ -3029,12 +3028,115 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             ImGui::TextColored(ImVec4(0.20f, 0.88f, 0.40f, 1.0f), "● PLAY MODE");
         }
 
-        // 4. Custom Window Frame Control Buttons (Minimize, Maximize/Restore, Close)
         float btnAreaW = 138.0f * uiScale;
         float btnY = vp->Pos.y;
         float btnH = titleBarH;
         float btnW = btnAreaW / 3.0f;
 
+        // 4. Workspace Tabs in Middle of Title Bar (Matches ref.png)
+        float currentX = ImGui::GetCursorPosX();
+        float tabStartX = std::max(currentX + 16.0f * uiScale, topBarW * 0.36f);
+        float tabRightLimit = topBarW - btnAreaW - 8.0f * uiScale;
+
+        if (tabStartX < tabRightLimit) {
+            ImGui::SameLine(tabStartX);
+            ImGui::SetCursorPosY(std::max(2.0f, 4.0f * uiScale));
+
+            auto& uiMgr = EunoiaUI::UIEditorManager::Get();
+            int activeTab = uiMgr.activeTabIndex;
+
+            // Level Editor Tab (Always open)
+            bool isMainActive = (activeTab == 0);
+            if (isMainActive) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.11f, 0.14f, 0.7f));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
+            }
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.28f, 0.36f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+
+            if (ImGui::Button("🌐 Level Editor", ImVec2(0.0f, 22.0f * uiScale))) {
+                uiMgr.SwitchToMainEditor();
+            }
+            if (isMainActive) {
+                ImVec2 minPos = ImGui::GetItemRectMin();
+                ImVec2 maxPos = ImGui::GetItemRectMax();
+                dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
+                                  ImVec2(maxPos.x, maxPos.y),
+                                  IM_COL32(38, 139, 210, 255), 1.5f);
+            }
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+
+            // UI Editor Tabs
+            const auto& editors = uiMgr.GetEditors();
+            int toClose = -1;
+            for (size_t i = 0; i < editors.size(); ++i) {
+                if (ImGui::GetCursorPosX() > tabRightLimit - 120.0f * uiScale) break;
+
+                ImGui::SameLine(0.0f, 4.0f * uiScale);
+                int tabIdx = (int)i + 1;
+                bool isTabActive = (activeTab == tabIdx);
+
+                if (isTabActive) {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
+                } else {
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.11f, 0.14f, 0.7f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
+                }
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.28f, 0.36f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+
+                std::string label = "🎨 " + editors[i]->name;
+                if (editors[i]->isDirty) label += "*";
+                label += "##TitleTab_" + std::to_string(i);
+
+                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 22.0f * uiScale))) {
+                    uiMgr.SwitchToEditor(tabIdx);
+                }
+                if (isTabActive) {
+                    ImVec2 minPos = ImGui::GetItemRectMin();
+                    ImVec2 maxPos = ImGui::GetItemRectMax();
+                    dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
+                                      ImVec2(maxPos.x, maxPos.y),
+                                      IM_COL32(38, 139, 210, 255), 1.5f);
+                }
+
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor(4);
+
+                // Close button ✕
+                ImGui::SameLine(0.0f, 1.0f * uiScale);
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Text, isTabActive ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 2.0f * uiScale));
+
+                std::string closeLabel = "✕##TitleCloseTab_" + std::to_string(i);
+                if (ImGui::Button(closeLabel.c_str(), ImVec2(18.0f * uiScale, 22.0f * uiScale))) {
+                    toClose = (int)i;
+                }
+
+                ImGui::PopStyleVar(2);
+                ImGui::PopStyleColor(4);
+            }
+
+            if (toClose >= 0) {
+                uiMgr.Close((size_t)toClose);
+            }
+        }
+
+        // 5. Custom Window Frame Control Buttons (Minimize, Maximize/Restore, Close)
         bool isTitleBarHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
         bool anyItemActive = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered();
 
@@ -3797,125 +3899,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
 }
 
 void EngineUI::RenderWorkspaceTabBar(Scene& scene) {
-    ImGuiViewport* vp = ImGui::GetMainViewport();
-    float titleBarH = 32.0f * uiScale;
-    float menuBarH = 36.0f * uiScale;
-    float tabBarH = 32.0f * uiScale;
-    float tabBarY = vp->Pos.y + titleBarH + menuBarH;
-
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, tabBarY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(vp->Size.x, tabBarH), ImGuiCond_Always);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
-                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav |
-                            ImGuiWindowFlags_NoBringToFrontOnFocus;
-
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * uiScale, 3.0f * uiScale));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * uiScale, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
-
-    if (ImGui::Begin("##WorkspaceTabBar", nullptr, flags)) {
-        auto& uiMgr = EunoiaUI::UIEditorManager::Get();
-        int activeTab = uiMgr.activeTabIndex;
-
-        // Draw bottom separator line
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddLine(ImVec2(vp->Pos.x, tabBarY + tabBarH - 1.0f),
-                    ImVec2(vp->Pos.x + vp->Size.x, tabBarY + tabBarH - 1.0f),
-                    IM_COL32(35, 38, 48, 255), 1.0f);
-
-        // 1. Level Editor Tab (Always open, cannot be closed)
-        bool isMainActive = (activeTab == 0);
-        if (isMainActive) {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
-        } else {
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.11f, 0.12f, 0.15f, 0.7f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
-        }
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.26f, 0.33f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-
-        if (ImGui::Button(" 🌐 Level Editor ", ImVec2(0.0f, 25.0f * uiScale))) {
-            uiMgr.SwitchToMainEditor();
-        }
-        if (isMainActive) {
-            ImVec2 minPos = ImGui::GetItemRectMin();
-            ImVec2 maxPos = ImGui::GetItemRectMax();
-            dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
-                              ImVec2(maxPos.x, maxPos.y),
-                              IM_COL32(38, 139, 210, 255), 2.0f);
-        }
-
-        ImGui::PopStyleVar();
-        ImGui::PopStyleColor(4);
-
-        // 2. UI Editor Tabs
-        const auto& editors = uiMgr.GetEditors();
-        int toClose = -1;
-        for (size_t i = 0; i < editors.size(); ++i) {
-            ImGui::SameLine();
-            int tabIdx = (int)i + 1;
-            bool isTabActive = (activeTab == tabIdx);
-
-            if (isTabActive) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.11f, 0.12f, 0.15f, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
-            }
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.26f, 0.33f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-
-            std::string label = " 🎨 " + editors[i]->name;
-            if (editors[i]->isDirty) label += "*";
-            label += "##Tab_" + std::to_string(i);
-
-            if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
-                uiMgr.SwitchToEditor(tabIdx);
-            }
-            if (isTabActive) {
-                ImVec2 minPos = ImGui::GetItemRectMin();
-                ImVec2 maxPos = ImGui::GetItemRectMax();
-                dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
-                                  ImVec2(maxPos.x, maxPos.y),
-                                  IM_COL32(38, 139, 210, 255), 2.0f);
-            }
-
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(4);
-
-            // Close button ✕
-            ImGui::SameLine(0, 2.0f * uiScale);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, isTabActive ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-
-            std::string closeLabel = "✕##CloseTab_" + std::to_string(i);
-            if (ImGui::Button(closeLabel.c_str(), ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
-                toClose = (int)i;
-            }
-
-            ImGui::PopStyleVar();
-            ImGui::PopStyleColor(4);
-        }
-
-        if (toClose >= 0) {
-            uiMgr.Close((size_t)toClose);
-        }
-    }
-    ImGui::End();
-
-    ImGui::PopStyleColor();
-    ImGui::PopStyleVar(4);
+    // Workspace tabs are rendered inline inside the custom title bar (Matches ref.png)
 }
 
 void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs) {
