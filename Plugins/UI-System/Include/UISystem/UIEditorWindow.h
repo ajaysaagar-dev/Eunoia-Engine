@@ -5,17 +5,8 @@
 #include "HtmlTailwindParser.h"
 #include <imgui.h>
 #include <imgui_internal.h>
-#if __has_include(<imgui_impl_glfw.h>)
-#include <imgui_impl_glfw.h>
-#endif
-#if __has_include(<imgui_impl_opengl3.h>)
-#include <imgui_impl_opengl3.h>
-#endif
-#include <GLFW/glfw3.h>
 
 #ifdef _WIN32
-#define GLFW_EXPOSE_NATIVE_WIN32
-#include <GLFW/glfw3native.h>
 #include <windows.h>
 #endif
 
@@ -380,145 +371,6 @@ public:
     }
 };
 
-inline void RunStandaloneUIEditor(const std::string& filePath, const std::string& name = "") {
-    // Create dedicated secondary GLFW window for UI Editor
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
-
-    const int WIN_W = 1280;
-    const int WIN_H = 800;
-
-    std::string winTitle = "Eunoia Engine - UI Editor";
-    if (!name.empty()) winTitle += " - " + name;
-    else if (!filePath.empty()) winTitle += " - " + std::filesystem::path(filePath).stem().string();
-
-    GLFWwindow* uiWindow = glfwCreateWindow(WIN_W, WIN_H, winTitle.c_str(), nullptr, nullptr);
-    if (!uiWindow) {
-        std::cerr << "[UIEditor] Failed to create standalone UI Editor window!\n";
-        return;
-    }
-
-    glfwMakeContextCurrent(uiWindow);
-    glfwSwapInterval(1);
-
-    // Save previous ImGui context
-    ImGuiContext* prevContext = ImGui::GetCurrentContext();
-
-    IMGUI_CHECKVERSION();
-    ImGuiContext* uiContext = ImGui::CreateContext();
-    ImGui::SetCurrentContext(uiContext);
-    ImGuiIO& io = ImGui::GetIO();
-    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-    io.IniFilename = nullptr;
-
-    // Load fonts
-    ImFontConfig fontConfig;
-    fontConfig.OversampleH = 1;
-    fontConfig.OversampleV = 1;
-    ImFont* mainFont = nullptr;
-    if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
-        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
-    } else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
-        mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
-    }
-    if (mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
-        ImFontConfig symbolConfig;
-        symbolConfig.MergeMode = true;
-        symbolConfig.OversampleH = 2;
-        symbolConfig.OversampleV = 2;
-        static const ImWchar symbolRanges[] = { 0x2000, 0x2BFF, 0 };
-        io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", 18.0f, &symbolConfig, symbolRanges);
-    }
-    if (!mainFont) {
-        io.Fonts->AddFontDefault();
-        io.FontGlobalScale = 1.25f;
-    }
-
-    // Modern Dark Theme
-    ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 0.0f;
-    style.FrameRounding = 4.0f;
-    style.PopupRounding = 4.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.GrabRounding = 4.0f;
-    style.TabRounding = 4.0f;
-    style.WindowBorderSize = 0.0f;
-    style.FrameBorderSize = 0.0f;
-    style.WindowPadding = ImVec2(10.0f, 10.0f);
-    style.FramePadding = ImVec2(8.0f, 6.0f);
-    style.ItemSpacing = ImVec2(8.0f, 6.0f);
-
-    ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg] = ImVec4(0.10f, 0.11f, 0.15f, 1.0f);
-    colors[ImGuiCol_ChildBg] = ImVec4(0.12f, 0.13f, 0.18f, 1.0f);
-    colors[ImGuiCol_Header] = ImVec4(0.15f, 0.20f, 0.30f, 1.0f);
-    colors[ImGuiCol_HeaderHovered] = ImVec4(0.20f, 0.30f, 0.45f, 1.0f);
-    colors[ImGuiCol_HeaderActive] = ImVec4(0.10f, 0.40f, 0.70f, 1.0f);
-    colors[ImGuiCol_Button] = ImVec4(0.18f, 0.20f, 0.28f, 1.0f);
-    colors[ImGuiCol_ButtonHovered] = ImVec4(0.25f, 0.30f, 0.42f, 1.0f);
-    colors[ImGuiCol_ButtonActive] = ImVec4(0.10f, 0.45f, 0.80f, 1.0f);
-    colors[ImGuiCol_FrameBg] = ImVec4(0.14f, 0.16f, 0.22f, 1.0f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.20f, 0.24f, 0.32f, 1.0f);
-    colors[ImGuiCol_FrameBgActive] = ImVec4(0.24f, 0.30f, 0.40f, 1.0f);
-
-    ImGui_ImplGlfw_InitForOpenGL(uiWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 330");
-
-    UIEditorWindow editor(filePath, name);
-
-    // Standalone loop
-    while (!glfwWindowShouldClose(uiWindow)) {
-        glfwPollEvents();
-
-        int displayW = 0, displayH = 0;
-        glfwGetFramebufferSize(uiWindow, &displayW, &displayH);
-        if (displayW <= 0 || displayH <= 0) continue;
-
-        ImGui_ImplOpenGL3_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-
-        ImGui::SetNextWindowPos(ImVec2(0, 0));
-        ImGui::SetNextWindowSize(ImVec2((float)displayW, (float)displayH));
-        ImGuiWindowFlags winFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                                   ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus |
-                                   ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
-        if (ImGui::Begin("UIEditorMainWindow", nullptr, winFlags)) {
-            editor.RenderUIEditorContent();
-        }
-        ImGui::End();
-        ImGui::PopStyleVar();
-
-        ImGui::Render();
-        glViewport(0, 0, displayW, displayH);
-        glClearColor(0.08f, 0.09f, 0.12f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-
-        glfwSwapBuffers(uiWindow);
-    }
-
-    // Auto save on exit
-    editor.Save();
-
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext(uiContext);
-
-    glfwDestroyWindow(uiWindow);
-
-    // Restore previous ImGui context
-    if (prevContext) {
-        ImGui::SetCurrentContext(prevContext);
-    }
-}
-
 class UIEditorManager {
 public:
     static UIEditorManager& Get() {
@@ -527,19 +379,51 @@ public:
     }
 
     void Open(const std::string& filePath, const std::string& name = "") {
-        RunStandaloneUIEditor(filePath, name);
+        for (auto& editor : m_editors) {
+            if (editor->filePath == filePath) {
+                editor->isOpen = true;
+                return;
+            }
+        }
+        m_editors.push_back(std::make_unique<UIEditorWindow>(filePath, name));
     }
 
     void RenderAll() {
-        // UI Editor runs in its own separate window
+        for (auto it = m_editors.begin(); it != m_editors.end();) {
+            if ((*it)->isOpen) {
+                std::string winTitle = "🎨 UI Editor - " + (*it)->ui.name;
+                if ((*it)->isDirty) winTitle += " *";
+                winTitle += "###UIEditorWin_" + (*it)->filePath;
+
+                ImGui::SetNextWindowSize(ImVec2(1180, 720), ImGuiCond_FirstUseEver);
+                ImGui::SetNextWindowPos(ImVec2(100, 70), ImGuiCond_FirstUseEver);
+
+                bool stillOpen = true;
+                if (ImGui::Begin(winTitle.c_str(), &stillOpen, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse)) {
+                    (*it)->RenderUIEditorContent();
+                }
+                ImGui::End();
+
+                if (!stillOpen) {
+                    if ((*it)->autoSave || (*it)->isDirty) {
+                        (*it)->Save();
+                    }
+                    (*it)->isOpen = false;
+                }
+                ++it;
+            } else {
+                it = m_editors.erase(it);
+            }
+        }
     }
 
     bool HasOpenEditors() const {
-        return false;
+        return !m_editors.empty();
     }
 
 private:
     UIEditorManager() = default;
+    std::vector<std::unique_ptr<UIEditorWindow>> m_editors;
 };
 
 } // namespace EunoiaUI
