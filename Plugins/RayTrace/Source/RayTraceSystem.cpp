@@ -399,7 +399,7 @@ static bool IntersectRayCone(const glm::vec3& ro, const glm::vec3& rd, const glm
 }
 
 bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& start, const glm::vec3& dirNorm, float maxDist, RayTraceHit& outHit, bool ignoreTriggers, const Scene* scene) {
-    if (obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || IsCameraPrimitive(obj.type)) {
+    if (obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isUserInterface || obj.type == PrimitiveType::UserInterface) {
         return false;
     }
 
@@ -473,7 +473,7 @@ bool RayTraceSystem::RaycastGameObject(const GameObject& obj, const glm::vec3& s
                 bestShape = mod.shapeType;
             }
         }
-    } else if (obj.type != PrimitiveType::Empty && obj.type != PrimitiveType::ImportedMesh) {
+    } else if (obj.type != PrimitiveType::Empty && obj.type != PrimitiveType::ImportedMesh && obj.type != PrimitiveType::UserInterface && !obj.isUserInterface) {
         // Fallback default shape matching primitive dimensions
         float t = 0.0f;
         glm::vec3 n(0.0f);

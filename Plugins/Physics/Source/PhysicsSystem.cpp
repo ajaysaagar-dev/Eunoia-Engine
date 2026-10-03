@@ -257,7 +257,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
             for (size_t g = 0; g < numObjs; ++g) {
                 if (g == i) continue;
                 auto& groundObj = scene.objects[g];
-                if (!groundObj.visible) continue;
+                if (!groundObj.visible || groundObj.isUserInterface || groundObj.type == PrimitiveType::UserInterface) continue;
                 bool isGround = (groundObj.type == PrimitiveType::Plane || groundObj.type == PrimitiveType::Quad ||
                                  (!groundObj.modifiers.empty() && groundObj.modifiers[0].shapeType == CollisionShapeType::Plane));
                 if (!isGround) continue;
@@ -341,7 +341,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
         // 2b. Dynamic Body vs Body SAT Contacts
         for (size_t i = 0; i < numObjs; ++i) {
             auto& objA = scene.objects[i];
-            if (!objA.visible || objA.isLight || IsLightPrimitive(objA.type) || objA.isCamera) continue;
+            if (!objA.visible || objA.isLight || IsLightPrimitive(objA.type) || objA.isCamera || objA.isUserInterface || objA.type == PrimitiveType::UserInterface) continue;
             if (objA.type == PrimitiveType::Empty && objA.modifiers.empty() && !objA.hasPhysics) continue;
             bool isGroundA = (objA.type == PrimitiveType::Plane || objA.type == PrimitiveType::Quad ||
                              (!objA.modifiers.empty() && objA.modifiers[0].shapeType == CollisionShapeType::Plane));
@@ -349,7 +349,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
 
             for (size_t j = i + 1; j < numObjs; ++j) {
                 auto& objB = scene.objects[j];
-                if (!objB.visible || objB.isLight || IsLightPrimitive(objB.type) || objB.isCamera) continue;
+                if (!objB.visible || objB.isLight || IsLightPrimitive(objB.type) || objB.isCamera || objB.isUserInterface || objB.type == PrimitiveType::UserInterface) continue;
                 if (objB.type == PrimitiveType::Empty && objB.modifiers.empty() && !objB.hasPhysics) continue;
                 bool isGroundB = (objB.type == PrimitiveType::Plane || objB.type == PrimitiveType::Quad ||
                                  (!objB.modifiers.empty() && objB.modifiers[0].shapeType == CollisionShapeType::Plane));

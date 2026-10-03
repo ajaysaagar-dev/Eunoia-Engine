@@ -444,6 +444,8 @@ void CollisionSystem::AppendCollisionWireframe(
     const glm::vec3& cameraPos,
     const glm::mat4& worldMat)
 {
+    if (obj.isUserInterface || obj.type == PrimitiveType::UserInterface) return;
+
     // Render all active modifiers
     for (const auto& mod : obj.modifiers) {
         if (!mod.enabled || !mod.showWireframe || mod.shapeType == CollisionShapeType::None) {
@@ -502,7 +504,7 @@ RaycastHitResult CollisionSystem::Raycast(const Scene& scene, const glm::vec3& o
     glm::vec3 dirNorm = glm::normalize(direction);
 
     for (const auto& obj : scene.objects) {
-        if (!obj.visible) continue;
+        if (!obj.visible || obj.isLight || IsLightPrimitive(obj.type) || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isUserInterface || obj.type == PrimitiveType::UserInterface) continue;
 
         glm::mat4 worldMat = scene.GetWorldMatrix(obj);
         glm::mat4 invWorld = glm::inverse(worldMat);
@@ -578,6 +580,9 @@ RaycastHitResult CollisionSystem::Raycast(const Scene& scene, const glm::vec3& o
 }
 
 bool CollisionSystem::CheckOverlap(const GameObject& a, const glm::mat4& worldA, const GameObject& b, const glm::mat4& worldB, CollisionHitResult& outResult) {
+    if (a.isUserInterface || a.type == PrimitiveType::UserInterface || b.isUserInterface || b.type == PrimitiveType::UserInterface) {
+        return false;
+    }
     for (int i = 0; i < (int)a.modifiers.size(); ++i) {
         const auto& modA = a.modifiers[i];
         if (!modA.enabled || modA.shapeType == CollisionShapeType::None) continue;
