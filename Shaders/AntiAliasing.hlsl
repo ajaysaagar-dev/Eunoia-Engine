@@ -215,13 +215,13 @@ float4 ApplyTAA(float2 uv, float2 texel, float2 jitter)
     historyColor = YCoCgToRGB(historyYCoCg);
 
     // Dynamic anti-ghosting disocclusion detection:
-    // If luminance / chrominance delta is significant, reject history
+    // If luminance / chrominance delta is detected, immediately reject stale history
     float lumaDiff = abs(historyYCoCg.x - currentYCoCg.x);
     float chromDiff = length(historyYCoCg.yz - currentYCoCg.yz);
-    float motionDisocclusion = saturate(lumaDiff * 8.0f + chromDiff * 5.0f);
+    float motionDisocclusion = saturate(lumaDiff * 14.0f + chromDiff * 8.0f);
 
     float baseBlend = 0.20f;
-    float blendFactor = lerp(baseBlend, 1.0f, motionDisocclusion);
+    float blendFactor = (motionDisocclusion > 0.08f) ? 1.0f : lerp(baseBlend, 1.0f, motionDisocclusion * 12.5f);
 
     float3 result = lerp(historyColor, currentColor, blendFactor);
     return float4(result, 1.0f);
@@ -261,7 +261,7 @@ float4 ApplyTSR(float2 uv, float2 texel, float2 jitter)
     historyColor = YCoCgToRGB(historyYCoCg);
 
     float lumaDiff = abs(historyYCoCg.x - centerYCoCg.x);
-    float blendFactor = lerp(0.25f, 1.0f, saturate(lumaDiff * 8.0f));
+    float blendFactor = (lumaDiff > 0.04f) ? 1.0f : lerp(0.25f, 1.0f, saturate(lumaDiff * 25.0f));
 
     float3 result = lerp(historyColor, sharpened, blendFactor);
     return float4(result, 1.0f);
@@ -352,7 +352,7 @@ float4 ApplyUpscalerReconstruction(float2 uv, float2 texel, float2 jitter)
     history = YCoCgToRGB(historyYCoCg);
 
     float lumaDiff = abs(historyYCoCg.x - colMYCoCg.x);
-    float blendFactor = lerp(0.25f, 1.0f, saturate(lumaDiff * 8.0f));
+    float blendFactor = (lumaDiff > 0.04f) ? 1.0f : lerp(0.25f, 1.0f, saturate(lumaDiff * 25.0f));
 
     float3 finalColor = lerp(history, rcasColor, blendFactor);
     return float4(finalColor, 1.0f);

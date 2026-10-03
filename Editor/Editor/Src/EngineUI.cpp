@@ -11215,6 +11215,7 @@ void EngineUI::EnterPlayMode(Scene& scene, OrbitCamera* cameraPtr) {
 
     isPlayModeActive = true;
     CursorState.Locked();
+    scene.SyncLightPositionsFromActors();
     scene.StartPlayMode();
     AddLog("LogPlayLevel", "Entered Play Mode in Editor (Full Screen Fit)", 2);
 }

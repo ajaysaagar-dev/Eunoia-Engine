@@ -1636,6 +1636,7 @@ public:
             }
         }
         scene.SyncLightActors();
+        scene.SyncLightPositionsFromActors();
         scene.ResolveAllBehaviourReferences();
     }
 
