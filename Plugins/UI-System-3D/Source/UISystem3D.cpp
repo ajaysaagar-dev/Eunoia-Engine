@@ -77,18 +77,31 @@ UserInterface* UISystem3DManager::CreateNewUI3D(const std::string& name, const s
 }
 
 void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const OrbitCamera& camera,
-                                  const glm::vec4& vpRect, bool isGameView, bool isSelected) {
+                                  const glm::vec4& vpRect, bool isGameView, bool isSelected, Scene* scene) {
     if (!obj.visible || !obj.ui3d.enabled) return;
 
     ImDrawList* drawList = reinterpret_cast<ImDrawList*>(imDrawListPtr);
     if (!drawList) return;
+
+    if (vpRect.z <= 1.0f || vpRect.w <= 1.0f) return;
 
     float aspect = (vpRect.z > 0.0f && vpRect.w > 0.0f) ? (vpRect.z / vpRect.w) : (16.0f / 9.0f);
     glm::mat4 proj = camera.GetProjectionMatrix(aspect);
     glm::mat4 view = camera.GetViewMatrix();
     glm::mat4 vpMatrix = proj * view;
 
-    glm::vec3 worldPos = obj.position;
+    glm::vec3 worldPos = scene ? scene->GetWorldPosition(obj) : obj.position;
+    glm::vec3 camPos = camera.GetPosition();
+    glm::vec3 camFwd = camera.GetForward();
+    float camNear = std::max(0.05f, camera.nearPlane);
+
+    // 1. Strict Behind-Camera Culling for the object center
+    glm::vec3 toObj = worldPos - camPos;
+    float centerFwdDist = glm::dot(toObj, camFwd);
+    if (centerFwdDist <= camNear) {
+        return; // Object is behind camera near plane
+    }
+
     float halfW = (obj.ui3d.size.x * obj.scale.x) * 0.5f;
     float halfH = (obj.ui3d.size.y * obj.scale.y) * 0.5f;
     if (halfW <= 0.001f) halfW = 1.0f;
@@ -99,13 +112,12 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
     glm::vec3 normal(0.0f, 0.0f, 1.0f);
 
     if (obj.ui3d.space == UI3DSpaceType::Screen) {
-        // Screen Space: Billboard facing camera view
-        glm::vec3 camPos = camera.GetPosition();
+        // Screen Space Billboard
         glm::vec3 fwd = camPos - worldPos;
         if (glm::length2(fwd) > 0.0001f) {
             fwd = glm::normalize(fwd);
         } else {
-            fwd = -camera.GetForward();
+            fwd = -camFwd;
         }
         glm::vec3 camUp = camera.GetUp();
         right = glm::cross(camUp, fwd);
@@ -118,13 +130,23 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
         normal = fwd;
     } else {
         // World Space: Follow actor transform orientation
-        glm::mat4 rot(1.0f);
-        rot = glm::rotate(rot, glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-        rot = glm::rotate(rot, glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-        rot = glm::rotate(rot, glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-        right  = glm::vec3(rot * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
-        up     = glm::vec3(rot * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
-        normal = glm::vec3(rot * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+        if (scene) {
+            glm::mat4 worldMat = scene->GetWorldMatrix(obj);
+            glm::vec3 c0(worldMat[0]);
+            glm::vec3 c1(worldMat[1]);
+            glm::vec3 c2(worldMat[2]);
+            if (glm::length2(c0) > 0.0001f) right = glm::normalize(c0);
+            if (glm::length2(c1) > 0.0001f) up = glm::normalize(c1);
+            if (glm::length2(c2) > 0.0001f) normal = glm::normalize(c2);
+        } else {
+            glm::mat4 rot(1.0f);
+            rot = glm::rotate(rot, glm::radians(obj.rotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+            rot = glm::rotate(rot, glm::radians(obj.rotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+            rot = glm::rotate(rot, glm::radians(obj.rotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+            right  = glm::vec3(rot * glm::vec4(1.0f, 0.0f, 0.0f, 0.0f));
+            up     = glm::vec3(rot * glm::vec4(0.0f, 1.0f, 0.0f, 0.0f));
+            normal = glm::vec3(rot * glm::vec4(0.0f, 0.0f, 1.0f, 0.0f));
+        }
     }
 
     // 4 Quad Corners in 3D Space
@@ -133,36 +155,86 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
     glm::vec3 cBR = worldPos + right * halfW - up * halfH;
     glm::vec3 cBL = worldPos - right * halfW - up * halfH;
 
+    // Check if all 4 corners are behind camera
+    if (glm::dot(cTL - camPos, camFwd) <= camNear &&
+        glm::dot(cTR - camPos, camFwd) <= camNear &&
+        glm::dot(cBR - camPos, camFwd) <= camNear &&
+        glm::dot(cBL - camPos, camFwd) <= camNear) {
+        return;
+    }
+
+    // Backface check for single-sided world space UI
+    if (!obj.ui3d.twoSided && obj.ui3d.space == UI3DSpaceType::World) {
+        glm::vec3 viewDir = worldPos - camPos;
+        if (glm::dot(viewDir, normal) > 0.0f) {
+            return; // Backfacing
+        }
+    }
+
     // Project points to Viewport Screen coordinates
     auto ProjectPoint = [&](const glm::vec3& pt, ImVec2& outScreen) -> bool {
+        float fwdDist = glm::dot(pt - camPos, camFwd);
+        if (fwdDist <= camNear) return false;
+
         glm::vec4 clip = vpMatrix * glm::vec4(pt, 1.0f);
-        if (clip.w <= 0.01f) return false;
+        if (clip.w <= 0.001f) return false;
+
         glm::vec3 ndc = glm::vec3(clip) / clip.w;
-        if (ndc.z < -1.0f || ndc.z > 1.0f) return false;
+        // DX12 / GLM depth range is [0.0, 1.0]
+        if (ndc.z < 0.0f || ndc.z > 1.0f) return false;
+
         outScreen.x = vpRect.x + (ndc.x * 0.5f + 0.5f) * vpRect.z;
         outScreen.y = vpRect.y + ((1.0f - ndc.y) * 0.5f) * vpRect.w;
         return true;
     };
 
-    ImVec2 pTL, pTR, pBR, pBL;
+    ImVec2 pCenter(0.0f, 0.0f);
+    bool vCenter = ProjectPoint(worldPos, pCenter);
+
+    ImVec2 pTL(0.0f, 0.0f), pTR(0.0f, 0.0f), pBR(0.0f, 0.0f), pBL(0.0f, 0.0f);
     bool vTL = ProjectPoint(cTL, pTL);
     bool vTR = ProjectPoint(cTR, pTR);
     bool vBR = ProjectPoint(cBR, pBR);
     bool vBL = ProjectPoint(cBL, pBL);
 
-    if (!vTL || !vTR || !vBR || !vBL) {
-        // Also check center point projection if partially clipped
-        ImVec2 pCenter;
-        if (!ProjectPoint(worldPos, pCenter)) return;
+    float minX = 0.0f, maxX = 0.0f, minY = 0.0f, maxY = 0.0f;
+
+    if (vTL && vTR && vBR && vBL) {
+        minX = std::min({pTL.x, pTR.x, pBR.x, pBL.x});
+        maxX = std::max({pTL.x, pTR.x, pBR.x, pBL.x});
+        minY = std::min({pTL.y, pTR.y, pBR.y, pBL.y});
+        maxY = std::max({pTL.y, pTR.y, pBR.y, pBL.y});
+    } else if (vCenter) {
+        // Fallback to center projection with projected extents
+        glm::vec4 clipR = vpMatrix * glm::vec4(worldPos + right * halfW, 1.0f);
+        glm::vec4 clipU = vpMatrix * glm::vec4(worldPos + up * halfH, 1.0f);
+        glm::vec4 clipC = vpMatrix * glm::vec4(worldPos, 1.0f);
+        float sHalfW = halfW * 50.0f;
+        float sHalfH = halfH * 50.0f;
+        if (clipR.w > 0.001f && clipC.w > 0.001f) {
+            sHalfW = std::abs((clipR.x / clipR.w - clipC.x / clipC.w) * 0.5f * vpRect.z);
+        }
+        if (clipU.w > 0.001f && clipC.w > 0.001f) {
+            sHalfH = std::abs((clipU.y / clipU.w - clipC.y / clipC.w) * 0.5f * vpRect.w);
+        }
+        sHalfW = std::max(5.0f, sHalfW);
+        sHalfH = std::max(5.0f, sHalfH);
+        pTL = ImVec2(pCenter.x - sHalfW, pCenter.y - sHalfH);
+        pTR = ImVec2(pCenter.x + sHalfW, pCenter.y - sHalfH);
+        pBR = ImVec2(pCenter.x + sHalfW, pCenter.y + sHalfH);
+        pBL = ImVec2(pCenter.x - sHalfW, pCenter.y + sHalfH);
+        minX = pCenter.x - sHalfW;
+        maxX = pCenter.x + sHalfW;
+        minY = pCenter.y - sHalfH;
+        maxY = pCenter.y + sHalfH;
+    } else {
+        return; // Neither center nor all corners visible
     }
 
-    // Backface check for single-sided world space UI
-    if (!obj.ui3d.twoSided && obj.ui3d.space == UI3DSpaceType::World) {
-        glm::vec3 camPos = camera.GetPosition();
-        glm::vec3 viewDir = worldPos - camPos;
-        if (glm::dot(viewDir, normal) > 0.0f) {
-            return; // Backfacing
-        }
+    // Viewport frustum bounds check
+    if (maxX < vpRect.x || minX > vpRect.x + vpRect.z ||
+        maxY < vpRect.y || minY > vpRect.y + vpRect.w) {
+        return; // Entirely out of viewport
     }
 
     // 1. Draw 3D Quad Background (if not transparent)
@@ -183,11 +255,6 @@ void UISystem3DManager::Render3DUI(void* imDrawListPtr, GameObject& obj, const O
     }
 
     if (ui && ui->isVisible) {
-        float minX = std::min({pTL.x, pTR.x, pBR.x, pBL.x});
-        float maxX = std::max({pTL.x, pTR.x, pBR.x, pBL.x});
-        float minY = std::min({pTL.y, pTR.y, pBR.y, pBL.y});
-        float maxY = std::max({pTL.y, pTR.y, pBR.y, pBL.y});
-
         glm::vec2 quadMin(minX, minY);
         glm::vec2 quadMax(maxX, maxY);
 
@@ -267,7 +334,7 @@ void UISystem3DManager::RenderAllScene3DUI(void* imDrawListPtr, Scene& scene, co
         if (!obj.visible) continue;
         if (obj.isUserInterface || obj.type == PrimitiveType::UserInterface || (!obj.ui3d.uiAssetPath.empty() && obj.ui3d.enabled)) {
             bool isSel = (scene.selectedId == obj.id);
-            Render3DUI(drawList, obj, camera, vpRect, isGameView, isSel);
+            Render3DUI(drawList, obj, camera, vpRect, isGameView, isSel, &scene);
         }
     }
 }

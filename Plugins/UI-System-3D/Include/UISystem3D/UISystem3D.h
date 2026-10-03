@@ -32,7 +32,7 @@ public:
 
     // 3D Space Viewport Rendering
     void Render3DUI(void* imDrawListPtr, GameObject& obj, const OrbitCamera& camera,
-                    const glm::vec4& vpRect, bool isGameView, bool isSelected = false);
+                    const glm::vec4& vpRect, bool isGameView, bool isSelected = false, Scene* scene = nullptr);
 
     void RenderAllScene3DUI(void* imDrawListPtr, Scene& scene, const OrbitCamera& camera,
                             const glm::vec4& vpRect, bool isGameView);
