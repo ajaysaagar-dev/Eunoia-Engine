@@ -55,14 +55,12 @@ ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
         return model;
     }
 
-    // Neglect repetitive material-not-found spam and only log non-mtl warnings once
     if (!reader.Warning().empty()) {
         std::istringstream stream(reader.Warning());
         std::string line;
         bool hasLoggedMissingMtl = false;
         while (std::getline(stream, line)) {
             if (line.find("not found in .mtl") != std::string::npos) {
-                // Neglect repetitive "not found in .mtl" spam; log a single one-line notice once
                 if (!hasLoggedMissingMtl) {
                     hasLoggedMissingMtl = true;
                     std::cout << "[MeshImporter] Notice: Materials not found in .mtl for '" << filePath << "' (neglecting missing materials, using defaults).\n";
@@ -80,15 +78,29 @@ ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
     auto resolveObjTex = [&](const std::string& texname) -> std::string {
         if (texname.empty()) return "";
         std::filesystem::path resolved = objDir / texname;
-        return std::filesystem::exists(resolved) ? resolved.string() : texname; // bare name lets TextureManager's recursive search try
+        return std::filesystem::exists(resolved) ? resolved.string() : texname;
     };
 
     for (const auto& shape : shapes) {
-        ImportedMesh mesh;
-        mesh.name = shape.name;
+        // Group faces by material ID to support multi-material meshes
+        std::unordered_map<int, std::vector<size_t>> matFaces;
+        size_t faceCount = shape.mesh.num_face_vertices.size();
+        for (size_t f = 0; f < faceCount; ++f) {
+            int matId = (f < shape.mesh.material_ids.size()) ? shape.mesh.material_ids[f] : -1;
+            matFaces[matId].push_back(f);
+        }
 
-        if (!shape.mesh.material_ids.empty()) {
-            int matId = shape.mesh.material_ids[0];
+        for (const auto& kv : matFaces) {
+            int matId = kv.first;
+            const auto& faceIndices = kv.second;
+            if (faceIndices.empty()) continue;
+
+            ImportedMesh mesh;
+            mesh.name = shape.name;
+            if (matFaces.size() > 1 && matId >= 0 && matId < (int)materials.size()) {
+                mesh.name += "_" + materials[matId].name;
+            }
+
             if (matId >= 0 && matId < (int)materials.size()) {
                 const auto& tm = materials[matId];
                 ImportedMaterial& m = mesh.material;
@@ -101,63 +113,87 @@ ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
                 m.aoTexture        = resolveObjTex(tm.ambient_texname);
                 m.emissionTexture  = resolveObjTex(tm.emissive_texname);
                 m.opacityTexture   = resolveObjTex(tm.alpha_texname);
-                if (m.roughnessTexture.empty() && tm.roughness > 0.0f && std::isfinite(tm.roughness)) m.roughness = tm.roughness;
-                if (m.metallicTexture.empty() && tm.metallic > 0.0f && std::isfinite(tm.metallic)) m.metallic = tm.metallic;
+
+                if (std::isfinite(tm.diffuse[0]) && (tm.diffuse[0] > 0.001f || tm.diffuse[1] > 0.001f || tm.diffuse[2] > 0.001f)) {
+                    m.baseColor = glm::vec3(tm.diffuse[0], tm.diffuse[1], tm.diffuse[2]);
+                }
+                if (std::isfinite(tm.emission[0]) && (tm.emission[0] > 0.001f || tm.emission[1] > 0.001f || tm.emission[2] > 0.001f)) {
+                    m.emissiveColor = glm::vec3(tm.emission[0], tm.emission[1], tm.emission[2]);
+                    m.emissiveIntensity = 1.0f;
+                }
+                if (tm.dissolve > 0.0f && tm.dissolve < 0.999f && std::isfinite(tm.dissolve)) {
+                    m.opacity = tm.dissolve;
+                    m.blendMode = 1;
+                }
+                if (m.roughnessTexture.empty()) {
+                    if (tm.roughness > 0.0f && std::isfinite(tm.roughness)) {
+                        m.roughness = tm.roughness;
+                    } else if (tm.shininess > 0.0f && std::isfinite(tm.shininess)) {
+                        m.roughness = std::clamp(std::sqrt(2.0f / (tm.shininess + 2.0f)), 0.04f, 1.0f);
+                    }
+                }
+                if (m.metallicTexture.empty() && tm.metallic > 0.0f && std::isfinite(tm.metallic)) {
+                    m.metallic = tm.metallic;
+                }
+            }
+
+            for (size_t f : faceIndices) {
+                for (size_t v = 0; v < 3; ++v) {
+                    tinyobj::index_t idx = shape.mesh.indices[f * 3 + v];
+                    MeshVertex vertex;
+
+                    vertex.pos = {
+                        attrib.vertices[3 * size_t(idx.vertex_index) + 0],
+                        attrib.vertices[3 * size_t(idx.vertex_index) + 1],
+                        attrib.vertices[3 * size_t(idx.vertex_index) + 2]
+                    };
+
+                    if (idx.normal_index >= 0) {
+                        vertex.normal = {
+                            attrib.normals[3 * size_t(idx.normal_index) + 0],
+                            attrib.normals[3 * size_t(idx.normal_index) + 1],
+                            attrib.normals[3 * size_t(idx.normal_index) + 2]
+                        };
+                    } else {
+                        vertex.normal = {0.0f, 0.0f, 0.0f};
+                    }
+
+                    if (idx.texcoord_index >= 0) {
+                        vertex.uv = {
+                            attrib.texcoords[2 * size_t(idx.texcoord_index) + 0],
+                            attrib.texcoords[2 * size_t(idx.texcoord_index) + 1]
+                        };
+                    } else {
+                        vertex.uv = {0.0f, 0.0f};
+                    }
+
+                    mesh.vertices.push_back(vertex);
+                    mesh.indices.push_back((uint32_t)mesh.vertices.size() - 1);
+                }
+            }
+
+            // Compute flat normals if missing
+            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+                MeshVertex& v0 = mesh.vertices[mesh.indices[i]];
+                MeshVertex& v1 = mesh.vertices[mesh.indices[i+1]];
+                MeshVertex& v2 = mesh.vertices[mesh.indices[i+2]];
+
+                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
+                    glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                    v0.normal = normal;
+                    v1.normal = normal;
+                    v2.normal = normal;
+                }
+            }
+
+            GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
+            LogShaderResourceValidation(mesh.material, true, true, !attrib.texcoords.empty());
+
+            mesh.valid = !mesh.vertices.empty();
+            if (mesh.valid) {
+                model.meshes.push_back(mesh);
             }
         }
-
-        for (size_t s = 0; s < shape.mesh.indices.size(); s++) {
-            tinyobj::index_t idx = shape.mesh.indices[s];
-            MeshVertex vertex;
-
-            vertex.pos = {
-                attrib.vertices[3 * size_t(idx.vertex_index) + 0],
-                attrib.vertices[3 * size_t(idx.vertex_index) + 1],
-                attrib.vertices[3 * size_t(idx.vertex_index) + 2]
-            };
-
-            if (idx.normal_index >= 0) {
-                vertex.normal = {
-                    attrib.normals[3 * size_t(idx.normal_index) + 0],
-                    attrib.normals[3 * size_t(idx.normal_index) + 1],
-                    attrib.normals[3 * size_t(idx.normal_index) + 2]
-                };
-            } else {
-                vertex.normal = {0.0f, 0.0f, 0.0f};
-            }
-
-            if (idx.texcoord_index >= 0) {
-                vertex.uv = {
-                    attrib.texcoords[2 * size_t(idx.texcoord_index) + 0],
-                    attrib.texcoords[2 * size_t(idx.texcoord_index) + 1]
-                };
-            } else {
-                vertex.uv = {0.0f, 0.0f};
-            }
-
-            mesh.vertices.push_back(vertex);
-            mesh.indices.push_back((uint32_t)mesh.vertices.size() - 1);
-        }
-
-        // Compute flat normals if missing
-        for (size_t i = 0; i < mesh.indices.size(); i += 3) {
-            MeshVertex& v0 = mesh.vertices[mesh.indices[i]];
-            MeshVertex& v1 = mesh.vertices[mesh.indices[i+1]];
-            MeshVertex& v2 = mesh.vertices[mesh.indices[i+2]];
-
-            if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                v0.normal = normal;
-                v1.normal = normal;
-                v2.normal = normal;
-            }
-        }
-
-        GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
-        LogShaderResourceValidation(mesh.material, true, true, !attrib.texcoords.empty());
-
-        mesh.valid = true;
-        model.meshes.push_back(mesh);
     }
     model.valid = !model.meshes.empty();
     return model;
@@ -195,10 +231,7 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
         cgltf_image* img = tex->image;
         if (img->uri) {
             std::string uri = img->uri;
-            if (uri.rfind("data:", 0) == 0) {
-                // Embedded base64 data URI — cgltf can decode this for us via buffer_view if present;
-                // fall through to buffer_view handling below if uri decoding isn't wired up.
-            } else {
+            if (uri.rfind("data:", 0) != 0) {
                 std::filesystem::path resolved = gltfDir / uri;
                 if (std::filesystem::exists(resolved)) return resolved.string();
             }
@@ -221,15 +254,18 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
     };
 
     for (cgltf_size i = 0; i < data->meshes_count; ++i) {
-        ImportedMesh mesh;
-        mesh.name = data->meshes[i].name ? data->meshes[i].name : "Mesh";
+        std::string baseMeshName = data->meshes[i].name ? data->meshes[i].name : ("Mesh_" + std::to_string(i));
 
         for (cgltf_size j = 0; j < data->meshes[i].primitives_count; ++j) {
             cgltf_primitive* primitive = &data->meshes[i].primitives[j];
-
             if (primitive->type != cgltf_primitive_type_triangles) continue;
 
-            if (!mesh.material.hasMaterial && primitive->material) {
+            ImportedMesh mesh;
+            mesh.name = (data->meshes[i].primitives_count > 1)
+                ? (baseMeshName + "_" + std::to_string(j))
+                : baseMeshName;
+
+            if (primitive->material) {
                 cgltf_material* mat = primitive->material;
                 ImportedMaterial& m = mesh.material;
                 m.hasMaterial = true;
@@ -239,9 +275,8 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                     m.baseColorTexture = resolveGltfImage(pbr.base_color_texture.texture, m.name, "BaseColor");
                     m.metallicTexture  = resolveGltfImage(pbr.metallic_roughness_texture.texture, m.name, "MetallicRoughness");
                     m.roughnessTexture = m.metallicTexture; // packed GLTF metallic-roughness
-                    // GLTF specification: Green channel = Roughness, Blue channel = Metallic
-                    m.roughnessChannel = 1;
-                    m.metallicChannel = 2;
+                    m.roughnessChannel = 1; // Green channel = Roughness
+                    m.metallicChannel = 2;  // Blue channel = Metallic
                     m.aoChannel = 0;
                     if (std::isfinite(pbr.base_color_factor[0])) {
                         m.baseColor = glm::vec3(pbr.base_color_factor[0], pbr.base_color_factor[1], pbr.base_color_factor[2]);
@@ -255,6 +290,12 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                 m.emissionTexture = resolveGltfImage(mat->emissive_texture.texture, m.name, "Emissive");
                 if (std::isfinite(mat->emissive_factor[0])) {
                     m.emissiveColor = glm::vec3(mat->emissive_factor[0], mat->emissive_factor[1], mat->emissive_factor[2]);
+                    if (m.emissiveColor.r > 0.001f || m.emissiveColor.g > 0.001f || m.emissiveColor.b > 0.001f || !m.emissionTexture.empty()) {
+                        m.emissiveIntensity = 1.0f;
+                    }
+                }
+                if (mat->has_emissive_strength) {
+                    m.emissiveIntensity = mat->emissive_strength.emissive_strength;
                 }
                 if (mat->alpha_mode == cgltf_alpha_mode_mask) {
                     m.blendMode = 1;
@@ -265,8 +306,6 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                     m.blendMode = 0;
                 }
             }
-
-            uint32_t vertexStart = mesh.vertices.size();
 
             cgltf_accessor* posAccessor = nullptr;
             cgltf_accessor* normAccessor = nullptr;
@@ -291,7 +330,8 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                 cgltf_accessor_read_float(posAccessor, k, &vertex.pos.x, 3);
                 if (normAccessor) {
                     cgltf_accessor_read_float(normAccessor, k, &vertex.normal.x, 3);
-                    vertex.normal = glm::normalize(vertex.normal);
+                    float nLen = glm::length(vertex.normal);
+                    if (nLen > 0.001f) vertex.normal /= nLen;
                 }
                 if (uvAccessor) {
                     cgltf_accessor_read_float(uvAccessor, k, &vertex.uv.x, 2);
@@ -304,43 +344,45 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
 
             if (primitive->indices) {
                 for (cgltf_size k = 0; k < primitive->indices->count; ++k) {
-                    mesh.indices.push_back(vertexStart + cgltf_accessor_read_index(primitive->indices, k));
+                    mesh.indices.push_back(cgltf_accessor_read_index(primitive->indices, k));
                 }
             } else {
                 for (cgltf_size k = 0; k < posAccessor->count; ++k) {
-                    mesh.indices.push_back(vertexStart + k);
+                    mesh.indices.push_back((uint32_t)k);
                 }
             }
-        }
-        
-        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-            MeshVertex& v0 = mesh.vertices[mesh.indices[i]];
-            MeshVertex& v1 = mesh.vertices[mesh.indices[i+1]];
-            MeshVertex& v2 = mesh.vertices[mesh.indices[i+2]];
 
-            if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                v0.normal = normal;
-                v1.normal = normal;
-                v2.normal = normal;
+            for (size_t idx = 0; idx + 2 < mesh.indices.size(); idx += 3) {
+                MeshVertex& v0 = mesh.vertices[mesh.indices[idx]];
+                MeshVertex& v1 = mesh.vertices[mesh.indices[idx+1]];
+                MeshVertex& v2 = mesh.vertices[mesh.indices[idx+2]];
+
+                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
+                    glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                    v0.normal = normal;
+                    v1.normal = normal;
+                    v2.normal = normal;
+                }
+            }
+
+            bool hasImportedTangents = false;
+            for (const auto& v : mesh.vertices) {
+                if (v.tangent != glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)) {
+                    hasImportedTangents = true;
+                    break;
+                }
+            }
+            if (!hasImportedTangents) {
+                GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
+            }
+
+            LogShaderResourceValidation(mesh.material, true, true, true);
+
+            mesh.valid = !mesh.vertices.empty();
+            if (mesh.valid) {
+                model.meshes.push_back(mesh);
             }
         }
-
-        bool hasImportedTangents = false;
-        for (const auto& v : mesh.vertices) {
-            if (v.tangent != glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)) {
-                hasImportedTangents = true;
-                break;
-            }
-        }
-        if (!hasImportedTangents) {
-            GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
-        }
-
-        LogShaderResourceValidation(mesh.material, true, true, true);
-
-        mesh.valid = true;
-        model.meshes.push_back(mesh);
     }
     
     cgltf_free(data);
@@ -355,8 +397,6 @@ static std::string ResolveFbxTexturePath(ufbx_texture* tex, const std::filesyste
                                           const std::string& slotName) {
     if (!tex) return "";
 
-    // Embedded media: extract to a cache file next to the source FBX so the
-    // existing path-based TextureManager can load it with no renderer changes.
     if (tex->content.size > 0) {
         std::error_code ec;
         std::filesystem::create_directories(cacheDir, ec);
@@ -375,7 +415,6 @@ static std::string ResolveFbxTexturePath(ufbx_texture* tex, const std::filesyste
         return "";
     }
 
-    // External reference: prefer absolute filename, fall back to relative-to-FBX-dir.
     if (tex->filename.length > 0) {
         std::string abs(tex->filename.data, tex->filename.length);
         if (std::filesystem::exists(abs)) return abs;
@@ -384,9 +423,73 @@ static std::string ResolveFbxTexturePath(ufbx_texture* tex, const std::filesyste
         std::filesystem::path rel(std::string(tex->relative_filename.data, tex->relative_filename.length));
         std::filesystem::path resolved = fbxDir / rel;
         if (std::filesystem::exists(resolved)) return resolved.string();
-        return resolved.string(); // let TextureManager's recursive search try the bare filename
+        return resolved.string();
     }
     return "";
+}
+
+static void PopulateFbxMaterial(ImportedMaterial& m, ufbx_material* mat,
+                                const std::filesystem::path& fbxDir, const std::filesystem::path& cacheDir) {
+    if (!mat) return;
+    m.hasMaterial = true;
+    m.name = mat->name.length > 0 ? std::string(mat->name.data, mat->name.length) : "Material";
+    m.normalMapYFlip = true; // Blender/OpenGL standard normal map convention
+
+    // 1. PBR Material Properties (Maya Stingray, Blender Principled, 3ds Max Physical)
+    m.baseColorTexture = ResolveFbxTexturePath(mat->pbr.base_color.texture, fbxDir, cacheDir, m.name, "BaseColor");
+    m.normalTexture    = ResolveFbxTexturePath(mat->pbr.normal_map.texture, fbxDir, cacheDir, m.name, "Normal");
+    m.roughnessTexture = ResolveFbxTexturePath(mat->pbr.roughness.texture, fbxDir, cacheDir, m.name, "Roughness");
+    m.metallicTexture  = ResolveFbxTexturePath(mat->pbr.metalness.texture, fbxDir, cacheDir, m.name, "Metallic");
+    m.aoTexture        = ResolveFbxTexturePath(mat->pbr.ambient_occlusion.texture, fbxDir, cacheDir, m.name, "AO");
+    m.emissionTexture  = ResolveFbxTexturePath(mat->pbr.emission_color.texture, fbxDir, cacheDir, m.name, "Emissive");
+    m.opacityTexture   = ResolveFbxTexturePath(mat->pbr.opacity.texture, fbxDir, cacheDir, m.name, "Opacity");
+
+    if (mat->pbr.base_color.has_value) {
+        ufbx_vec3 bc = mat->pbr.base_color.value_vec3;
+        if (std::isfinite((float)bc.x) && std::isfinite((float)bc.y) && std::isfinite((float)bc.z))
+            m.baseColor = glm::vec3((float)bc.x, (float)bc.y, (float)bc.z);
+    }
+    if (mat->pbr.metalness.has_value && m.metallicTexture.empty()) {
+        m.metallic = std::isfinite((float)mat->pbr.metalness.value_real) ? (float)mat->pbr.metalness.value_real : 0.0f;
+    }
+    if (mat->pbr.roughness.has_value && m.roughnessTexture.empty()) {
+        m.roughness = std::isfinite((float)mat->pbr.roughness.value_real) ? (float)mat->pbr.roughness.value_real : 0.5f;
+    }
+    if (mat->pbr.emission_color.has_value) {
+        ufbx_vec3 ec = mat->pbr.emission_color.value_vec3;
+        if (std::isfinite((float)ec.x) && std::isfinite((float)ec.y) && std::isfinite((float)ec.z))
+            m.emissiveColor = glm::vec3((float)ec.x, (float)ec.y, (float)ec.z);
+    }
+    if (mat->pbr.emission_factor.has_value && std::isfinite((float)mat->pbr.emission_factor.value_real)) {
+        m.emissiveIntensity = (float)mat->pbr.emission_factor.value_real;
+    } else if (m.emissiveColor.r > 0.001f || m.emissiveColor.g > 0.001f || m.emissiveColor.b > 0.001f || !m.emissionTexture.empty()) {
+        m.emissiveIntensity = 1.0f;
+    }
+    if (mat->pbr.opacity.has_value && std::isfinite((float)mat->pbr.opacity.value_real)) {
+        m.opacity = (float)mat->pbr.opacity.value_real;
+    }
+
+    // 2. FBX Classic Lambert / Phong fallbacks
+    if (m.baseColorTexture.empty() && mat->fbx.diffuse_color.texture) {
+        m.baseColorTexture = ResolveFbxTexturePath(mat->fbx.diffuse_color.texture, fbxDir, cacheDir, m.name, "Diffuse");
+    }
+    if (m.normalTexture.empty()) {
+        if (mat->fbx.normal_map.texture) {
+            m.normalTexture = ResolveFbxTexturePath(mat->fbx.normal_map.texture, fbxDir, cacheDir, m.name, "Normal");
+        } else if (mat->fbx.bump.texture) {
+            m.normalTexture = ResolveFbxTexturePath(mat->fbx.bump.texture, fbxDir, cacheDir, m.name, "Bump");
+        }
+    }
+    if (m.emissionTexture.empty() && mat->fbx.emission_color.texture) {
+        m.emissionTexture = ResolveFbxTexturePath(mat->fbx.emission_color.texture, fbxDir, cacheDir, m.name, "Emission");
+    }
+    if (m.opacityTexture.empty() && mat->fbx.transparency_color.texture) {
+        m.opacityTexture = ResolveFbxTexturePath(mat->fbx.transparency_color.texture, fbxDir, cacheDir, m.name, "Transparency");
+    }
+
+    if (!m.opacityTexture.empty() || m.opacity < 0.999f) {
+        m.blendMode = 1;
+    }
 }
 
 ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
@@ -413,13 +516,13 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
         ufbx_mesh* mesh = scene->meshes.data[i];
         if (!mesh || mesh->num_faces == 0) continue;
 
-        ImportedMesh im;
+        std::string baseMeshName;
         if (mesh->name.data && mesh->name.length > 0) {
-            im.name = std::string(mesh->name.data, mesh->name.length);
+            baseMeshName = std::string(mesh->name.data, mesh->name.length);
         } else if (mesh->instances.count > 0 && mesh->instances.data[0]->name.data) {
-            im.name = std::string(mesh->instances.data[0]->name.data, mesh->instances.data[0]->name.length);
+            baseMeshName = std::string(mesh->instances.data[0]->name.data, mesh->instances.data[0]->name.length);
         } else {
-            im.name = "FBX_Mesh_" + std::to_string(i);
+            baseMeshName = "FBX_Mesh_" + std::to_string(i);
         }
 
         size_t max_tris = mesh->max_face_triangles * 3;
@@ -427,113 +530,102 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
             tri_indices.resize(std::max(max_tris, (size_t)64));
         }
 
+        // Group faces by material index (supports multi-material submesh splitting)
+        size_t numMats = std::max((size_t)1, (size_t)mesh->materials.count);
+        std::vector<std::vector<size_t>> matFaces(numMats);
+
         for (size_t f = 0; f < mesh->faces.count; ++f) {
-            ufbx_face face = mesh->faces.data[f];
-            uint32_t num_tris = ufbx_triangulate_face(tri_indices.data(), tri_indices.size(), mesh, face);
-
-            for (uint32_t t = 0; t < num_tris * 3; ++t) {
-                uint32_t idx = tri_indices[t];
-                MeshVertex v;
-                ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, idx);
-                v.pos = { (float)p.x, (float)p.y, (float)p.z };
-
-                if (mesh->vertex_normal.exists) {
-                    ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
-                    v.normal = { (float)n.x, (float)n.y, (float)n.z };
-                } else {
-                    v.normal = { 0.0f, 1.0f, 0.0f };
+            size_t matIdx = 0;
+            if (mesh->face_material.count > f) {
+                int32_t fm = mesh->face_material.data[f];
+                if (fm >= 0 && (size_t)fm < numMats) {
+                    matIdx = (size_t)fm;
                 }
+            }
+            matFaces[matIdx].push_back(f);
+        }
 
-                if (mesh->vertex_uv.exists) {
-                    ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, idx);
-                    v.uv = { (float)uv.x, (float)uv.y };
-                } else {
-                    v.uv = { 0.0f, 0.0f };
-                }
+        for (size_t mIdx = 0; mIdx < numMats; ++mIdx) {
+            const auto& faceList = matFaces[mIdx];
+            if (faceList.empty()) continue;
 
-                if (mesh->vertex_tangent.exists) {
-                    ufbx_vec3 t = ufbx_get_vertex_vec3(&mesh->vertex_tangent, idx);
-                    ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
-                    float h = 1.0f;
-                    if (mesh->vertex_bitangent.exists) {
-                        ufbx_vec3 b = ufbx_get_vertex_vec3(&mesh->vertex_bitangent, idx);
-                        glm::vec3 gn((float)n.x, (float)n.y, (float)n.z);
-                        glm::vec3 gt((float)t.x, (float)t.y, (float)t.z);
-                        glm::vec3 gb((float)b.x, (float)b.y, (float)b.z);
-                        h = (glm::dot(glm::cross(gn, gt), gb) < 0.0f) ? -1.0f : 1.0f;
+            ImportedMesh im;
+            im.name = baseMeshName;
+            if (numMats > 1) {
+                im.name += "_" + std::to_string(mIdx);
+            }
+
+            for (size_t f : faceList) {
+                ufbx_face face = mesh->faces.data[f];
+                uint32_t num_tris = ufbx_triangulate_face(tri_indices.data(), tri_indices.size(), mesh, face);
+
+                for (uint32_t t = 0; t < num_tris * 3; ++t) {
+                    uint32_t idx = tri_indices[t];
+                    MeshVertex v;
+                    ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, idx);
+                    v.pos = { (float)p.x, (float)p.y, (float)p.z };
+
+                    if (mesh->vertex_normal.exists) {
+                        ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
+                        v.normal = { (float)n.x, (float)n.y, (float)n.z };
+                    } else {
+                        v.normal = { 0.0f, 1.0f, 0.0f };
                     }
-                    v.tangent = { (float)t.x, (float)t.y, (float)t.z, h };
+
+                    if (mesh->vertex_uv.exists) {
+                        ufbx_vec2 uv = ufbx_get_vertex_vec2(&mesh->vertex_uv, idx);
+                        v.uv = { (float)uv.x, (float)uv.y };
+                    } else {
+                        v.uv = { 0.0f, 0.0f };
+                    }
+
+                    if (mesh->vertex_tangent.exists) {
+                        ufbx_vec3 tg = ufbx_get_vertex_vec3(&mesh->vertex_tangent, idx);
+                        ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
+                        float h = 1.0f;
+                        if (mesh->vertex_bitangent.exists) {
+                            ufbx_vec3 b = ufbx_get_vertex_vec3(&mesh->vertex_bitangent, idx);
+                            glm::vec3 gn((float)n.x, (float)n.y, (float)n.z);
+                            glm::vec3 gt((float)tg.x, (float)tg.y, (float)tg.z);
+                            glm::vec3 gb((float)b.x, (float)b.y, (float)b.z);
+                            h = (glm::dot(glm::cross(gn, gt), gb) < 0.0f) ? -1.0f : 1.0f;
+                        }
+                        v.tangent = { (float)tg.x, (float)tg.y, (float)tg.z, h };
+                    }
+
+                    im.vertices.push_back(v);
+                    im.indices.push_back((uint32_t)im.vertices.size() - 1);
                 }
-
-                im.vertices.push_back(v);
-                im.indices.push_back((uint32_t)im.vertices.size() - 1);
-            }
-        }
-
-        for (size_t k = 0; k + 2 < im.indices.size(); k += 3) {
-            MeshVertex& v0 = im.vertices[im.indices[k]];
-            MeshVertex& v1 = im.vertices[im.indices[k+1]];
-            MeshVertex& v2 = im.vertices[im.indices[k+2]];
-            if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                glm::vec3 n = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                v0.normal = n;
-                v1.normal = n;
-                v2.normal = n;
-            }
-        }
-
-        if (!mesh->vertex_tangent.exists) {
-            GeometryBuilder::CalculateTangents(im.vertices, im.indices);
-        }
-
-        if (mesh->materials.count > 0 && mesh->materials.data[0]) {
-            ufbx_material* mat = mesh->materials.data[0];
-            ImportedMaterial& m = im.material;
-            m.hasMaterial = true;
-            m.name = mat->name.length > 0 ? std::string(mat->name.data, mat->name.length) : "Material";
-
-            m.baseColorTexture = ResolveFbxTexturePath(mat->pbr.base_color.texture, fbxDir, cacheDir, m.name, "BaseColor");
-            m.normalTexture    = ResolveFbxTexturePath(mat->pbr.normal_map.texture, fbxDir, cacheDir, m.name, "Normal");
-            m.roughnessTexture = ResolveFbxTexturePath(mat->pbr.roughness.texture, fbxDir, cacheDir, m.name, "Roughness");
-            m.metallicTexture  = ResolveFbxTexturePath(mat->pbr.metalness.texture, fbxDir, cacheDir, m.name, "Metallic");
-            m.aoTexture        = ResolveFbxTexturePath(mat->pbr.ambient_occlusion.texture, fbxDir, cacheDir, m.name, "AO");
-            m.emissionTexture  = ResolveFbxTexturePath(mat->pbr.emission_color.texture, fbxDir, cacheDir, m.name, "Emissive");
-            m.normalMapYFlip   = true; // Blender FBX exports normal maps in OpenGL standard convention
-
-            if (mat->pbr.base_color.has_value) {
-                ufbx_vec3 bc = mat->pbr.base_color.value_vec3;
-                if (std::isfinite((float)bc.x) && std::isfinite((float)bc.y) && std::isfinite((float)bc.z))
-                    m.baseColor = glm::vec3((float)bc.x, (float)bc.y, (float)bc.z);
-            }
-            if (mat->pbr.opacity.texture) {
-                m.opacityTexture = ResolveFbxTexturePath(mat->pbr.opacity.texture, fbxDir, cacheDir, m.name, "Opacity");
-            }
-            if (mat->pbr.opacity.has_value && std::isfinite((float)mat->pbr.opacity.value_real)) {
-                m.opacity = (float)mat->pbr.opacity.value_real;
-            }
-            if (!m.opacityTexture.empty() || m.opacity < 0.999f) {
-                m.blendMode = 1;
             }
 
-            // Constant fallbacks when a slot has a value but no texture (e.g. a flat metalness/roughness number)
-            if (mat->pbr.metalness.has_value && m.metallicTexture.empty())
-                m.metallic = std::isfinite((float)mat->pbr.metalness.value_real) ? (float)mat->pbr.metalness.value_real : 0.0f;
-            if (mat->pbr.roughness.has_value && m.roughnessTexture.empty())
-                m.roughness = std::isfinite((float)mat->pbr.roughness.value_real) ? (float)mat->pbr.roughness.value_real : 0.5f;
-            if (mat->pbr.emission_color.has_value) {
-                ufbx_vec3 ec = mat->pbr.emission_color.value_vec3;
-                if (std::isfinite((float)ec.x) && std::isfinite((float)ec.y) && std::isfinite((float)ec.z))
-                    m.emissiveColor = glm::vec3((float)ec.x, (float)ec.y, (float)ec.z);
+            for (size_t k = 0; k + 2 < im.indices.size(); k += 3) {
+                MeshVertex& v0 = im.vertices[im.indices[k]];
+                MeshVertex& v1 = im.vertices[im.indices[k+1]];
+                MeshVertex& v2 = im.vertices[im.indices[k+2]];
+                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
+                    glm::vec3 n = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                    v0.normal = n;
+                    v1.normal = n;
+                    v2.normal = n;
+                }
             }
-            if (mat->pbr.emission_factor.has_value && std::isfinite((float)mat->pbr.emission_factor.value_real))
-                m.emissiveIntensity = (float)mat->pbr.emission_factor.value_real;
-        }
 
-        LogShaderResourceValidation(im.material, true, mesh->vertex_normal.exists, mesh->vertex_uv.exists);
+            if (!mesh->vertex_tangent.exists) {
+                GeometryBuilder::CalculateTangents(im.vertices, im.indices);
+            }
 
-        im.valid = !im.vertices.empty();
-        if (im.valid) {
-            model.meshes.push_back(im);
+            if (mesh->materials.count > mIdx && mesh->materials.data[mIdx]) {
+                PopulateFbxMaterial(im.material, mesh->materials.data[mIdx], fbxDir, cacheDir);
+            } else if (mesh->materials.count > 0 && mesh->materials.data[0]) {
+                PopulateFbxMaterial(im.material, mesh->materials.data[0], fbxDir, cacheDir);
+            }
+
+            LogShaderResourceValidation(im.material, true, mesh->vertex_normal.exists, mesh->vertex_uv.exists);
+
+            im.valid = !im.vertices.empty();
+            if (im.valid) {
+                model.meshes.push_back(im);
+            }
         }
     }
 

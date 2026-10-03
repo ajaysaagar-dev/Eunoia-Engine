@@ -144,8 +144,8 @@ struct MaterialShaderConstants
 	float metallicChannel;
 	float aoChannel;
 	float materialDebugMode;
-	float pad1;
-	float pad2;
+	float hasMetalTex;
+	float hasEmissionTex;
 	float pad3;
 };
 static_assert(sizeof(MaterialShaderConstants) == 128, "MaterialShaderConstants must be 128 bytes (32 floats)");
@@ -954,14 +954,6 @@ void InitLightmapSrvSlot()
 }
 
 
-enum class TextureUsageSlot {
-	BaseColor,
-	Normal,
-	Roughness,
-	Metallic,
-	AO,
-	Opacity
-};
 
 DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture& fallback, TextureUsageSlot slot = TextureUsageSlot::BaseColor)
 {
@@ -1058,30 +1050,34 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 	const std::string& rough,
 	const std::string& metal,
 	const std::string& ao,
-	const std::string& opacity)
+	const std::string& opacity,
+	const std::string& emission = "")
 {
-	std::string key = albedo + "|" + normal + "|" + rough + "|" + metal + "|" + ao + "|" + opacity;
+	std::string key = albedo + "|" + normal + "|" + rough + "|" + metal + "|" + ao + "|" + opacity + "|" + emission;
 	auto it = g_materialDescriptorTables.find(key);
 	if (it != g_materialDescriptorTables.end()) {
 		return it->second;
 	}
 
-	DX12GpuTexture texAlbedo  = (!albedo.empty() && albedo != "none")
+	DX12GpuTexture texAlbedo   = (!albedo.empty() && albedo != "none")
 		? GetOrLoadGPUTexture(albedo, g_fallbackMissing, TextureUsageSlot::BaseColor)
 		: g_fallbackWhite;
-	DX12GpuTexture texNormal  = GetOrLoadGPUTexture(normal,  g_fallbackNormal, TextureUsageSlot::Normal);
-	DX12GpuTexture texRough   = GetOrLoadGPUTexture(rough,   g_fallbackRoughness, TextureUsageSlot::Roughness);
-	DX12GpuTexture texMetal   = GetOrLoadGPUTexture(metal,   g_fallbackMetallic, TextureUsageSlot::Metallic);
-	DX12GpuTexture texAO      = GetOrLoadGPUTexture(ao,      g_fallbackAO, TextureUsageSlot::AO);
-	DX12GpuTexture texOpacity = (!opacity.empty() && opacity != "none")
+	DX12GpuTexture texNormal   = GetOrLoadGPUTexture(normal,   g_fallbackNormal, TextureUsageSlot::Normal);
+	DX12GpuTexture texRough    = GetOrLoadGPUTexture(rough,    g_fallbackRoughness, TextureUsageSlot::Roughness);
+	DX12GpuTexture texMetal    = GetOrLoadGPUTexture(metal,    g_fallbackMetallic, TextureUsageSlot::Metallic);
+	DX12GpuTexture texAO       = GetOrLoadGPUTexture(ao,       g_fallbackAO, TextureUsageSlot::AO);
+	DX12GpuTexture texOpacity  = (!opacity.empty() && opacity != "none")
 		? GetOrLoadGPUTexture(opacity, g_fallbackWhite, TextureUsageSlot::Opacity)
 		: g_fallbackWhite;
+	DX12GpuTexture texEmission = (!emission.empty() && emission != "none")
+		? GetOrLoadGPUTexture(emission, g_fallbackBlack, TextureUsageSlot::Emission)
+		: g_fallbackBlack;
 
 	static D3D12_GPU_DESCRIPTOR_HANDLE s_fallbackTable = {};
 	static bool s_hasFallbackTable = false;
 
 	UINT baseIdx = 0;
-	if (!TryAllocSrvDescriptors(6, baseIdx))
+	if (!TryAllocSrvDescriptors(7, baseIdx))
 	{
 		if (s_hasFallbackTable) {
 			return s_fallbackTable;
@@ -1094,9 +1090,9 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 	baseCpu.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
 	baseGpu.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
 
-	DX12GpuTexture slots[6] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity };
-	for (int i = 0; i < 6; ++i) {
-		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (slots[i].resource && slots[i].cpuHandle.ptr != 0) ? slots[i].cpuHandle : g_fallbackWhite.cpuHandle;
+	DX12GpuTexture slots[7] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity, texEmission };
+	for (int i = 0; i < 7; ++i) {
+		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (slots[i].resource && slots[i].cpuHandle.ptr != 0) ? slots[i].cpuHandle : (i == 6 ? g_fallbackBlack.cpuHandle : g_fallbackWhite.cpuHandle);
 		D3D12_CPU_DESCRIPTOR_HANDLE dst = baseCpu;
 		dst.ptr += (SIZE_T)i * g_srvDescriptorSize;
 		g_d3dDevice->CopyDescriptorsSimple(1, dst, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
@@ -1149,7 +1145,7 @@ void PreRenderUploadTextures()
 	{
 		if (batch.indexCount == 0) continue;
 		GetOrCreateMaterialTable(
-			batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex);
+			batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex, batch.emissionTex);
 	}
 
 	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
@@ -1974,10 +1970,10 @@ static HRESULT CompileOrLoadCachedShader(
 
 int createShadersAndPipeline()
 {
-	// 1. Root Signature (CBV b0, 32-bit constants b1, Descriptor Table t0-t5 for materials, Descriptor Table t6 for shadow map, Descriptor Table t7 for point shadows, Descriptor Table t8 for spot/area shadows, Samplers s0-s2)
+	// 1. Root Signature (CBV b0, 32-bit constants b1, Descriptor Table t0-t6 for materials, Descriptor Table t7 for shadow map, Descriptor Table t8 for point shadows, Descriptor Table t9 for spot/area shadows, Samplers s0-s2)
 	D3D12_DESCRIPTOR_RANGE srvRange = {};
 	srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
-	srvRange.NumDescriptors = 6;
+	srvRange.NumDescriptors = 7;
 	srvRange.BaseShaderRegister = 0;
 	srvRange.RegisterSpace = 0;
 	srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
@@ -1985,28 +1981,28 @@ int createShadersAndPipeline()
 	D3D12_DESCRIPTOR_RANGE shadowSrvRange = {};
 	shadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	shadowSrvRange.NumDescriptors = 1;
-	shadowSrvRange.BaseShaderRegister = 6;
+	shadowSrvRange.BaseShaderRegister = 7;
 	shadowSrvRange.RegisterSpace = 0;
 	shadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	D3D12_DESCRIPTOR_RANGE ptShadowSrvRange = {};
 	ptShadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	ptShadowSrvRange.NumDescriptors = 1;
-	ptShadowSrvRange.BaseShaderRegister = 7;
+	ptShadowSrvRange.BaseShaderRegister = 8;
 	ptShadowSrvRange.RegisterSpace = 0;
 	ptShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	D3D12_DESCRIPTOR_RANGE spotShadowSrvRange = {};
 	spotShadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	spotShadowSrvRange.NumDescriptors = 1;
-	spotShadowSrvRange.BaseShaderRegister = 8;
+	spotShadowSrvRange.BaseShaderRegister = 9;
 	spotShadowSrvRange.RegisterSpace = 0;
 	spotShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
 	D3D12_DESCRIPTOR_RANGE lightmapSrvRange = {};
 	lightmapSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
 	lightmapSrvRange.NumDescriptors = 1;
-	lightmapSrvRange.BaseShaderRegister = 9;
+	lightmapSrvRange.BaseShaderRegister = 10;
 	lightmapSrvRange.RegisterSpace = 0;
 	lightmapSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
 
@@ -2024,31 +2020,31 @@ int createShadersAndPipeline()
 	rootParams[1].Constants.Num32BitValues = 32;
 	rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-	// 2: Descriptor Table t0-t5 (6 SRVs for Material Textures)
+	// 2: Descriptor Table t0-t6 (7 SRVs for Material Textures)
 	rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParams[2].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[2].DescriptorTable.pDescriptorRanges = &srvRange;
 	rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-	// 3: Descriptor Table t6 (1 SRV for Directional Shadow Map)
+	// 3: Descriptor Table t7 (1 SRV for Directional Shadow Map)
 	rootParams[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParams[3].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[3].DescriptorTable.pDescriptorRanges = &shadowSrvRange;
 	rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-	// 4: Descriptor Table t7 (1 SRV for Point Light Shadow Cubemap Array)
+	// 4: Descriptor Table t8 (1 SRV for Point Light Shadow Cubemap Array)
 	rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParams[4].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[4].DescriptorTable.pDescriptorRanges = &ptShadowSrvRange;
 	rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-	// 5: Descriptor Table t8 (1 SRV for Spot / Area Light Shadow 2D Array)
+	// 5: Descriptor Table t9 (1 SRV for Spot / Area Light Shadow 2D Array)
 	rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[5].DescriptorTable.pDescriptorRanges = &spotShadowSrvRange;
 	rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-	// 6: Descriptor Table t9 (1 SRV for Baked Lightmap)
+	// 6: Descriptor Table t10 (1 SRV for Baked Lightmap)
 	rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
 	rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
 	rootParams[6].DescriptorTable.pDescriptorRanges = &lightmapSrvRange;
@@ -2182,21 +2178,22 @@ int createShadersAndPipeline()
 			float metallicChannel;
 			float aoChannel;
 			float materialDebugMode;
-			float pad1;
-			float pad2;
+			float hasMetalTex;
+			float hasEmissionTex;
 			float pad3;
 		};
 
-		Texture2D g_albedoTex : register(t0);
-		Texture2D g_normalTex : register(t1);
-		Texture2D g_roughTex  : register(t2);
-		Texture2D g_metalTex  : register(t3);
-		Texture2D g_aoTex     : register(t4);
-		Texture2D g_opacityTex : register(t5);
-		Texture2D g_shadowMap : register(t6);
-		TextureCubeArray g_pointShadowMap : register(t7);
-		Texture2DArray g_spotShadowMap : register(t8);
-		Texture2D g_lightmapTex : register(t9);
+		Texture2D g_albedoTex   : register(t0);
+		Texture2D g_normalTex   : register(t1);
+		Texture2D g_roughTex    : register(t2);
+		Texture2D g_metalTex    : register(t3);
+		Texture2D g_aoTex       : register(t4);
+		Texture2D g_opacityTex  : register(t5);
+		Texture2D g_emissiveTex : register(t6);
+		Texture2D g_shadowMap   : register(t7);
+		TextureCubeArray g_pointShadowMap : register(t8);
+		Texture2DArray g_spotShadowMap : register(t9);
+		Texture2D g_lightmapTex : register(t10);
 
 		SamplerState g_sampler : register(s0);
 		SamplerComparisonState g_shadowSampler : register(s1);
@@ -2462,7 +2459,7 @@ int createShadersAndPipeline()
 			rough = clamp(rough, 0.04f, 1.0f);
 
 			float metal = metallic;
-			if (hasAlbedoTex > 0.5f || hasRoughTex > 0.5f)
+			if (hasMetalTex > 0.5f)
 			{
 				float4 mSamp = g_metalTex.Sample(g_sampler, uv);
 				metal = clamp(SamplePbrChannel(mSamp, metallicChannel), 0.0f, 1.0f);
@@ -2520,10 +2517,18 @@ int createShadersAndPipeline()
 				return float4(pow(saturate(simpleDiff), 1.0f / 2.2f), currentOpacity);
 			}
 
+			float3 emissive = emissiveColor * emissiveIntensity;
+			if (hasEmissionTex > 0.5f)
+			{
+				float4 emSample = g_emissiveTex.Sample(g_sampler, uv);
+				float3 emLinear = pow(max(emSample.rgb, 0.0001f), 2.2f);
+				emissive = emLinear * emissiveColor * max(emissiveIntensity, 1.0f);
+			}
+
 			if (isUnlit > 0.5f)
 			{
 				float3 unlitBase = (length(input.color) > 0.001f && hasAlbedoTex < 0.5f) ? (input.color * albedo) : albedo;
-				return float4(pow(saturate(unlitBase + emissiveColor * emissiveIntensity), 1.0f / 2.2f), currentOpacity);
+				return float4(pow(saturate(unlitBase + emissive), 1.0f / 2.2f), currentOpacity);
 			}
 
 			float NdotL = max(dot(N, L), 0.0f);
@@ -2645,7 +2650,6 @@ int createShadersAndPipeline()
 				}
 			}
 
-			float3 emissive = emissiveColor * emissiveIntensity;
 			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
 			float hasLightmap = input.color.z;
 			float3 bakedLit = float3(0.0f, 0.0f, 0.0f);
@@ -4064,11 +4068,13 @@ void renderFrame()
 			matConsts.metallicChannel = (float)batch.metallicChannel;
 			matConsts.aoChannel = (float)batch.aoChannel;
 			matConsts.materialDebugMode = (float)batch.materialDebugMode;
+			matConsts.hasMetalTex = (!batch.metalTex.empty() && batch.metalTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasEmissionTex = (!batch.emissionTex.empty() && batch.emissionTex != "none") ? 1.0f : 0.0f;
 
 			g_commandList->SetGraphicsRoot32BitConstants(1, 32, &matConsts, 0);
 
 			D3D12_GPU_DESCRIPTOR_HANDLE tableHandle = GetOrCreateMaterialTable(
-				batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex);
+				batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex, batch.emissionTex);
 			if (tableHandle.ptr == 0) continue;
 
 			char bufSceneDraw[160];

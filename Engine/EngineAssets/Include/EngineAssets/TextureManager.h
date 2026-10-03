@@ -51,6 +51,32 @@ struct CachedTexture {
     }
 };
 
+enum class TextureUsageSlot : int {
+    BaseColor = 0,
+    Normal = 1,
+    Roughness = 2,
+    Metallic = 3,
+    AO = 4,
+    Opacity = 5,
+    Emission = 6,
+    Cubemap = 7,
+    Generic = 8
+};
+
+inline const char* GetTextureUsageSlotName(TextureUsageSlot slot) {
+    switch (slot) {
+        case TextureUsageSlot::BaseColor: return "BaseColor";
+        case TextureUsageSlot::Normal:    return "Normal";
+        case TextureUsageSlot::Roughness: return "Roughness";
+        case TextureUsageSlot::Metallic:  return "Metallic";
+        case TextureUsageSlot::AO:        return "AO";
+        case TextureUsageSlot::Opacity:   return "Opacity";
+        case TextureUsageSlot::Emission:  return "Emission";
+        case TextureUsageSlot::Cubemap:   return "Cubemap";
+        default:                          return "Generic";
+    }
+}
+
 enum class TextureQuality : int {
     None = 0,    // Native (unconstrained realtime resolution)
     Low = 1,     // 256
@@ -193,32 +219,53 @@ public:
             if (result.empty()) result = name;
         }
         // 2. Relative to project root
-        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / name, ec)) {
-            result = (m_projectRoot / name).string();
-        }
-        // 3. Under Materials/textures/
-        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / "Materials" / "textures" / name, ec)) {
-            result = (m_projectRoot / "Materials" / "textures" / name).string();
-        }
-        // 4. Under Materials/
-        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot / "Materials" / name, ec)) {
-            result = (m_projectRoot / "Materials" / name).string();
-        }
-        // 5. Recursive search matching filename inside project root
-        else if (!m_projectRoot.empty() && std::filesystem::exists(m_projectRoot, ec) && std::filesystem::is_directory(m_projectRoot, ec)) {
-            try {
+        else if (!m_projectRoot.empty()) {
+            std::vector<std::filesystem::path> searchRoots = {
+                m_projectRoot,
+                m_projectRoot / "Content",
+                m_projectRoot / "Content" / "Textures",
+                m_projectRoot / "Content" / "Materials",
+                m_projectRoot / "Materials",
+                m_projectRoot / "Materials" / "textures",
+                m_projectRoot / "Textures",
+                m_projectRoot / "ImportedTextures",
+                m_projectRoot / "Content" / "ImportedTextures"
+            };
+
+            for (const auto& root : searchRoots) {
+                if (std::filesystem::exists(root / name, ec)) {
+                    result = (root / name).string();
+                    break;
+                }
+            }
+
+            // Fallback: search by bare filename in search roots
+            if (result.empty()) {
                 std::string targetFilename = std::filesystem::path(name).filename().string();
-                auto options = std::filesystem::directory_options::skip_permission_denied;
-                for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
-                     !ec && it != std::filesystem::recursive_directory_iterator();
-                     it.increment(ec)) {
-                    if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
-                        result = it->path().string();
+                for (const auto& root : searchRoots) {
+                    if (std::filesystem::exists(root / targetFilename, ec)) {
+                        result = (root / targetFilename).string();
                         break;
                     }
                 }
-            } catch (...) {
-                // Ignore filesystem errors
+            }
+
+            // Recursive search matching filename inside project root
+            if (result.empty() && std::filesystem::exists(m_projectRoot, ec) && std::filesystem::is_directory(m_projectRoot, ec)) {
+                try {
+                    std::string targetFilename = std::filesystem::path(name).filename().string();
+                    auto options = std::filesystem::directory_options::skip_permission_denied;
+                    for (auto it = std::filesystem::recursive_directory_iterator(m_projectRoot, options, ec);
+                         !ec && it != std::filesystem::recursive_directory_iterator();
+                         it.increment(ec)) {
+                        if (!it->is_directory(ec) && it->path().filename().string() == targetFilename) {
+                            result = it->path().string();
+                            break;
+                        }
+                    }
+                } catch (...) {
+                    // Ignore filesystem errors
+                }
             }
         }
 
@@ -227,19 +274,19 @@ public:
         return result;
     }
 
-    CachedTexture* GetTexture(const std::string& name, bool isNormalMap = false) {
+    CachedTexture* GetTexture(const std::string& name, TextureUsageSlot slot = TextureUsageSlot::BaseColor) {
         if (name.empty() || name == "none") return nullptr;
         std::string resolved = ResolvePath(name);
         if (resolved.empty()) return nullptr;
 
-        std::string cacheKey = resolved + (isNormalMap ? "@normal" : "@color");
+        std::string cacheKey = resolved + "@slot=" + std::to_string(static_cast<int>(slot));
         auto it = m_cache.find(cacheKey);
         if (it != m_cache.end()) {
             return &it->second;
         }
 
         CachedTexture tex;
-        tex.isNormalMap = isNormalMap;
+        tex.isNormalMap = (slot == TextureUsageSlot::Normal);
 
         // Check if file is DDS format
         std::string ext = std::filesystem::path(resolved).extension().string();
@@ -303,7 +350,7 @@ public:
             }
         }
 
-        // Standard 2D image (PNG, JPG, BMP, TGA) via stb_image + DirectXTex Mipmap generation
+        // Standard 2D image (PNG, JPG, BMP, TGA, HDR, PSD) via stb_image + DirectXTex Mipmap generation
         int w = 0, h = 0, comp = 0;
         unsigned char* pixels = stbi_load(resolved.c_str(), &w, &h, &comp, 4);
         if (pixels && w > 0 && h > 0) {
@@ -342,9 +389,9 @@ public:
             baseImage.pixels = pixels;
 
             uint32_t filterFlags = DirectX::TEX_FILTER_BOX;
-            if (isNormalMap) {
+            if (slot == TextureUsageSlot::Normal) {
                 filterFlags |= DirectX::TEX_FILTER_NORMAL_NORMALIZE;
-            } else {
+            } else if (slot == TextureUsageSlot::BaseColor || slot == TextureUsageSlot::Emission) {
                 filterFlags |= DirectX::TEX_FILTER_SRGB;
             }
 
@@ -361,5 +408,9 @@ public:
 
         m_cache[cacheKey] = std::move(tex);
         return &m_cache[cacheKey];
+    }
+
+    CachedTexture* GetTexture(const std::string& name, bool isNormalMap) {
+        return GetTexture(name, isNormalMap ? TextureUsageSlot::Normal : TextureUsageSlot::BaseColor);
     }
 };

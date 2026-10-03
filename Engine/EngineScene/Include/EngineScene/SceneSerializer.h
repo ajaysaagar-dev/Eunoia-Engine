@@ -208,6 +208,11 @@ public:
             file << "        \"meshClusterCulling\": " << BoolStr(obj.meshClusterCulling) << ",\n";
             file << "        \"opacity\": " << obj.opacity << ",\n";
             file << "        \"opacityMaskClipValue\": " << obj.opacityMaskClipValue << ",\n";
+            file << "        \"normalMapYFlip\": " << BoolStr(obj.normalMapYFlip) << ",\n";
+            file << "        \"metallicChannel\": " << obj.metallicChannel << ",\n";
+            file << "        \"roughnessChannel\": " << obj.roughnessChannel << ",\n";
+            file << "        \"aoChannel\": " << obj.aoChannel << ",\n";
+            file << "        \"materialDebugMode\": " << obj.materialDebugMode << ",\n";
             file << "        \"uvScale\": [" << obj.uvScale.x << ", " << obj.uvScale.y << "],\n";
             file << "        \"textures\": {\n";
             file << "          \"baseColor\": " << QuoteStr(obj.baseColorTexture) << ",\n";
@@ -1069,6 +1074,11 @@ public:
             p = matBlock.find("\"meshClusterCulling\""); if (p != std::string::npos) obj.meshClusterCulling = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"opacity\""); if (p != std::string::npos) obj.opacity = ParseFloatAt(matBlock, p, 1.0f);
             p = matBlock.find("\"opacityMaskClipValue\""); if (p != std::string::npos) obj.opacityMaskClipValue = ParseFloatAt(matBlock, p, 0.333f);
+            p = matBlock.find("\"normalMapYFlip\""); if (p != std::string::npos) obj.normalMapYFlip = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"metallicChannel\""); if (p != std::string::npos) obj.metallicChannel = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"roughnessChannel\""); if (p != std::string::npos) obj.roughnessChannel = ParseIntAt(matBlock, p, 1);
+            p = matBlock.find("\"aoChannel\""); if (p != std::string::npos) obj.aoChannel = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"materialDebugMode\""); if (p != std::string::npos) obj.materialDebugMode = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"uvScale\"");
             if (p != std::string::npos) {
                 size_t lb = matBlock.find('[', p);

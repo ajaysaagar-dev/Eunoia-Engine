@@ -952,18 +952,27 @@ public:
                 child.parentId = rootId;
 
                 if (im.material.hasMaterial) {
-                    child.materialName       = im.material.name;
-                    child.baseColorTexture   = im.material.baseColorTexture;
-                    child.normalTexture      = im.material.normalTexture;
-                    child.roughnessTexture   = im.material.roughnessTexture;
-                    child.metallicTexture    = im.material.metallicTexture;
-                    child.aoTexture          = im.material.aoTexture;
-                    child.emissionTexture    = im.material.emissionTexture;
-                    child.opacityTexture     = im.material.opacityTexture;
-                    child.metallic           = im.material.metallic;
-                    child.roughness          = im.material.roughness;
-                    child.emissiveColor      = im.material.emissiveColor;
-                    child.emissiveIntensity  = im.material.emissiveIntensity;
+                    child.materialName          = im.material.name;
+                    child.baseColorTexture      = im.material.baseColorTexture;
+                    child.normalTexture         = im.material.normalTexture;
+                    child.roughnessTexture      = im.material.roughnessTexture;
+                    child.metallicTexture       = im.material.metallicTexture;
+                    child.aoTexture             = im.material.aoTexture;
+                    child.emissionTexture       = im.material.emissionTexture;
+                    child.opacityTexture        = im.material.opacityTexture;
+                    child.color                 = im.material.baseColor;
+                    child.metallic              = im.material.metallic;
+                    child.roughness             = im.material.roughness;
+                    child.normalStrength        = im.material.normalStrength;
+                    child.normalMapYFlip        = im.material.normalMapYFlip;
+                    child.metallicChannel       = im.material.metallicChannel;
+                    child.roughnessChannel      = im.material.roughnessChannel;
+                    child.aoChannel             = im.material.aoChannel;
+                    child.blendMode             = im.material.blendMode;
+                    child.opacity               = im.material.opacity;
+                    child.opacityMaskClipValue  = im.material.opacityMaskClipValue;
+                    child.emissiveColor         = im.material.emissiveColor;
+                    child.emissiveIntensity     = im.material.emissiveIntensity;
 
                     AddEngineLog("LogImport",
                         "Auto-assigned material \"" + im.material.name + "\" to \"" + child.name + "\"" +
@@ -1008,18 +1017,27 @@ public:
 
         if (!model.meshes.empty() && model.meshes[0].material.hasMaterial) {
             const auto& mat = model.meshes[0].material;
-            obj.materialName       = mat.name;
-            obj.baseColorTexture   = mat.baseColorTexture;
-            obj.normalTexture      = mat.normalTexture;
-            obj.roughnessTexture   = mat.roughnessTexture;
-            obj.metallicTexture    = mat.metallicTexture;
-            obj.aoTexture          = mat.aoTexture;
-            obj.emissionTexture    = mat.emissionTexture;
-            obj.opacityTexture     = mat.opacityTexture;
-            obj.metallic           = mat.metallic;
-            obj.roughness          = mat.roughness;
-            obj.emissiveColor      = mat.emissiveColor;
-            obj.emissiveIntensity  = mat.emissiveIntensity;
+            obj.materialName          = mat.name;
+            obj.baseColorTexture      = mat.baseColorTexture;
+            obj.normalTexture         = mat.normalTexture;
+            obj.roughnessTexture      = mat.roughnessTexture;
+            obj.metallicTexture       = mat.metallicTexture;
+            obj.aoTexture             = mat.aoTexture;
+            obj.emissionTexture       = mat.emissionTexture;
+            obj.opacityTexture        = mat.opacityTexture;
+            obj.color                 = mat.baseColor;
+            obj.metallic              = mat.metallic;
+            obj.roughness             = mat.roughness;
+            obj.normalStrength        = mat.normalStrength;
+            obj.normalMapYFlip        = mat.normalMapYFlip;
+            obj.metallicChannel       = mat.metallicChannel;
+            obj.roughnessChannel      = mat.roughnessChannel;
+            obj.aoChannel             = mat.aoChannel;
+            obj.blendMode             = mat.blendMode;
+            obj.opacity               = mat.opacity;
+            obj.opacityMaskClipValue  = mat.opacityMaskClipValue;
+            obj.emissiveColor         = mat.emissiveColor;
+            obj.emissiveIntensity     = mat.emissiveIntensity;
 
             AddEngineLog("LogImport",
                 "Auto-assigned material \"" + mat.name + "\" to \"" + obj.name + "\"" +
@@ -1504,6 +1522,7 @@ struct RenderBatch {
     std::string metalTex;
     std::string aoTex;
     std::string opacityTex;
+    std::string emissionTex;
     glm::vec3 baseColor{1.0f, 1.0f, 1.0f};
     float metallic = 0.0f;
     float roughness = 0.5f;
@@ -1624,6 +1643,7 @@ struct RenderBatch {
             b.metalTex = obj.metallicTexture;
             b.aoTex = obj.aoTexture;
             b.opacityTex = obj.opacityTexture;
+            b.emissionTex = obj.emissionTexture;
             b.baseColor = obj.color;
             b.metallic = obj.metallic;
             b.roughness = obj.roughness;
