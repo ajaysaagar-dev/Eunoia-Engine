@@ -359,6 +359,7 @@ public:
             file << "      \"hasPhysics\": " << BoolStr(obj.hasPhysics) << ",\n";
             if (obj.hasPhysics) {
                 file << "      \"physicsEnabled\": " << BoolStr(obj.physics.enabled) << ",\n";
+                file << "      \"physicsIsCharacterPhysics\": " << BoolStr(obj.physics.isCharacterPhysics) << ",\n";
                 file << "      \"physicsUseGravity\": " << BoolStr(obj.physics.useGravity) << ",\n";
                 file << "      \"physicsGravityMultiplier\": " << obj.physics.gravityMultiplier << ",\n";
                 file << "      \"physicsMass\": " << obj.physics.mass << ",\n";
@@ -1294,6 +1295,11 @@ public:
             obj.hasPhysics = ParseBoolAt(actorBlock, p, false);
             if (obj.hasPhysics) {
                 p = actorBlock.find("\"physicsEnabled\""); if (p != std::string::npos) obj.physics.enabled = ParseBoolAt(actorBlock, p, true);
+                p = actorBlock.find("\"physicsIsCharacterPhysics\"");
+                if (p != std::string::npos) {
+                    obj.physics.isCharacterPhysics = ParseBoolAt(actorBlock, p, false);
+                    if (obj.physics.isCharacterPhysics) obj.physics.name = "Character Physics";
+                }
                 p = actorBlock.find("\"physicsUseGravity\""); if (p != std::string::npos) obj.physics.useGravity = ParseBoolAt(actorBlock, p, true);
                 p = actorBlock.find("\"physicsGravityMultiplier\""); if (p != std::string::npos) obj.physics.gravityMultiplier = ParseFloatAt(actorBlock, p, 1.0f);
                 p = actorBlock.find("\"physicsMass\""); if (p != std::string::npos) obj.physics.mass = ParseFloatAt(actorBlock, p, 1.0f);

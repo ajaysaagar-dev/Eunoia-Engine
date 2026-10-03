@@ -70,6 +70,9 @@ static glm::vec3 GetObjectHalfExtents(const GameObject& obj) {
 }
 
 static bool ShouldLockCharacterUpright(const GameObject& obj) {
+    if (obj.hasPhysics && obj.physics.isCharacterPhysics) {
+        return true;
+    }
     for (const auto& mod : obj.modifiers) {
         if (mod.enabled && mod.shapeType == CollisionShapeType::Character) {
             if (mod.preventSideFall && !mod.sideFall) {
@@ -290,7 +293,8 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                         cc.rA = cornerWorld - obj.position;
                         cc.rB = glm::vec3(0.0f);
                         cc.penetration = penetration;
-                        cc.restitution = std::clamp(obj.physics.bounciness, 0.0f, 0.9f);
+                        bool isCharA = obj.physics.isCharacterPhysics || (!obj.modifiers.empty() && obj.modifiers[0].shapeType == CollisionShapeType::Character);
+                        cc.restitution = isCharA ? 0.0f : std::clamp(obj.physics.bounciness, 0.0f, 0.9f);
                         cc.friction = std::clamp(obj.physics.friction, 0.0f, 1.0f);
 
                         // Tangent vectors
@@ -323,7 +327,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                         glm::vec3 vPoint = obj.physics.velocity + glm::cross(obj.physics.angularVelocity, cc.rA);
                         float vRelN = glm::dot(vPoint, cc.normal);
                         float bounceBias = 0.0f;
-                        if (vRelN < -0.3f && cc.restitution > 0.01f) {
+                        if (!isCharA && vRelN < -0.3f && cc.restitution > 0.01f) {
                             bounceBias = -cc.restitution * vRelN;
                         }
                         cc.velocityBias = penBias + bounceBias;
@@ -402,7 +406,9 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                 cc.rA = contactPt - objA.position;
                 cc.rB = contactPt - objB.position;
                 cc.penetration = minPen;
-                cc.restitution = std::min(dynA ? objA.physics.bounciness : 0.0f, dynB ? objB.physics.bounciness : 0.0f);
+                bool isCharA = dynA && (objA.physics.isCharacterPhysics || (!objA.modifiers.empty() && objA.modifiers[0].shapeType == CollisionShapeType::Character));
+                bool isCharB = dynB && (objB.physics.isCharacterPhysics || (!objB.modifiers.empty() && objB.modifiers[0].shapeType == CollisionShapeType::Character));
+                cc.restitution = (isCharA || isCharB) ? 0.0f : std::min(dynA ? objA.physics.bounciness : 0.0f, dynB ? objB.physics.bounciness : 0.0f);
                 cc.friction = std::sqrt((dynA ? objA.physics.friction : 0.5f) * (dynB ? objB.physics.friction : 0.5f));
 
                 glm::vec3 tangent1 = glm::cross(cc.normal, glm::vec3(0.0f, 0.0f, 1.0f));
@@ -443,7 +449,7 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
                 glm::vec3 vPtB = dynB ? (objB.physics.velocity + glm::cross(objB.physics.angularVelocity, cc.rB)) : glm::vec3(0.0f);
                 float vRelN = glm::dot(vPtA - vPtB, cc.normal);
                 float bounceBias = 0.0f;
-                if (vRelN < -0.3f && cc.restitution > 0.01f) {
+                if (!isCharA && !isCharB && vRelN < -0.3f && cc.restitution > 0.01f) {
                     bounceBias = -cc.restitution * vRelN;
                 }
                 cc.velocityBias = penBias + bounceBias;

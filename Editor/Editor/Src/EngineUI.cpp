@@ -6187,6 +6187,10 @@ void EngineUI::RenderDetails(Scene& scene) {
                     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "PHYSICS MODIFIERS");
                     ImGui::Separator();
                     if (!obj->hasPhysics) {
+                        if (ImGui::MenuItem("🧍  Character Physics")) {
+                            obj->AddCharacterPhysicsModifier();
+                            AddLog("LogPhysics", "Added Character Physics to " + obj->name, 0);
+                        }
                         if (ImGui::MenuItem("⚛️   Physics Modifier")) {
                             obj->AddPhysicsModifier();
                             AddLog("LogPhysics", "Added Physics Modifier to " + obj->name, 0);
@@ -6357,7 +6361,9 @@ void EngineUI::RenderDetails(Scene& scene) {
                         ImGui::Checkbox("##PhysModEnabled", &obj->physics.enabled);
                         ImGui::SameLine();
 
-                        bool isPhysOpen = ImGui::TreeNodeEx("⚛️   Physics Modifier##PhysHeader", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
+                        bool isCharPhys = obj->physics.isCharacterPhysics;
+                        std::string physHeader = isCharPhys ? "🧍  Character Physics##PhysHeader" : "⚛️   Physics Modifier##PhysHeader";
+                        bool isPhysOpen = ImGui::TreeNodeEx(physHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
 
                         ImGui::SameLine(ImGui::GetContentRegionAvail().x + 20.0f);
                         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 0.8f));
@@ -6373,6 +6379,11 @@ void EngineUI::RenderDetails(Scene& scene) {
 
                         if (isPhysOpen) {
                             ImGui::Indent(8.0f);
+
+                            if (isCharPhys) {
+                                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.4f, 1.0f), "Character Dynamics Active (Zero Bounce, Stop-on-Collision)");
+                                ImGui::Spacing();
+                            }
 
                             // Gravity properties
                             ImGui::Checkbox("Use Gravity", &obj->physics.useGravity);
@@ -6398,9 +6409,14 @@ void EngineUI::RenderDetails(Scene& scene) {
                             ImGui::DragFloat("Angular Damping", &obj->physics.angularDamping, 0.005f, 0.0f, 1.0f, "%.3f");
 
                             // Restitution & Friction
-                            ImGui::SliderFloat("Bounciness", &obj->physics.bounciness, 0.0f, 1.0f, "%.2f");
-                            if (ImGui::IsItemHovered()) {
-                                ImGui::SetTooltip("Restitution: 0.0 = no bounce, 1.0 = superball.");
+                            if (isCharPhys) {
+                                ImGui::TextDisabled("Bounciness: 0.00 (Zero bounce for character)");
+                                obj->physics.bounciness = 0.0f;
+                            } else {
+                                ImGui::SliderFloat("Bounciness", &obj->physics.bounciness, 0.0f, 1.0f, "%.2f");
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("Restitution: 0.0 = no bounce, 1.0 = superball.");
+                                }
                             }
                             ImGui::SliderFloat("Friction", &obj->physics.friction, 0.0f, 1.0f, "%.2f");
                             if (ImGui::IsItemHovered()) {
@@ -6422,6 +6438,18 @@ void EngineUI::RenderDetails(Scene& scene) {
                             ImGui::Checkbox("Y##FrzY", &obj->physics.lockPositionY);
                             ImGui::SameLine();
                             ImGui::Checkbox("Z##FrzZ", &obj->physics.lockPositionZ);
+
+                            if (isCharPhys) {
+                                ImGui::TextDisabled("Freeze Rotation: X [Locked]  Y [Free]  Z [Locked] (Upright)");
+                            } else {
+                                ImGui::TextDisabled("Freeze Rotation:");
+                                ImGui::SameLine();
+                                ImGui::Checkbox("X##FrzRotX", &obj->physics.lockRotationX);
+                                ImGui::SameLine();
+                                ImGui::Checkbox("Y##FrzRotY", &obj->physics.lockRotationY);
+                                ImGui::SameLine();
+                                ImGui::Checkbox("Z##FrzRotZ", &obj->physics.lockRotationZ);
+                            }
 
                             // Runtime Debug info
                             ImGui::Spacing();

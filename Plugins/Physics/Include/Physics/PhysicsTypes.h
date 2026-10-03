@@ -17,6 +17,7 @@ struct PhysicsModifier {
     float mass = 1.0f; // Mass in kilograms (must be > 0)
 
     // Dynamics & Damping
+    bool isCharacterPhysics = false; // Dedicated character physics mode (zero bounce, solid collision stopping, upright lock)
     float linearDamping = 0.05f;  // Air resistance / linear drag (0.0 to 1.0)
     float angularDamping = 0.05f; // Rotational drag (0.0 to 1.0)
     float bounciness = 0.2f;      // Restitution coefficient (0.0 = inelastic, 1.0 = superball)

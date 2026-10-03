@@ -692,16 +692,54 @@ struct GameObject {
 
     void AddPhysicsModifier() {
         hasPhysics = true;
+        physics.name = "Physics Modifier";
+        physics.isCharacterPhysics = false;
         physics.enabled = true;
         physics.useGravity = true;
         physics.gravityMultiplier = 1.0f;
         physics.mass = 1.0f;
+        physics.bounciness = 0.2f;
+        physics.friction = 0.6f;
+        physics.linearDamping = 0.05f;
+        physics.angularDamping = 0.05f;
+        physics.lockRotationX = false;
+        physics.lockRotationZ = false;
         physics.ResetVelocity();
+    }
+
+    void AddCharacterPhysicsModifier() {
+        hasPhysics = true;
+        physics.name = "Character Physics";
+        physics.isCharacterPhysics = true;
+        physics.enabled = true;
+        physics.useGravity = true;
+        physics.gravityMultiplier = 1.0f;
+        physics.mass = 75.0f;
+        physics.bounciness = 0.0f; // Zero bounce for realistic character dynamics
+        physics.friction = 0.8f;
+        physics.linearDamping = 0.1f;
+        physics.angularDamping = 0.9f;
+        physics.lockRotationX = true;
+        physics.lockRotationZ = true;
+        physics.ResetVelocity();
+
+        // If no character collision modifier exists, add Character Collision
+        bool hasCharCol = false;
+        for (const auto& mod : modifiers) {
+            if (mod.shapeType == CollisionShapeType::Character || mod.shapeType == CollisionShapeType::Capsule) {
+                hasCharCol = true;
+                break;
+            }
+        }
+        if (!hasCharCol && modifiers.empty()) {
+            AddModifier(CollisionShapeType::Character);
+        }
     }
 
     void RemovePhysicsModifier() {
         hasPhysics = false;
         physics.enabled = false;
+        physics.isCharacterPhysics = false;
         physics.ResetVelocity();
     }
 

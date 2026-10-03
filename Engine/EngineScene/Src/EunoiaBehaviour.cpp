@@ -183,6 +183,120 @@ static Scene* GetSceneForGameObject(const GameObject* go) {
     return nullptr;
 }
 
+static bool CheckCharOverlap(const glm::vec3& charPos, const glm::vec3& charHalf, const glm::vec3& charCenterOffset, const GameObject& other) {
+    if (!other.visible || other.isLight || IsLightPrimitive(other.type) || other.isCamera || other.type == PrimitiveType::Camera || other.isUserInterface || other.type == PrimitiveType::UserInterface) {
+        return false;
+    }
+    if (other.type == PrimitiveType::Empty && other.modifiers.empty()) return false;
+    if (!other.modifiers.empty() && other.modifiers[0].isTrigger) return false;
+
+    glm::vec3 cMin = charPos + charCenterOffset - charHalf + glm::vec3(0.01f);
+    glm::vec3 cMax = charPos + charCenterOffset + charHalf - glm::vec3(0.01f);
+
+    glm::vec3 obsHalf(0.5f);
+    glm::vec3 obsCenter = other.position;
+    if (!other.modifiers.empty()) {
+        const auto& mod = other.modifiers[0];
+        if (mod.shapeType == CollisionShapeType::Box || mod.shapeType == CollisionShapeType::Mesh) {
+            obsHalf = mod.boxExtents * glm::abs(other.scale);
+        } else if (mod.shapeType == CollisionShapeType::Sphere) {
+            obsHalf = glm::vec3(mod.radius) * glm::abs(other.scale);
+        } else if (mod.shapeType == CollisionShapeType::Plane) {
+            obsHalf = glm::vec3(mod.planeSize.x * 0.5f * std::abs(other.scale.x), 0.05f, mod.planeSize.y * 0.5f * std::abs(other.scale.z));
+        } else {
+            obsHalf = glm::vec3(mod.radius, mod.height * 0.5f, mod.radius) * glm::abs(other.scale);
+        }
+        obsCenter += mod.centerOffset * other.scale;
+    } else {
+        if (other.type == PrimitiveType::Plane || other.type == PrimitiveType::Quad) {
+            obsHalf = glm::vec3(other.params.width * 0.5f * std::abs(other.scale.x), 0.05f, (other.params.depth > 0.0f ? other.params.depth : 2.5f) * 0.5f * std::abs(other.scale.z));
+        } else if (other.type == PrimitiveType::Sphere || other.type == PrimitiveType::UVSphere || other.type == PrimitiveType::Icosphere) {
+            obsHalf = glm::vec3(other.params.radius) * glm::abs(other.scale);
+        } else {
+            obsHalf = glm::vec3(
+                std::max(0.05f, other.params.width * 0.5f),
+                std::max(0.05f, other.params.height * 0.5f),
+                std::max(0.05f, other.params.depth * 0.5f)
+            ) * glm::abs(other.scale);
+        }
+    }
+
+    glm::vec3 oMin = obsCenter - obsHalf;
+    glm::vec3 oMax = obsCenter + obsHalf;
+
+    return (cMin.x <= oMax.x && cMax.x >= oMin.x) &&
+           (cMin.y <= oMax.y && cMax.y >= oMin.y) &&
+           (cMin.z <= oMax.z && cMax.z >= oMin.z);
+}
+
+static glm::vec3 ResolveCharacterMovement(GameObject* go, const glm::vec3& targetPos) {
+    if (!go) return targetPos;
+    bool isChar = (go->hasPhysics && go->physics.isCharacterPhysics);
+    if (!isChar) {
+        for (const auto& mod : go->modifiers) {
+            if (mod.enabled && mod.shapeType == CollisionShapeType::Character) {
+                isChar = true;
+                break;
+            }
+        }
+    }
+    if (!isChar) return targetPos;
+
+    Scene* scene = GetSceneForGameObject(go);
+    if (!scene) return targetPos;
+
+    glm::vec3 charHalf(0.35f, 0.9f, 0.35f);
+    glm::vec3 charOffset(0.0f);
+    if (!go->modifiers.empty()) {
+        const auto& mod = go->modifiers[0];
+        if (mod.shapeType == CollisionShapeType::Character || mod.shapeType == CollisionShapeType::Capsule) {
+            charHalf = glm::vec3(mod.radius, mod.height * 0.5f, mod.radius) * glm::abs(go->scale);
+            charOffset = mod.centerOffset * go->scale;
+        }
+    }
+
+    glm::vec3 curPos = go->position;
+    glm::vec3 resolvedPos = curPos;
+
+    // Test X movement
+    glm::vec3 testX = glm::vec3(targetPos.x, curPos.y, curPos.z);
+    bool hitX = false;
+    for (const auto& other : scene->objects) {
+        if (&other == go || other.id == go->id) continue;
+        if (CheckCharOverlap(testX, charHalf, charOffset, other)) {
+            hitX = true;
+            break;
+        }
+    }
+    if (!hitX) resolvedPos.x = targetPos.x;
+
+    // Test Z movement
+    glm::vec3 testZ = glm::vec3(resolvedPos.x, curPos.y, targetPos.z);
+    bool hitZ = false;
+    for (const auto& other : scene->objects) {
+        if (&other == go || other.id == go->id) continue;
+        if (CheckCharOverlap(testZ, charHalf, charOffset, other)) {
+            hitZ = true;
+            break;
+        }
+    }
+    if (!hitZ) resolvedPos.z = targetPos.z;
+
+    // Test Y movement
+    glm::vec3 testY = glm::vec3(resolvedPos.x, targetPos.y, resolvedPos.z);
+    bool hitY = false;
+    for (const auto& other : scene->objects) {
+        if (&other == go || other.id == go->id) continue;
+        if (CheckCharOverlap(testY, charHalf, charOffset, other)) {
+            hitY = true;
+            break;
+        }
+    }
+    if (!hitY) resolvedPos.y = targetPos.y;
+
+    return resolvedPos;
+}
+
 glm::vec3 GameObjectTransform::GetRelativeLocationInternal() const {
     if (!gameObject) return glm::vec3(0.0f);
     return gameObject->position;
@@ -190,7 +304,7 @@ glm::vec3 GameObjectTransform::GetRelativeLocationInternal() const {
 
 void GameObjectTransform::SetRelativeLocationInternal(const glm::vec3& v) {
     if (!gameObject) return;
-    gameObject->position = v;
+    gameObject->position = ResolveCharacterMovement(gameObject, v);
 }
 
 glm::vec3 GameObjectTransform::GetRelativeRotationInternal() const {
@@ -226,17 +340,18 @@ void GameObjectTransform::SetWorldLocationInternal(const glm::vec3& v) {
     if (!gameObject) return;
     Scene* scene = GetSceneForGameObject(gameObject);
     if (!scene || gameObject->parentId == -1) {
-        gameObject->position = v;
+        gameObject->position = ResolveCharacterMovement(gameObject, v);
         return;
     }
     const GameObject* parent = scene->FindObjectConst(gameObject->parentId);
     if (!parent) {
-        gameObject->position = v;
+        gameObject->position = ResolveCharacterMovement(gameObject, v);
         return;
     }
     glm::mat4 pMat = scene->GetWorldMatrix(*parent);
     glm::mat4 invP = glm::inverse(pMat);
-    gameObject->position = glm::vec3(invP * glm::vec4(v, 1.0f));
+    glm::vec3 localPos = glm::vec3(invP * glm::vec4(v, 1.0f));
+    gameObject->position = ResolveCharacterMovement(gameObject, localPos);
 }
 
 glm::vec3 GameObjectTransform::GetWorldRotationInternal() const {
