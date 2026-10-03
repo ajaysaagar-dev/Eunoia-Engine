@@ -711,6 +711,8 @@ struct GameObject {
         hasPhysics = true;
         physics.name = "Character Physics";
         physics.isCharacterPhysics = true;
+        physics.enableStepBackImpulse = false;
+        physics.stepBackImpulseMultiplier = 1.0f;
         physics.enabled = true;
         physics.useGravity = true;
         physics.gravityMultiplier = 1.0f;

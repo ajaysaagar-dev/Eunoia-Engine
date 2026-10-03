@@ -294,6 +294,37 @@ static glm::vec3 ResolveCharacterMovement(GameObject* go, const glm::vec3& targe
     }
     if (!hitY) resolvedPos.y = targetPos.y;
 
+    // Strict upright locking (no glitches, no tilts)
+    if (go->hasPhysics && go->physics.isCharacterPhysics) {
+        go->rotation.x = 0.0f;
+        go->rotation.z = 0.0f;
+        go->physics.angularVelocity.x = 0.0f;
+        go->physics.angularVelocity.z = 0.0f;
+
+        // Apply slight step-back impulse when enabled and character moves back away from contact
+        if (go->physics.enableStepBackImpulse) {
+            glm::vec3 moveDelta = targetPos - curPos;
+            float moveLen = glm::length(glm::vec2(moveDelta.x, moveDelta.z));
+            if (moveLen > 1e-4f && !hitX && !hitZ) {
+                float impulseFactor = std::clamp(go->physics.stepBackImpulseMultiplier, 0.1f, 10.0f);
+                glm::vec3 impulseBoost = glm::normalize(glm::vec3(moveDelta.x, 0.0f, moveDelta.z)) * (0.015f * impulseFactor);
+                glm::vec3 boostedPos = resolvedPos + impulseBoost;
+                bool hitBoost = false;
+                for (const auto& other : scene->objects) {
+                    if (&other == go || other.id == go->id) continue;
+                    if (CheckCharOverlap(boostedPos, charHalf, charOffset, other)) {
+                        hitBoost = true;
+                        break;
+                    }
+                }
+                if (!hitBoost) {
+                    resolvedPos.x = boostedPos.x;
+                    resolvedPos.z = boostedPos.z;
+                }
+            }
+        }
+    }
+
     return resolvedPos;
 }
 
@@ -314,7 +345,12 @@ glm::vec3 GameObjectTransform::GetRelativeRotationInternal() const {
 
 void GameObjectTransform::SetRelativeRotationInternal(const glm::vec3& v) {
     if (!gameObject) return;
-    gameObject->rotation = v;
+    glm::vec3 targetRot = v;
+    if (gameObject->hasPhysics && gameObject->physics.isCharacterPhysics) {
+        targetRot.x = 0.0f;
+        targetRot.z = 0.0f;
+    }
+    gameObject->rotation = targetRot;
 }
 
 glm::vec3 GameObjectTransform::GetRelativeScaleInternal() const {

@@ -6441,6 +6441,17 @@ void EngineUI::RenderDetails(Scene& scene) {
 
                             if (isCharPhys) {
                                 ImGui::TextDisabled("Freeze Rotation: X [Locked]  Y [Free]  Z [Locked] (Upright)");
+
+                                ImGui::Spacing();
+                                ImGui::Separator();
+                                ImGui::Text("Character Collision Impulse");
+                                ImGui::Checkbox("Enable Step-Back Impulse##CharImpulse", &obj->physics.enableStepBackImpulse);
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::SetTooltip("When enabled, applies a slight impulse when moving back away from an obstacle contact.");
+                                }
+                                if (obj->physics.enableStepBackImpulse) {
+                                    ImGui::DragFloat("Impulse Multiplier##CharImpMult", &obj->physics.stepBackImpulseMultiplier, 0.05f, 0.1f, 10.0f, "%.2fx");
+                                }
                             } else {
                                 ImGui::TextDisabled("Freeze Rotation:");
                                 ImGui::SameLine();

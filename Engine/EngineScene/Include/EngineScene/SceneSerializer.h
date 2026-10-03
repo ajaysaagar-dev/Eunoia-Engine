@@ -345,7 +345,7 @@ public:
             file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
 
             file << "      \"isUserInterface\": " << BoolStr(obj.isUserInterface || obj.type == PrimitiveType::UserInterface) << ",\n";
-            file << "      \"uiAssetPath\": \"" << obj.ui3d.uiAssetPath << "\",\n";
+            file << "      \"uiAssetPath\": " << QuoteStr(obj.ui3d.uiAssetPath) << ",\n";
             file << "      \"uiSpace\": " << (int)obj.ui3d.space << ",\n";
             file << "      \"uiSize\": [" << obj.ui3d.size.x << ", " << obj.ui3d.size.y << "],\n";
             file << "      \"uiCanvasResolution\": [" << obj.ui3d.canvasResolution.x << ", " << obj.ui3d.canvasResolution.y << "],\n";
@@ -360,6 +360,8 @@ public:
             if (obj.hasPhysics) {
                 file << "      \"physicsEnabled\": " << BoolStr(obj.physics.enabled) << ",\n";
                 file << "      \"physicsIsCharacterPhysics\": " << BoolStr(obj.physics.isCharacterPhysics) << ",\n";
+                file << "      \"physicsEnableStepBackImpulse\": " << BoolStr(obj.physics.enableStepBackImpulse) << ",\n";
+                file << "      \"physicsStepBackImpulseMultiplier\": " << obj.physics.stepBackImpulseMultiplier << ",\n";
                 file << "      \"physicsUseGravity\": " << BoolStr(obj.physics.useGravity) << ",\n";
                 file << "      \"physicsGravityMultiplier\": " << obj.physics.gravityMultiplier << ",\n";
                 file << "      \"physicsMass\": " << obj.physics.mass << ",\n";
@@ -1300,6 +1302,10 @@ public:
                     obj.physics.isCharacterPhysics = ParseBoolAt(actorBlock, p, false);
                     if (obj.physics.isCharacterPhysics) obj.physics.name = "Character Physics";
                 }
+                p = actorBlock.find("\"physicsEnableStepBackImpulse\"");
+                if (p != std::string::npos) obj.physics.enableStepBackImpulse = ParseBoolAt(actorBlock, p, false);
+                p = actorBlock.find("\"physicsStepBackImpulseMultiplier\"");
+                if (p != std::string::npos) obj.physics.stepBackImpulseMultiplier = ParseFloatAt(actorBlock, p, 1.0f);
                 p = actorBlock.find("\"physicsUseGravity\""); if (p != std::string::npos) obj.physics.useGravity = ParseBoolAt(actorBlock, p, true);
                 p = actorBlock.find("\"physicsGravityMultiplier\""); if (p != std::string::npos) obj.physics.gravityMultiplier = ParseFloatAt(actorBlock, p, 1.0f);
                 p = actorBlock.find("\"physicsMass\""); if (p != std::string::npos) obj.physics.mass = ParseFloatAt(actorBlock, p, 1.0f);
