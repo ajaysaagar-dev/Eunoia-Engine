@@ -2,6 +2,7 @@
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
+#include <SaveSystem/SaveSystem.h>
 #include <EngineCore/EngineLogger.h>
 #ifdef GetClassName
 #undef GetClassName
@@ -485,6 +486,9 @@ public:
         scene.objects.clear();
         scene.pointLights.clear();
         scene.selectedId = -1;
+
+        // Reset Local Save Store for the newly loaded level
+        SaveSystem.OnLevelLoaded(filePath);
 
         if (onProgress) onProgress(0.35f, "Loading Skybox & Environment", "Ambiance & clear color");
         ParseSkyboxAndEnvironment(content, scene);

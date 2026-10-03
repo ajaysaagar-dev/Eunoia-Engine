@@ -12,6 +12,7 @@
 #include <EnginePlatform/InputSystem.h>
 #include <UISystem/UISystem.h>
 #include <RayTrace/RayTrace.h>
+#include <SaveSystem/SaveSystem.h>
 
 // Forward declarations
 struct GameObject;

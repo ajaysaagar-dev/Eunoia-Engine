@@ -1545,6 +1545,49 @@ void DynamicScriptBehaviour::Start() {
             EunoiaUI::UISystemManager::Get().Remove(uiPtr);
         }
     }
+
+    // Execute dynamic save actions in Start()
+    for (const auto& act : m_startSaveActions) {
+        auto& store = (act.scope == DynamicSaveAction::Scope::Global) ? SaveSystem.Global : SaveSystem.Local;
+        if (act.type == DynamicSaveAction::ActionType::SetItem) {
+            if (act.isConstString) {
+                store.SetItem(act.itemName, act.valueStr);
+            } else if (!act.varName.empty()) {
+                if (m_floatStorage.find(act.varName) != m_floatStorage.end()) store.SetItem(act.itemName, GetFloat(act.varName));
+                else if (m_intStorage.find(act.varName) != m_intStorage.end()) store.SetItem(act.itemName, GetInt(act.varName));
+                else if (m_boolStorage.find(act.varName) != m_boolStorage.end()) store.SetItem(act.itemName, GetBool(act.varName));
+                else if (m_stringStorage.find(act.varName) != m_stringStorage.end()) store.SetItem(act.itemName, GetString(act.varName));
+                else if (m_doubleStorage.find(act.varName) != m_doubleStorage.end()) store.SetItem(act.itemName, GetDouble(act.varName));
+                else if (m_int64Storage.find(act.varName) != m_int64Storage.end()) store.SetItem(act.itemName, GetInt64(act.varName));
+                else if (m_vec2Storage.find(act.varName) != m_vec2Storage.end()) store.SetItem(act.itemName, GetVec2(act.varName));
+                else if (m_vec3Storage.find(act.varName) != m_vec3Storage.end()) store.SetItem(act.itemName, GetVec3(act.varName));
+                else if (m_vec4Storage.find(act.varName) != m_vec4Storage.end()) store.SetItem(act.itemName, GetVec4(act.varName));
+                else store.SetItem(act.itemName, act.valueStr);
+            } else {
+                std::string v = act.valueStr;
+                std::string vLow = v;
+                std::transform(vLow.begin(), vLow.end(), vLow.begin(), ::tolower);
+                if (vLow == "true") store.SetItem(act.itemName, true);
+                else if (vLow == "false") store.SetItem(act.itemName, false);
+                else {
+                    try {
+                        if (v.find('.') != std::string::npos) {
+                            if (v.back() == 'f' || v.back() == 'F') v.pop_back();
+                            store.SetItem(act.itemName, std::stof(v));
+                        } else {
+                            store.SetItem(act.itemName, std::stoi(v));
+                        }
+                    } catch (...) {
+                        store.SetItem(act.itemName, act.valueStr);
+                    }
+                }
+            }
+        } else if (act.type == DynamicSaveAction::ActionType::RemoveItem) {
+            store.RemoveItem(act.itemName);
+        } else if (act.type == DynamicSaveAction::ActionType::RemoveAll) {
+            store.RemoveAll();
+        }
+    }
 }
 
 void DynamicScriptBehaviour::Update(float deltaTime) {
@@ -1720,6 +1763,14 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                 float f = GetFloat(item.varName, -999999.0f);
                 if (f != -999999.0f) msg += std::to_string(f);
                 else msg += (GetBool(item.varName, false) ? "true" : "false");
+            }
+        }
+        if (!item.saveItemName.empty()) {
+            auto& store = item.saveItemIsGlobal ? SaveSystem.Global : SaveSystem.Local;
+            if (store.HasItem(item.saveItemName)) {
+                msg += store.GetItem(item.saveItemName).ToString();
+            } else {
+                msg += "null";
             }
         }
         if (item.appendPosition && m_owner) {
@@ -2017,6 +2068,81 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                     }
                 }
             }
+        }
+    }
+
+    // Execute real-time dynamic SaveSystem actions inside Update()
+    for (const auto& action : m_updateSaveActions) {
+        bool boolConditionMet = true;
+        for (const auto& bCond : action.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        if (action.requireHitStatus) {
+            if (!m_lastDynamicHit.Status) continue;
+            if (!action.requireHitTag.empty()) {
+                if (!m_lastDynamicHit.GameObject || !m_lastDynamicHit.GameObject.HasTag(action.requireHitTag)) {
+                    continue;
+                }
+            }
+        }
+        if (action.requireNoHit && m_lastDynamicHit.Status) continue;
+
+        if (!action.requiredKeys.empty()) {
+            bool keyMet = false;
+            for (const auto& cond : action.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    if (cond.isNegated) down = !down;
+                    if (down) { keyMet = true; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        auto& store = (action.scope == DynamicSaveAction::Scope::Global) ? SaveSystem.Global : SaveSystem.Local;
+        if (action.type == DynamicSaveAction::ActionType::SetItem) {
+            if (action.isConstString) {
+                store.SetItem(action.itemName, action.valueStr);
+            } else if (!action.varName.empty()) {
+                if (m_floatStorage.find(action.varName) != m_floatStorage.end()) store.SetItem(action.itemName, GetFloat(action.varName));
+                else if (m_intStorage.find(action.varName) != m_intStorage.end()) store.SetItem(action.itemName, GetInt(action.varName));
+                else if (m_boolStorage.find(action.varName) != m_boolStorage.end()) store.SetItem(action.itemName, GetBool(action.varName));
+                else if (m_stringStorage.find(action.varName) != m_stringStorage.end()) store.SetItem(action.itemName, GetString(action.varName));
+                else if (m_doubleStorage.find(action.varName) != m_doubleStorage.end()) store.SetItem(action.itemName, GetDouble(action.varName));
+                else if (m_int64Storage.find(action.varName) != m_int64Storage.end()) store.SetItem(action.itemName, GetInt64(action.varName));
+                else if (m_vec2Storage.find(action.varName) != m_vec2Storage.end()) store.SetItem(action.itemName, GetVec2(action.varName));
+                else if (m_vec3Storage.find(action.varName) != m_vec3Storage.end()) store.SetItem(action.itemName, GetVec3(action.varName));
+                else if (m_vec4Storage.find(action.varName) != m_vec4Storage.end()) store.SetItem(action.itemName, GetVec4(action.varName));
+                else store.SetItem(action.itemName, action.valueStr);
+            } else {
+                std::string v = action.valueStr;
+                std::string vLow = v;
+                std::transform(vLow.begin(), vLow.end(), vLow.begin(), ::tolower);
+                if (vLow == "true") store.SetItem(action.itemName, true);
+                else if (vLow == "false") store.SetItem(action.itemName, false);
+                else {
+                    try {
+                        if (v.find('.') != std::string::npos) {
+                            if (v.back() == 'f' || v.back() == 'F') v.pop_back();
+                            store.SetItem(action.itemName, std::stof(v));
+                        } else {
+                            store.SetItem(action.itemName, std::stoi(v));
+                        }
+                    } catch (...) {
+                        store.SetItem(action.itemName, action.valueStr);
+                    }
+                }
+            }
+        } else if (action.type == DynamicSaveAction::ActionType::RemoveItem) {
+            store.RemoveItem(action.itemName);
+        } else if (action.type == DynamicSaveAction::ActionType::RemoveAll) {
+            store.RemoveAll();
         }
     }
 }
@@ -2893,7 +3019,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     m_startUIAddTargets.clear();
     m_startUIRemoveTargets.clear();
     m_startUIRemoveAll = false;
+    m_startSaveActions.clear();
     m_updatePrintMessages.clear();
+    m_updateSaveActions.clear();
+    m_destroyActions.clear();
     m_transformActions.clear();
     m_lineTraceActions.clear();
     m_uiActions.clear();
@@ -3325,6 +3454,97 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             sm.printMessages.push_back(outAct.target);
                             if (currentMethodName == "Start") m_startPrintMessages.push_back(outAct.target);
                             return true;
+                        }
+                    }
+                }
+
+                // SaveSystem calls (SaveSystem.Global.SetItem, SaveSystem.Local.SetItem, RemoveItem, RemoveAll)
+                if (sLow.find("savesystem.") != std::string::npos || sLow.find("savesystem::") != std::string::npos) {
+                    bool isGlobal = (sLow.find(".local") == std::string::npos && sLow.find("::local") == std::string::npos);
+                    DynamicScriptBehaviour::DynamicSaveAction saveAct;
+                    saveAct.scope = isGlobal ? DynamicScriptBehaviour::DynamicSaveAction::Scope::Global : DynamicScriptBehaviour::DynamicSaveAction::Scope::Local;
+
+                    if (sLow.find("removeall()") != std::string::npos || sLow.find("removeall( )") != std::string::npos) {
+                        saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::RemoveAll;
+                        if (currentMethodName == "Start") m_startSaveActions.push_back(saveAct);
+                        return true;
+                    } else if (sLow.find("removeitem(") != std::string::npos) {
+                        size_t p1 = s.find("RemoveItem(");
+                        if (p1 == std::string::npos) p1 = s.find("removeitem(");
+                        if (p1 == std::string::npos) p1 = s.find("Removeitem(");
+                        size_t pOpen = s.find('(', p1);
+                        size_t pClose = s.rfind(')');
+                        if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                            std::string arg = s.substr(pOpen + 1, pClose - pOpen - 1);
+                            size_t q1 = arg.find('"');
+                            if (q1 != std::string::npos) {
+                                size_t q2 = arg.find('"', q1 + 1);
+                                if (q2 != std::string::npos) saveAct.itemName = arg.substr(q1 + 1, q2 - q1 - 1);
+                            } else {
+                                size_t a1 = arg.find_first_not_of(" \t");
+                                size_t a2 = arg.find_last_not_of(" \t");
+                                if (a1 != std::string::npos && a2 != std::string::npos) saveAct.itemName = arg.substr(a1, a2 - a1 + 1);
+                            }
+                            saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::RemoveItem;
+                            if (currentMethodName == "Start") m_startSaveActions.push_back(saveAct);
+                            return true;
+                        }
+                    } else if (sLow.find("setitem(") != std::string::npos) {
+                        size_t p1 = s.find("SetItem(");
+                        if (p1 == std::string::npos) p1 = s.find("setitem(");
+                        if (p1 == std::string::npos) p1 = s.find("Setitem(");
+                        size_t pOpen = s.find('(', p1);
+                        size_t pClose = s.rfind(')');
+                        if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                            std::string argsStr = s.substr(pOpen + 1, pClose - pOpen - 1);
+                            std::vector<std::string> args;
+                            std::string cur;
+                            bool inQ = false;
+                            for (char c : argsStr) {
+                                if (c == '"') inQ = !inQ;
+                                if (c == ',' && !inQ) {
+                                    args.push_back(cur);
+                                    cur.clear();
+                                } else {
+                                    cur += c;
+                                }
+                            }
+                            if (!cur.empty()) args.push_back(cur);
+
+                            if (args.size() >= 2) {
+                                std::string itemArg = args[0];
+                                std::string valArg = args[1];
+
+                                size_t q1 = itemArg.find('"');
+                                if (q1 != std::string::npos) {
+                                    size_t q2 = itemArg.find('"', q1 + 1);
+                                    if (q2 != std::string::npos) saveAct.itemName = itemArg.substr(q1 + 1, q2 - q1 - 1);
+                                } else {
+                                    size_t a1 = itemArg.find_first_not_of(" \t");
+                                    size_t a2 = itemArg.find_last_not_of(" \t");
+                                    if (a1 != std::string::npos && a2 != std::string::npos) saveAct.itemName = itemArg.substr(a1, a2 - a1 + 1);
+                                }
+
+                                size_t vq1 = valArg.find('"');
+                                if (vq1 != std::string::npos) {
+                                    size_t vq2 = valArg.find('"', vq1 + 1);
+                                    if (vq2 != std::string::npos) {
+                                        saveAct.valueStr = valArg.substr(vq1 + 1, vq2 - vq1 - 1);
+                                        saveAct.isConstString = true;
+                                    }
+                                } else {
+                                    size_t va1 = valArg.find_first_not_of(" \t");
+                                    size_t va2 = valArg.find_last_not_of(" \t");
+                                    if (va1 != std::string::npos && va2 != std::string::npos) {
+                                        std::string rawVal = valArg.substr(va1, va2 - va1 + 1);
+                                        saveAct.valueStr = rawVal;
+                                        saveAct.varName = rawVal;
+                                    }
+                                }
+                                saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::SetItem;
+                                if (currentMethodName == "Start") m_startSaveActions.push_back(saveAct);
+                                return true;
+                            }
                         }
                     }
                 }
@@ -3821,6 +4041,29 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             };
 
+            auto applyConditionsToSaveAction = [&](DynamicSaveAction& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                    if (sc.requireHitStatus) act.requireHitStatus = true;
+                    if (sc.requireNoHit) act.requireNoHit = true;
+                    if (!sc.requireHitTag.empty()) act.requireHitTag = sc.requireHitTag;
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+                if (pendingSingleLineRequireHitStatus) act.requireHitStatus = true;
+                if (pendingSingleLineRequireNoHit) act.requireNoHit = true;
+                if (!pendingSingleLineRequireHitTag.empty()) act.requireHitTag = pendingSingleLineRequireHitTag;
+                if (hasPendingSingleLineCondition) {
+                    pendingSingleLineKeys.clear();
+                    pendingSingleLineBools.clear();
+                    pendingSingleLineRequireHitStatus = false;
+                    pendingSingleLineRequireNoHit = false;
+                    pendingSingleLineRequireHitTag.clear();
+                    hasPendingSingleLineCondition = false;
+                }
+            };
+
             // 1. Scan for Print statements
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
@@ -3871,6 +4114,28 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         item.appendHitName = true;
                     }
 
+                    if (lowerInner.find("savesystem.") != std::string::npos || lowerInner.find("savesystem::") != std::string::npos) {
+                        bool isGlobal = (lowerInner.find(".local") == std::string::npos && lowerInner.find("::local") == std::string::npos);
+                        item.saveItemIsGlobal = isGlobal;
+                        size_t giPos = lowerInner.find("getitem(");
+                        if (giPos != std::string::npos) {
+                            size_t p1 = inner.find('(', giPos);
+                            size_t p2 = inner.find(')', p1);
+                            if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                                std::string arg = inner.substr(p1 + 1, p2 - p1 - 1);
+                                size_t q1 = arg.find('"');
+                                if (q1 != std::string::npos) {
+                                    size_t q2 = arg.find('"', q1 + 1);
+                                    if (q2 != std::string::npos) item.saveItemName = arg.substr(q1 + 1, q2 - q1 - 1);
+                                } else {
+                                    size_t a1 = arg.find_first_not_of(" \t");
+                                    size_t a2 = arg.find_last_not_of(" \t");
+                                    if (a1 != std::string::npos && a2 != std::string::npos) item.saveItemName = arg.substr(a1, a2 - a1 + 1);
+                                }
+                            }
+                        }
+                    }
+
                     if (lowerInner.find("position") != std::string::npos || lowerInner.find("location") != std::string::npos) {
                         if (!item.appendHitPoint) item.appendPosition = true;
                     }
@@ -3905,6 +4170,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     } else {
                         if (item.appendDeltaTime) item.textPrefix = "DeltaTime: ";
                         else if (item.appendHitName || item.appendHitId || item.appendHitPoint || item.appendHitStatus || item.appendHitDistance || item.appendHitNormal || item.appendHitTags) item.textPrefix = "";
+                        else if (!item.saveItemName.empty()) item.textPrefix = "";
                         else if (!item.varName.empty()) item.textPrefix = item.varName + ": ";
                         else item.textPrefix = inner;
                     }
@@ -4200,6 +4466,97 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 act.type = DynamicScriptBehaviour::DynamicUIAction::ActionType::RemoveAll;
                 applyConditionsToUIAction(act);
                 m_uiActions.push_back(act);
+            }
+
+            // 7. Scan for SaveSystem (SetItem / RemoveItem / RemoveAll)
+            if (lLower.find("savesystem.") != std::string::npos || lLower.find("savesystem::") != std::string::npos) {
+                bool isGlobal = (lLower.find(".local") == std::string::npos && lLower.find("::local") == std::string::npos);
+                DynamicScriptBehaviour::DynamicSaveAction saveAct;
+                saveAct.scope = isGlobal ? DynamicScriptBehaviour::DynamicSaveAction::Scope::Global : DynamicScriptBehaviour::DynamicSaveAction::Scope::Local;
+
+                if (lLower.find("removeall()") != std::string::npos || lLower.find("removeall( )") != std::string::npos) {
+                    saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::RemoveAll;
+                    applyConditionsToSaveAction(saveAct);
+                    m_updateSaveActions.push_back(saveAct);
+                } else if (lLower.find("removeitem(") != std::string::npos) {
+                    size_t p1 = l.find("RemoveItem(");
+                    if (p1 == std::string::npos) p1 = l.find("removeitem(");
+                    if (p1 == std::string::npos) p1 = l.find("Removeitem(");
+                    size_t pOpen = l.find('(', p1);
+                    size_t pClose = l.rfind(')');
+                    if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                        std::string arg = l.substr(pOpen + 1, pClose - pOpen - 1);
+                        size_t q1 = arg.find('"');
+                        if (q1 != std::string::npos) {
+                            size_t q2 = arg.find('"', q1 + 1);
+                            if (q2 != std::string::npos) saveAct.itemName = arg.substr(q1 + 1, q2 - q1 - 1);
+                        } else {
+                            size_t a1 = arg.find_first_not_of(" \t");
+                            size_t a2 = arg.find_last_not_of(" \t");
+                            if (a1 != std::string::npos && a2 != std::string::npos) saveAct.itemName = arg.substr(a1, a2 - a1 + 1);
+                        }
+                        saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::RemoveItem;
+                        applyConditionsToSaveAction(saveAct);
+                        m_updateSaveActions.push_back(saveAct);
+                    }
+                } else if (lLower.find("setitem(") != std::string::npos) {
+                    size_t p1 = l.find("SetItem(");
+                    if (p1 == std::string::npos) p1 = l.find("setitem(");
+                    if (p1 == std::string::npos) p1 = l.find("Setitem(");
+                    size_t pOpen = l.find('(', p1);
+                    size_t pClose = l.rfind(')');
+                    if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                        std::string argsStr = l.substr(pOpen + 1, pClose - pOpen - 1);
+                        std::vector<std::string> args;
+                        std::string cur;
+                        bool inQ = false;
+                        for (char c : argsStr) {
+                            if (c == '"') inQ = !inQ;
+                            if (c == ',' && !inQ) {
+                                args.push_back(cur);
+                                cur.clear();
+                            } else {
+                                cur += c;
+                            }
+                        }
+                        if (!cur.empty()) args.push_back(cur);
+
+                        if (args.size() >= 2) {
+                            std::string itemArg = args[0];
+                            std::string valArg = args[1];
+
+                            size_t q1 = itemArg.find('"');
+                            if (q1 != std::string::npos) {
+                                size_t q2 = itemArg.find('"', q1 + 1);
+                                if (q2 != std::string::npos) saveAct.itemName = itemArg.substr(q1 + 1, q2 - q1 - 1);
+                            } else {
+                                size_t a1 = itemArg.find_first_not_of(" \t");
+                                size_t a2 = itemArg.find_last_not_of(" \t");
+                                if (a1 != std::string::npos && a2 != std::string::npos) saveAct.itemName = itemArg.substr(a1, a2 - a1 + 1);
+                            }
+
+                            size_t vq1 = valArg.find('"');
+                            if (vq1 != std::string::npos) {
+                                size_t vq2 = valArg.find('"', vq1 + 1);
+                                if (vq2 != std::string::npos) {
+                                    saveAct.valueStr = valArg.substr(vq1 + 1, vq2 - vq1 - 1);
+                                    saveAct.isConstString = true;
+                                }
+                            } else {
+                                size_t va1 = valArg.find_first_not_of(" \t");
+                                size_t va2 = valArg.find_last_not_of(" \t");
+                                if (va1 != std::string::npos && va2 != std::string::npos) {
+                                    std::string rawVal = valArg.substr(va1, va2 - va1 + 1);
+                                    saveAct.valueStr = rawVal;
+                                    saveAct.varName = rawVal;
+                                }
+                            }
+                            saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::SetItem;
+                            applyConditionsToSaveAction(saveAct);
+                            m_updateSaveActions.push_back(saveAct);
+                        }
+                    }
+                }
             }
 
             // Handle brace cleanup at end of line

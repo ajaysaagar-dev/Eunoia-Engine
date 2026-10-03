@@ -76,6 +76,8 @@ public:
         clone->m_startPrintMessages = m_startPrintMessages;
         clone->m_updatePrintMessages = m_updatePrintMessages;
         clone->m_destroyActions = m_destroyActions;
+        clone->m_startSaveActions = m_startSaveActions;
+        clone->m_updateSaveActions = m_updateSaveActions;
         clone->m_transformActions = m_transformActions;
         clone->m_startLockCursor = m_startLockCursor;
         clone->m_startUnlockCursor = m_startUnlockCursor;
@@ -259,6 +261,8 @@ public:
         std::vector<DynamicKeyCondition> requiredKeys;
         std::vector<DynamicBoolCondition> requiredBools;
         std::string varName;
+        std::string saveItemName;
+        bool saveItemIsGlobal = true;
         int printKey = -1;
     };
     std::vector<DynamicUpdatePrint> m_updatePrintMessages;
@@ -325,6 +329,25 @@ public:
         std::vector<DynamicBoolCondition> requiredBools;
     };
     std::vector<DynamicUIAction> m_uiActions;
+
+    struct DynamicSaveAction {
+        enum class Scope { Global, Local };
+        enum class ActionType { SetItem, RemoveItem, RemoveAll };
+
+        Scope scope = Scope::Global;
+        ActionType type = ActionType::SetItem;
+        std::string itemName;
+        std::string valueStr;
+        std::string varName;
+        bool isConstString = false;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+        bool requireHitStatus = false;
+        bool requireNoHit = false;
+        std::string requireHitTag;
+    };
+    std::vector<DynamicSaveAction> m_startSaveActions;
+    std::vector<DynamicSaveAction> m_updateSaveActions;
 
     std::string m_sourceCppPath;
     std::filesystem::file_time_type m_sourceTimestamp{};

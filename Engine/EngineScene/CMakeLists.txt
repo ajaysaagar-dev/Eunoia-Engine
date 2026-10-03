@@ -11,6 +11,7 @@ target_include_directories(EngineScene PUBLIC
     ${EUNOIA_DEPS}/glm
     ${EUNOIA_DEPS}/json
     ${EUNOIA_ROOT}/Plugins/UI-System/Include
+    ${EUNOIA_ROOT}/Plugins/Save-System/Include
 )
 
 target_link_libraries(EngineScene PUBLIC
