@@ -208,7 +208,7 @@ public:
     using AntiAliasingMethod = Eunoia::AntiAliasingMethod;
     using AntiAliasingInfo = Eunoia::AntiAliasingInfo;
 
-    AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::TAA;
+    AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::FXAA;
     TextureQuality currentTextureQuality = TextureQuality::None;
     void ApplyTextureQuality(TextureQuality quality);
     void RenderQualitySettings();

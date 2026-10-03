@@ -10,7 +10,7 @@ GraphicsSystem& GraphicsSystem::Get() {
 }
 
 GraphicsSystem::GraphicsSystem() {
-    m_settings.antiAliasing = AntiAliasingMethod::TAA; // Default to primary AA from dev.md
+    m_settings.antiAliasing = AntiAliasingMethod::FXAA; // Default to FXAA for clean non-ghosting rendering
 }
 
 bool GraphicsSystem::Initialize() {
@@ -185,8 +185,8 @@ glm::vec2 GraphicsSystem::GetTemporalJitter(uint64_t frameIndex, uint32_t width,
     float jitterX = halton(phase, 2) - 0.5f;
     float jitterY = halton(phase, 3) - 0.5f;
 
-    // Convert subpixel offset (-0.5 to +0.5 pixels) into normalized projection coordinates
-    return glm::vec2((2.0f * jitterX) / (float)width, (2.0f * jitterY) / (float)height);
+    // Return subpixel offset (-0.5 to +0.5 pixels)
+    return glm::vec2(jitterX, jitterY);
 }
 
 void GraphicsSystem::RegisterAntiAliasingChangedCallback(const std::string& listenerId, AntiAliasingCallback callback) {
@@ -202,10 +202,10 @@ void GraphicsSystem::UnregisterAntiAliasingChangedCallback(const std::string& li
 const std::vector<AntiAliasingInfo>& GraphicsSystem::GetAllMethods() {
     static const std::vector<AntiAliasingInfo> s_methods = {
         { AntiAliasingMethod::None,       "None",                    "Off",                   "Zero",      "Disabled",                  "Off" },
-        { AntiAliasingMethod::TAA,        "TAA",                     "Very High",             "Medium",    "Primary AA",                "Primary" },
+        { AntiAliasingMethod::FXAA,       "FXAA",                    "Medium",                "Very Low",  "Clean Non-Temporal AA",     "Fast" },
+        { AntiAliasingMethod::SMAA,       "SMAA",                    "High",                  "Low",       "Morphological AA",          "Sharp" },
+        { AntiAliasingMethod::TAA,        "TAA",                     "Very High",             "Medium",    "Temporal AA (YCoCg)",       "Primary" },
         { AntiAliasingMethod::TSR,        "TSR / Temporal Upscaler", "Excellent",             "Med-High",  "High-end renderer",         "Upscaler" },
-        { AntiAliasingMethod::SMAA,       "SMAA",                    "High",                  "Low",       "Non-temporal fallback",     "Fallback" },
-        { AntiAliasingMethod::FXAA,       "FXAA",                    "Medium",                "Very Low",  "Low-end fallback",          "Fast" },
         { AntiAliasingMethod::MSAA_2x_4x, "MSAA 2x/4x",              "Very High geometry AA", "High",      "Forward renderer",          "Geometry" },
         { AntiAliasingMethod::SSAA,       "SSAA",                    "Excellent",             "Very High", "Screenshot/cinematic mode", "Cinematic" },
         { AntiAliasingMethod::DLSS,       "DLSS",                    "Excellent",             "Medium",    "NVIDIA optional",           "NVIDIA" },
@@ -220,7 +220,7 @@ const char* GraphicsSystem::MethodToString(AntiAliasingMethod method) {
     for (const auto& m : methods) {
         if (m.method == method) return m.name;
     }
-    return "None";
+    return "FXAA";
 }
 
 AntiAliasingMethod GraphicsSystem::StringToMethod(const std::string& name) {
@@ -228,17 +228,17 @@ AntiAliasingMethod GraphicsSystem::StringToMethod(const std::string& name) {
     std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
     if (lower == "none" || lower == "off") return AntiAliasingMethod::None;
+    if (lower.find("fxaa") != std::string::npos) return AntiAliasingMethod::FXAA;
+    if (lower.find("smaa") != std::string::npos) return AntiAliasingMethod::SMAA;
     if (lower.find("taa") != std::string::npos) return AntiAliasingMethod::TAA;
     if (lower.find("tsr") != std::string::npos || lower.find("temporal upscaler") != std::string::npos) return AntiAliasingMethod::TSR;
-    if (lower.find("smaa") != std::string::npos) return AntiAliasingMethod::SMAA;
-    if (lower.find("fxaa") != std::string::npos) return AntiAliasingMethod::FXAA;
     if (lower.find("msaa") != std::string::npos) return AntiAliasingMethod::MSAA_2x_4x;
     if (lower.find("ssaa") != std::string::npos) return AntiAliasingMethod::SSAA;
     if (lower.find("dlss") != std::string::npos) return AntiAliasingMethod::DLSS;
     if (lower.find("fsr") != std::string::npos) return AntiAliasingMethod::FSR;
     if (lower.find("xess") != std::string::npos) return AntiAliasingMethod::XeSS;
 
-    return AntiAliasingMethod::TAA;
+    return AntiAliasingMethod::FXAA;
 }
 
 } // namespace Eunoia

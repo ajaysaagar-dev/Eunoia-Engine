@@ -44,6 +44,27 @@ float GetLuminance(float3 color)
     return dot(color, float3(0.2126f, 0.7152f, 0.0722f));
 }
 
+// Convert RGB to YCoCg
+float3 RGBToYCoCg(float3 c)
+{
+    float y  =  0.25f * c.r + 0.50f * c.g + 0.25f * c.b;
+    float co =  0.50f * c.r               - 0.50f * c.b;
+    float cg = -0.25f * c.r + 0.50f * c.g - 0.25f * c.b;
+    return float3(y, co, cg);
+}
+
+// Convert YCoCg to RGB
+float3 YCoCgToRGB(float3 c)
+{
+    float y  = c.x;
+    float co = c.y;
+    float cg = c.z;
+    float r = y + co - cg;
+    float g = y + cg;
+    float b = y - co - cg;
+    return saturate(float3(r, g, b));
+}
+
 // ----------------------------------------------------------------------------
 // FXAA 3.11 Quality Algorithm
 // ----------------------------------------------------------------------------
@@ -147,15 +168,18 @@ float4 ApplySMAA(float2 uv, float2 texel)
 }
 
 // ----------------------------------------------------------------------------
-// TAA (Temporal Anti-Aliasing with Neighbourhood Clamping)
+// TAA (Temporal Anti-Aliasing with YCoCg Variance Clipping & Disocclusion Rejection)
 // ----------------------------------------------------------------------------
 float4 ApplyTAA(float2 uv, float2 texel, float2 jitter)
 {
     float3 currentColor = g_sceneTexture.SampleLevel(g_linearSampler, uv, 0).rgb;
+    float3 currentYCoCg = RGBToYCoCg(currentColor);
 
-    // 3x3 neighbourhood bounding box clamping
-    float3 minColor = currentColor;
-    float3 maxColor = currentColor;
+    // Compute 3x3 neighbourhood statistics in YCoCg space
+    float3 m1 = float3(0.0f, 0.0f, 0.0f);
+    float3 m2 = float3(0.0f, 0.0f, 0.0f);
+    float3 minColorYCoCg = currentYCoCg;
+    float3 maxColorYCoCg = currentYCoCg;
 
     [unroll]
     for (int y = -1; y <= 1; ++y)
@@ -164,20 +188,41 @@ float4 ApplyTAA(float2 uv, float2 texel, float2 jitter)
         for (int x = -1; x <= 1; ++x)
         {
             float3 sampleColor = g_sceneTexture.SampleLevel(g_pointSampler, uv + float2((float)x, (float)y) * texel, 0).rgb;
-            minColor = min(minColor, sampleColor);
-            maxColor = max(maxColor, sampleColor);
+            float3 sampleYCoCg = RGBToYCoCg(sampleColor);
+            m1 += sampleYCoCg;
+            m2 += sampleYCoCg * sampleYCoCg;
+            minColorYCoCg = min(minColorYCoCg, sampleYCoCg);
+            maxColorYCoCg = max(maxColorYCoCg, sampleYCoCg);
         }
     }
+
+    m1 /= 9.0f;
+    m2 /= 9.0f;
+    float3 sigma = sqrt(max(float3(0.0f, 0.0f, 0.0f), m2 - m1 * m1));
+
+    // Strict variance box (gamma = 1.0f for crisp anti-ghosting)
+    const float gamma = 1.0f;
+    float3 clipMin = max(minColorYCoCg, m1 - gamma * sigma);
+    float3 clipMax = min(maxColorYCoCg, m1 + gamma * sigma);
 
     // Sample history at unjittered UV
     float2 historyUV = uv - jitter * texel;
     float3 historyColor = g_historyTexture.SampleLevel(g_linearSampler, historyUV, 0).rgb;
+    float3 historyYCoCg = RGBToYCoCg(historyColor);
 
-    // Clamp history to current neighborhood to prevent ghosting
-    historyColor = clamp(historyColor, minColor, maxColor);
+    // Clip history in YCoCg space to eliminate ghost trails
+    historyYCoCg = clamp(historyYCoCg, clipMin, clipMax);
+    historyColor = YCoCgToRGB(historyYCoCg);
 
-    // Blend: 88% historical accumulation, 12% current frame
-    float blendFactor = 0.12f;
+    // Dynamic anti-ghosting disocclusion detection:
+    // If luminance / chrominance delta is significant, reject history
+    float lumaDiff = abs(historyYCoCg.x - currentYCoCg.x);
+    float chromDiff = length(historyYCoCg.yz - currentYCoCg.yz);
+    float motionDisocclusion = saturate(lumaDiff * 8.0f + chromDiff * 5.0f);
+
+    float baseBlend = 0.20f;
+    float blendFactor = lerp(baseBlend, 1.0f, motionDisocclusion);
+
     float3 result = lerp(historyColor, currentColor, blendFactor);
     return float4(result, 1.0f);
 }
@@ -199,15 +244,26 @@ float4 ApplyTSR(float2 uv, float2 texel, float2 jitter)
     float3 highPass = colCenter - blurred;
     float3 sharpened = colCenter + highPass * 0.35f;
 
+    float3 centerYCoCg = RGBToYCoCg(colCenter);
+    float3 topYCoCg    = RGBToYCoCg(colTop);
+    float3 botYCoCg    = RGBToYCoCg(colBottom);
+    float3 leftYCoCg   = RGBToYCoCg(colLeft);
+    float3 rightYCoCg  = RGBToYCoCg(colRight);
+
+    float3 minYCoCg = min(centerYCoCg, min(min(topYCoCg, botYCoCg), min(leftYCoCg, rightYCoCg)));
+    float3 maxYCoCg = max(centerYCoCg, max(max(topYCoCg, botYCoCg), max(leftYCoCg, rightYCoCg)));
+
     // Temporal blend with history
     float2 historyUV = uv - jitter * texel;
     float3 historyColor = g_historyTexture.SampleLevel(g_linearSampler, historyUV, 0).rgb;
+    float3 historyYCoCg = RGBToYCoCg(historyColor);
+    historyYCoCg = clamp(historyYCoCg, minYCoCg, maxYCoCg);
+    historyColor = YCoCgToRGB(historyYCoCg);
 
-    float3 minC = min(colCenter, min(min(colTop, colBottom), min(colLeft, colRight)));
-    float3 maxC = max(colCenter, max(max(colTop, colBottom), max(colLeft, colRight)));
-    historyColor = clamp(historyColor, minC, maxC);
+    float lumaDiff = abs(historyYCoCg.x - centerYCoCg.x);
+    float blendFactor = lerp(0.25f, 1.0f, saturate(lumaDiff * 8.0f));
 
-    float3 result = lerp(historyColor, sharpened, 0.15f);
+    float3 result = lerp(historyColor, sharpened, blendFactor);
     return float4(result, 1.0f);
 }
 
@@ -284,12 +340,21 @@ float4 ApplyUpscalerReconstruction(float2 uv, float2 texel, float2 jitter)
     float3 weightTotal = 1.0f + 4.0f * w;
     float3 rcasColor = (colM + (colN + colS + colW + colE) * w) / max(weightTotal, 0.001f);
 
+    float3 colMYCoCg = RGBToYCoCg(colM);
+    float3 minCYCoCg = RGBToYCoCg(minC);
+    float3 maxCYCoCg = RGBToYCoCg(maxC);
+
     // Temporal accumulation with jitter reprojection
     float2 historyUV = uv - jitter * texel;
     float3 history = g_historyTexture.SampleLevel(g_linearSampler, historyUV, 0).rgb;
-    history = clamp(history, minC, maxC);
+    float3 historyYCoCg = RGBToYCoCg(history);
+    historyYCoCg = clamp(historyYCoCg, min(minCYCoCg, maxCYCoCg), max(minCYCoCg, maxCYCoCg));
+    history = YCoCgToRGB(historyYCoCg);
 
-    float3 finalColor = lerp(history, rcasColor, 0.18f);
+    float lumaDiff = abs(historyYCoCg.x - colMYCoCg.x);
+    float blendFactor = lerp(0.25f, 1.0f, saturate(lumaDiff * 8.0f));
+
+    float3 finalColor = lerp(history, rcasColor, blendFactor);
     return float4(finalColor, 1.0f);
 }
 

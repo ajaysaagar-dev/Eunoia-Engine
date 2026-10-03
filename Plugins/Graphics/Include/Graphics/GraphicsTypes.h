@@ -35,7 +35,7 @@ struct AntiAliasingInfo {
 };
 
 struct GraphicsQualitySettings {
-    AntiAliasingMethod antiAliasing = AntiAliasingMethod::TAA;
+    AntiAliasingMethod antiAliasing = AntiAliasingMethod::FXAA;
     int shadowQuality = 2;       // 0=Low, 1=Medium, 2=High, 3=Ultra
     int textureQuality = 2;      // 0=Low, 1=Medium, 2=High, 3=Ultra
     int postProcessQuality = 2;  // 0=Low, 1=Medium, 2=High, 3=Ultra
