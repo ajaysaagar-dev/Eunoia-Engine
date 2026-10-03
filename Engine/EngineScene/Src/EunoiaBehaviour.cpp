@@ -1633,8 +1633,41 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
     // Execute real-time dynamic Print statements inside Update()
     for (const auto& item : m_updatePrintMessages) {
-        if (item.requireHitStatus && !m_lastDynamicHit.Status) continue;
+        // 1. Check boolean condition variables
+        bool boolConditionMet = true;
+        for (const auto& bCond : item.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        // 2. Check hit conditions
+        if (item.requireHitStatus) {
+            if (!m_lastDynamicHit.Status) continue;
+            if (!item.requireHitTag.empty()) {
+                if (!m_lastDynamicHit.GameObject || !m_lastDynamicHit.GameObject.HasTag(item.requireHitTag)) {
+                    continue;
+                }
+            }
+        }
         if (item.requireNoHit && m_lastDynamicHit.Status) continue;
+
+        // 3. Check key conditions if any
+        if (!item.requiredKeys.empty()) {
+            bool keyMet = false;
+            for (const auto& cond : item.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = cond.isPressed ? InputSystem::Get().IsKeyPressed(cond.key) : InputSystem::Get().IsKeyDown(cond.key);
+                    if (cond.isNegated) down = !down;
+                    if (down) { keyMet = true; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
         std::string msg = item.textPrefix;
         if (item.appendDeltaTime) {
             msg += std::to_string(dt);
@@ -1703,7 +1736,62 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             msg += item.textSuffix;
         }
 
-        PrintWithKey(item.printKey, msg, 2.5f);
+        if (!item.requiredKeys.empty()) {
+            Print(msg, 2.5f);
+        } else {
+            PrintWithKey(item.printKey, msg, 2.5f);
+        }
+    }
+
+    // Execute real-time dynamic Destroy actions inside Update()
+    for (const auto& action : m_destroyActions) {
+        if (!action.enabled) continue;
+        bool boolConditionMet = true;
+        for (const auto& bCond : action.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        if (action.requireHitStatus) {
+            if (!m_lastDynamicHit.Status) continue;
+            if (!action.requireHitTag.empty()) {
+                if (!m_lastDynamicHit.GameObject || !m_lastDynamicHit.GameObject.HasTag(action.requireHitTag)) {
+                    continue;
+                }
+            }
+        }
+        if (action.requireNoHit && m_lastDynamicHit.Status) continue;
+
+        if (!action.requiredKeys.empty()) {
+            bool keyMet = false;
+            for (const auto& cond : action.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = cond.isPressed ? InputSystem::Get().IsKeyPressed(cond.key) : InputSystem::Get().IsKeyDown(cond.key);
+                    if (cond.isNegated) down = !down;
+                    if (down) { keyMet = true; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        if (action.targetIsHitObject) {
+            if (m_lastDynamicHit.Status && m_lastDynamicHit.GameObject && m_lastDynamicHit.GameObject.ptr) {
+                m_lastDynamicHit.GameObject.ptr->Destroy();
+            }
+        } else if (!action.targetVar.empty()) {
+            int objId = GetInt(action.targetVar, -1);
+            if (objId >= 0 && m_scene) {
+                m_scene->RemoveObject(objId);
+            } else if (m_owner && (action.targetVar == "this" || action.targetVar == "gameobject" || action.targetVar == "owner")) {
+                m_owner->Destroy();
+            }
+        } else if (m_owner) {
+            m_owner->Destroy();
+        }
     }
 
     // Execute real-time dynamic Transform actions inside Update() (dev.md: Transform.Translate, Transform.Rotate)
@@ -3606,8 +3694,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         }
                         conditionStack.push_back(scope);
                     } else {
-                        pendingSingleLineKeys = lineKeys;
-                        pendingSingleLineBools = lineBools;
+                        pendingSingleLineKeys.insert(pendingSingleLineKeys.end(), lineKeys.begin(), lineKeys.end());
+                        pendingSingleLineBools.insert(pendingSingleLineBools.end(), lineBools.begin(), lineBools.end());
                         if (isHitCheck) {
                             if (isNegatedHit) pendingSingleLineRequireNoHit = true;
                             else {
@@ -3687,6 +3775,52 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             };
 
+            auto applyConditionsToPrint = [&](DynamicScriptBehaviour::DynamicUpdatePrint& item) {
+                for (const auto& sc : conditionStack) {
+                    item.requiredKeys.insert(item.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    item.requiredBools.insert(item.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                    if (sc.requireHitStatus) item.requireHitStatus = true;
+                    if (sc.requireNoHit) item.requireNoHit = true;
+                    if (!sc.requireHitTag.empty()) item.requireHitTag = sc.requireHitTag;
+                }
+                item.requiredKeys.insert(item.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                item.requiredBools.insert(item.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+                if (pendingSingleLineRequireHitStatus) item.requireHitStatus = true;
+                if (pendingSingleLineRequireNoHit) item.requireNoHit = true;
+                if (!pendingSingleLineRequireHitTag.empty()) item.requireHitTag = pendingSingleLineRequireHitTag;
+                if (hasPendingSingleLineCondition) {
+                    pendingSingleLineKeys.clear();
+                    pendingSingleLineBools.clear();
+                    pendingSingleLineRequireHitStatus = false;
+                    pendingSingleLineRequireNoHit = false;
+                    pendingSingleLineRequireHitTag.clear();
+                    hasPendingSingleLineCondition = false;
+                }
+            };
+
+            auto applyConditionsToDestroy = [&](DynamicDestroyAction& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                    if (sc.requireHitStatus) act.requireHitStatus = true;
+                    if (sc.requireNoHit) act.requireNoHit = true;
+                    if (!sc.requireHitTag.empty()) act.requireHitTag = sc.requireHitTag;
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+                if (pendingSingleLineRequireHitStatus) act.requireHitStatus = true;
+                if (pendingSingleLineRequireNoHit) act.requireNoHit = true;
+                if (!pendingSingleLineRequireHitTag.empty()) act.requireHitTag = pendingSingleLineRequireHitTag;
+                if (hasPendingSingleLineCondition) {
+                    pendingSingleLineKeys.clear();
+                    pendingSingleLineBools.clear();
+                    pendingSingleLineRequireHitStatus = false;
+                    pendingSingleLineRequireNoHit = false;
+                    pendingSingleLineRequireHitTag.clear();
+                    hasPendingSingleLineCondition = false;
+                }
+            };
+
             // 1. Scan for Print statements
             size_t prPos = l.find("Print(");
             if (prPos != std::string::npos) {
@@ -3698,19 +3832,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     std::transform(lowerInner.begin(), lowerInner.end(), lowerInner.begin(), ::tolower);
 
                     DynamicScriptBehaviour::DynamicUpdatePrint item;
-                    for (const auto& sc : conditionStack) {
-                        if (sc.requireHitStatus) item.requireHitStatus = true;
-                        if (sc.requireNoHit) item.requireNoHit = true;
-                    }
-                    if (pendingSingleLineRequireHitStatus) item.requireHitStatus = true;
-                    if (pendingSingleLineRequireNoHit) item.requireNoHit = true;
-                    if (hasPendingSingleLineCondition) {
-                        pendingSingleLineKeys.clear();
-                        pendingSingleLineBools.clear();
-                        pendingSingleLineRequireHitStatus = false;
-                        pendingSingleLineRequireNoHit = false;
-                        hasPendingSingleLineCondition = false;
-                    }
+                    applyConditionsToPrint(item);
 
                     if (lowerInner.find("deltatime") != std::string::npos ||
                         lowerInner.find("delta_time") != std::string::npos ||
@@ -3790,6 +3912,42 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     item.printKey = (int)m_updatePrintMessages.size() + 100;
                     m_updatePrintMessages.push_back(item);
                 }
+            }
+
+            // 1b. Scan for Destroy statements (e.g. Hit.GameObject.Destroy(), GameObject.Destroy(), Destroy(Hit.GameObject), etc.)
+            if (lLower.find(".destroy()") != std::string::npos || lLower.find("->destroy()") != std::string::npos ||
+                lLower.find("gameobject.destroy(") != std::string::npos || lLower.find("gameobject::destroy(") != std::string::npos ||
+                lLower.find("destroy(") != std::string::npos || lLower.find("destroy();") != std::string::npos) {
+                DynamicDestroyAction act;
+                act.enabled = true;
+                if (lLower.find("hit") != std::string::npos && (lLower.find("gameobject") != std::string::npos || lLower.find(".destroy") != std::string::npos)) {
+                    act.targetIsHitObject = true;
+                } else if (lLower.find("gameobject.destroy()") != std::string::npos || lLower.find("this->destroy()") != std::string::npos || lLower.find("destroy()") != std::string::npos) {
+                    act.targetIsHitObject = false;
+                    act.targetVar = "this";
+                } else {
+                    size_t dPos = lLower.find("destroy(");
+                    if (dPos != std::string::npos) {
+                        size_t p1 = l.find('(', dPos);
+                        size_t p2 = l.rfind(')');
+                        if (p1 != std::string::npos && p2 != std::string::npos && p2 > p1 + 1) {
+                            std::string arg = l.substr(p1 + 1, p2 - p1 - 1);
+                            std::string aLow = arg;
+                            std::transform(aLow.begin(), aLow.end(), aLow.begin(), ::tolower);
+                            if (aLow.find("hit") != std::string::npos) {
+                                act.targetIsHitObject = true;
+                            } else {
+                                size_t a1 = arg.find_first_not_of(" \t&*");
+                                size_t a2 = arg.find_last_not_of(" \t&*");
+                                if (a1 != std::string::npos && a2 != std::string::npos) {
+                                    act.targetVar = arg.substr(a1, a2 - a1 + 1);
+                                }
+                            }
+                        }
+                    }
+                }
+                applyConditionsToDestroy(act);
+                m_destroyActions.push_back(act);
             }
 
             // 2. Scan for Transform.Translate / RelativeTranslate / WorldTranslate
@@ -4069,7 +4227,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     if (m_lineTraceActions.empty()) {
         bool needsHit = false;
         for (const auto& pr : m_updatePrintMessages) {
-            if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal || pr.appendHitTags) {
+            if (pr.appendHitName || pr.appendHitId || pr.appendHitPoint || pr.appendHitStatus || pr.appendHitDistance || pr.appendHitNormal || pr.appendHitTags || pr.requireHitStatus || pr.requireNoHit || !pr.requireHitTag.empty()) {
                 needsHit = true;
                 break;
             }
@@ -4077,6 +4235,14 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         if (!needsHit) {
             for (const auto& uia : m_uiActions) {
                 if (uia.requireHitStatus || uia.requireNoHit || !uia.requireHitTag.empty()) {
+                    needsHit = true;
+                    break;
+                }
+            }
+        }
+        if (!needsHit) {
+            for (const auto& da : m_destroyActions) {
+                if (da.targetIsHitObject || da.requireHitStatus || da.requireNoHit || !da.requireHitTag.empty()) {
                     needsHit = true;
                     break;
                 }
@@ -4190,6 +4356,22 @@ void EunoiaBehaviour::DestroyGameObject(int objectId) {
     if (!m_scene) return;
     m_scene->RemoveObject(objectId);
     AddEngineLog("LogBehaviour", "[Behaviour] DestroyGameObject: removed object ID " + std::to_string(objectId), 0);
+}
+
+void EunoiaBehaviour::Destroy(GameObject* obj) {
+    if (obj) obj->Destroy();
+}
+
+void EunoiaBehaviour::Destroy(GameObject& obj) {
+    obj.Destroy();
+}
+
+void EunoiaBehaviour::Destroy(const Eunoia::RayTrace::GameObjectHitProxy& hitProxy) {
+    if (hitProxy.ptr) hitProxy.ptr->Destroy();
+}
+
+void EunoiaBehaviour::Destroy() {
+    if (m_owner) m_owner->Destroy();
 }
 
 // ============================================================================

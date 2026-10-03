@@ -90,6 +90,18 @@ void GameObjectHitProxy::removeAllTags() {
     RemoveAllTag();
 }
 
+void GameObjectHitProxy::Destroy() const {
+    if (ptr) {
+        ptr->Destroy();
+    }
+}
+
+void GameObjectHitProxy::destroy() const {
+    if (ptr) {
+        ptr->Destroy();
+    }
+}
+
 void RayTraceHit::SetHit(bool hit, ::GameObject* obj, const glm::vec3& pt, const glm::vec3& n, float dist, float frac, int objId, int modIdx, const std::string& modName, CollisionShapeType shape) {
     Status = hit;
     status = hit;

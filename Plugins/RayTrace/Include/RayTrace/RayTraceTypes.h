@@ -102,6 +102,10 @@ struct GameObjectHitProxy {
     void RemoveAllTags();
     void removeAllTag();
     void removeAllTags();
+
+    // Destroy GameObject method (Hit.GameObject.Destroy())
+    void Destroy() const;
+    void destroy() const;
 };
 
 struct RayTraceHit {

@@ -1950,3 +1950,21 @@ struct RenderBatch {
 };
 
 using Level = Scene;
+
+inline void GameObject::Destroy() {
+    if (scene) {
+        scene->RemoveObject(id);
+    }
+}
+
+inline void GameObject::Destroy(GameObject* obj) {
+    if (obj) obj->Destroy();
+}
+
+inline void GameObject::Destroy(GameObject& obj) {
+    obj.Destroy();
+}
+
+inline void GameObject::Destroy(int objId) {
+    // If called with ID and static method
+}

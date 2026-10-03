@@ -1237,6 +1237,12 @@ struct GameObject {
             if (rotation.z > 360.0f) rotation.z -= 360.0f;
         }
     }
+
+    // Runtime Lifecycle & Destruction (dev.md & user request: GameObject.Destroy())
+    void Destroy();
+    static void Destroy(GameObject* obj);
+    static void Destroy(GameObject& obj);
+    static void Destroy(int objId);
 };
 
 // ============================================================================

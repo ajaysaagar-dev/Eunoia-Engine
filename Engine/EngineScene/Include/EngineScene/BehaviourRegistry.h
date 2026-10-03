@@ -75,6 +75,7 @@ public:
         clone->m_hasInput = m_hasInput;
         clone->m_startPrintMessages = m_startPrintMessages;
         clone->m_updatePrintMessages = m_updatePrintMessages;
+        clone->m_destroyActions = m_destroyActions;
         clone->m_transformActions = m_transformActions;
         clone->m_startLockCursor = m_startLockCursor;
         clone->m_startUnlockCursor = m_startUnlockCursor;
@@ -228,6 +229,17 @@ public:
     std::vector<std::string> m_startUIRemoveTargets;
     bool m_startUIRemoveAll = false;
 
+    struct DynamicKeyCondition {
+        int key = -1;
+        bool isPressed = false; // true: IsKeyPressed, false: IsKeyDown
+        bool isNegated = false; // true: !IsKeyDown
+    };
+
+    struct DynamicBoolCondition {
+        std::string varName;
+        bool expectedVal = true;
+    };
+
     struct DynamicUpdatePrint {
         std::string textPrefix;
         std::string textSuffix;
@@ -243,10 +255,25 @@ public:
         bool appendHitTags = false;
         bool requireHitStatus = false;
         bool requireNoHit = false;
+        std::string requireHitTag;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
         std::string varName;
         int printKey = -1;
     };
     std::vector<DynamicUpdatePrint> m_updatePrintMessages;
+
+    struct DynamicDestroyAction {
+        bool enabled = true;
+        bool targetIsHitObject = false;
+        std::string targetVar;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+        bool requireHitStatus = false;
+        bool requireNoHit = false;
+        std::string requireHitTag;
+    };
+    std::vector<DynamicDestroyAction> m_destroyActions;
 
     struct DynamicLineTraceAction {
         bool enabled = true;
@@ -260,17 +287,6 @@ public:
     };
     std::vector<DynamicLineTraceAction> m_lineTraceActions;
     RayTraceHit m_lastDynamicHit;
-
-    struct DynamicKeyCondition {
-        int key = -1;
-        bool isPressed = false; // true: IsKeyPressed, false: IsKeyDown
-        bool isNegated = false; // true: !IsKeyDown
-    };
-
-    struct DynamicBoolCondition {
-        std::string varName;
-        bool expectedVal = true;
-    };
 
     struct DynamicTransformAction {
         enum class ActionType {

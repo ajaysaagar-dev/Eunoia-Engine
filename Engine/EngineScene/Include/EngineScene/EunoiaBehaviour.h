@@ -542,6 +542,13 @@ public:
     GameObject* SpawnGameObject(const std::string& name, const glm::vec3& position = glm::vec3(0.0f));
     void        DestroyGameObject(int objectId);
 
+    // Destroy GameObject methods (supporting Destroy(obj), Destroy(Hit.GameObject), Destroy(this), Destroy(id))
+    void Destroy(GameObject* obj);
+    void Destroy(GameObject& obj);
+    void Destroy(const Eunoia::RayTrace::GameObjectHitProxy& hitProxy);
+    void Destroy(int objectId) { DestroyGameObject(objectId); }
+    void Destroy();
+
     // Enabled state (dev.md Section 17)
     bool IsEnabled() const { return m_enabled; }
     void SetEnabled(bool enabled) {
