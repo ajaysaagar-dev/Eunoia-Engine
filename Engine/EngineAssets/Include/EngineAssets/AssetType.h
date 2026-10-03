@@ -83,6 +83,10 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     std::transform(e.begin(), e.end(), e.begin(), ::tolower);
     if (!e.empty() && e[0] == '.') e.erase(0, 1);
 
+    if (e.empty() || e == "assetmeta" || e == "meta" || e == "metadata" || e == "json" || e == "elogs" || e == "log") {
+        return AssetType::Unknown;
+    }
+
     if (e == "png" || e == "jpg" || e == "jpeg" || e == "bmp" || e == "tga" || e == "dds" || e == "hdr") {
         return AssetType::Texture;
     }

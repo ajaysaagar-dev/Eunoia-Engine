@@ -23,9 +23,9 @@ bool AssetRegistry::RegisterAsset(const AssetMetadata& metadata) {
     std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
     std::string oName = metadata.objectName;
     std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
-    if (sPath.find(".assetmeta") != std::string::npos || sPath.find(".meta") != std::string::npos ||
-        vPath.find(".assetmeta") != std::string::npos || vPath.find(".meta") != std::string::npos ||
-        oName.find(".assetmeta") != std::string::npos || oName.find(".meta") != std::string::npos) {
+    if (sPath.find(".assetmeta") != std::string::npos || sPath.find(".meta") != std::string::npos || sPath.find(".metadata") != std::string::npos ||
+        vPath.find(".assetmeta") != std::string::npos || vPath.find(".meta") != std::string::npos || vPath.find(".metadata") != std::string::npos ||
+        oName.find(".assetmeta") != std::string::npos || oName.find(".meta") != std::string::npos || oName.find(".metadata") != std::string::npos) {
         return false;
     }
 
@@ -37,6 +37,28 @@ bool AssetRegistry::RegisterAsset(const AssetMetadata& metadata) {
     meta.virtualPath = normPath;
     if (meta.objectName.empty()) {
         meta.objectName = AssetPath::GetObjectName(normPath);
+    }
+
+    // Clean up any stale/orphaned asset IDs matching the same virtual path or source path
+    auto itV = m_assetByVirtualPath.find(normPath);
+    if (itV != m_assetByVirtualPath.end() && itV->second != meta.id) {
+        AssetID oldId = itV->second;
+        m_assetsByID.erase(oldId);
+        for (auto& tPair : m_assetsByType) {
+            tPair.second.erase(std::remove(tPair.second.begin(), tPair.second.end(), oldId), tPair.second.end());
+        }
+    }
+
+    for (auto it = m_assetsByID.begin(); it != m_assetsByID.end(); ) {
+        if (it->first != meta.id && (!meta.sourcePath.empty() && it->second.sourcePath == meta.sourcePath)) {
+            m_assetByVirtualPath.erase(it->second.virtualPath);
+            for (auto& tPair : m_assetsByType) {
+                tPair.second.erase(std::remove(tPair.second.begin(), tPair.second.end(), it->first), tPair.second.end());
+            }
+            it = m_assetsByID.erase(it);
+        } else {
+            ++it;
+        }
     }
 
     m_assetsByID[meta.id] = meta;
@@ -493,7 +515,10 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
             std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
             if (fLower.find(".assetmeta") != std::string::npos ||
                 fLower.find(".meta") != std::string::npos ||
-                fLower.find("assetregistry.json") != std::string::npos) {
+                fLower.find(".metadata") != std::string::npos ||
+                fLower.find("assetregistry.json") != std::string::npos ||
+                fLower.find(".elogs") != std::string::npos ||
+                fLower.find(".log") != std::string::npos) {
                 continue;
             }
 
@@ -588,7 +613,10 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
             std::transform(fLower.begin(), fLower.end(), fLower.begin(), ::tolower);
             if (fLower.find(".assetmeta") != std::string::npos ||
                 fLower.find(".meta") != std::string::npos ||
-                fLower.find("assetregistry.json") != std::string::npos) {
+                fLower.find(".metadata") != std::string::npos ||
+                fLower.find("assetregistry.json") != std::string::npos ||
+                fLower.find(".elogs") != std::string::npos ||
+                fLower.find(".log") != std::string::npos) {
                 continue;
             }
 

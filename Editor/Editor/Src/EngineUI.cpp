@@ -9092,11 +9092,38 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         visibleItemKeys.push_back("DIR:" + subDir);
                     }
                 }
+                std::unordered_set<std::string> seenItemKeys;
                 for (const auto& meta : displayAssets) {
                     std::string sPath = meta.sourcePath;
                     std::transform(sPath.begin(), sPath.end(), sPath.begin(), ::tolower);
-                    if (sPath.find(".assetmeta") != std::string::npos || sPath.find(".meta") != std::string::npos) continue;
-                    visibleItemKeys.push_back("ASSET:" + meta.virtualPath);
+                    std::string vPath = meta.virtualPath;
+                    std::transform(vPath.begin(), vPath.end(), vPath.begin(), ::tolower);
+                    std::string oName = meta.objectName;
+                    std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
+
+                    if (sPath.find(".assetmeta") != std::string::npos ||
+                        sPath.find(".meta") != std::string::npos ||
+                        sPath.find(".metadata") != std::string::npos ||
+                        sPath.find(".html") != std::string::npos ||
+                        sPath.find(".elogs") != std::string::npos ||
+                        sPath.find(".log") != std::string::npos ||
+                        vPath.find(".assetmeta") != std::string::npos ||
+                        vPath.find(".meta") != std::string::npos ||
+                        vPath.find(".metadata") != std::string::npos ||
+                        vPath.find(".html") != std::string::npos ||
+                        vPath.find(".elogs") != std::string::npos ||
+                        vPath.find(".log") != std::string::npos ||
+                        oName.find(".assetmeta") != std::string::npos ||
+                        oName.find(".meta") != std::string::npos ||
+                        oName.find(".metadata") != std::string::npos) {
+                        continue;
+                    }
+
+                    std::string itemKey = "ASSET:" + meta.virtualPath;
+                    if (seenItemKeys.count(itemKey) == 0) {
+                        seenItemKeys.insert(itemKey);
+                        visibleItemKeys.push_back(itemKey);
+                    }
                 }
 
                 // Selection click handler for Windows Ctrl/Shift multi-selection
@@ -9152,6 +9179,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 };
 
                 std::vector<CBItem> allItems;
+                std::unordered_set<std::string> seenDisplayKeys;
 
                 if (searchStr.empty()) {
                     for (const auto& subDir : currentSubdirs) {
@@ -9175,19 +9203,33 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                     if (sPath.find(".assetmeta") != std::string::npos ||
                         sPath.find(".meta") != std::string::npos ||
+                        sPath.find(".metadata") != std::string::npos ||
                         sPath.find(".html") != std::string::npos ||
+                        sPath.find(".elogs") != std::string::npos ||
+                        sPath.find(".log") != std::string::npos ||
                         vPath.find(".assetmeta") != std::string::npos ||
                         vPath.find(".meta") != std::string::npos ||
+                        vPath.find(".metadata") != std::string::npos ||
                         vPath.find(".html") != std::string::npos ||
+                        vPath.find(".elogs") != std::string::npos ||
+                        vPath.find(".log") != std::string::npos ||
                         oName.find(".assetmeta") != std::string::npos ||
-                        oName.find(".meta") != std::string::npos) {
+                        oName.find(".meta") != std::string::npos ||
+                        oName.find(".metadata") != std::string::npos) {
                         continue;
                     }
+
+                    std::string key = "ASSET:" + meta.virtualPath;
+                    if (seenDisplayKeys.count(key) > 0 || (!sPath.empty() && seenDisplayKeys.count("SRC:" + sPath) > 0)) {
+                        continue;
+                    }
+                    seenDisplayKeys.insert(key);
+                    if (!sPath.empty()) seenDisplayKeys.insert("SRC:" + sPath);
 
                     CBItem item;
                     item.isFolder = false;
                     item.meta = meta;
-                    item.itemKey = "ASSET:" + meta.virtualPath;
+                    item.itemKey = key;
                     item.primaryVal = meta.virtualPath;
                     item.displayName = meta.objectName;
                     allItems.push_back(std::move(item));
