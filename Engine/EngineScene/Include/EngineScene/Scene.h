@@ -1474,6 +1474,7 @@ public:
                     if (b && b->IsEnabled()) b->LateUpdate(dt);
                 }
             }
+            SyncLightPositionsFromActors();
             return;
         }
 

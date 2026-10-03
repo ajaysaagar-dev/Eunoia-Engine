@@ -2274,7 +2274,8 @@ int createShadersAndPipeline()
 			float lightScale = length(lightSpaceMatrix[0].xyz);
 			float texelSizeWorld = (lightScale > 0.00001f) ? (2.0f / (shadowMapSize * lightScale)) : 0.02f;
 
-			float normalBias = texelSizeWorld * (1.5f * sinTheta + 0.5f);
+			// Precision normal offset bias to prevent self-shadowing without detaching dynamic character shadows
+			float normalBias = texelSizeWorld * (0.6f * sinTheta + 0.1f);
 			float3 biasedWorldPos = worldPos + N * normalBias;
 
 			float4 shadowCoord = mul(lightSpaceMatrix, float4(biasedWorldPos, 1.0f));
@@ -2298,7 +2299,7 @@ int createShadersAndPipeline()
 			float zBorderDist = min(projCoords.z, 1.0f - projCoords.z);
 			fade = min(fade, saturate(zBorderDist * 10.0f));
 
-			float depthBias = max(shadowBias * (1.0f - cosTheta), shadowBias * 0.2f);
+			float depthBias = max(shadowBias * (1.0f - cosTheta), shadowBias * 0.15f);
 			float currentDepth = projCoords.z - depthBias;
 
 			float texelSize = 1.0f / shadowMapSize;
@@ -2375,7 +2376,7 @@ int createShadersAndPipeline()
 			float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
 
 			float texelSize = 1.0f / max(shadowRes, 256.0f);
-			float normalBias = texelSize * 2.0f * (1.5f * sinTheta + 0.5f);
+			float normalBias = texelSize * (0.8f * sinTheta + 0.2f);
 			float3 biasedWorldPos = worldPos + N * normalBias;
 
 			float4 shadowCoord = mul(spotMatrix, float4(biasedWorldPos, 1.0f));
@@ -2392,7 +2393,7 @@ int createShadersAndPipeline()
 			shadowUV.x = projCoords.x * 0.5f + 0.5f;
 			shadowUV.y = -projCoords.y * 0.5f + 0.5f;
 
-			float depthBias = max(sBias * (1.0f - cosTheta), sBias * 0.2f);
+			float depthBias = max(sBias * (1.0f - cosTheta), sBias * 0.15f);
 			float currentDepth = projCoords.z - depthBias;
 
 			float filterRadius = texelSize * max(pcfRadius, 0.5f);
@@ -3419,11 +3420,24 @@ void updateConstantBuffer()
 	float sceneRadius = glm::length(sceneMax - sceneCenter);
 	if (sceneRadius < 10.0f) sceneRadius = 10.0f;
 
+	// Quantize scene radius in 2.0m steps to eliminate shadow projection breathing during movement
+	sceneRadius = std::ceil(sceneRadius * 0.5f) * 2.0f;
+
 	float orthoHalfSize = sceneRadius * 1.25f + 2.0f;
 	float lightDistance = sceneRadius * 2.0f + 10.0f;
-	glm::vec3 lightPos = sceneCenter + lightDir * lightDistance;
 	glm::vec3 up = (std::abs(lightDir.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
-	glm::mat4 lightView = glm::lookAt(lightPos, sceneCenter, up);
+
+	// Light-space texel snapping to lock shadow texel grid to world space and prevent swimming/shimmering
+	glm::mat4 lightViewIdentity = glm::lookAt(lightDir * lightDistance, glm::vec3(0.0f), up);
+	glm::vec4 centerInLightView = lightViewIdentity * glm::vec4(sceneCenter, 1.0f);
+	float worldUnitsPerTexel = (2.0f * orthoHalfSize) / (float)std::max((int)g_currentDirShadowRes, 256);
+	if (worldUnitsPerTexel > 1e-6f) {
+		centerInLightView.x = std::floor(centerInLightView.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+		centerInLightView.y = std::floor(centerInLightView.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+	}
+	glm::vec3 snappedCenter = glm::vec3(glm::inverse(lightViewIdentity) * centerInLightView);
+	glm::vec3 lightPos = snappedCenter + lightDir * lightDistance;
+	glm::mat4 lightView = glm::lookAt(lightPos, snappedCenter, up);
 
 	float nearPlane = 1.0f;
 	float farPlane = lightDistance + sceneRadius * 2.0f + 10.0f;
