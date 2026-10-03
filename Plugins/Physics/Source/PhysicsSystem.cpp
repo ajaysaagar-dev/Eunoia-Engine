@@ -551,6 +551,13 @@ void PhysicsSystem::StepSimulation(Scene& scene, float dt) {
 
             auto& phys = obj.physics;
 
+            // Void limit check to prevent out-of-bounds objects from accelerating to negative infinity
+            if (obj.position.y < -300.0f) {
+                phys.velocity = glm::vec3(0.0f);
+                phys.angularVelocity = glm::vec3(0.0f);
+                continue;
+            }
+
             // Rest thresholding for stable resting state (zero jitter)
             if (phys.isGrounded && glm::length(phys.velocity) < 0.04f && glm::length(phys.angularVelocity) < 0.05f) {
                 phys.velocity = glm::vec3(0.0f);

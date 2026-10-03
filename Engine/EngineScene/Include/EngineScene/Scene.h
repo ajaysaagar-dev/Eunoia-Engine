@@ -246,6 +246,8 @@ public:
         for (const auto& obj : objects) {
             if (!obj.visible || obj.isLight || obj.type == PrimitiveType::Empty) continue;
             if (obj.mesh.vertices.empty()) continue;
+            if (!std::isfinite(obj.position.x) || !std::isfinite(obj.position.y) || !std::isfinite(obj.position.z)) continue;
+            if (obj.position.y < -200.0f) continue; // Ignore out-of-bounds fallen objects
 
             glm::mat4 worldMat = GetWorldMatrix(obj);
             glm::vec3 objMin(1e9f), objMax(-1e9f);
@@ -273,7 +275,7 @@ public:
             };
             for (int i = 0; i < 8; ++i) {
                 glm::vec4 wp = worldMat * glm::vec4(corners[i], 1.0f);
-                if (std::isfinite(wp.x) && std::isfinite(wp.y) && std::isfinite(wp.z)) {
+                if (std::isfinite(wp.x) && std::isfinite(wp.y) && std::isfinite(wp.z) && wp.y >= -200.0f) {
                     minB = glm::min(minB, glm::vec3(wp));
                     maxB = glm::max(maxB, glm::vec3(wp));
                     hasValidGeom = true;

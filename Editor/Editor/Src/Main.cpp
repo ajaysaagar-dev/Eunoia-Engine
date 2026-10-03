@@ -3409,27 +3409,81 @@ void updateConstantBuffer()
 	// Light View-Projection for Directional Sun Light
 	glm::vec3 lightDir = g_scene.lightDirection;
 	float lLen = glm::length(lightDir);
-	if (lLen > 0.0001f && !std::isnan(lLen)) {
+	if (lLen > 0.0001f && !std::isnan(lLen) && std::isfinite(lLen)) {
 		lightDir /= lLen;
 	} else {
 		lightDir = glm::vec3(0.6f, 1.0f, 0.8f);
 	}
-	glm::vec3 sceneMin(-10.0f), sceneMax(10.0f);
-	g_scene.GetSceneAABB(sceneMin, sceneMax);
-	glm::vec3 sceneCenter = (sceneMin + sceneMax) * 0.5f;
-	float sceneRadius = glm::length(sceneMax - sceneCenter);
-	if (sceneRadius < 10.0f) sceneRadius = 10.0f;
 
-	// Quantize scene radius in 2.0m steps to eliminate shadow projection breathing during movement
-	sceneRadius = std::ceil(sceneRadius * 0.5f) * 2.0f;
+	// Calculate Camera Frustum Focused Directional Shadow Frustum
+	// This bounds the shadow map strictly around the active player/camera view area,
+	// maintaining high, stable shadow texel resolution regardless of falling objects or physics motion.
+	glm::vec3 camPos = g_camera.GetPosition();
+	glm::vec3 camForward = g_camera.GetForward();
+	glm::vec3 camUp = g_camera.GetUp();
+	glm::vec3 camRight = g_camera.GetRight();
 
-	float orthoHalfSize = sceneRadius * 1.25f + 2.0f;
-	float lightDistance = sceneRadius * 2.0f + 10.0f;
+	if (!std::isfinite(camPos.x) || !std::isfinite(camPos.y) || !std::isfinite(camPos.z)) camPos = glm::vec3(0.0f);
+	if (!std::isfinite(camForward.x) || !std::isfinite(camForward.y) || !std::isfinite(camForward.z) || glm::length(camForward) < 1e-4f) camForward = glm::vec3(0.0f, 0.0f, -1.0f);
+	if (!std::isfinite(camUp.x) || !std::isfinite(camUp.y) || !std::isfinite(camUp.z) || glm::length(camUp) < 1e-4f) camUp = glm::vec3(0.0f, 1.0f, 0.0f);
+	if (!std::isfinite(camRight.x) || !std::isfinite(camRight.y) || !std::isfinite(camRight.z) || glm::length(camRight) < 1e-4f) camRight = glm::vec3(1.0f, 0.0f, 0.0f);
+
+	float shadowDist = std::min(g_camera.farPlane, 60.0f);
+	if (shadowDist < 10.0f || !std::isfinite(shadowDist)) shadowDist = 60.0f;
+	float nearZ = std::max(0.1f, g_camera.nearPlane);
+
+	float fovY = glm::radians(std::clamp(g_camera.fov, 10.0f, 120.0f));
+	float tanHalfFovY = std::tan(fovY * 0.5f);
+
+	float nearH = 2.0f * tanHalfFovY * nearZ;
+	float nearW = nearH * aspect;
+	float farH = 2.0f * tanHalfFovY * shadowDist;
+	float farW = farH * aspect;
+
+	if (g_camera.isOrthographic) {
+		nearH = (g_camera.orthoSize > 0.01f ? g_camera.orthoSize : 5.0f) * 2.0f;
+		nearW = nearH * aspect;
+		farH = nearH;
+		farW = nearW;
+	}
+
+	glm::vec3 nearCenter = camPos + camForward * nearZ;
+	glm::vec3 farCenter = camPos + camForward * shadowDist;
+
+	glm::vec3 frustumCorners[8] = {
+		nearCenter + camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f),
+		nearCenter + camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f),
+		nearCenter - camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f),
+		nearCenter - camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f),
+		farCenter + camUp * (farH * 0.5f) - camRight * (farW * 0.5f),
+		farCenter + camUp * (farH * 0.5f) + camRight * (farW * 0.5f),
+		farCenter - camUp * (farH * 0.5f) - camRight * (farW * 0.5f),
+		farCenter - camUp * (farH * 0.5f) + camRight * (farW * 0.5f)
+	};
+
+	glm::vec3 frustumCenter(0.0f);
+	for (int i = 0; i < 8; ++i) {
+		frustumCenter += frustumCorners[i];
+	}
+	frustumCenter /= 8.0f;
+
+	float shadowRadius = 0.0f;
+	for (int i = 0; i < 8; ++i) {
+		float dist = glm::length(frustumCorners[i] - frustumCenter);
+		if (dist > shadowRadius && std::isfinite(dist)) shadowRadius = dist;
+	}
+	if (shadowRadius < 15.0f || !std::isfinite(shadowRadius)) shadowRadius = 15.0f;
+
+	// Quantize shadow radius in 2.0m steps to eliminate projection breathing
+	shadowRadius = std::ceil(shadowRadius * 0.5f) * 2.0f;
+
+	float orthoHalfSize = shadowRadius + 2.0f;
+	float lightDistance = shadowRadius * 2.0f + 25.0f; // Pull back light to catch casters outside view
 	glm::vec3 up = (std::abs(lightDir.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
 
 	// Light-space texel snapping to lock shadow texel grid to world space and prevent swimming/shimmering
 	glm::mat4 lightViewIdentity = glm::lookAt(lightDir * lightDistance, glm::vec3(0.0f), up);
-	glm::vec4 centerInLightView = lightViewIdentity * glm::vec4(sceneCenter, 1.0f);
+	glm::vec4 centerInLightView = lightViewIdentity * glm::vec4(frustumCenter, 1.0f);
 	float worldUnitsPerTexel = (2.0f * orthoHalfSize) / (float)std::max((int)g_currentDirShadowRes, 256);
 	if (worldUnitsPerTexel > 1e-6f) {
 		centerInLightView.x = std::floor(centerInLightView.x / worldUnitsPerTexel) * worldUnitsPerTexel;
@@ -3440,7 +3494,7 @@ void updateConstantBuffer()
 	glm::mat4 lightView = glm::lookAt(lightPos, snappedCenter, up);
 
 	float nearPlane = 1.0f;
-	float farPlane = lightDistance + sceneRadius * 2.0f + 10.0f;
+	float farPlane = lightDistance + shadowRadius * 2.0f + 25.0f;
 	glm::mat4 lightProj = glm::ortho(-orthoHalfSize, orthoHalfSize, -orthoHalfSize, orthoHalfSize, nearPlane, farPlane);
 	glm::mat4 lightSpaceMatrix = lightProj * lightView;
 
