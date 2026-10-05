@@ -1646,6 +1646,7 @@ void EditorComponent::Start()
 	if (scene.names.GetCount() == 0)
 	{
 		// Default world: pure dark black without skybox
+		scene.weather.SetSkyboxDisabled(true);
 		scene.weather.ambient = XMFLOAT3(0, 0, 0);
 		scene.weather.horizon = XMFLOAT3(0, 0, 0);
 		scene.weather.zenith = XMFLOAT3(0, 0, 0);
@@ -1655,14 +1656,6 @@ void EditorComponent::Start()
 		scene.weather.SetVolumetricClouds(false);
 		scene.weather.skyMap = {};
 		scene.weather.skyMapName.clear();
-
-		Entity sun = scene.Entity_CreateLight("Directional Light", XMFLOAT3(0, 10, 0), XMFLOAT3(1, 1, 1), 2.0f, 100.0f, LightComponent::LightType::DIRECTIONAL);
-		TransformComponent* sunTrans = scene.transforms.GetComponent(sun);
-		if (sunTrans)
-		{
-			sunTrans->RotateRollPitchYaw(XMFLOAT3(XM_PIDIV4, XM_PIDIV4, 0));
-			sunTrans->SetDirty();
-		}
 
 		Entity floor = scene.Entity_CreatePlane("Ground Plane");
 		TransformComponent* floorTrans = scene.transforms.GetComponent(floor);
@@ -6923,6 +6916,7 @@ void EditorComponent::NewScene()
 
 	Scene& scene = GetCurrentScene();
 	// Default world: pure dark black without skybox
+	scene.weather.SetSkyboxDisabled(true);
 	scene.weather.ambient = XMFLOAT3(0, 0, 0);
 	scene.weather.horizon = XMFLOAT3(0, 0, 0);
 	scene.weather.zenith = XMFLOAT3(0, 0, 0);
@@ -6932,14 +6926,6 @@ void EditorComponent::NewScene()
 	scene.weather.SetVolumetricClouds(false);
 	scene.weather.skyMap = {};
 	scene.weather.skyMapName.clear();
-
-	Entity sun = scene.Entity_CreateLight("Directional Light", XMFLOAT3(0, 10, 0), XMFLOAT3(1, 1, 1), 2.0f, 100.0f, LightComponent::LightType::DIRECTIONAL);
-	TransformComponent* sunTrans = scene.transforms.GetComponent(sun);
-	if (sunTrans)
-	{
-		sunTrans->RotateRollPitchYaw(XMFLOAT3(XM_PIDIV4, XM_PIDIV4, 0));
-		sunTrans->SetDirty();
-	}
 
 	Entity floor = scene.Entity_CreatePlane("Ground Plane");
 	TransformComponent* floorTrans = scene.transforms.GetComponent(floor);

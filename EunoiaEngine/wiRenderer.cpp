@@ -9604,7 +9604,7 @@ void RefreshEnvProbes(const Visibility& vis, CommandList cmd)
 
 		AABB probe_aabb;
 		probe_aabb.layerMask = 0;
-		if (probe.texture.IsValid())
+		if (probe.texture.IsValid() && !vis.scene->weather.IsSkyboxDisabled())
 		{
 			render_probe(probe, probe_aabb);
 		}

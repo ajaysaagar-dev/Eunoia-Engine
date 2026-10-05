@@ -942,7 +942,7 @@ namespace wi::scene
 		shaderscene.materialCount = (uint)materialArraySize;
 		shaderscene.meshletbuffer = device->GetDescriptorIndex(&meshletBuffer, SubresourceType::SRV);
 		shaderscene.texturestreamingbuffer = device->GetDescriptorIndex(&textureStreamingFeedbackBuffer, SubresourceType::UAV);
-		if (weather.skyMap.IsValid())
+		if (weather.skyMap.IsValid() && !weather.IsSkyboxDisabled())
 		{
 			shaderscene.globalenvmap = device->GetDescriptorIndex(&weather.skyMap.GetTexture(), SubresourceType::SRV, weather.skyMap.GetTextureSRGBSubresource());
 		}
@@ -952,11 +952,11 @@ namespace wi::scene
 		}
 		shaderscene.texture_cloudmap = device->GetDescriptorIndex(&cloudmap, SubresourceType::SRV);
 
-		if (probes.GetCount() > 0 && probes[0].texture.IsValid())
+		if (!weather.IsSkyboxDisabled() && probes.GetCount() > 0 && probes[0].texture.IsValid())
 		{
 			shaderscene.globalprobe = device->GetDescriptorIndex(&probes[0].texture, SubresourceType::SRV);
 		}
-		else if (global_dynamic_probe.texture.IsValid())
+		else if (!weather.IsSkyboxDisabled() && global_dynamic_probe.texture.IsValid())
 		{
 			shaderscene.globalprobe = device->GetDescriptorIndex(&global_dynamic_probe.texture, SubresourceType::SRV);
 		}
@@ -983,16 +983,26 @@ namespace wi::scene
 		shaderscene.weather.sun_color = wi::math::pack_half3(weather.sunColor);
 		shaderscene.weather.sun_direction = wi::math::pack_half3(weather.sunDirection);
 		shaderscene.weather.most_important_light_index = weather.most_important_light_index;
-		shaderscene.weather.ambient = wi::math::pack_half3(weather.ambient);
+		if (weather.IsSkyboxDisabled())
+		{
+			shaderscene.weather.ambient = wi::math::pack_half3(XMFLOAT3(0, 0, 0));
+			shaderscene.weather.horizon = wi::math::pack_half3(XMFLOAT3(0, 0, 0));
+			shaderscene.weather.zenith = wi::math::pack_half3(XMFLOAT3(0, 0, 0));
+			shaderscene.weather.sky_exposure = 0.0f;
+		}
+		else
+		{
+			shaderscene.weather.ambient = wi::math::pack_half3(weather.ambient);
+			shaderscene.weather.horizon = wi::math::pack_half3(weather.horizon);
+			shaderscene.weather.zenith = wi::math::pack_half3(weather.zenith);
+			shaderscene.weather.sky_exposure = weather.skyExposure;
+		}
 		shaderscene.weather.sky_rotation_sin = std::sin(weather.sky_rotation);
 		shaderscene.weather.sky_rotation_cos = std::cos(weather.sky_rotation);
 		shaderscene.weather.fog.start = weather.fogStart;
 		shaderscene.weather.fog.density = weather.fogDensity;
 		shaderscene.weather.fog.height_start = weather.fogHeightStart;
 		shaderscene.weather.fog.height_end = weather.fogHeightEnd;
-		shaderscene.weather.horizon = wi::math::pack_half3(weather.horizon);
-		shaderscene.weather.zenith = wi::math::pack_half3(weather.zenith);
-		shaderscene.weather.sky_exposure = weather.skyExposure;
 		shaderscene.weather.wind.speed = weather.windSpeed;
 		shaderscene.weather.wind.randomness = weather.windRandomness;
 		shaderscene.weather.wind.wavesize = weather.windWaveSize;
