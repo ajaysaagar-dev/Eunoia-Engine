@@ -59,8 +59,10 @@ namespace EunoiaUI
 		bool m_showBottomDrawer = true;
 		bool m_showViewportOverlay = true;
 		bool m_showGraphicsSettings = false;
+		bool m_showSkyboxWindow = false;
 
 		void RenderGraphicsSettingsModal(EditorComponent& editor);
+		void RenderSkyboxWindow(EditorComponent& editor, wi::scene::Scene& scene);
 
 		// Layout sizing
 		float m_topBarHeight = 64.0f;

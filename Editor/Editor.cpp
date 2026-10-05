@@ -1645,6 +1645,17 @@ void EditorComponent::Start()
 	Scene& scene = GetCurrentScene();
 	if (scene.names.GetCount() == 0)
 	{
+		// Default world: pure dark black without skybox
+		scene.weather.ambient = XMFLOAT3(0, 0, 0);
+		scene.weather.horizon = XMFLOAT3(0, 0, 0);
+		scene.weather.zenith = XMFLOAT3(0, 0, 0);
+		scene.weather.fogStart = 0;
+		scene.weather.fogDensity = 0;
+		scene.weather.SetRealisticSky(false);
+		scene.weather.SetVolumetricClouds(false);
+		scene.weather.skyMap = {};
+		scene.weather.skyMapName.clear();
+
 		Entity sun = scene.Entity_CreateLight("Directional Light", XMFLOAT3(0, 10, 0), XMFLOAT3(1, 1, 1), 2.0f, 100.0f, LightComponent::LightType::DIRECTIONAL);
 		TransformComponent* sunTrans = scene.transforms.GetComponent(sun);
 		if (sunTrans)
@@ -6911,6 +6922,17 @@ void EditorComponent::NewScene()
 	cameraWnd.ResetCam();
 
 	Scene& scene = GetCurrentScene();
+	// Default world: pure dark black without skybox
+	scene.weather.ambient = XMFLOAT3(0, 0, 0);
+	scene.weather.horizon = XMFLOAT3(0, 0, 0);
+	scene.weather.zenith = XMFLOAT3(0, 0, 0);
+	scene.weather.fogStart = 0;
+	scene.weather.fogDensity = 0;
+	scene.weather.SetRealisticSky(false);
+	scene.weather.SetVolumetricClouds(false);
+	scene.weather.skyMap = {};
+	scene.weather.skyMapName.clear();
+
 	Entity sun = scene.Entity_CreateLight("Directional Light", XMFLOAT3(0, 10, 0), XMFLOAT3(1, 1, 1), 2.0f, 100.0f, LightComponent::LightType::DIRECTIONAL);
 	TransformComponent* sunTrans = scene.transforms.GetComponent(sun);
 	if (sunTrans)

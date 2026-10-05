@@ -345,7 +345,15 @@ namespace EunoiaUI
 			cubeTrans->UpdateTransform();
 		}
 
-		starterScene.weather.ambient = XMFLOAT3(0.2f, 0.2f, 0.25f);
+		starterScene.weather.ambient = XMFLOAT3(0, 0, 0);
+		starterScene.weather.horizon = XMFLOAT3(0, 0, 0);
+		starterScene.weather.zenith = XMFLOAT3(0, 0, 0);
+		starterScene.weather.fogStart = 0;
+		starterScene.weather.fogDensity = 0;
+		starterScene.weather.SetRealisticSky(false);
+		starterScene.weather.SetVolumetricClouds(false);
+		starterScene.weather.skyMap = {};
+		starterScene.weather.skyMapName.clear();
 		starterScene.weather.sunColor = XMFLOAT3(1.0f, 0.95f, 0.85f);
 		starterScene.weather.sunDirection = XMFLOAT3(0.5f, 0.8f, 0.3f);
 
