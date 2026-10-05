@@ -70,6 +70,9 @@ namespace EunoiaUI
 		bool m_showNewLevelModal = false;
 		char m_newLevelNameBuf[64] = "NewLevel";
 
+		bool m_showNewSkyboxModal = false;
+		char m_newSkyboxNameBuf[64] = "Skybox_New";
+
 		// Output Log State
 		std::vector<LogEntry> m_logs;
 		bool m_showInfo = true;
@@ -99,6 +102,7 @@ namespace EunoiaUI
 		void HandleCreateScript(const std::string& name);
 		void HandleCreateMaterial(const std::string& name);
 		void HandleCreateLevel(const std::string& name, EditorComponent& editor);
+		void HandleCreateSkybox(const std::string& name);
 		bool PassesTypeFilter(const std::filesystem::path& path, bool isDir) const;
 	};
 }

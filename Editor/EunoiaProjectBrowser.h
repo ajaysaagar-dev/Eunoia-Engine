@@ -40,6 +40,7 @@ namespace EunoiaUI
 
 		static std::string ShowSelectFolderDialog(void* owner = nullptr, const std::string& title = "Select Project Location");
 		static std::string ShowOpenFileDialog(const char* filter = "Level Files (*.eulevel;*.wiscene)\0*.eulevel;*.wiscene\0All Files (*.*)\0*.*\0");
+		static std::string ShowSaveFileDialog(const char* filter = "All Files (*.*)\0*.*\0", const char* defaultName = "");
 
 	private:
 		int m_activeTab = 0; // 0 = Recent Projects, 1 = New Project

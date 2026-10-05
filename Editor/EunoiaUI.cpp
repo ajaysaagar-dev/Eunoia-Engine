@@ -866,10 +866,10 @@ namespace EunoiaUI
 		ImGui::End();
 	}
 
-	void UIManager::RenderSkyboxWindow(EditorComponent& editor, Scene& scene)
+	void UIManager::RenderSkyboxWindow(EditorComponent& editor, wi::scene::Scene& scene)
 	{
-		ImGui::SetNextWindowSize(ImVec2(520, 620), ImGuiCond_FirstUseEver);
-		if (!ImGui::Begin("Skybox / World Environment Settings", &m_showSkyboxWindow, ImGuiWindowFlags_NoCollapse))
+		ImGui::SetNextWindowSize(ImVec2(580, 660), ImGuiCond_FirstUseEver);
+		if (!ImGui::Begin("🌌 World Skybox Settings###WorldSkyboxSettingsWin", &m_showSkyboxWindow, ImGuiWindowFlags_NoCollapse))
 		{
 			ImGui::End();
 			return;
@@ -897,42 +897,76 @@ namespace EunoiaUI
 		bool isSkyboxDisabled = !isTextureActive && !isRealisticActive && !hasColors;
 
 		// -----------------------------------------------------------------------------
-		// 1. ACTIVE STATUS BANNER & QUICK ACTIONS
+		// 1. OLD EUNOIA ENGINE HEADER & MASTER ENABLE
 		// -----------------------------------------------------------------------------
-		ImGui::TextColored(ImVec4(0.5f, 0.7f, 1.0f, 1.0f), "CURRENT STATUS:");
+		ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "World Environment Skybox Configuration");
+		ImGui::TextWrapped("Configure the active world skybox background and ambient scene illumination for the level.");
+		ImGui::Separator();
+
+		bool enableSkybox = !isSkyboxDisabled;
+		if (ImGui::Checkbox("Enable World Skybox", &enableSkybox))
+		{
+			if (!enableSkybox)
+			{
+				weather.skyMap = {};
+				weather.skyMapName.clear();
+				weather.SetRealisticSky(false);
+				weather.SetVolumetricClouds(false);
+				weather.horizon = XMFLOAT3(0, 0, 0);
+				weather.zenith = XMFLOAT3(0, 0, 0);
+				weather.ambient = XMFLOAT3(0, 0, 0);
+				weather.fogDensity = 0.0f;
+				SyncWeather();
+				m_bottomDrawer.AddLog("World", "Skybox disabled (Dark World)", 3);
+			}
+			else
+			{
+				weather.SetRealisticSky(true);
+				weather.ambient = XMFLOAT3(33.0f / 255.0f, 47.0f / 255.0f, 127.0f / 255.0f);
+				weather.horizon = XMFLOAT3(101.0f / 255.0f, 101.0f / 255.0f, 227.0f / 255.0f);
+				weather.zenith = XMFLOAT3(99.0f / 255.0f, 133.0f / 255.0f, 255.0f / 255.0f);
+				weather.fogStart = 100.0f;
+				weather.fogDensity = 0.0025f;
+				SyncWeather();
+				m_bottomDrawer.AddLog("World", "Skybox enabled (Daytime Atmosphere)", 3);
+			}
+		}
+
+		ImGui::SameLine();
+		ImGui::TextDisabled("| Status:");
 		ImGui::SameLine();
 		if (isTextureActive)
 		{
 			std::string texName = weather.skyMapName.empty() ? "Custom Texture" : wi::helper::GetFileNameFromPath(weather.skyMapName);
-			ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "🌌 HDR Texture Active (%s)", texName.c_str());
+			ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "🌌 HDR Active (%s)", texName.c_str());
 		}
 		else if (isRealisticActive)
 		{
-			ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "☀️ Realistic Atmospheric Sky Active");
+			ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "☀️ Realistic Sky");
 		}
 		else if (hasColors)
 		{
-			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "🎨 Procedural Gradient Sky Active");
+			ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "🎨 Gradient Sky");
 		}
 		else
 		{
-			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "⚫ Skybox Disabled (Pure Pitch Black World)");
+			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "⚫ Pitch Black");
 		}
 
 		ImGui::Spacing();
 
-		// Quick Switch Buttons
+		// Quick Switch Action Buttons
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 		if (isSkyboxDisabled)
 		{
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-			ImGui::Button("⚫ Skybox Disabled", ImVec2(150, 26));
+			ImGui::Button("⚫ Skybox Disabled", ImVec2(145, 26));
 			ImGui::PopStyleColor();
 		}
 		else
 		{
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1.0f));
-			if (ImGui::Button("⚫ Disable Skybox (Pitch Black)", ImVec2(195, 26)))
+			if (ImGui::Button("⚫ Disable Skybox", ImVec2(145, 26)))
 			{
 				weather.skyMap = {};
 				weather.skyMapName.clear();
@@ -949,7 +983,7 @@ namespace EunoiaUI
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("☀️ Realistic Sky", ImVec2(120, 26)))
+		if (ImGui::Button("☀️ Realistic Sky", ImVec2(125, 26)))
 		{
 			weather.skyMap = {};
 			weather.skyMapName.clear();
@@ -962,7 +996,7 @@ namespace EunoiaUI
 		}
 
 		ImGui::SameLine();
-		if (ImGui::Button("🎨 Gradient Sky", ImVec2(120, 26)))
+		if (ImGui::Button("🎨 Gradient Sky", ImVec2(125, 26)))
 		{
 			weather.skyMap = {};
 			weather.skyMapName.clear();
@@ -978,15 +1012,151 @@ namespace EunoiaUI
 		ImGui::Separator();
 
 		// -----------------------------------------------------------------------------
-		// 2. SETTINGS TABS (ALL FULLY FUNCTIONAL & ALWAYS ACCESSIBLE)
+		// 2. SETTINGS TABS (MATCHING OLD EUNOIA ENGINE & WICKED ENGINE)
 		// -----------------------------------------------------------------------------
 		if (ImGui::BeginTabBar("##SkyboxTabs"))
 		{
-			// TAB 1: HDR / TEXTURE MAP
-			if (ImGui::BeginTabItem("🌌 HDR Texture"))
+			// TAB 1: ACTIVE SKYBOX ASSET (.eskybox)
+			if (ImGui::BeginTabItem("📁 Skybox Asset"))
 			{
 				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Skybox Texture (Cubemap / LatLong HDR / Spherical)");
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Active Skybox Asset (.eskybox)");
+
+				// Scan project content directory for .eskybox files
+				std::vector<std::string> skyboxFiles;
+				std::error_code ec;
+				for (const auto& entry : std::filesystem::recursive_directory_iterator(m_bottomDrawer.GetContentRoot(), ec))
+				{
+					if (!entry.is_directory(ec))
+					{
+						std::string ext = wi::helper::toUpper(entry.path().extension().string());
+						if (ext == ".ESKYBOX" || ext == ".SKYBOX")
+						{
+							skyboxFiles.push_back(entry.path().string());
+						}
+					}
+				}
+
+				static std::string activeAssetPath = "";
+				std::string comboPreview = activeAssetPath.empty() ? "(Direct Custom Settings)" : wi::helper::GetFileNameFromPath(activeAssetPath);
+
+				ImGui::SetNextItemWidth(300.0f);
+				if (ImGui::BeginCombo("Skybox Asset", comboPreview.c_str()))
+				{
+					if (ImGui::Selectable("(Direct Custom Settings)", activeAssetPath.empty()))
+					{
+						activeAssetPath = "";
+					}
+					ImGui::Separator();
+					for (const auto& sf : skyboxFiles)
+					{
+						std::string fName = wi::helper::GetFileNameFromPath(sf);
+						bool isSel = (activeAssetPath == sf);
+						if (ImGui::Selectable(fName.c_str(), isSel))
+						{
+							activeAssetPath = sf;
+
+							// Load .eskybox file
+							std::ifstream file(sf);
+							if (file.is_open())
+							{
+								std::string line;
+								while (std::getline(file, line))
+								{
+									if (line.empty() || line[0] == '#') continue;
+									auto colon = line.find(':');
+									if (colon == std::string::npos) continue;
+									std::string key = line.substr(0, colon);
+									std::string val = line.substr(colon + 1);
+									while (!key.empty() && isspace((unsigned char)key.back())) key.pop_back();
+									while (!key.empty() && isspace((unsigned char)key.front())) key.erase(key.begin());
+									while (!val.empty() && isspace((unsigned char)val.back())) val.pop_back();
+									while (!val.empty() && isspace((unsigned char)val.front())) val.erase(val.begin());
+
+									if (key == "hdrTexture" && !val.empty())
+									{
+										weather.skyMapName = val;
+										weather.skyMap = wi::resourcemanager::Load(val);
+									}
+									else if (key == "exposure")
+									{
+										try { weather.skyExposure = std::stof(val); } catch (...) {}
+									}
+									else if (key == "rotation")
+									{
+										try { weather.sky_rotation = wi::math::DegreesToRadians(std::stof(val)); } catch (...) {}
+									}
+									else if (key == "tint")
+									{
+										std::stringstream ss(val);
+										ss >> weather.horizon.x >> weather.horizon.y >> weather.horizon.z;
+									}
+									else if (key == "enableSkybox")
+									{
+										if (val == "0" || val == "false" || val == "False")
+										{
+											weather.skyMap = {};
+											weather.skyMapName.clear();
+											weather.SetRealisticSky(false);
+											weather.horizon = XMFLOAT3(0, 0, 0);
+											weather.zenith = XMFLOAT3(0, 0, 0);
+											weather.ambient = XMFLOAT3(0, 0, 0);
+											weather.fogDensity = 0;
+										}
+									}
+								}
+								SyncWeather();
+								m_bottomDrawer.AddLog("World", "Loaded Skybox Asset: " + fName, 3);
+							}
+						}
+					}
+					ImGui::EndCombo();
+				}
+
+				ImGui::Spacing();
+				if (ImGui::Button("💾 Save Current Skybox (.eskybox)", ImVec2(240, 26)))
+				{
+					std::string filter = "Skybox Asset (*.eskybox)\0*.eskybox\0All Files (*.*)\0*.*\0";
+					std::string savePath = ProjectBrowser::ShowSaveFileDialog(filter.c_str(), "Skybox_New.eskybox");
+					if (!savePath.empty())
+					{
+						if (savePath.find(".eskybox") == std::string::npos) savePath += ".eskybox";
+
+						std::ofstream file(savePath);
+						if (file.is_open())
+						{
+							file << "# Eunoia-Editor Skybox Asset\n";
+							file << "name: " << wi::helper::GetFileNameFromPath(savePath) << "\n";
+							file << "hdrTexture: " << weather.skyMapName << "\n";
+							file << "exposure: " << weather.skyExposure << "\n";
+							file << "rotation: " << wi::math::RadiansToDegrees(weather.sky_rotation) << "\n";
+							file << "tint: " << weather.horizon.x << " " << weather.horizon.y << " " << weather.horizon.z << "\n";
+							file << "ambientContribution: 0.5\n";
+							file << "enableSkybox: " << (!isSkyboxDisabled ? 1 : 0) << "\n";
+							file << "enableSkyboxLighting: 0\n";
+							file << "skyboxLightingIntensity: 1.0\n";
+							file << "skyboxLightingColor: 1.0 1.0 1.0\n";
+							file << "skyboxLightingSpecular: 1.0\n";
+							file << "skyboxLightingDiffuse: 1.0\n";
+							file << "realisticSky: " << (weather.IsRealisticSky() ? 1 : 0) << "\n";
+							file << "volumetricClouds: " << (weather.IsVolumetricClouds() ? 1 : 0) << "\n";
+							file << "fogDensity: " << weather.fogDensity << "\n";
+							file.close();
+
+							activeAssetPath = savePath;
+							m_bottomDrawer.AddLog("World", "Saved Skybox Asset: " + savePath, 3);
+						}
+					}
+				}
+
+				ImGui::EndTabItem();
+			}
+
+			// TAB 2: HDR / TEXTURE & ILLUMINATION
+			if (ImGui::BeginTabItem("🌌 HDR Texture & Illumination"))
+			{
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Equirectangular HDR / Texture Illumination");
 
 				std::string texName = weather.skyMapName.empty() ? "(No texture loaded - using procedural / gradient sky)" : wi::helper::GetFileNameFromPath(weather.skyMapName);
 				ImGui::Text("Active Texture: %s", texName.c_str());
@@ -1016,7 +1186,7 @@ namespace EunoiaUI
 				ImGui::PopStyleColor(2);
 
 				ImGui::Spacing();
-				if (ImGui::Button("📂 Load HDR / Sky Texture...", ImVec2(190, 26)))
+				if (ImGui::Button("📂 Load HDR / Sky Texture...", ImVec2(200, 26)))
 				{
 					std::string filter = "Skybox Image (*.hdr;*.png;*.jpg;*.dds;*.tga;*.bmp;*.eskybox)\0*.hdr;*.png;*.jpg;*.jpeg;*.dds;*.tga;*.bmp;*.eskybox\0All Files (*.*)\0*.*\0";
 					std::string file = ProjectBrowser::ShowOpenFileDialog(filter.c_str());
@@ -1041,24 +1211,71 @@ namespace EunoiaUI
 				}
 
 				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Texture Parameters");
+				ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Illumination Parameters");
 
-				if (ImGui::SliderFloat("Sky Exposure", &weather.skyExposure, 0.0f, 10.0f, "%.2f"))
+				if (ImGui::SliderFloat("Exposure / Intensity", &weather.skyExposure, 0.05f, 10.0f, "%.2f"))
 				{
 					SyncWeather();
 				}
 
 				float skyRotDeg = wi::math::RadiansToDegrees(weather.sky_rotation);
-				if (ImGui::SliderFloat("Sky Texture Rotation", &skyRotDeg, 0.0f, 360.0f, "%.1f deg"))
+				if (ImGui::SliderFloat("Rotation (Azimuth)", &skyRotDeg, 0.0f, 360.0f, "%.1f°"))
 				{
 					weather.sky_rotation = wi::math::DegreesToRadians(skyRotDeg);
+					SyncWeather();
+				}
+
+				if (ImGui::ColorEdit3("Sky Tint", &weather.horizon.x))
+				{
+					SyncWeather();
+				}
+
+				if (ImGui::Button("Reset Defaults##SkyboxReset"))
+				{
+					weather.skyExposure = 1.0f;
+					weather.sky_rotation = 0.0f;
+					weather.horizon = XMFLOAT3(1.0f, 1.0f, 1.0f);
 					SyncWeather();
 				}
 
 				ImGui::EndTabItem();
 			}
 
-			// TAB 2: REALISTIC ATMOSPHERE
+			// TAB 3: SKYBOX BASED LIGHTING (ENVIRONMENT IBL)
+			if (ImGui::BeginTabItem("💡 Skybox Lighting (IBL)"))
+			{
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Environment Image-Based Lighting (IBL)");
+				ImGui::TextWrapped("Cast diffuse and specular ambient illumination into the 3D scene from the skybox.");
+				ImGui::Spacing();
+
+				static bool enableSkyboxLighting = false;
+				static float lightingIntensity = 1.0f;
+				static XMFLOAT3 lightingColor = XMFLOAT3(1.0f, 1.0f, 1.0f);
+				static float diffuseContrib = 1.0f;
+				static float specularContrib = 1.0f;
+
+				if (ImGui::Checkbox("Enable Skybox Based Lighting", &enableSkyboxLighting))
+				{
+					SyncWeather();
+				}
+
+				if (enableSkyboxLighting)
+				{
+					if (ImGui::SliderFloat("Lighting Intensity", &lightingIntensity, 0.0f, 10.0f, "%.2f")) SyncWeather();
+					if (ImGui::ColorEdit3("Lighting Color Tint", &lightingColor.x)) SyncWeather();
+					if (ImGui::SliderFloat("Diffuse Contribution", &diffuseContrib, 0.0f, 2.0f, "%.2f")) SyncWeather();
+					if (ImGui::SliderFloat("Specular / Reflection Contribution", &specularContrib, 0.0f, 2.0f, "%.2f")) SyncWeather();
+				}
+				else
+				{
+					ImGui::TextDisabled("  (Skybox based scene lighting is currently disabled by default)");
+				}
+
+				ImGui::EndTabItem();
+			}
+
+			// TAB 4: PROCEDURAL & ATMOSPHERIC SKY
 			if (ImGui::BeginTabItem("☀️ Atmospheric Sky"))
 			{
 				ImGui::Spacing();
@@ -1104,30 +1321,14 @@ namespace EunoiaUI
 					ImGui::TextDisabled("Enable 'Realistic Atmosphere' above to activate atmospheric simulation.");
 				}
 
-				ImGui::EndTabItem();
-			}
+				ImGui::Separator();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Gradient Colors & Ambient Lighting");
 
-			// TAB 3: COLORS (HORIZON, ZENITH, AMBIENT)
-			if (ImGui::BeginTabItem("🎨 Sky Colors"))
-			{
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Gradient & Ambient Environment Colors");
+				if (ImGui::ColorEdit3("Horizon Color", &weather.horizon.x)) SyncWeather();
+				if (ImGui::ColorEdit3("Zenith Color", &weather.zenith.x)) SyncWeather();
+				if (ImGui::ColorEdit3("Ambient Color", &weather.ambient.x)) SyncWeather();
 
-				if (ImGui::ColorEdit3("Horizon Color", &weather.horizon.x))
-				{
-					SyncWeather();
-				}
-				if (ImGui::ColorEdit3("Zenith Color", &weather.zenith.x))
-				{
-					SyncWeather();
-				}
-				if (ImGui::ColorEdit3("Ambient Color", &weather.ambient.x))
-				{
-					SyncWeather();
-				}
-
-				ImGui::Spacing();
-				if (ImGui::Button("Reset All Colors to Black (0, 0, 0)", ImVec2(240, 26)))
+				if (ImGui::Button("Reset All Colors to Black (0, 0, 0)", ImVec2(240, 24)))
 				{
 					weather.horizon = XMFLOAT3(0, 0, 0);
 					weather.zenith = XMFLOAT3(0, 0, 0);
@@ -1135,14 +1336,8 @@ namespace EunoiaUI
 					SyncWeather();
 				}
 
-				ImGui::EndTabItem();
-			}
-
-			// TAB 4: VOLUMETRIC CLOUDS & FOG
-			if (ImGui::BeginTabItem("☁️ Clouds & Fog"))
-			{
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Volumetric 3D Clouds");
+				ImGui::Separator();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Volumetric 3D Clouds & Fog");
 
 				bool clouds = weather.IsVolumetricClouds();
 				if (ImGui::Checkbox("Volumetric Clouds", &clouds))
@@ -1153,89 +1348,88 @@ namespace EunoiaUI
 
 				if (clouds)
 				{
-					bool cloudReceiveShadow = weather.IsVolumetricCloudsReceiveShadow();
-					if (ImGui::Checkbox("Clouds Receive Shadow", &cloudReceiveShadow))
+					if (ImGui::SliderFloat("Cloud Start Height", &weather.volumetricCloudParameters.cloudStartHeight, 500.0f, 2500.0f, "%.0f m")) SyncWeather();
+					if (ImGui::SliderFloat("Cloud Thickness", &weather.volumetricCloudParameters.cloudThickness, 0.0f, 8000.0f, "%.0f m")) SyncWeather();
+				}
+
+				if (ImGui::SliderFloat("Fog Start Distance", &weather.fogStart, 0.0f, 5000.0f, "%.1f m")) SyncWeather();
+				if (ImGui::SliderFloat("Fog Density", &weather.fogDensity, 0.0f, 0.05f, "%.5f")) SyncWeather();
+
+				ImGui::EndTabItem();
+			}
+
+			// TAB 5: ENVIRONMENT & WEATHER (OCEAN, WIND, RAIN, COLOR GRADING)
+			if (ImGui::BeginTabItem("🌊 Environment & Weather"))
+			{
+				ImGui::Spacing();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Ocean Simulation");
+
+				bool oceanEnabled = weather.IsOceanEnabled();
+				if (ImGui::Checkbox("Ocean Simulation", &oceanEnabled))
+				{
+					weather.SetOceanEnabled(oceanEnabled);
+					if (!oceanEnabled)
 					{
-						weather.SetVolumetricCloudsReceiveShadow(cloudReceiveShadow);
+						scene.ocean = {};
+					}
+					SyncWeather();
+				}
+
+				if (oceanEnabled)
+				{
+					if (ImGui::SliderFloat("Ocean Patch Size", &weather.oceanParameters.patch_length, 1.0f, 1000.0f))
+					{
+						scene.ocean = {};
 						SyncWeather();
 					}
-
-					bool cloudCastShadow = weather.IsVolumetricCloudsCastShadow();
-					if (ImGui::Checkbox("Clouds Cast Shadow", &cloudCastShadow))
+					if (ImGui::SliderFloat("Wave Amplitude", &weather.oceanParameters.wave_amplitude, 0.0f, 1000.0f))
 					{
-						weather.SetVolumetricCloudsCastShadow(cloudCastShadow);
+						scene.ocean = {};
 						SyncWeather();
 					}
-
-					if (ImGui::SliderFloat("Cloud Start Height", &weather.volumetricCloudParameters.cloudStartHeight, 500.0f, 2500.0f, "%.0f m"))
-					{
-						SyncWeather();
-					}
-					if (ImGui::SliderFloat("Cloud Thickness", &weather.volumetricCloudParameters.cloudThickness, 0.0f, 8000.0f, "%.0f m"))
-					{
-						SyncWeather();
-					}
-
-					std::string wm1Name = weather.volumetricCloudsWeatherMapFirstName.empty() ? "Load Volumetric Clouds Weather Map 1" : wi::helper::GetFileNameFromPath(weather.volumetricCloudsWeatherMapFirstName);
-					if (ImGui::Button(wm1Name.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 26)))
-					{
-						std::string filter = "Texture (*.png;*.jpg;*.dds)\0*.png;*.jpg;*.dds\0All Files (*.*)\0*.*\0";
-						std::string file = ProjectBrowser::ShowOpenFileDialog(filter.c_str());
-						if (!file.empty())
-						{
-							weather.volumetricCloudsWeatherMapFirstName = file;
-							weather.volumetricCloudsWeatherMapFirst = wi::resourcemanager::Load(file);
-							SyncWeather();
-						}
-					}
-
-					std::string wm2Name = weather.volumetricCloudsWeatherMapSecondName.empty() ? "Load Volumetric Clouds Weather Map 2" : wi::helper::GetFileNameFromPath(weather.volumetricCloudsWeatherMapSecondName);
-					if (ImGui::Button(wm2Name.c_str(), ImVec2(ImGui::GetContentRegionAvail().x, 26)))
-					{
-						std::string filter = "Texture (*.png;*.jpg;*.dds)\0*.png;*.jpg;*.dds\0All Files (*.*)\0*.*\0";
-						std::string file = ProjectBrowser::ShowOpenFileDialog(filter.c_str());
-						if (!file.empty())
-						{
-							weather.volumetricCloudsWeatherMapSecondName = file;
-							weather.volumetricCloudsWeatherMapSecond = wi::resourcemanager::Load(file);
-							SyncWeather();
-						}
-					}
+					if (ImGui::SliderFloat("Choppiness", &weather.oceanParameters.choppy_scale, 0.0f, 10.0f)) SyncWeather();
+					if (ImGui::SliderFloat("Wind Dependency", &weather.oceanParameters.wind_dependency, 0.0f, 1.0f)) SyncWeather();
 				}
 
 				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Atmospheric Distance & Height Fog");
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Wind & Gravity");
 
-				bool overrideFog = weather.IsOverrideFogColor();
-				if (ImGui::Checkbox("Override Fog Color (from Horizon Color)", &overrideFog))
+				if (ImGui::SliderFloat("Gravity Y", &weather.gravity.y, -20.0f, 20.0f)) SyncWeather();
+				if (ImGui::SliderFloat("Wind Speed", &weather.windSpeed, 0.0f, 4.0f)) SyncWeather();
+				if (ImGui::SliderFloat("Wind Randomness", &weather.windRandomness, 0.0f, 10.0f)) SyncWeather();
+
+				ImGui::Separator();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Rain Weather Effect");
+
+				if (ImGui::SliderFloat("Rain Amount", &weather.rain_amount, 0.0f, 1.0f)) SyncWeather();
+				if (weather.rain_amount > 0.001f)
 				{
-					weather.SetOverrideFogColor(overrideFog);
-					SyncWeather();
+					if (ImGui::SliderFloat("Rain Speed", &weather.rain_speed, 0.0f, 2.0f)) SyncWeather();
+					if (ImGui::ColorEdit4("Rain Color", &weather.rain_color.x)) SyncWeather();
 				}
 
-				bool heightFog = weather.IsHeightFog();
-				if (ImGui::Checkbox("Height Fog", &heightFog))
-				{
-					weather.SetHeightFog(heightFog);
-					SyncWeather();
-				}
+				ImGui::Separator();
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Color Grading LUT");
 
-				if (ImGui::SliderFloat("Fog Start Distance", &weather.fogStart, 0.0f, 5000.0f, "%.1f m"))
+				std::string lutName = weather.colorGradingMapName.empty() ? "Load Color Grading LUT (PNG)" : wi::helper::GetFileNameFromPath(weather.colorGradingMapName);
+				if (ImGui::Button(lutName.c_str(), ImVec2(220, 26)))
 				{
-					SyncWeather();
-				}
-				if (ImGui::SliderFloat("Fog Density", &weather.fogDensity, 0.0f, 0.05f, "%.5f"))
-				{
-					SyncWeather();
-				}
-				if (heightFog)
-				{
-					if (ImGui::SliderFloat("Fog Height Start", &weather.fogHeightStart, -100.0f, 100.0f, "%.1f m"))
+					std::string filter = "Texture (*.png;*.dds)\0*.png;*.dds\0All Files (*.*)\0*.*\0";
+					std::string file = ProjectBrowser::ShowOpenFileDialog(filter.c_str());
+					if (!file.empty())
 					{
+						weather.colorGradingMapName = file;
+						weather.colorGradingMap = wi::resourcemanager::Load(file, wi::resourcemanager::Flags::IMPORT_COLORGRADINGLUT);
 						SyncWeather();
 					}
-					if (ImGui::SliderFloat("Fog Height End", &weather.fogHeightEnd, -100.0f, 100.0f, "%.1f m"))
+				}
+				if (weather.colorGradingMap.IsValid())
+				{
+					ImGui::SameLine();
+					if (ImGui::Button("Clear LUT", ImVec2(90, 26)))
 					{
+						weather.colorGradingMap = {};
+						weather.colorGradingMapName.clear();
 						SyncWeather();
 					}
 				}
@@ -1243,11 +1437,11 @@ namespace EunoiaUI
 				ImGui::EndTabItem();
 			}
 
-			// TAB 5: PRESETS (WICKEDENGINE FULL PARITY)
+			// TAB 6: PRESETS (1-CLICK WORLD ATMOSPHERES)
 			if (ImGui::BeginTabItem("🎭 Presets"))
 			{
 				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "WickedEngine Environment Presets");
+				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Atmosphere & Weather Presets");
 
 				float pBtnW = 240.0f;
 				float pBtnH = 28.0f;
@@ -1356,117 +1550,7 @@ namespace EunoiaUI
 				ImGui::EndTabItem();
 			}
 
-			// TAB 6: ENVIRONMENT & WEATHER (OCEAN, WIND, RAIN, COLOR GRADING)
-			if (ImGui::BeginTabItem("🌊 Environment & Weather"))
-			{
-				ImGui::Spacing();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Ocean Simulation");
-
-				bool oceanEnabled = weather.IsOceanEnabled();
-				if (ImGui::Checkbox("Ocean Simulation", &oceanEnabled))
-				{
-					weather.SetOceanEnabled(oceanEnabled);
-					if (!oceanEnabled)
-					{
-						scene.ocean = {};
-					}
-					SyncWeather();
-				}
-
-				if (oceanEnabled)
-				{
-					if (ImGui::SliderFloat("Ocean Patch Size", &weather.oceanParameters.patch_length, 1.0f, 1000.0f))
-					{
-						scene.ocean = {};
-						SyncWeather();
-					}
-					if (ImGui::SliderFloat("Wave Amplitude", &weather.oceanParameters.wave_amplitude, 0.0f, 1000.0f))
-					{
-						scene.ocean = {};
-						SyncWeather();
-					}
-					if (ImGui::SliderFloat("Choppiness", &weather.oceanParameters.choppy_scale, 0.0f, 10.0f))
-					{
-						SyncWeather();
-					}
-					if (ImGui::SliderFloat("Wind Dependency", &weather.oceanParameters.wind_dependency, 0.0f, 1.0f))
-					{
-						SyncWeather();
-					}
-				}
-
-				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Wind & Gravity");
-
-				if (ImGui::SliderFloat("Gravity Y", &weather.gravity.y, -20.0f, 20.0f))
-				{
-					SyncWeather();
-				}
-				if (ImGui::SliderFloat("Wind Speed", &weather.windSpeed, 0.0f, 4.0f))
-				{
-					SyncWeather();
-				}
-				if (ImGui::SliderFloat("Wind Wave Size", &weather.windWaveSize, 0.0f, 1.0f))
-				{
-					SyncWeather();
-				}
-				if (ImGui::SliderFloat("Wind Randomness", &weather.windRandomness, 0.0f, 10.0f))
-				{
-					SyncWeather();
-				}
-
-				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Rain Weather Effect");
-
-				if (ImGui::SliderFloat("Rain Amount", &weather.rain_amount, 0.0f, 1.0f))
-				{
-					SyncWeather();
-				}
-				if (weather.rain_amount > 0.001f)
-				{
-					if (ImGui::SliderFloat("Rain Length", &weather.rain_length, 0.0f, 0.1f)) SyncWeather();
-					if (ImGui::SliderFloat("Rain Speed", &weather.rain_speed, 0.0f, 2.0f)) SyncWeather();
-					if (ImGui::SliderFloat("Rain Scale", &weather.rain_scale, 0.005f, 0.1f)) SyncWeather();
-					if (ImGui::SliderFloat("Rain Splash Scale", &weather.rain_splash_scale, 0.0f, 1.0f)) SyncWeather();
-					if (ImGui::ColorEdit4("Rain Color", &weather.rain_color.x)) SyncWeather();
-				}
-
-				ImGui::Separator();
-				ImGui::TextColored(ImVec4(0.4f, 0.75f, 1.0f, 1.0f), "Color Grading LUT");
-
-				std::string lutName = weather.colorGradingMapName.empty() ? "Load Color Grading LUT (PNG)" : wi::helper::GetFileNameFromPath(weather.colorGradingMapName);
-				if (ImGui::Button(lutName.c_str(), ImVec2(220, 26)))
-				{
-					std::string filter = "Texture (*.png;*.dds)\0*.png;*.dds\0All Files (*.*)\0*.*\0";
-					std::string file = ProjectBrowser::ShowOpenFileDialog(filter.c_str());
-					if (!file.empty())
-					{
-						weather.colorGradingMapName = file;
-						weather.colorGradingMap = wi::resourcemanager::Load(file, wi::resourcemanager::Flags::IMPORT_COLORGRADINGLUT);
-						SyncWeather();
-					}
-				}
-				if (weather.colorGradingMap.IsValid())
-				{
-					ImGui::SameLine();
-					if (ImGui::Button("Clear LUT", ImVec2(90, 26)))
-					{
-						weather.colorGradingMap = {};
-						weather.colorGradingMapName.clear();
-						SyncWeather();
-					}
-				}
-
-				ImGui::EndTabItem();
-			}
-
 			ImGui::EndTabBar();
-		}
-
-		ImGui::Separator();
-		if (ImGui::Button("Close", ImVec2(100, 26)))
-		{
-			m_showSkyboxWindow = false;
 		}
 
 		ImGui::End();

@@ -118,6 +118,27 @@ namespace EunoiaUI
 		return "";
 	}
 
+	std::string ProjectBrowser::ShowSaveFileDialog(const char* filter, const char* defaultName)
+	{
+		char filename[MAX_PATH] = "";
+		if (defaultName && defaultName[0] != '\0')
+		{
+			strncpy_s(filename, defaultName, sizeof(filename) - 1);
+		}
+		OPENFILENAMEA ofn = { 0 };
+		ofn.lStructSize = sizeof(ofn);
+		ofn.lpstrFilter = filter;
+		ofn.lpstrFile = filename;
+		ofn.nMaxFile = MAX_PATH;
+		ofn.Flags = OFN_PATHMUSTEXIST | OFN_OVERWRITEPROMPT | OFN_NOCHANGEDIR;
+
+		if (GetSaveFileNameA(&ofn))
+		{
+			return std::string(filename);
+		}
+		return "";
+	}
+
 	bool ProjectBrowser::CreateNewProject(const std::string& parentDir, const std::string& projName)
 	{
 		if (parentDir.empty() || projName.empty()) return false;

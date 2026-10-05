@@ -119,14 +119,38 @@ namespace EunoiaUI
 	void BottomDrawer::LoadContentBrowserIcons()
 	{
 		if (m_iconsLoaded) return;
-		m_iconFolder = wi::resourcemanager::Load("Resources/Icons/Content Browser/folder.png");
-		m_iconLevel = wi::resourcemanager::Load("Resources/Icons/Content Browser/level.png");
-		m_icon3D = wi::resourcemanager::Load("Resources/Icons/Content Browser/3d.png");
-		m_iconMaterial = wi::resourcemanager::Load("Resources/Icons/Content Browser/material.png");
-		m_iconTexture = wi::resourcemanager::Load("Resources/Icons/Content Browser/texture.png");
-		m_iconBehaviour = wi::resourcemanager::Load("Resources/Icons/Content Browser/behaviour.png");
-		m_iconSkybox = wi::resourcemanager::Load("Resources/Icons/Content Browser/skybox.png");
-		m_iconVisualBehaviour = wi::resourcemanager::Load("Resources/Icons/Content Browser/visual-behaviuor.png");
+		auto FindIconPath = [](const std::string& relPath) -> std::string {
+			std::error_code ec;
+			std::string fn = std::filesystem::path(relPath).filename().string();
+			std::filesystem::path candidates[] = {
+				relPath,
+				std::filesystem::current_path() / relPath,
+				std::filesystem::current_path() / "Resources" / "Icons" / "Content Browser" / fn,
+				std::filesystem::current_path() / ".." / relPath,
+				std::filesystem::current_path() / ".." / "Resources" / "Icons" / "Content Browser" / fn,
+				std::filesystem::current_path() / "Editor" / relPath,
+				std::filesystem::path("C:/Projects/Eunoia-Engine/Build (BUILD)/Resources/Icons/Content Browser") / fn,
+				std::filesystem::path("C:/Projects/Eunoia-Engine/Eunoia Engine (Main Engine)/Resources/Icons/Content Browser") / fn,
+				std::filesystem::path("C:/Projects/Eunoia-Engine/Eunoia Engine (Main Engine)/Editor/Resources/Icons/Content Browser") / fn
+			};
+			for (const auto& c : candidates)
+			{
+				if (std::filesystem::exists(c, ec) && !std::filesystem::is_directory(c, ec))
+				{
+					return c.string();
+				}
+			}
+			return relPath;
+		};
+
+		m_iconFolder = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/folder.png"));
+		m_iconLevel = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/level.png"));
+		m_icon3D = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/3d.png"));
+		m_iconMaterial = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/material.png"));
+		m_iconTexture = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/texture.png"));
+		m_iconBehaviour = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/behaviour.png"));
+		m_iconSkybox = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/skybox.png"));
+		m_iconVisualBehaviour = wi::resourcemanager::Load(FindIconPath("Resources/Icons/Content Browser/visual-behaviuor.png"));
 		m_iconsLoaded = true;
 	}
 
@@ -140,8 +164,8 @@ namespace EunoiaUI
 
 		if (m_typeFilter == 1) // 3D Models & Levels
 			return (ext == ".eulevel" || ext == ".elevel" || ext == ".level" || ext == ".wiscene" || ext == ".obj" || ext == ".gltf" || ext == ".glb" || ext == ".fbx" || ext == ".ply");
-		if (m_typeFilter == 2) // Textures
-			return (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".dds" || ext == ".tga" || ext == ".bmp" || ext == ".hdr");
+		if (m_typeFilter == 2) // Textures & Skyboxes
+			return (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".dds" || ext == ".tga" || ext == ".bmp" || ext == ".hdr" || ext == ".eskybox" || ext == ".skybox");
 		if (m_typeFilter == 3) // Materials
 			return (ext == ".eumat" || ext == ".emat" || ext == ".mat" || ext == ".wimaterial");
 		if (m_typeFilter == 4) // Scripts & Behaviors
@@ -366,6 +390,48 @@ namespace EunoiaUI
 
 		AddLog("ContentBrowser", "Created new Level: " + filename, 3);
 		m_selectedAssetPath = fullPath.string();
+	}
+
+	void BottomDrawer::HandleCreateSkybox(const std::string& name)
+	{
+		std::string filename = name;
+		if (filename.find(".eskybox") == std::string::npos && filename.find(".skybox") == std::string::npos)
+		{
+			filename += ".eskybox";
+		}
+
+		std::filesystem::path fullPath = m_currentDir / filename;
+		std::error_code ec;
+		if (std::filesystem::exists(fullPath, ec))
+		{
+			AddLog("ContentBrowser", "Skybox asset already exists: " + filename, 2);
+			return;
+		}
+
+		std::ofstream file(fullPath);
+		if (file.is_open())
+		{
+			file << "# Eunoia-Editor Skybox Asset\n";
+			file << "name: " << std::filesystem::path(filename).stem().string() << "\n";
+			file << "hdrTexture: \n";
+			file << "exposure: 1.0\n";
+			file << "rotation: 0.0\n";
+			file << "tint: 1.0 1.0 1.0\n";
+			file << "ambientContribution: 0.5\n";
+			file << "enableSkybox: 1\n";
+			file << "enableSkyboxLighting: 0\n";
+			file << "skyboxLightingIntensity: 1.0\n";
+			file << "skyboxLightingColor: 1.0 1.0 1.0\n";
+			file << "skyboxLightingSpecular: 1.0\n";
+			file << "skyboxLightingDiffuse: 1.0\n";
+			file << "realisticSky: 0\n";
+			file << "volumetricClouds: 0\n";
+			file << "fogDensity: 0.0\n";
+			file.close();
+
+			AddLog("ContentBrowser", "Created Skybox Asset: " + filename, 3);
+			m_selectedAssetPath = fullPath.string();
+		}
 	}
 
 	void BottomDrawer::RenderContentBrowser(EditorComponent& editor)
@@ -616,6 +682,11 @@ namespace EunoiaUI
 				m_showNewScriptModal = true;
 				strcpy_s(m_newScriptNameBuf, "NewBehavior");
 			}
+			if (ImGui::MenuItem("🌌 New Skybox Asset (.eskybox)..."))
+			{
+				m_showNewSkyboxModal = true;
+				strcpy_s(m_newSkyboxNameBuf, "Skybox_New");
+			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("📥 Import 3D Model / Level..."))
 			{
@@ -856,6 +927,77 @@ namespace EunoiaUI
 				else if (isScript)
 				{
 					ShellExecuteA(NULL, "open", entry.path().string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+				}
+				else if (isSkybox)
+				{
+					std::string extUpper = wi::helper::toUpper(wi::helper::GetExtensionFromFileName(entry.path().string()));
+					wi::scene::Scene& scene = editor.GetCurrentScene();
+					wi::scene::WeatherComponent& weather = (scene.weathers.GetCount() > 0) ? scene.weathers[0] : scene.weather;
+
+					if (extUpper == "ESKYBOX" || extUpper == "SKYBOX")
+					{
+						std::ifstream file(entry.path());
+						if (file.is_open())
+						{
+							std::string line;
+							while (std::getline(file, line))
+							{
+								if (line.empty() || line[0] == '#') continue;
+								auto colon = line.find(':');
+								if (colon == std::string::npos) continue;
+								std::string key = line.substr(0, colon);
+								std::string val = line.substr(colon + 1);
+								while (!key.empty() && isspace((unsigned char)key.back())) key.pop_back();
+								while (!key.empty() && isspace((unsigned char)key.front())) key.erase(key.begin());
+								while (!val.empty() && isspace((unsigned char)val.back())) val.pop_back();
+								while (!val.empty() && isspace((unsigned char)val.front())) val.erase(val.begin());
+
+								if (key == "hdrTexture" && !val.empty())
+								{
+									weather.skyMapName = val;
+									weather.skyMap = wi::resourcemanager::Load(val);
+								}
+								else if (key == "exposure")
+								{
+									try { weather.skyExposure = std::stof(val); } catch (...) {}
+								}
+								else if (key == "rotation")
+								{
+									try { weather.sky_rotation = wi::math::DegreesToRadians(std::stof(val)); } catch (...) {}
+								}
+								else if (key == "tint")
+								{
+									std::stringstream ss(val);
+									ss >> weather.horizon.x >> weather.horizon.y >> weather.horizon.z;
+								}
+								else if (key == "enableSkybox")
+								{
+									if (val == "0" || val == "false" || val == "False")
+									{
+										weather.skyMap = {};
+										weather.skyMapName.clear();
+										weather.SetRealisticSky(false);
+										weather.horizon = XMFLOAT3(0, 0, 0);
+										weather.zenith = XMFLOAT3(0, 0, 0);
+										weather.ambient = XMFLOAT3(0, 0, 0);
+										weather.fogDensity = 0;
+									}
+								}
+							}
+						}
+					}
+					else if (extUpper == "HDR" || extUpper == "DDS" || extUpper == "PNG" || extUpper == "JPG")
+					{
+						weather.skyMapName = entry.path().string();
+						weather.skyMap = wi::resourcemanager::Load(entry.path().string());
+					}
+
+					if (scene.weathers.GetCount() > 0) scene.weathers[0] = weather;
+					scene.weather = weather;
+					for (size_t i = 0; i < scene.probes.GetCount(); ++i) scene.probes[i].SetDirty();
+					scene.global_dynamic_probe.SetDirty();
+
+					AddLog("ContentBrowser", "Applied Skybox Asset: " + filename, 3);
 				}
 				else
 				{
@@ -1193,6 +1335,36 @@ namespace EunoiaUI
 				if (m_newLevelNameBuf[0] != '\0')
 				{
 					HandleCreateLevel(m_newLevelNameBuf, editor);
+				}
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::SameLine();
+			if (ImGui::Button("Cancel", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Escape))
+			{
+				ImGui::CloseCurrentPopup();
+			}
+			ImGui::EndPopup();
+		}
+
+		// New Skybox Asset Modal
+		if (m_showNewSkyboxModal)
+		{
+			ImGui::OpenPopup("Create Skybox Asset###NewSkyboxPopup");
+			m_showNewSkyboxModal = false;
+		}
+
+		if (ImGui::BeginPopupModal("Create Skybox Asset###NewSkyboxPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		{
+			ImGui::Text("Enter Skybox asset name (without or with .eskybox):");
+			ImGui::SetNextItemWidth(260.0f);
+			ImGui::InputText("##SkyboxNameInput", m_newSkyboxNameBuf, sizeof(m_newSkyboxNameBuf));
+			ImGui::Spacing();
+
+			if (ImGui::Button("Create", ImVec2(100, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter))
+			{
+				if (m_newSkyboxNameBuf[0] != '\0')
+				{
+					HandleCreateSkybox(m_newSkyboxNameBuf);
 				}
 				ImGui::CloseCurrentPopup();
 			}
