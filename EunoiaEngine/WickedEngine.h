@@ -80,7 +80,7 @@
 #ifndef WICKED_CMAKE_BUILD
 
 #ifdef PLATFORM_WINDOWS_DESKTOP
-#pragma comment(lib,"WickedEngine_Windows.lib")
+#pragma comment(lib,"EunoiaEngine_Windows.lib")
 #endif // PLATFORM_WINDOWS_DESKTOP
 
 #ifdef PLATFORM_XBOX
