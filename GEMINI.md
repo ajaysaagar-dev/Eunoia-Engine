@@ -10,3 +10,8 @@
 
 ## 3. Communication Guidelines
 - Use concise, direct, technical communication (Caveman style: minimal fluff, high density, drop unnecessary filler words).
+
+## 4. Git Commit & Push Policy
+- **ALWAYS PUSH TO GITHUB ONCE COMPLETE AS CLUSTER**: Once work is done, make separate individual commits for each updated feature, then push all commits together to GitHub.
+- **COMMIT FORMAT**: Use `"[<Feature Name>] <what is updated>"` (e.g. `"[Content Browser] Add official Eunoia icon rendering and format support"`).
+
