@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?> 
+<AutoVisualizer xmlns="http://schemas.microsoft.com/vstudio/debugger/natvis/2010">
+	
+	<Type Name="wi::vector&lt;*&gt;">
+		<DisplayString>{{ size={m_size} }}</DisplayString>
+		<Expand>
+			<Item Name="[size]" ExcludeView="simple">m_size</Item>
+			<Item Name="[capacity]" ExcludeView="simple">m_capacity</Item>
+			<ArrayItems>
+				<Size>m_size</Size>
+				<ValuePointer>m_data</ValuePointer>
+			</ArrayItems>
+		</Expand>
+	</Type>
+
+	<Type Name="wi::allocator::shared_ptr&lt;*&gt;">
+		<DisplayString>{{ handle={handle} }}</DisplayString>
+		<Expand>
+			<Item Name="[ptr]">reinterpret_cast&lt;$T1*&gt;(handle &amp; (~0ull &lt;&lt; 8ull))</Item>
+			<Item Name="[allocator]">shared_allocators[handle &amp; 0xFF]</Item>
+		</Expand>
+	</Type>
+	
+</AutoVisualizer>

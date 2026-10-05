@@ -1,9 +1,0 @@
-{
-  "name": "Graphics",
-  "version": "1.0",
-  "description": "Global graphics management, quality presets, and anti-aliasing pipeline system",
-  "author": "Eunoia Engine",
-  "category": "Rendering",
-  "isCore": true,
-  "loadPriority": 15
-}

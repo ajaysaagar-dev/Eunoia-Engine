@@ -1,16 +1,12 @@
-# Project Guidelines & Rules
+# Project Instructions & Rules
 
-## Automatic GitHub Synchronization
-- Whenever changes are made to this codebase/project, all modified files, features, and fixes must be logically grouped into modular, well-described commits.
-- Automatically stage, commit, and push all commits to GitHub (`origin`) at the completion of the work.
-- Keep the local branch synchronized with `origin` at all times without requiring manual reminders.
+## 1. Build Execution Policy
+- **ALWAYS BUILD ONCE CODE IS DONE**: Always execute `Build.bat` after completing code modifications to verify successful compilation and ensure no compiler or linker errors exist.
 
-## Build Rules
-- Never auto build the engine or run build scripts (`Build.bat`, `CompileGameScripts.bat`, etc.) unless the user explicitly requests to build.
+## 2. Rendering & Engine Architecture
+- **Preserve WickedEngine Rendering**: All graphics, shaders, post-processing, and renderer pipelines must remain powered natively by WickedEngine (`wi::renderer`, `wi::RenderPath3D`, `wi::graphics::GraphicsDevice`).
+- **Do Not Break Shaders**: Custom UI shaders must never be loaded into WickedEngine's engine shader registry via `wi::renderer::LoadShader`. Direct creation or compilation through `wi::shadercompiler::Compile` / `device->CreateShader` must be used.
+- **Maintain Eunoia Engine Styling**: Follow the UE5-inspired dark theme (`#2B2B2B` background, `#007ACC` accent blue, `#3E3E3E` borders) across Outliner, Details, Content Browser, Top Menu Bar, and Project Browser.
 
-## Always Active Skills & Communication Rules
-- Always use and apply the `caveman` skill (located globally at `~/.gemini/config/skills/caveman/SKILL.md`) for all responses and communications.
-- Follow `caveman` mode (default: `full`):
-  - Respond terse like smart caveman. All technical substance stay. Only fluff die.
-  - Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/happy to), hedging. Fragments OK. Short synonyms.
-  - No tool-call narration or status preamble. Technical terms, commands, code blocks, and error quotes remain exact and verbatim.
+## 3. Communication Guidelines
+- Use concise, direct, technical communication (Caveman style: minimal fluff, high density, drop unnecessary filler words).

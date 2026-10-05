@@ -1,18 +1,21 @@
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
-if not exist "Build\Engine\Eunoia-Editor.exe" (
-    echo [INFO] Build\Engine\Eunoia-Editor.exe not found. Building first...
-    call Build.bat
-    if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
-)
+REM Search for existing engine binary across configurations
+set "EXE="
+if exist "BUILD\x64\Release\Editor_Windows\Editor_Windows.exe" set "EXE=BUILD\x64\Release\Editor_Windows\Editor_Windows.exe"
+if not defined EXE if exist "BUILD\x64\Release\Editor_Windows.exe" set "EXE=BUILD\x64\Release\Editor_Windows.exe"
+if not defined EXE if exist "BUILD\x64\Debug\Editor_Windows\Editor_Windows.exe" set "EXE=BUILD\x64\Debug\Editor_Windows\Editor_Windows.exe"
+if not defined EXE if exist "BUILD\x64\Debug\Editor_Windows.exe" set "EXE=BUILD\x64\Debug\Editor_Windows.exe"
+if not defined EXE if exist "Editor\Editor_Windows\x64\Release\Editor_Windows.exe" set "EXE=Editor\Editor_Windows\x64\Release\Editor_Windows.exe"
 
-if exist "Build\Engine\Eunoia-Editor.exe" (
-    echo [INFO] Starting Eunoia-Editor from Build\Engine...
-    cd /d "%~dp0Build\Engine"
-    start "" "Eunoia-Editor.exe"
-) else (
-    echo [ERROR] Could not find or build Eunoia-Editor.exe.
+if not defined EXE (
+    echo [ERROR] Editor binary not found in BUILD directories.
+    echo Run Build.bat to compile the binary first.
     exit /b 1
 )
+
+echo Launching Eunoia Editor directly using workspace source assets: !EXE!
+start "" "!EXE!" %*
+exit /b 0

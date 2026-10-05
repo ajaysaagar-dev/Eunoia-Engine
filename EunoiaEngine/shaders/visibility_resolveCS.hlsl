@@ -1,0 +1,184 @@
+#define PRIMITIVEID_FROM_MESHLET_OPTIMIZED
+#include "globals.hlsli"
+#include "ShaderInterop_Renderer.h"
+#include "surfaceHF.hlsli"
+#include "raytracingHF.hlsli"
+
+// This shader reads primitiveID and resolves depth mipchain from it
+//	resolved depth can mismatch from hardware depth where viewport squishing was applied. Resolved depth can be unprojected to true positions
+//	It also does material binning when requested
+//	It can run in uniform and divergent manner based on previous primitiveID classification of visibility_analyzeCS
+
+StructuredBuffer<PrimitiveVisibilityTile> primitive_binned_tiles : register(t0);
+
+groupshared uint local_bin_mask;
+
+groupshared float shared_depth[VISIBILITY_BLOCKSIZE / 2][VISIBILITY_BLOCKSIZE / 2];
+
+RWStructuredBuffer<IndirectDispatchArgs> output_bins : register(u0);
+RWStructuredBuffer<VisibilityTile> output_binned_tiles : register(u1);
+
+RWTexture2D<float> output_depth_mip0 : register(u3);
+RWTexture2D<float> output_depth_mip1 : register(u4);
+RWTexture2D<float> output_depth_mip2 : register(u5);
+RWTexture2D<float> output_depth_mip3 : register(u6);
+RWTexture2D<float> output_depth_mip4 : register(u7);
+
+[numthreads(VISIBILITY_BLOCKSIZE * VISIBILITY_BLOCKSIZE, 1, 1)]
+void main(uint Gid : SV_GroupID, uint groupIndex : SV_GroupIndex)
+{
+#ifdef MATERIAL_BINNING
+	if (groupIndex == 0)
+	{
+		local_bin_mask = 0;
+	}
+	GroupMemoryBarrierWithGroupSync();
+#endif // MATERIAL_BINNING
+
+	const uint2 GTid = remap_lane_quads(groupIndex);
+	ShaderCamera camera = GetCamera();
+
+#ifdef PRIMITIVEID_UNIFORM
+	const uint tile_offset = 0;
+#else
+	const uint tile_offset = camera.visibility_tilecount_flat;
+#endif // PRIMITIVEID_UNIFORM
+
+	PrimitiveVisibilityTile primitive_tile = primitive_binned_tiles[tile_offset + Gid];
+
+	const uint2 tileID = unpack_pixel(primitive_tile.visibility_tile_id);
+	const uint2 pixel = tileID * VISIBILITY_BLOCKSIZE + GTid;
+
+#ifdef PRIMITIVEID_UNIFORM
+	const uint primitiveID = primitive_tile.primitiveID;
+#else
+	const bool pixel_valid = (pixel.x < camera.internal_resolution.x) && (pixel.y < camera.internal_resolution.y);
+	const uint primitiveID = pixel_valid ? texture_primitiveID[pixel] : 0;
+#endif // PRIMITIVEID_UNIFORM
+	
+	RayDesc ray = CreateCameraRay(pixel);
+
+	float depth = 0; // sky default
+	uint bin = SHADERTYPE_BIN_COUNT; // sky default
+
+	[branch]
+	if (primitiveID != 0)
+	{
+		PrimitiveID prim;
+		prim.init();
+		prim.unpack(primitiveID);
+
+#ifdef MATERIAL_BINNING
+		bin = prim.shaderType;
+#endif // MATERIAL_BINNING
+
+		Surface surface;
+		surface.init();
+
+		[branch]
+		if (surface.load(prim, ray.Origin, ray.Direction))
+		{
+			float4 tmp = mul(camera.view_projection, float4(surface.P, 1));
+			tmp.xyz /= max(0.0001, tmp.w); // max: avoid nan
+			depth = saturate(tmp.z); // saturate: avoid blown up values
+		}
+	}
+
+#ifdef MATERIAL_BINNING
+	uint wave_local_bin_mask = WaveActiveBitOr(1u << bin);
+	if (WaveIsFirstLane())
+	{
+		InterlockedOr(local_bin_mask, wave_local_bin_mask);
+	}
+
+	GroupMemoryBarrierWithGroupSync();
+	if (groupIndex < SHADERTYPE_BIN_COUNT)
+	{
+		if (local_bin_mask & (1u << groupIndex))
+		{
+			uint bin_tile_list_offset = groupIndex * camera.visibility_tilecount_flat;
+			uint bucket_index = groupIndex;
+
+#ifndef PRIMITIVEID_UNIFORM
+			bin_tile_list_offset += camera.visibility_tilecount_flat * SHADERTYPE_BIN_COUNT;
+			bucket_index += SHADERTYPE_BIN_COUNT;
+#endif // PRIMITIVEID_UNIFORM
+
+			uint tile_offset = 0;
+			InterlockedAdd(output_bins[bucket_index].ThreadGroupCountX, 1, tile_offset);
+
+			VisibilityTile tile;
+			tile.visibility_tile_id = primitive_tile.visibility_tile_id;
+#ifdef PRIMITIVEID_UNIFORM
+			tile.shaderType_or_primitiveID = primitive_tile.primitiveID;
+#else
+			tile.shaderType_or_primitiveID = groupIndex;
+#endif // PRIMITIVEID_UNIFORM
+			output_binned_tiles[bin_tile_list_offset + tile_offset] = tile;
+		}
+	}
+#endif // MATERIAL_BINNING
+
+#ifdef PRIMITIVEID_UNIFORM
+	if (primitiveID == 0)
+		return; // depths are pre-cleared for sky in whole, no need to continue here if the whole tile is uniform
+#endif // PRIMITIVEID_UNIFORM
+
+	// mip0
+	output_depth_mip0[pixel] = depth;
+
+	// mip1
+	float x_depth = QuadReadAcrossX(depth);
+	float min_d_quad = min(depth, x_depth);
+	float y_depth = QuadReadAcrossY(min_d_quad);
+	float min_d_mip1 = min(min_d_quad, y_depth);
+
+	// LDS for mip2 an onward:
+	if ((GTid.x & 1) == 0 && (GTid.y & 1) == 0)
+	{
+		output_depth_mip1[pixel / 2] = min_d_mip1;
+		uint2 lds_coord = GTid / 2; 
+		shared_depth[lds_coord.y][lds_coord.x] = min_d_mip1;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	// mip2
+	if ((GTid.x & 3) == 0 && (GTid.y & 3) == 0)
+	{
+		uint2 lds_coord = GTid / 2;
+
+		float d0 = shared_depth[lds_coord.y + 0][lds_coord.x + 0];
+		float d1 = shared_depth[lds_coord.y + 0][lds_coord.x + 1];
+		float d2 = shared_depth[lds_coord.y + 1][lds_coord.x + 0];
+		float d3 = shared_depth[lds_coord.y + 1][lds_coord.x + 1];
+
+		float min_d = min(min(d0, d1), min(d2, d3));
+
+		shared_depth[lds_coord.y][lds_coord.x] = min_d;
+
+		output_depth_mip2[pixel / 4] = min_d;
+	}
+	GroupMemoryBarrierWithGroupSync();
+
+	// mip3
+	if (GTid.x == 0 && GTid.y == 0)
+	{
+		float d0 = shared_depth[0][0];
+		float d1 = shared_depth[0][2];
+		float d2 = shared_depth[2][0];
+		float d3 = shared_depth[2][2];
+
+		float min_d = min(min(d0, d1), min(d2, d3));
+
+		shared_depth[0][0] = min_d;
+
+		output_depth_mip3[pixel / 8] = min_d;
+	}
+
+	// mip4
+	if (GTid.x == 0 && GTid.y == 0)
+	{
+		output_depth_mip4[pixel / 16] = shared_depth[0][0];
+	}
+
+}
