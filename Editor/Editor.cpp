@@ -39,8 +39,17 @@ enum class FileType
 };
 static wi::unordered_map<std::string, FileType> filetypes = {
 	{"LUA", FileType::LUA},
+	{"EUBEH", FileType::LUA},
+	{"EUBEHAVIOUR", FileType::LUA},
 	{"EULEVEL", FileType::WISCENE},
+	{"ELEVEL", FileType::WISCENE},
+	{"LEVEL", FileType::WISCENE},
+	{"ESCENE", FileType::WISCENE},
 	{"WISCENE", FileType::WISCENE},
+	{"EUMAT", FileType::TEXT},
+	{"EMAT", FileType::TEXT},
+	{"MAT", FileType::TEXT},
+	{"WIMATERIAL", FileType::TEXT},
 	{"OBJ", FileType::OBJ},
 	{"GLTF", FileType::GLTF},
 	{"GLB", FileType::GLB},
@@ -51,6 +60,17 @@ static wi::unordered_map<std::string, FileType> filetypes = {
 	{"H", FileType::HEADER},
 	{"CPP", FileType::CPP},
 	{"TXT", FileType::TEXT},
+	{"PNG", FileType::IMAGE},
+	{"JPG", FileType::IMAGE},
+	{"JPEG", FileType::IMAGE},
+	{"BMP", FileType::IMAGE},
+	{"TGA", FileType::IMAGE},
+	{"DDS", FileType::IMAGE},
+	{"HDR", FileType::IMAGE},
+	{"WAV", FileType::SOUND},
+	{"OGG", FileType::SOUND},
+	{"MP3", FileType::SOUND},
+	{"MP4", FileType::VIDEO},
 };
 
 enum class EditorActions

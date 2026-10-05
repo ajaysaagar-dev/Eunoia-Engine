@@ -116,6 +116,20 @@ namespace EunoiaUI
 		ImGui::PopStyleVar(2);
 	}
 
+	void BottomDrawer::LoadContentBrowserIcons()
+	{
+		if (m_iconsLoaded) return;
+		m_iconFolder = wi::resourcemanager::Load("Resources/Icons/Content Browser/folder.png");
+		m_iconLevel = wi::resourcemanager::Load("Resources/Icons/Content Browser/level.png");
+		m_icon3D = wi::resourcemanager::Load("Resources/Icons/Content Browser/3d.png");
+		m_iconMaterial = wi::resourcemanager::Load("Resources/Icons/Content Browser/material.png");
+		m_iconTexture = wi::resourcemanager::Load("Resources/Icons/Content Browser/texture.png");
+		m_iconBehaviour = wi::resourcemanager::Load("Resources/Icons/Content Browser/behaviour.png");
+		m_iconSkybox = wi::resourcemanager::Load("Resources/Icons/Content Browser/skybox.png");
+		m_iconVisualBehaviour = wi::resourcemanager::Load("Resources/Icons/Content Browser/visual-behaviuor.png");
+		m_iconsLoaded = true;
+	}
+
 	bool BottomDrawer::PassesTypeFilter(const std::filesystem::path& path, bool isDir) const
 	{
 		if (isDir) return true;
@@ -125,13 +139,13 @@ namespace EunoiaUI
 		std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
 		if (m_typeFilter == 1) // 3D Models & Levels
-			return (ext == ".eulevel" || ext == ".wiscene" || ext == ".obj" || ext == ".gltf" || ext == ".glb" || ext == ".fbx" || ext == ".ply");
+			return (ext == ".eulevel" || ext == ".elevel" || ext == ".level" || ext == ".wiscene" || ext == ".obj" || ext == ".gltf" || ext == ".glb" || ext == ".fbx" || ext == ".ply");
 		if (m_typeFilter == 2) // Textures
 			return (ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".dds" || ext == ".tga" || ext == ".bmp" || ext == ".hdr");
 		if (m_typeFilter == 3) // Materials
-			return (ext == ".wimaterial" || ext == ".mat");
-		if (m_typeFilter == 4) // Scripts
-			return (ext == ".lua");
+			return (ext == ".eumat" || ext == ".emat" || ext == ".mat" || ext == ".wimaterial");
+		if (m_typeFilter == 4) // Scripts & Behaviors
+			return (ext == ".eubeh" || ext == ".eubehaviour" || ext == ".lua");
 		if (m_typeFilter == 5) // Audio
 			return (ext == ".wav" || ext == ".ogg" || ext == ".mp3");
 
@@ -211,20 +225,23 @@ namespace EunoiaUI
 	void BottomDrawer::HandleCreateScript(const std::string& name)
 	{
 		std::string filename = name;
-		if (filename.find(".lua") == std::string::npos) filename += ".lua";
+		if (filename.find(".eubeh") == std::string::npos && filename.find(".eubehaviour") == std::string::npos && filename.find(".lua") == std::string::npos)
+		{
+			filename += ".eubeh";
+		}
 
 		std::filesystem::path fullPath = m_currentDir / filename;
 		std::error_code ec;
 		if (std::filesystem::exists(fullPath, ec))
 		{
-			AddLog("ContentBrowser", "Script already exists: " + filename, 2);
+			AddLog("ContentBrowser", "Script/Behavior already exists: " + filename, 2);
 			return;
 		}
 
 		std::ofstream out(fullPath);
 		if (out.is_open())
 		{
-			out << "-- Eunoia Engine Lua Script: " << filename << "\n";
+			out << "-- Eunoia Engine Behavior Script: " << filename << "\n";
 			out << "-- Documentation: Content/Documentation/EunoiaEngine-Documentation.md\n\n";
 			out << "runProcess(function()\n";
 			out << "    local scene = GetScene()\n";
@@ -237,7 +254,7 @@ namespace EunoiaUI
 			out << "end)\n";
 			out.close();
 
-			AddLog("ContentBrowser", "Created Lua Script: " + filename, 3);
+			AddLog("ContentBrowser", "Created Behavior Script: " + filename, 3);
 			m_selectedAssetPath = fullPath.string();
 		}
 	}
@@ -245,7 +262,10 @@ namespace EunoiaUI
 	void BottomDrawer::HandleCreateMaterial(const std::string& name)
 	{
 		std::string filename = name;
-		if (filename.find(".wimaterial") == std::string::npos) filename += ".wimaterial";
+		if (filename.find(".eumat") == std::string::npos && filename.find(".emat") == std::string::npos && filename.find(".mat") == std::string::npos && filename.find(".wimaterial") == std::string::npos)
+		{
+			filename += ".eumat";
+		}
 
 		std::filesystem::path fullPath = m_currentDir / filename;
 		std::error_code ec;
@@ -342,6 +362,8 @@ namespace EunoiaUI
 
 	void BottomDrawer::RenderContentBrowser(EditorComponent& editor)
 	{
+		LoadContentBrowserIcons();
+
 		std::error_code ec;
 		if (!std::filesystem::exists(m_contentRoot, ec))
 		{
@@ -436,15 +458,15 @@ namespace EunoiaUI
 				m_showNewFolderModal = true;
 				strcpy_s(m_newFolderNameBuf, "NewFolder");
 			}
-			if (ImGui::MenuItem("🎨 New Material (.wimaterial)..."))
+			if (ImGui::MenuItem("🎨 New Material (.eumat)..."))
 			{
 				m_showNewMaterialModal = true;
 				strcpy_s(m_newMaterialNameBuf, "M_NewMaterial");
 			}
-			if (ImGui::MenuItem("📜 New Lua Script (.lua)..."))
+			if (ImGui::MenuItem("📜 New Behavior (.eubeh)..."))
 			{
 				m_showNewScriptModal = true;
-				strcpy_s(m_newScriptNameBuf, "NewScript");
+				strcpy_s(m_newScriptNameBuf, "NewBehavior");
 			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("📥 Import 3D Model / Level..."))
@@ -576,15 +598,15 @@ namespace EunoiaUI
 				m_showNewFolderModal = true;
 				strcpy_s(m_newFolderNameBuf, "NewFolder");
 			}
-			if (ImGui::MenuItem("🎨 New Material (.wimaterial)..."))
+			if (ImGui::MenuItem("🎨 New Material (.eumat)..."))
 			{
 				m_showNewMaterialModal = true;
 				strcpy_s(m_newMaterialNameBuf, "M_NewMaterial");
 			}
-			if (ImGui::MenuItem("📜 New Lua Script (.lua)..."))
+			if (ImGui::MenuItem("📜 New Behavior (.eubeh)..."))
 			{
 				m_showNewScriptModal = true;
-				strcpy_s(m_newScriptNameBuf, "NewScript");
+				strcpy_s(m_newScriptNameBuf, "NewBehavior");
 			}
 			ImGui::Separator();
 			if (ImGui::MenuItem("📥 Import 3D Model / Level..."))
@@ -658,48 +680,149 @@ namespace EunoiaUI
 			ImGui::BeginGroup();
 
 			// Card Visual Classification
-			const char* iconTag = isDir ? "[DIR]" : "[FILE]";
-			ImVec4 tagColor = ImVec4(0.2f, 0.7f, 0.9f, 1.0f); // Default Cyan for Folders
-
 			std::string ext = entry.path().extension().string();
 			std::string extLower = ext;
 			std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
 
-			bool isLevel = (extLower == ".eulevel" || extLower == ".wiscene");
+			bool isLevel = (extLower == ".eulevel" || extLower == ".elevel" || extLower == ".level" || extLower == ".wiscene");
 			bool is3DModel = (extLower == ".obj" || extLower == ".gltf" || extLower == ".glb" || extLower == ".fbx" || extLower == ".ply");
 			bool isTexture = (extLower == ".png" || extLower == ".jpg" || extLower == ".jpeg" || extLower == ".dds" || extLower == ".tga" || extLower == ".bmp" || extLower == ".hdr");
-			bool isMaterial = (extLower == ".wimaterial" || extLower == ".mat");
-			bool isScript = (extLower == ".lua");
+			bool isMaterial = (extLower == ".eumat" || extLower == ".emat" || extLower == ".mat" || extLower == ".wimaterial");
+			bool isScript = (extLower == ".eubeh" || extLower == ".eubehaviour" || extLower == ".lua");
+			bool isSkybox = (extLower == ".eskybox" || extLower == ".ehdr" || extLower == ".skybox");
+			bool isVisualBehaviour = (extLower == ".ebehaviour" || extLower == ".visualbehaviour");
 			bool isAudio = (extLower == ".wav" || extLower == ".ogg" || extLower == ".mp3");
 
-			if (isLevel) { iconTag = "🌐 LEVEL"; tagColor = ImVec4(0.20f, 0.85f, 0.95f, 1.0f); }     // Cyan
-			else if (is3DModel) { iconTag = "🧊 3D"; tagColor = ImVec4(0.95f, 0.55f, 0.20f, 1.0f); } // Orange
-			else if (isTexture) { iconTag = "🖼 TEX"; tagColor = ImVec4(0.20f, 0.85f, 0.50f, 1.0f); } // Emerald
-			else if (isMaterial) { iconTag = "🎨 MAT"; tagColor = ImVec4(0.35f, 0.65f, 1.00f, 1.0f); } // Blue
-			else if (isScript) { iconTag = "📜 LUA"; tagColor = ImVec4(0.85f, 0.40f, 0.95f, 1.0f); }   // Purple
-			else if (isAudio) { iconTag = "🔊 AUD"; tagColor = ImVec4(0.95f, 0.80f, 0.20f, 1.0f); }    // Amber
-			else if (isDir) { iconTag = "📁 DIR"; tagColor = ImVec4(0.25f, 0.80f, 0.95f, 1.0f); }
+			auto GetIconTextureID = [](const wi::Resource& res) -> ImTextureID {
+				if (res.IsValid())
+				{
+					return (ImTextureID)(&res.GetTexture());
+				}
+				return nullptr;
+			};
 
-			bool isSelected = (m_selectedAssetPath == entry.path().string());
-			if (isSelected)
+			ImTextureID iconTex = nullptr;
+			ImVec4 tagColor = ImVec4(0.25f, 0.80f, 0.95f, 1.0f);
+			const char* iconTag = "FILE";
+
+			if (isDir)
 			{
-				ImGui::PushStyleColor(ImGuiCol_Button, Colors::AccentBlue);
-				ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.9f));
+				iconTex = GetIconTextureID(m_iconFolder);
+				tagColor = ImVec4(0.25f, 0.80f, 0.95f, 1.0f); // Cyan
+				iconTag = "DIR";
+			}
+			else if (isLevel)
+			{
+				iconTex = GetIconTextureID(m_iconLevel);
+				tagColor = ImVec4(0.20f, 0.85f, 0.95f, 1.0f); // Cyan
+				iconTag = "LEVEL";
+			}
+			else if (isMaterial)
+			{
+				iconTex = GetIconTextureID(m_iconMaterial);
+				tagColor = ImVec4(0.35f, 0.65f, 1.00f, 1.0f); // Blue
+				iconTag = "MAT";
+			}
+			else if (is3DModel)
+			{
+				iconTex = GetIconTextureID(m_icon3D);
+				tagColor = ImVec4(0.95f, 0.55f, 0.20f, 1.0f); // Orange
+				iconTag = "3D";
+			}
+			else if (isTexture)
+			{
+				iconTex = GetIconTextureID(m_iconTexture);
+				tagColor = ImVec4(0.20f, 0.85f, 0.50f, 1.0f); // Emerald
+				iconTag = "TEX";
+			}
+			else if (isScript)
+			{
+				iconTex = GetIconTextureID(m_iconBehaviour);
+				tagColor = ImVec4(0.85f, 0.40f, 0.95f, 1.0f); // Purple
+				iconTag = "BEH";
+			}
+			else if (isSkybox)
+			{
+				iconTex = GetIconTextureID(m_iconSkybox);
+				tagColor = ImVec4(0.30f, 0.75f, 0.90f, 1.0f); // Sky Blue
+				iconTag = "SKY";
+			}
+			else if (isVisualBehaviour)
+			{
+				iconTex = GetIconTextureID(m_iconVisualBehaviour);
+				tagColor = ImVec4(0.90f, 0.35f, 0.60f, 1.0f); // Magenta
+				iconTag = "VBEH";
+			}
+			else if (isAudio)
+			{
+				iconTex = GetIconTextureID(m_iconBehaviour);
+				tagColor = ImVec4(0.95f, 0.80f, 0.20f, 1.0f); // Amber
+				iconTag = "AUD";
+			}
+			else
+			{
+				iconTex = GetIconTextureID(m_icon3D);
+				tagColor = ImVec4(0.60f, 0.60f, 0.60f, 1.0f);
+				iconTag = "FILE";
 			}
 
-			std::string shortName = (filename.size() > 7) ? (filename.substr(0, 6) + "..") : filename;
-			char btnLabel[128];
-			snprintf(btnLabel, sizeof(btnLabel), "%s\n\n%s##card", iconTag, shortName.c_str());
+			float cardW = m_thumbnailSize;
+			float cardH = m_thumbnailSize + 22.0f;
+			bool isSelected = (m_selectedAssetPath == entry.path().string());
+			ImVec2 curScreenPos = ImGui::GetCursorScreenPos();
 
-			if (ImGui::Button(btnLabel, ImVec2(m_thumbnailSize, m_thumbnailSize)))
+			if (isSelected)
+			{
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.28f, 0.48f, 0.90f));
+				ImGui::PushStyleColor(ImGuiCol_Border, Colors::AccentBlue);
+			}
+			else
+			{
+				ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.11f, 0.12f, 0.15f, 0.75f));
+				ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.22f, 0.28f, 0.60f));
+			}
+
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+			ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+
+			if (ImGui::Button("##cardBtn", ImVec2(cardW, cardH)))
 			{
 				m_selectedAssetPath = entry.path().string();
 			}
 
-			if (isSelected)
+			ImDrawList* dl = ImGui::GetWindowDrawList();
+			ImVec2 cardMin = curScreenPos;
+			ImVec2 cardMax = ImVec2(curScreenPos.x + cardW, curScreenPos.y + cardH);
+
+			// Top color stripe
+			dl->AddRectFilled(
+				ImVec2(cardMin.x + 1.0f, cardMin.y + 1.0f),
+				ImVec2(cardMax.x - 1.0f, cardMin.y + 3.5f),
+				ImGui::ColorConvertFloat4ToU32(tagColor),
+				2.0f,
+				ImDrawFlags_RoundCornersTop
+			);
+
+			// Centered Icon Image
+			float iconDim = std::min(48.0f, cardW - 16.0f);
+			ImVec2 iconPos = ImVec2(cardMin.x + (cardW - iconDim) * 0.5f, cardMin.y + 6.0f);
+			if (iconTex)
 			{
-				ImGui::PopStyleColor(2);
+				dl->AddImage(iconTex, iconPos, ImVec2(iconPos.x + iconDim, iconPos.y + iconDim));
 			}
+			else
+			{
+				dl->AddText(ImVec2(cardMin.x + 4.0f, cardMin.y + 14.0f), ImGui::ColorConvertFloat4ToU32(tagColor), iconTag);
+			}
+
+			// Truncated filename text centered at bottom
+			std::string shortName = (filename.size() > 9) ? (filename.substr(0, 8) + "..") : filename;
+			ImVec2 txtSz = ImGui::CalcTextSize(shortName.c_str());
+			ImVec2 txtPos = ImVec2(cardMin.x + (cardW - txtSz.x) * 0.5f, cardMax.y - 18.0f);
+			dl->AddText(txtPos, IM_COL32(230, 232, 238, 255), shortName.c_str());
+
+			ImGui::PopStyleVar(2);
+			ImGui::PopStyleColor(2);
 
 			// Double Click Actions
 			if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
@@ -983,16 +1106,16 @@ namespace EunoiaUI
 			ImGui::EndPopup();
 		}
 
-		// New Script Modal
+		// New Script / Behavior Modal
 		if (m_showNewScriptModal)
 		{
-			ImGui::OpenPopup("Create Lua Script###NewScriptPopup");
+			ImGui::OpenPopup("Create Behavior Script###NewScriptPopup");
 			m_showNewScriptModal = false;
 		}
 
-		if (ImGui::BeginPopupModal("Create Lua Script###NewScriptPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+		if (ImGui::BeginPopupModal("Create Behavior Script###NewScriptPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::Text("Enter script name (without or with .lua):");
+			ImGui::Text("Enter Behavior script name (without or with .eubeh):");
 			ImGui::SetNextItemWidth(260.0f);
 			ImGui::InputText("##ScriptNameInput", m_newScriptNameBuf, sizeof(m_newScriptNameBuf));
 			ImGui::Spacing();
@@ -1022,7 +1145,7 @@ namespace EunoiaUI
 
 		if (ImGui::BeginPopupModal("Create Material###NewMaterialPopup", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 		{
-			ImGui::Text("Enter material name (without or with .wimaterial):");
+			ImGui::Text("Enter material name (without or with .eumat):");
 			ImGui::SetNextItemWidth(260.0f);
 			ImGui::InputText("##MaterialNameInput", m_newMaterialNameBuf, sizeof(m_newMaterialNameBuf));
 			ImGui::Spacing();

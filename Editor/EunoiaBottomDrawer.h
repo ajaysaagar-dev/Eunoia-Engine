@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include "wiResourceManager.h"
 
 class EditorComponent;
 
@@ -77,6 +78,18 @@ namespace EunoiaUI
 		bool m_autoScroll = true;
 		char m_logSearchBuf[64] = "";
 		char m_commandInputBuf[256] = "";
+
+		// Content Browser Icons (from original Eunoia Engine)
+		wi::Resource m_iconFolder;
+		wi::Resource m_iconLevel;
+		wi::Resource m_icon3D;
+		wi::Resource m_iconMaterial;
+		wi::Resource m_iconTexture;
+		wi::Resource m_iconBehaviour;
+		wi::Resource m_iconSkybox;
+		wi::Resource m_iconVisualBehaviour;
+		bool m_iconsLoaded = false;
+		void LoadContentBrowserIcons();
 
 		void RenderContentBrowser(EditorComponent& editor);
 		void RenderOutputLog(EditorComponent& editor);
