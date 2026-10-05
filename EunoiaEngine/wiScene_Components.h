@@ -1920,8 +1920,8 @@ namespace wi::scene
 		float skyExposure = 1;
 		XMFLOAT3 horizon = XMFLOAT3(0.0f, 0.0f, 0.0f);
 		XMFLOAT3 zenith = XMFLOAT3(0.0f, 0.0f, 0.0f);
-		XMFLOAT3 ambient = XMFLOAT3(0.2f, 0.2f, 0.2f);
-		float fogStart = 100;
+		XMFLOAT3 ambient = XMFLOAT3(0.0f, 0.0f, 0.0f);
+		float fogStart = 0;
 		float fogDensity = 0;
 		float fogHeightStart = 1;
 		float fogHeightEnd = 3;
