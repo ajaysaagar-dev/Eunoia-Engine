@@ -1890,8 +1890,9 @@ namespace wi::scene
 			REALISTIC_SKY_HIGH_QUALITY = 1 << 8,
 			REALISTIC_SKY_RECEIVE_SHADOW = 1 << 9,
 			VOLUMETRIC_CLOUDS_RECEIVE_SHADOW = 1 << 10,
+			SKYBOX_DISABLED = 1 << 11,
 		};
-		uint32_t _flags = EMPTY;
+		uint32_t _flags = SKYBOX_DISABLED;
 
 		constexpr bool IsOceanEnabled() const { return _flags & OCEAN_ENABLED; }
 		constexpr bool IsRealisticSky() const { return _flags & REALISTIC_SKY; }
@@ -1903,6 +1904,8 @@ namespace wi::scene
 		constexpr bool IsRealisticSkyHighQuality() const { return _flags & REALISTIC_SKY_HIGH_QUALITY; }
 		constexpr bool IsRealisticSkyReceiveShadow() const { return _flags & REALISTIC_SKY_RECEIVE_SHADOW; }
 		constexpr bool IsVolumetricCloudsReceiveShadow() const { return _flags & VOLUMETRIC_CLOUDS_RECEIVE_SHADOW; }
+		constexpr bool IsSkyboxDisabled() const { return _flags & SKYBOX_DISABLED; }
+		constexpr bool IsSkyboxEnabled() const { return !IsSkyboxDisabled(); }
 
 		constexpr void SetOceanEnabled(bool value = true) { set_flag(_flags, OCEAN_ENABLED, value); }
 		constexpr void SetRealisticSky(bool value = true) { set_flag(_flags, REALISTIC_SKY, value); }
@@ -1913,6 +1916,8 @@ namespace wi::scene
 		constexpr void SetRealisticSkyAerialPerspective(bool value = true) { set_flag(_flags, REALISTIC_SKY_AERIAL_PERSPECTIVE, value); }
 		constexpr void SetRealisticSkyHighQuality(bool value = true) { set_flag(_flags, REALISTIC_SKY_HIGH_QUALITY, value); }
 		constexpr void SetRealisticSkyReceiveShadow(bool value = true) { set_flag(_flags, REALISTIC_SKY_RECEIVE_SHADOW, value); }
+		constexpr void SetSkyboxDisabled(bool value = true) { set_flag(_flags, SKYBOX_DISABLED, value); }
+		constexpr void SetSkyboxEnabled(bool value = true) { SetSkyboxDisabled(!value); }
 		constexpr void SetVolumetricCloudsReceiveShadow(bool value = true) { set_flag(_flags, VOLUMETRIC_CLOUDS_RECEIVE_SHADOW, value); }
 
 		XMFLOAT3 sunColor = XMFLOAT3(0, 0, 0);

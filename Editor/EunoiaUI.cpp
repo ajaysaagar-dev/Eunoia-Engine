@@ -439,37 +439,27 @@ namespace EunoiaUI
 					{
 						m_showSkyboxWindow = true;
 					}
-					bool isSkyActive = scene.weather.skyMap.IsValid() || scene.weather.IsRealisticSky() ||
-						(scene.weather.horizon.x > 0.001f || scene.weather.horizon.y > 0.001f || scene.weather.horizon.z > 0.001f ||
-						 scene.weather.zenith.x > 0.001f || scene.weather.zenith.y > 0.001f || scene.weather.zenith.z > 0.001f);
+					bool isSkyActive = scene.weather.IsSkyboxEnabled();
 					if (ImGui::MenuItem(isSkyActive ? "Disable Skybox (Pitch Black)" : "Enable Default Skybox"))
 					{
-						if (isSkyActive)
+						scene.weather.SetSkyboxEnabled(!isSkyActive);
+						if (!isSkyActive)
 						{
-							scene.weather.skyMap = {};
-							scene.weather.skyMapName.clear();
-							scene.weather.SetRealisticSky(false);
-							scene.weather.SetVolumetricClouds(false);
-							scene.weather.horizon = XMFLOAT3(0, 0, 0);
-							scene.weather.zenith = XMFLOAT3(0, 0, 0);
-							scene.weather.ambient = XMFLOAT3(0, 0, 0);
-							scene.weather.fogDensity = 0.0f;
-							if (scene.weathers.GetCount() > 0) scene.weathers[0] = scene.weather;
-							for (size_t i = 0; i < scene.probes.GetCount(); ++i) scene.probes[i].SetDirty();
-							scene.global_dynamic_probe.SetDirty();
-							m_bottomDrawer.AddLog("World", "Skybox disabled (Dark World)", 3);
+							if (!scene.weather.skyMap.IsValid() && !scene.weather.IsRealisticSky())
+							{
+								scene.weather.SetRealisticSky(true);
+								scene.weather.horizon = XMFLOAT3(0.4f, 0.4f, 0.4f);
+								scene.weather.zenith = XMFLOAT3(0.1f, 0.2f, 0.4f);
+								scene.weather.ambient = XMFLOAT3(0.1f, 0.1f, 0.1f);
+							}
 						}
-						else
+						if (scene.weathers.GetCount() > 0)
 						{
-							scene.weather.SetRealisticSky(true);
-							scene.weather.horizon = XMFLOAT3(0.4f, 0.4f, 0.4f);
-							scene.weather.zenith = XMFLOAT3(0.1f, 0.2f, 0.4f);
-							scene.weather.ambient = XMFLOAT3(0.1f, 0.1f, 0.1f);
-							if (scene.weathers.GetCount() > 0) scene.weathers[0] = scene.weather;
-							for (size_t i = 0; i < scene.probes.GetCount(); ++i) scene.probes[i].SetDirty();
-							scene.global_dynamic_probe.SetDirty();
-							m_bottomDrawer.AddLog("World", "Skybox enabled (Realistic Sky)", 3);
+							for (size_t w = 0; w < scene.weathers.GetCount(); ++w) scene.weathers[w] = scene.weather;
 						}
+						for (size_t i = 0; i < scene.probes.GetCount(); ++i) scene.probes[i].SetDirty();
+						scene.global_dynamic_probe.SetDirty();
+						m_bottomDrawer.AddLog("World", !isSkyActive ? "Skybox enabled" : "Skybox disabled (Pitch Black)", 3);
 					}
 					ImGui::Separator();
 					if (ImGui::MenuItem("Reset to Default Level"))
@@ -880,7 +870,10 @@ namespace EunoiaUI
 		auto SyncWeather = [&]() {
 			if (scene.weathers.GetCount() > 0)
 			{
-				scene.weathers[0] = weather;
+				for (size_t i = 0; i < scene.weathers.GetCount(); ++i)
+				{
+					scene.weathers[i] = weather;
+				}
 			}
 			scene.weather = weather;
 			for (size_t i = 0; i < scene.probes.GetCount(); ++i)
@@ -890,11 +883,11 @@ namespace EunoiaUI
 			scene.global_dynamic_probe.SetDirty();
 		};
 
-		bool isTextureActive = weather.skyMap.IsValid();
-		bool isRealisticActive = weather.IsRealisticSky();
-		bool hasColors = (weather.horizon.x > 0.001f || weather.horizon.y > 0.001f || weather.horizon.z > 0.001f ||
+		bool isSkyboxDisabled = weather.IsSkyboxDisabled();
+		bool isTextureActive = !isSkyboxDisabled && weather.skyMap.IsValid();
+		bool isRealisticActive = !isSkyboxDisabled && weather.IsRealisticSky();
+		bool hasColors = !isSkyboxDisabled && (weather.horizon.x > 0.001f || weather.horizon.y > 0.001f || weather.horizon.z > 0.001f ||
 						  weather.zenith.x > 0.001f || weather.zenith.y > 0.001f || weather.zenith.z > 0.001f);
-		bool isSkyboxDisabled = !isTextureActive && !isRealisticActive && !hasColors;
 
 		// -----------------------------------------------------------------------------
 		// 1. OLD EUNOIA ENGINE HEADER & MASTER ENABLE
@@ -906,36 +899,33 @@ namespace EunoiaUI
 		bool enableSkybox = !isSkyboxDisabled;
 		if (ImGui::Checkbox("Enable World Skybox", &enableSkybox))
 		{
-			if (!enableSkybox)
+			weather.SetSkyboxEnabled(enableSkybox);
+			if (enableSkybox)
 			{
-				weather.skyMap = {};
-				weather.skyMapName.clear();
-				weather.SetRealisticSky(false);
-				weather.SetVolumetricClouds(false);
-				weather.horizon = XMFLOAT3(0, 0, 0);
-				weather.zenith = XMFLOAT3(0, 0, 0);
-				weather.ambient = XMFLOAT3(0, 0, 0);
-				weather.fogDensity = 0.0f;
-				SyncWeather();
-				m_bottomDrawer.AddLog("World", "Skybox disabled (Dark World)", 3);
+				if (!weather.skyMap.IsValid() && !weather.IsRealisticSky() &&
+					weather.horizon.x <= 0.001f && weather.horizon.y <= 0.001f && weather.horizon.z <= 0.001f &&
+					weather.zenith.x <= 0.001f && weather.zenith.y <= 0.001f && weather.zenith.z <= 0.001f)
+				{
+					weather.SetRealisticSky(true);
+					weather.ambient = XMFLOAT3(33.0f / 255.0f, 47.0f / 255.0f, 127.0f / 255.0f);
+					weather.horizon = XMFLOAT3(101.0f / 255.0f, 101.0f / 255.0f, 227.0f / 255.0f);
+					weather.zenith = XMFLOAT3(99.0f / 255.0f, 133.0f / 255.0f, 255.0f / 255.0f);
+					weather.fogStart = 100.0f;
+					weather.fogDensity = 0.0025f;
+				}
 			}
-			else
-			{
-				weather.SetRealisticSky(true);
-				weather.ambient = XMFLOAT3(33.0f / 255.0f, 47.0f / 255.0f, 127.0f / 255.0f);
-				weather.horizon = XMFLOAT3(101.0f / 255.0f, 101.0f / 255.0f, 227.0f / 255.0f);
-				weather.zenith = XMFLOAT3(99.0f / 255.0f, 133.0f / 255.0f, 255.0f / 255.0f);
-				weather.fogStart = 100.0f;
-				weather.fogDensity = 0.0025f;
-				SyncWeather();
-				m_bottomDrawer.AddLog("World", "Skybox enabled (Daytime Atmosphere)", 3);
-			}
+			SyncWeather();
+			m_bottomDrawer.AddLog("World", enableSkybox ? "Skybox enabled" : "Skybox disabled (Pitch Black)", 3);
 		}
 
 		ImGui::SameLine();
 		ImGui::TextDisabled("| Status:");
 		ImGui::SameLine();
-		if (isTextureActive)
+		if (isSkyboxDisabled)
+		{
+			ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "⚫ Pitch Black (Disabled)");
+		}
+		else if (isTextureActive)
 		{
 			std::string texName = weather.skyMapName.empty() ? "Custom Texture" : wi::helper::GetFileNameFromPath(weather.skyMapName);
 			ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "🌌 HDR Active (%s)", texName.c_str());
@@ -959,8 +949,20 @@ namespace EunoiaUI
 		ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
 		if (isSkyboxDisabled)
 		{
-			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
-			ImGui::Button("⚫ Skybox Disabled", ImVec2(145, 26));
+			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.22f, 1.0f));
+			if (ImGui::Button("⚫ Enable Skybox", ImVec2(145, 26)))
+			{
+				weather.SetSkyboxEnabled(true);
+				if (!weather.skyMap.IsValid() && !weather.IsRealisticSky())
+				{
+					weather.SetRealisticSky(true);
+					weather.ambient = XMFLOAT3(33.0f / 255.0f, 47.0f / 255.0f, 127.0f / 255.0f);
+					weather.horizon = XMFLOAT3(101.0f / 255.0f, 101.0f / 255.0f, 227.0f / 255.0f);
+					weather.zenith = XMFLOAT3(99.0f / 255.0f, 133.0f / 255.0f, 255.0f / 255.0f);
+				}
+				SyncWeather();
+				m_bottomDrawer.AddLog("World", "Skybox enabled", 3);
+			}
 			ImGui::PopStyleColor();
 		}
 		else
@@ -968,14 +970,7 @@ namespace EunoiaUI
 			ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1.0f));
 			if (ImGui::Button("⚫ Disable Skybox", ImVec2(145, 26)))
 			{
-				weather.skyMap = {};
-				weather.skyMapName.clear();
-				weather.SetRealisticSky(false);
-				weather.SetVolumetricClouds(false);
-				weather.horizon = XMFLOAT3(0, 0, 0);
-				weather.zenith = XMFLOAT3(0, 0, 0);
-				weather.ambient = XMFLOAT3(0, 0, 0);
-				weather.fogDensity = 0.0f;
+				weather.SetSkyboxDisabled(true);
 				SyncWeather();
 				m_bottomDrawer.AddLog("World", "Skybox disabled (Dark World)", 3);
 			}
@@ -985,6 +980,7 @@ namespace EunoiaUI
 		ImGui::SameLine();
 		if (ImGui::Button("☀️ Realistic Sky", ImVec2(125, 26)))
 		{
+			weather.SetSkyboxEnabled(true);
 			weather.skyMap = {};
 			weather.skyMapName.clear();
 			weather.SetRealisticSky(true);
@@ -998,6 +994,7 @@ namespace EunoiaUI
 		ImGui::SameLine();
 		if (ImGui::Button("🎨 Gradient Sky", ImVec2(125, 26)))
 		{
+			weather.SetSkyboxEnabled(true);
 			weather.skyMap = {};
 			weather.skyMapName.clear();
 			weather.SetRealisticSky(false);
@@ -1448,6 +1445,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("⚫ Pitch Black (Disable Skybox)", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxDisabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(false);
@@ -1462,6 +1460,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("☀️ Daytime Atmosphere", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(true);
@@ -1477,6 +1476,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("⛅ Partly Cloudy", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(true);
@@ -1492,6 +1492,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("🌅 Sunset", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(false);
@@ -1506,6 +1507,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("☁️ Overcast Cloudy", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(false);
@@ -1520,6 +1522,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("🌙 Night", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(true);
@@ -1535,6 +1538,7 @@ namespace EunoiaUI
 
 				if (ImGui::Button("⚪ White Furnace (Lighting Test)", ImVec2(pBtnW, pBtnH)))
 				{
+					weather.SetSkyboxEnabled(true);
 					weather.skyMap = {};
 					weather.skyMapName.clear();
 					weather.SetRealisticSky(false);

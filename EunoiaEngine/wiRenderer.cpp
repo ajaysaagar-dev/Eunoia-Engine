@@ -4369,15 +4369,15 @@ void UpdatePerFrameData(
 	{
 		frameCB.options |= OPTION_BIT_VXGI_REFLECTIONS_ENABLED;
 	}
-	if (vis.scene->weather.IsRealisticSky())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsRealisticSky())
 	{
 		frameCB.options |= OPTION_BIT_REALISTIC_SKY;
 	}
-	if (vis.scene->weather.IsOverrideFogColor())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsOverrideFogColor())
 	{
 		frameCB.options |= OPTION_BIT_OVERRIDE_FOG_COLOR;
 	}
-	if (vis.scene->weather.IsHeightFog())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsHeightFog())
 	{
 		frameCB.options |= OPTION_BIT_HEIGHT_FOG;
 	}
@@ -4410,27 +4410,27 @@ void UpdatePerFrameData(
 	{
 		frameCB.options |= OPTION_BIT_FORCE_UNLIT;
 	}
-	if (vis.scene->weather.IsVolumetricCloudsCastShadow() && vis.scene->weather.IsVolumetricClouds())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsVolumetricCloudsCastShadow() && vis.scene->weather.IsVolumetricClouds())
 	{
 		frameCB.options |= OPTION_BIT_VOLUMETRICCLOUDS_CAST_SHADOW;
 	}
-	if (vis.scene->weather.skyMap.IsValid() && !has_flag(vis.scene->weather.skyMap.GetTexture().desc.misc_flags, ResourceMiscFlag::TEXTURECUBE))
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.skyMap.IsValid() && !has_flag(vis.scene->weather.skyMap.GetTexture().desc.misc_flags, ResourceMiscFlag::TEXTURECUBE))
 	{
 		frameCB.options |= OPTION_BIT_STATIC_SKY_SPHEREMAP;
 	}
-	if (vis.scene->weather.IsRealisticSkyAerialPerspective() && vis.scene->weather.IsRealisticSky())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsRealisticSkyAerialPerspective() && vis.scene->weather.IsRealisticSky())
 	{
 		frameCB.options |= OPTION_BIT_REALISTIC_SKY_AERIAL_PERSPECTIVE;
 	}
-	if (vis.scene->weather.IsRealisticSkyHighQuality() && vis.scene->weather.IsRealisticSky())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsRealisticSkyHighQuality() && vis.scene->weather.IsRealisticSky())
 	{
 		frameCB.options |= OPTION_BIT_REALISTIC_SKY_HIGH_QUALITY;
 	}
-	if (vis.scene->weather.IsRealisticSkyReceiveShadow() && vis.scene->weather.IsRealisticSky())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsRealisticSkyReceiveShadow() && vis.scene->weather.IsRealisticSky())
 	{
 		frameCB.options |= OPTION_BIT_REALISTIC_SKY_RECEIVE_SHADOW;
 	}
-	if (vis.scene->weather.IsVolumetricCloudsReceiveShadow() && vis.scene->weather.IsVolumetricClouds())
+	if (!vis.scene->weather.IsSkyboxDisabled() && vis.scene->weather.IsVolumetricCloudsReceiveShadow() && vis.scene->weather.IsVolumetricClouds())
 	{
 		frameCB.options |= OPTION_BIT_VOLUMETRICCLOUDS_RECEIVE_SHADOW;
 	}
@@ -9060,6 +9060,11 @@ void ComputeSkyAtmosphereCameraVolumeLut(CommandList cmd)
 
 void DrawSky(const Scene& scene, CommandList cmd, bool clouds)
 {
+	if (scene.weather.IsSkyboxDisabled())
+	{
+		return;
+	}
+
 	device->EventBegin("DrawSky", cmd);
 
 	if (scene.weather.skyMap.IsValid())
