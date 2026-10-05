@@ -4,10 +4,14 @@ cd /d "%~dp0"
 
 REM Search for existing engine binary across configurations
 set "EXE="
-if exist "BUILD\x64\Release\Editor_Windows\Editor_Windows.exe" set "EXE=BUILD\x64\Release\Editor_Windows\Editor_Windows.exe"
+if exist "BUILD\x64\Release\Editor_Windows\Eunoia-Editor.exe" set "EXE=BUILD\x64\Release\Editor_Windows\Eunoia-Editor.exe"
+if not defined EXE if exist "BUILD\x64\Release\Eunoia-Editor.exe" set "EXE=BUILD\x64\Release\Eunoia-Editor.exe"
+if not defined EXE if exist "BUILD\x64\Debug\Editor_Windows\Eunoia-Editor.exe" set "EXE=BUILD\x64\Debug\Editor_Windows\Eunoia-Editor.exe"
+if not defined EXE if exist "BUILD\x64\Release\Editor_Windows\Editor_Windows.exe" set "EXE=BUILD\x64\Release\Editor_Windows\Editor_Windows.exe"
 if not defined EXE if exist "BUILD\x64\Release\Editor_Windows.exe" set "EXE=BUILD\x64\Release\Editor_Windows.exe"
 if not defined EXE if exist "BUILD\x64\Debug\Editor_Windows\Editor_Windows.exe" set "EXE=BUILD\x64\Debug\Editor_Windows\Editor_Windows.exe"
 if not defined EXE if exist "BUILD\x64\Debug\Editor_Windows.exe" set "EXE=BUILD\x64\Debug\Editor_Windows.exe"
+if not defined EXE if exist "Editor\Editor_Windows\x64\Release\Eunoia-Editor.exe" set "EXE=Editor\Editor_Windows\x64\Release\Eunoia-Editor.exe"
 if not defined EXE if exist "Editor\Editor_Windows\x64\Release\Editor_Windows.exe" set "EXE=Editor\Editor_Windows\x64\Release\Editor_Windows.exe"
 
 if not defined EXE (

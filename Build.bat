@@ -2,6 +2,7 @@
 setlocal
 
 REM Terminate lingering processes that hold file locks on output binaries
+taskkill /f /im Eunoia-Editor.exe >nul 2>&1
 taskkill /f /im Editor_Windows.exe >nul 2>&1
 taskkill /f /im cl.exe >nul 2>&1
 taskkill /f /im link.exe >nul 2>&1
