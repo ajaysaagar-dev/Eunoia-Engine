@@ -38,7 +38,6 @@
 #include <UISystem/UISystem.h>
 #include <Collisions/CollisionTypes.h>
 #include <Collisions/CollisionSystem.h>
-#include <PostProcess/PostProcessSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -3034,9 +3033,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showPostProcessingModal) {
         RenderPostProcessingModal(scene);
     }
-    if (showPostProcessSystemModal) {
-        RenderPostProcessSystemModal(scene);
-    }
 
     // 7. Asset Reference Viewer (dev.md Section 33)
     if (showReferenceViewer) {
@@ -3713,21 +3709,13 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 // POST PROCESSING
                 // ================================================================
                 if (ImGui::BeginMenu("Post Processing")) {
-                    auto& pp   = Eunoia::PostProcess::AdvancedPostProcessSystem::Get();
-                    auto& pps  = pp.GetSettingsRef();
                     if (ImGui::Checkbox("Enable Post Processing", &scene.enablePostProcessing))
                         AddLog("LogWorld", scene.enablePostProcessing ? "Post Processing Enabled" : "Post Processing Disabled", 0);
                     ImGui::Separator();
 
-                    ImGui::TextDisabled("HDR & Exposure:");
+                    ImGui::TextDisabled("HDR & Brightness:");
                     ImGui::SliderFloat("EV Compensation",    &scene.postExposureEV,         -5.0f, 5.0f, "%.2f EV");
                     ImGui::SliderFloat("Exposure Multiplier",&scene.postExposureMultiplier,  0.0f, 5.0f, "%.2f");
-                    ImGui::MenuItem("Eye Adaptation (Auto-Exposure)", nullptr, &pps.eyeAdaptation.enabled);
-                    if (pps.eyeAdaptation.enabled) {
-                        ImGui::SliderFloat("Adapt Speed",  &pps.eyeAdaptation.adaptSpeed, 0.1f, 10.0f, "%.1f");
-                        ImGui::SliderFloat("EV Min",       &pps.eyeAdaptation.minEV,      -8.0f, 0.0f,  "%.1f");
-                        ImGui::SliderFloat("EV Max",       &pps.eyeAdaptation.maxEV,       0.0f, 8.0f,  "%.1f");
-                    }
                     ImGui::Separator();
 
                     ImGui::TextDisabled("Color Grading:");
@@ -3741,36 +3729,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SliderFloat("Tint",        &scene.postColorTint,        -1.0f, 1.0f, "%.2f");
                     ImGui::Separator();
 
-                    ImGui::TextDisabled("Film & Lens Effects:");
-                    ImGui::MenuItem("Bloom",                nullptr, &pps.bloom.enabled);
-                    if (pps.bloom.enabled) ImGui::SliderFloat("Bloom Strength", &pps.bloom.strength, 0.0f, 2.0f, "%.2f");
-                    ImGui::MenuItem("Motion Blur",          nullptr, &pps.motionBlur.enabled);
-                    if (pps.motionBlur.enabled) ImGui::SliderFloat("Motion Blur Strength", &pps.motionBlur.strength, 0.0f, 2.0f, "%.2f");
-                    ImGui::MenuItem("Bokeh Depth of Field", nullptr, &pps.dof.enabled);
-                    if (pps.dof.enabled) {
-                        ImGui::SliderFloat("Focus Distance", &pps.dof.focusDistance, 0.5f, 100.0f, "%.1f m");
-                        ImGui::SliderFloat("Bokeh Radius",   &pps.dof.bokehRadius,   1.0f, 32.0f,  "%.0f px");
-                    }
-                    ImGui::MenuItem("Lens Flare",           nullptr, &pps.lensFlare.enabled);
-                    ImGui::MenuItem("Light Shafts (God Rays)", nullptr, &pps.lightShafts.enabled);
-                    ImGui::MenuItem("Chromatic Aberration", nullptr, &pps.chromaticAberration.enabled);
-                    if (pps.chromaticAberration.enabled) ImGui::SliderFloat("CA Amount", &pps.chromaticAberration.amount, 0.0f, 0.02f, "%.4f");
-                    ImGui::MenuItem("Sharpen Filter",       nullptr, &pps.sharpen.enabled);
-                    if (pps.sharpen.enabled) ImGui::SliderFloat("Sharpen Amount", &pps.sharpen.amount, 0.0f, 1.0f, "%.2f");
-                    ImGui::MenuItem("Edge Outline",         nullptr, &pps.edgeOutline.enabled);
-                    ImGui::Separator();
-
-                    if (ImGui::BeginMenu("Post Process Preset")) {
-                        if (ImGui::MenuItem("Off"))          pp.ApplyPreset(Eunoia::PostProcess::PostProcessPreset::Off);
-                        if (ImGui::MenuItem("Game Balanced"))pp.ApplyPreset(Eunoia::PostProcess::PostProcessPreset::GameBalanced);
-                        if (ImGui::MenuItem("Cinematic"))    pp.ApplyPreset(Eunoia::PostProcess::PostProcessPreset::Cinematic);
-                        if (ImGui::MenuItem("Photorealistic"))pp.ApplyPreset(Eunoia::PostProcess::PostProcessPreset::Photorealistic);
-                        if (ImGui::MenuItem("Stylized"))     pp.ApplyPreset(Eunoia::PostProcess::PostProcessPreset::Stylized);
-                        ImGui::EndMenu();
-                    }
-                    ImGui::Separator();
-                    if (ImGui::MenuItem("Full Post Processing Settings...", nullptr, showPostProcessingModal)) showPostProcessingModal = true;
-                    if (ImGui::MenuItem("Post-Process System Pipeline...", nullptr, showPostProcessSystemModal)) showPostProcessSystemModal = true;
+                    if (ImGui::MenuItem("Post Processing Settings...", nullptr, showPostProcessingModal)) showPostProcessingModal = true;
                     ImGui::EndMenu();
                 }
 
@@ -8311,154 +8270,8 @@ void EngineUI::RenderPostProcessingModal(Scene& scene) {
     }
     ImGui::End();
 }
-}
 
-void EngineUI::RenderPostProcessSystemModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(660, 620), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Post-Process System Pipeline###PostProcessSystemWin", &showPostProcessSystemModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& pp = Eunoia::PostProcess::PostProcessSystem::Get();
-        auto& s = pp.GetSettingsRef();
 
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.8f, 1.0f), "Post-Process System (Optics, Lens, Screen-Space Effects)");
-        ImGui::TextWrapped("Unified post processing pipeline consolidating Bloom, Depth of Field, Motion Blur, Lens Flares, God Rays, Chromatic Aberration, SSAO/HBAO/MSAO, and Screen Space Reflections.");
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("BLOOM & EMISSIVE BLEED", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable Bloom", &s.bloom.enabled);
-            if (s.bloom.enabled) {
-                ImGui::SliderFloat("Luminance Threshold", &s.bloom.threshold, 0.1f, 5.0f, "%.2f");
-                ImGui::SliderFloat("Bloom Intensity", &s.bloom.strength, 0.0f, 3.0f, "%.2f");
-                ImGui::SliderFloat("Scatter Radius", &s.bloom.scatter, 0.1f, 1.0f, "%.2f");
-                ImGui::SliderInt("Mip Chain Length", &s.bloom.mipChainLength, 3, 8);
-                ImGui::Checkbox("HDR Wide-Gamut Bleed", &s.bloom.useHDR);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("SCREEN SPACE AMBIENT OCCLUSION (AO)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* aoModes[] = { "Disabled", "SSAO (Brute Force)", "HBAO (Horizon Based)", "MSAO (Multi-Scale)" };
-            int currentMode = static_cast<int>(s.sse.ao.mode);
-            if (ImGui::Combo("AO Technique", &currentMode, aoModes, IM_ARRAYSIZE(aoModes))) {
-                s.sse.ao.mode = static_cast<Eunoia::PostProcess::SSAOMode>(currentMode);
-            }
-
-            if (s.sse.ao.mode != Eunoia::PostProcess::SSAOMode::Disabled) {
-                ImGui::SliderFloat("Sampling Radius", &s.sse.ao.radius, 0.1f, 3.0f, "%.2f m");
-                ImGui::SliderFloat("Power / Intensity", &s.sse.ao.power, 0.5f, 5.0f, "%.2f");
-                ImGui::SliderFloat("Depth Bias", &s.sse.ao.bias, 0.001f, 0.1f, "%.4f");
-                ImGui::SliderInt("Sample Count", &s.sse.ao.sampleCount, 4, 64);
-                ImGui::Checkbox("Bilateral Blur Filter", &s.sse.ao.enableBlur);
-                if (s.sse.ao.enableBlur) {
-                    ImGui::SliderFloat("Blur Sigma", &s.sse.ao.blurSigma, 0.5f, 5.0f, "%.1f");
-                }
-                ImGui::Checkbox("Temporal Accumulation", &s.sse.ao.enableTemporalAO);
-                if (s.sse.ao.enableTemporalAO) {
-                    ImGui::SliderFloat("Temporal Hysteresis", &s.sse.ao.temporalBlend, 0.5f, 0.99f, "%.2f");
-                }
-
-                if (s.sse.ao.mode == Eunoia::PostProcess::SSAOMode::HBAO) {
-                    ImGui::TextDisabled("HBAO Parameters:");
-                    ImGui::SliderFloat("Angle Bias", &s.sse.ao.hbaoAngleBias, 0.0f, 0.5f, "%.2f rad");
-                    ImGui::SliderInt("Ray Directions", &s.sse.ao.hbaoDirections, 4, 16);
-                    ImGui::SliderInt("Steps Per Direction", &s.sse.ao.hbaoSteps, 2, 8);
-                } else if (s.sse.ao.mode == Eunoia::PostProcess::SSAOMode::MSAO) {
-                    ImGui::TextDisabled("MSAO Parameters:");
-                    ImGui::SliderFloat("Multi-Scale Multiplier", &s.sse.ao.msaoRadiusMultiplier, 1.5f, 5.0f, "%.1f");
-                }
-            }
-        }
-
-        if (ImGui::CollapsingHeader("STOCHASTIC SCREEN SPACE REFLECTIONS (SSSR)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable SSSR", &s.sse.ssr.enableSSR);
-            if (s.sse.ssr.enableSSR) {
-                ImGui::SliderFloat("Roughness Cutoff", &s.sse.ssr.roughnessThreshold, 0.1f, 1.0f, "%.2f");
-                ImGui::SliderInt("Max Ray Steps", &s.sse.ssr.maxRaySteps, 16, 256);
-                ImGui::SliderFloat("Thickness Bias", &s.sse.ssr.thickness, 0.01f, 0.5f, "%.3f m");
-                ImGui::SliderFloat("Temporal Blend", &s.sse.ssr.temporalBlend, 0.5f, 0.99f, "%.2f");
-                ImGui::Checkbox("Spatio-Temporal Denoiser", &s.sse.ssr.enableDenoiser);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("SCREEN SPACE REFRACTIONS")) {
-            ImGui::Checkbox("Enable Screen Space Refraction", &s.sse.refractions.enableRefractions);
-            if (s.sse.refractions.enableRefractions) {
-                ImGui::SliderFloat("Refraction Blur", &s.sse.refractions.blurStrength, 0.001f, 0.1f, "%.3f");
-                ImGui::SliderFloat("Index of Refraction (IOR)", &s.sse.refractions.indexOfRefraction, 1.0f, 2.5f, "%.2f");
-            }
-        }
-
-        if (ImGui::CollapsingHeader("BOKEH DEPTH OF FIELD")) {
-            ImGui::Checkbox("Enable Bokeh DOF", &s.dof.enabled);
-            if (s.dof.enabled) {
-                ImGui::SliderFloat("Focal Distance", &s.dof.focusDistance, 0.5f, 100.0f, "%.1f m");
-                ImGui::SliderFloat("Focal Range", &s.dof.focusRange, 0.1f, 20.0f, "%.1f m");
-                ImGui::SliderFloat("Max Bokeh Radius", &s.dof.bokehRadius, 1.0f, 32.0f, "%.1f px");
-                ImGui::SliderInt("Aperture Blades", &s.dof.bokehBladeCount, 3, 9);
-                ImGui::SliderFloat("Blade Curvature", &s.dof.bokehBladeCurvature, 0.0f, 1.0f, "%.2f");
-                ImGui::Checkbox("Near-Field Defocus", &s.dof.nearField);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("MOTION BLUR")) {
-            ImGui::Checkbox("Enable Motion Blur", &s.motionBlur.enabled);
-            if (s.motionBlur.enabled) {
-                ImGui::SliderFloat("Blur Strength", &s.motionBlur.strength, 0.1f, 3.0f, "%.2f");
-                ImGui::SliderInt("Velocity Samples", &s.motionBlur.sampleCount, 4, 32);
-                ImGui::SliderFloat("Shutter Angle", &s.motionBlur.shutterAngle, 0.0f, 360.0f, "%.0f deg");
-            }
-        }
-
-        if (ImGui::CollapsingHeader("OPTICAL LENS FLARES & SHAFTS")) {
-            ImGui::Checkbox("Enable Lens Flare", &s.lensFlare.enabled);
-            if (s.lensFlare.enabled) {
-                ImGui::SliderFloat("Intensity##LF", &s.lensFlare.intensity, 0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Scale##LF", &s.lensFlare.scale, 0.1f, 3.0f, "%.2f");
-                ImGui::ColorEdit3("Tint##LF", &s.lensFlare.tint.x);
-            }
-            ImGui::Separator();
-            ImGui::Checkbox("Light Shafts (God Rays)", &s.lightShafts.enabled);
-            if (s.lightShafts.enabled) {
-                ImGui::SliderInt("Ray Samples", &s.lightShafts.numSamples, 16, 128);
-                ImGui::SliderFloat("Density##LS", &s.lightShafts.density, 0.1f, 2.0f, "%.2f");
-                ImGui::SliderFloat("Weight##LS", &s.lightShafts.weight, 0.5f, 10.0f, "%.2f");
-                ImGui::ColorEdit3("Shaft Tint", &s.lightShafts.tint.x);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("EYE ADAPTATION & HISTOGRAM AUTO-EXPOSURE")) {
-            ImGui::Checkbox("Enable Eye Adaptation", &s.eyeAdaptation.enabled);
-            if (s.eyeAdaptation.enabled) {
-                ImGui::SliderFloat("Adaptation Speed", &s.eyeAdaptation.adaptSpeed, 0.1f, 10.0f, "%.1f EV/s");
-                ImGui::SliderFloat("Min EV Limit", &s.eyeAdaptation.minEV, -10.0f, 0.0f, "%.1f EV");
-                ImGui::SliderFloat("Max EV Limit", &s.eyeAdaptation.maxEV, 0.0f, 10.0f, "%.1f EV");
-                ImGui::Checkbox("Luminance Histogram Weighting", &s.eyeAdaptation.useHistogram);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("LENS ARTIFACTS & OUTLINES")) {
-            ImGui::Checkbox("Chromatic Aberration", &s.chromaticAberration.enabled);
-            if (s.chromaticAberration.enabled) {
-                ImGui::SliderFloat("CA Shift Amount", &s.chromaticAberration.amount, 0.0f, 0.02f, "%.4f");
-                ImGui::Checkbox("Radial Falloff##CA", &s.chromaticAberration.radialFalloff);
-            }
-            ImGui::Checkbox("Sharpen Filter", &s.sharpen.enabled);
-            if (s.sharpen.enabled) {
-                ImGui::SliderFloat("Sharpen Amount", &s.sharpen.amount, 0.0f, 1.0f, "%.2f");
-            }
-            ImGui::Checkbox("Silhouette Edge Outline", &s.edgeOutline.enabled);
-            if (s.edgeOutline.enabled) {
-                ImGui::ColorEdit4("Outline Color", &s.edgeOutline.color.x);
-                ImGui::SliderFloat("Outline Thickness", &s.edgeOutline.thickness, 0.5f, 5.0f, "%.1f px");
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Close##ClosePPSModal", ImVec2(100, 30))) {
-            showPostProcessSystemModal = false;
-        }
-    }
-    ImGui::End();
-}
 
 
 
