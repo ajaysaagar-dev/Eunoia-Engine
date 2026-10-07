@@ -417,9 +417,8 @@ CacheValidationStatus SceneCacheManager::ValidateCache(const std::string& binPat
                 if (dep.path.empty()) continue;
                 std::error_code ec;
                 if (!std::filesystem::exists(dep.path, ec)) {
-                    // Source asset might be at external/unmounted dev drive (e.g. D:\xnormal\...);
-                    // the baked binary cache already contains full geometry, do not invalidate
-                    continue;
+                    if (outReason) *outReason = "Source asset missing: " + dep.path;
+                    return CacheValidationStatus::SourceAssetModified;
                 }
                 auto lastTime = std::filesystem::last_write_time(dep.path, ec).time_since_epoch().count();
                 if (dep.timestamp != 0 && static_cast<uint64_t>(lastTime) != dep.timestamp) {
