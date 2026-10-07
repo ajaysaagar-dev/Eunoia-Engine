@@ -83,15 +83,29 @@ namespace EunoiaBuildTool
 
             PrintBanner();
 
-            if (s_clean)
+            // Interactive prompt if run interactively with no explicit build flags
+            bool isInteractiveClean = false;
+            if (args.Length == 0 && !s_clean && !s_watch)
             {
-                CleanBuild();
-                return 0;
+                PromptBuildModeSelection();
+                if (s_clean) isInteractiveClean = true;
             }
 
             // Terminate running instances
             KillProcess("Eunoia-Editor.exe");
             KillProcess("Eunoia-Game.exe");
+
+            if (s_clean)
+            {
+                CleanBuild();
+                // If CLI passed --clean explicitly without interactive prompt, exit here.
+                // If interactive clean build was chosen, proceed to build from clean state.
+                if (!isInteractiveClean)
+                {
+                    return 0;
+                }
+            }
+
             EnsureDirectories();
 
             // Phase 1: Environment & Multi-core Toolchain Detection
@@ -137,10 +151,7 @@ namespace EunoiaBuildTool
                 return false;
             }
 
-            if (didCompileOrLink || !File.Exists(Path.Combine(s_outputDir, "glfw3.dll")))
-            {
-                PackageEngine();
-            }
+            PackageEngine();
 
             // Standalone Game Runtime only if explicitly requested
             if (s_buildGame)
@@ -368,6 +379,94 @@ Options:
             PrintInfo(string.Format("Engine Root:    {0}", s_projectDir));
             PrintInfo(string.Format("Build Output:   {0}", s_outputDir));
             PrintInfo(string.Format("Parallel Cores: {0} CPU Threads", s_maxConcurrency));
+            Console.WriteLine();
+        }
+
+        private static void PromptBuildModeSelection()
+        {
+            if (Console.IsInputRedirected) return;
+
+            string[] options = new string[]
+            {
+                "Fast Build  (Incremental - compile modified files & changes only)",
+                "Clean Build (Rebuild from scratch - delete intermediates and recompile all)"
+            };
+
+            int selectedIndex = 0;
+            ConsoleKey key;
+
+            Console.CursorVisible = false;
+            try
+            {
+                while (true)
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("Use Up/Down Arrow keys to select build mode, then press Enter:");
+                    Console.ResetColor();
+
+                    for (int i = 0; i < options.Length; i++)
+                    {
+                        if (i == selectedIndex)
+                        {
+                            Console.ForegroundColor = ConsoleColor.Black;
+                            Console.BackgroundColor = ConsoleColor.Cyan;
+                            Console.WriteLine(string.Format(" > [x] {0} ", options[i]));
+                            Console.ResetColor();
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.DarkGray;
+                            Console.WriteLine(string.Format("   [ ] {0} ", options[i]));
+                            Console.ResetColor();
+                        }
+                    }
+
+                    key = Console.ReadKey(true).Key;
+
+                    if (key == ConsoleKey.UpArrow)
+                    {
+                        selectedIndex--;
+                        if (selectedIndex < 0) selectedIndex = options.Length - 1;
+                    }
+                    else if (key == ConsoleKey.DownArrow)
+                    {
+                        selectedIndex++;
+                        if (selectedIndex >= options.Length) selectedIndex = 0;
+                    }
+                    else if (key == ConsoleKey.Enter)
+                    {
+                        break;
+                    }
+
+                    // Reset cursor up to redraw menu
+                    int linesToMove = options.Length + 1;
+                    try
+                    {
+                        Console.SetCursorPosition(0, Math.Max(0, Console.CursorTop - linesToMove));
+                    }
+                    catch
+                    {
+                        // In case console buffer doesn't support setting cursor
+                        Console.WriteLine();
+                    }
+                }
+            }
+            finally
+            {
+                Console.CursorVisible = true;
+            }
+
+            Console.WriteLine();
+            if (selectedIndex == 1)
+            {
+                PrintInfo("Selected: Clean Build (Rebuild all components from scratch)");
+                s_clean = true;
+            }
+            else
+            {
+                PrintInfo("Selected: Fast Build (Incremental - changes only)");
+                s_clean = false;
+            }
             Console.WriteLine();
         }
 
