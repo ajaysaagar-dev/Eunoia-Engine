@@ -142,7 +142,9 @@ public:
         file << "      \"gamma\": " << scene.postGamma << ",\n";
         file << "      \"colorFilter\": " << WriteVec3(scene.postColorFilter) << ",\n";
         file << "      \"colorTemperature\": " << scene.postColorTemperature << ",\n";
-        file << "      \"colorTint\": " << scene.postColorTint << "\n";
+        file << "      \"colorTint\": " << scene.postColorTint << ",\n";
+        file << "      \"sharpenAmount\": " << scene.postSharpenAmount << ",\n";
+        file << "      \"denoiserAmount\": " << scene.postDenoiserAmount << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -1087,6 +1089,8 @@ public:
             p = pBlock.find("\"colorFilter\""); if (p != std::string::npos) scene.postColorFilter = ParseVec3(pBlock, p);
             p = pBlock.find("\"colorTemperature\""); if (p != std::string::npos) scene.postColorTemperature = ParseFloatAt(pBlock, p, 6500.0f);
             p = pBlock.find("\"colorTint\""); if (p != std::string::npos) scene.postColorTint = ParseFloatAt(pBlock, p, 0.0f);
+            p = pBlock.find("\"sharpenAmount\""); if (p != std::string::npos) scene.postSharpenAmount = ParseFloatAt(pBlock, p, 0.0f);
+            p = pBlock.find("\"denoiserAmount\""); if (p != std::string::npos) scene.postDenoiserAmount = ParseFloatAt(pBlock, p, 0.0f);
         } else {
             scene.enablePostProcessing = false;
         }

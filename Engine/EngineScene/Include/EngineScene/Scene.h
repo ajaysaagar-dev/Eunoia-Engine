@@ -105,6 +105,8 @@ public:
     glm::vec3 postColorFilter{1.0f, 1.0f, 1.0f};
     float postColorTemperature = 6500.0f;
     float postColorTint = 0.0f;
+    float postSharpenAmount = 0.0f;   // 0.0 = Disabled/Off, 0.0..1.0 sharpen filter intensity
+    float postDenoiserAmount = 0.0f;  // 0.0 = Disabled/Off, 0.0..1.0 edge-preserving bilateral denoiser intensity
 
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
@@ -1385,6 +1387,8 @@ public:
         postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
         postColorTemperature = 6500.0f;
         postColorTint = 0.0f;
+        postSharpenAmount = 0.0f;
+        postDenoiserAmount = 0.0f;
         outlinerNodeOpenState.clear();
         contentBrowserFolderOpenState.clear();
     }

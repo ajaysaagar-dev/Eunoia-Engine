@@ -3729,6 +3729,11 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SliderFloat("Tint",        &scene.postColorTint,        -1.0f, 1.0f, "%.2f");
                     ImGui::Separator();
 
+                    ImGui::TextDisabled("Detail & Filtering:");
+                    ImGui::SliderFloat("Sharpen Filter", &scene.postSharpenAmount, 0.0f, 1.0f, "%.2f");
+                    ImGui::SliderFloat("Denoiser",       &scene.postDenoiserAmount, 0.0f, 1.0f, "%.2f");
+                    ImGui::Separator();
+
                     if (ImGui::MenuItem("Post Processing Settings...", nullptr, showPostProcessingModal)) showPostProcessingModal = true;
                     ImGui::EndMenu();
                 }
@@ -8245,6 +8250,23 @@ void EngineUI::RenderPostProcessingModal(Scene& scene) {
             ImGui::Spacing();
         }
 
+        // ====================================================================
+        // 4. SHARPEN FILTER & DENOISER
+        // ====================================================================
+        if (ImGui::CollapsingHeader("DETAIL & FILTERING (SHARPEN & DENOISER)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            ImGui::SliderFloat("Sharpen Filter", &scene.postSharpenAmount, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Contrast Adaptive / High-Pass sharpening filter intensity. 0 = Off, >0 sharpens fine surface details.");
+            }
+
+            ImGui::SliderFloat("Denoiser", &scene.postDenoiserAmount, 0.0f, 1.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Edge-preserving spatiotemporal noise reduction. 0 = Off, >0 suppresses high-frequency grain and noise.");
+            }
+            ImGui::Spacing();
+        }
+
         // Reset to Defaults & Close Buttons
         ImGui::Separator();
         ImGui::Spacing();
@@ -8260,6 +8282,8 @@ void EngineUI::RenderPostProcessingModal(Scene& scene) {
             scene.postColorFilter = glm::vec3(1.0f, 1.0f, 1.0f);
             scene.postColorTemperature = 6500.0f;
             scene.postColorTint = 0.0f;
+            scene.postSharpenAmount = 0.0f;
+            scene.postDenoiserAmount = 0.0f;
             AddLog("LogWorld", "Reset post processing settings to defaults (Disabled).", 0);
         }
 

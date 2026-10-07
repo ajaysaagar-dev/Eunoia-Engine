@@ -13,8 +13,9 @@ cbuffer AAConstants : register(b0)
     float g_jitterX;
     float g_jitterY;
     uint  g_frameCount;
-    float g_sharpness;
-    float3 g_pad;
+    float g_sharpness;           // Sharpen filter intensity (0.0 = Off, 0.0..1.0)
+    float g_denoiser;            // Bilateral denoiser intensity (0.0 = Off, 0.0..1.0)
+    float2 g_pad;
 };
 
 Texture2D g_sceneTexture   : register(t0);
@@ -391,6 +392,68 @@ float4 ApplyUpscalerReconstruction(float2 uv, float2 texel, float2 jitter)
 }
 
 // ----------------------------------------------------------------------------
+// Contrast Adaptive Sharpening (RCAS / Unsharp Mask) Filter
+// ----------------------------------------------------------------------------
+float3 ApplyPostSharpen(float3 color, float2 uv, float2 texel, float strength)
+{
+    float3 colN = g_sceneTexture.SampleLevel(g_linearSampler, uv + float2(0.0f, -texel.y), 0).rgb;
+    float3 colS = g_sceneTexture.SampleLevel(g_linearSampler, uv + float2(0.0f,  texel.y), 0).rgb;
+    float3 colW = g_sceneTexture.SampleLevel(g_linearSampler, uv + float2(-texel.x, 0.0f), 0).rgb;
+    float3 colE = g_sceneTexture.SampleLevel(g_linearSampler, uv + float2( texel.x, 0.0f), 0).rgb;
+
+    float3 neighbors = (colN + colS + colW + colE) * 0.25f;
+    float3 highPass = color - neighbors;
+
+    // Prevent ringing / halo artifacts
+    float3 minN = min(color, min(min(colN, colS), min(colW, colE)));
+    float3 maxN = max(color, max(max(colN, colS), max(colW, colE)));
+
+    float3 sharpened = color + highPass * (strength * 1.5f);
+    return clamp(sharpened, max(minN - 0.05f, 0.0f), minN + (maxN - minN) * (1.0f + strength * 0.5f));
+}
+
+// ----------------------------------------------------------------------------
+// Edge-Preserving Cross-Bilateral Denoiser
+// ----------------------------------------------------------------------------
+float3 ApplyPostDenoiser(float3 centerColor, float2 uv, float2 texel, float strength)
+{
+    float centerLuma = GetLuminance(centerColor);
+    float sigmaSpatial = 1.4f;
+    float sigmaColor = max(0.04f + (1.0f - strength) * 0.06f, 0.01f);
+
+    float3 sumColor = centerColor;
+    float totalWeight = 1.0f;
+
+    // 3x3 Cross-Bilateral Kernel
+    const float2 offsets[8] = {
+        float2(-1, -1), float2( 0, -1), float2( 1, -1),
+        float2(-1,  0),                 float2( 1,  0),
+        float2(-1,  1), float2( 0,  1), float2( 1,  1)
+    };
+
+    [unroll]
+    for (int i = 0; i < 8; ++i)
+    {
+        float2 sampleUV = uv + offsets[i] * texel;
+        float3 sampleCol = g_sceneTexture.SampleLevel(g_linearSampler, sampleUV, 0).rgb;
+        float sampleLuma = GetLuminance(sampleCol);
+
+        float spatialDistSq = dot(offsets[i], offsets[i]);
+        float spatialWeight = exp(-spatialDistSq / (2.0f * sigmaSpatial * sigmaSpatial));
+
+        float colorDiff = abs(centerLuma - sampleLuma);
+        float rangeWeight = exp(-(colorDiff * colorDiff) / (2.0f * sigmaColor * sigmaColor));
+
+        float w = spatialWeight * rangeWeight;
+        sumColor += sampleCol * w;
+        totalWeight += w;
+    }
+
+    float3 denoised = sumColor / max(totalWeight, 0.0001f);
+    return lerp(centerColor, denoised, saturate(strength * 1.2f));
+}
+
+// ----------------------------------------------------------------------------
 // Main Resolve Pixel Shader
 // ----------------------------------------------------------------------------
 float4 PS_AntiAliasing(VSOutput input) : SV_TARGET
@@ -399,38 +462,66 @@ float4 PS_AntiAliasing(VSOutput input) : SV_TARGET
     float2 uv = input.position.xy * texel;
     float2 jitter = float2(g_jitterX, g_jitterY);
 
+    float4 resolvedColor;
+
     switch (g_aaMethod)
     {
         case 0: // None
-            return g_sceneTexture.SampleLevel(g_pointSampler, uv, 0);
+            resolvedColor = g_sceneTexture.SampleLevel(g_pointSampler, uv, 0);
+            break;
 
         case 1: // TAA
-            return ApplyTAA(uv, texel, jitter);
+            resolvedColor = ApplyTAA(uv, texel, jitter);
+            break;
 
         case 2: // TSR
-            return ApplyTSR(uv, texel, jitter);
+            resolvedColor = ApplyTSR(uv, texel, jitter);
+            break;
 
         case 3: // SMAA
-            return ApplySMAA(uv, texel);
+            resolvedColor = ApplySMAA(uv, texel);
+            break;
 
         case 4: // FXAA
-            return ApplyFXAA(uv, texel);
+            resolvedColor = ApplyFXAA(uv, texel);
+            break;
 
         case 5: // MSAA 2x
-            return ApplyMSAA2x(uv, texel);
+            resolvedColor = ApplyMSAA2x(uv, texel);
+            break;
 
         case 6: // MSAA 4x
-            return ApplyMSAA4x(uv, texel);
+            resolvedColor = ApplyMSAA4x(uv, texel);
+            break;
 
         case 7: // SSAA
-            return ApplySSAA(uv, texel);
+            resolvedColor = ApplySSAA(uv, texel);
+            break;
 
         case 8: // DLSS
         case 9: // FSR
         case 10: // XeSS
-            return ApplyUpscalerReconstruction(uv, texel, jitter);
+            resolvedColor = ApplyUpscalerReconstruction(uv, texel, jitter);
+            break;
 
         default:
-            return g_sceneTexture.SampleLevel(g_pointSampler, uv, 0);
+            resolvedColor = g_sceneTexture.SampleLevel(g_pointSampler, uv, 0);
+            break;
     }
+
+    float3 finalRgb = resolvedColor.rgb;
+
+    // Apply edge-preserving denoiser first (if enabled in Post Processing)
+    if (g_denoiser > 0.001f)
+    {
+        finalRgb = ApplyPostDenoiser(finalRgb, uv, texel, g_denoiser);
+    }
+
+    // Apply contrast-adaptive sharpening filter (if enabled in Post Processing)
+    if (g_sharpness > 0.001f)
+    {
+        finalRgb = ApplyPostSharpen(finalRgb, uv, texel, g_sharpness);
+    }
+
+    return float4(finalRgb, resolvedColor.a);
 }

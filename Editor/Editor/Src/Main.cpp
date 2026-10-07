@@ -4718,6 +4718,9 @@ void renderFrame()
 		// Root descriptor table t0..t1 (Current scene + History)
 		g_commandList->SetGraphicsRootDescriptorTable(1, g_sceneSrvGpuHandle);
 
+		float effectiveSharpen = g_scene.enablePostProcessing ? g_scene.postSharpenAmount : 0.0f;
+		float effectiveDenoiser = g_scene.enablePostProcessing ? g_scene.postDenoiserAmount : 0.0f;
+
 		uint32_t aaMethodVal = (uint32_t)Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
 		struct alignas(16) {
 			uint32_t method;
@@ -4729,7 +4732,8 @@ void renderFrame()
 			float jitterY;
 			uint32_t frameCount;
 			float sharpness;
-			float pad[3];
+			float denoiser;
+			float pad[2];
 		} aaParams = {
 			aaMethodVal,
 			(float)g_currentWidth,
@@ -4739,8 +4743,9 @@ void renderFrame()
 			need3DSceneRender ? g_currentJitter.x : 0.0f,
 			need3DSceneRender ? g_currentJitter.y : 0.0f,
 			(uint32_t)g_globalFrameCounter,
-			1.0f,
-			{ 0.0f, 0.0f, 0.0f }
+			effectiveSharpen,
+			effectiveDenoiser,
+			{ 0.0f, 0.0f }
 		};
 		g_commandList->SetGraphicsRoot32BitConstants(0, 12, &aaParams, 0);
 
