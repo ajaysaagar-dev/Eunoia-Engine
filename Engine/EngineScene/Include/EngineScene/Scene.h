@@ -1657,81 +1657,13 @@ struct RenderBatch {
         std::vector<CandidateEntry> transparentEntries;
         opaqueEntries.reserve(objects.size());
 
-        // Extract 6 frustum planes for DirectX NDC (z in [0, 1]) if view-projection matrix provided
-        glm::vec4 frustumPlanes[6];
-        bool hasFrustum = (pViewProj != nullptr);
-        if (hasFrustum) {
-            const glm::mat4& vp = *pViewProj;
-            frustumPlanes[0] = glm::vec4(vp[0][3] + vp[0][0], vp[1][3] + vp[1][0], vp[2][3] + vp[2][0], vp[3][3] + vp[3][0]); // Left
-            frustumPlanes[1] = glm::vec4(vp[0][3] - vp[0][0], vp[1][3] - vp[1][0], vp[2][3] - vp[2][0], vp[3][3] - vp[3][0]); // Right
-            frustumPlanes[2] = glm::vec4(vp[0][3] + vp[0][1], vp[1][3] + vp[1][1], vp[2][3] + vp[2][1], vp[3][3] + vp[3][1]); // Bottom
-            frustumPlanes[3] = glm::vec4(vp[0][3] - vp[0][1], vp[1][3] - vp[1][1], vp[2][3] - vp[2][1], vp[3][3] - vp[3][1]); // Top
-            frustumPlanes[4] = glm::vec4(vp[0][2], vp[1][2], vp[2][2], vp[3][2]);                                                 // Near
-            frustumPlanes[5] = glm::vec4(vp[0][3] - vp[0][2], vp[1][3] - vp[1][2], vp[2][3] - vp[2][2], vp[3][3] - vp[3][2]); // Far
-
-            for (int p = 0; p < 6; ++p) {
-                float len = glm::length(glm::vec3(frustumPlanes[p]));
-                if (len > 1e-6f) frustumPlanes[p] /= len;
-            }
-        }
-
-        for (auto& obj : objects) {
-            obj.isHidden = false;
-
+        for (const auto& obj : objects) {
             if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
             if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
 
             bool isBatchVisible = true;
+
             glm::mat4 model = GetWorldMatrix(obj);
-
-            // Objects not in the viewport with type as static are hidden and not rendered
-            bool isStatic = (obj.mobility == Mobility::Static || obj.HasTag("Static") || obj.HasTag("static"));
-            if (isStatic && hasFrustum) {
-                glm::vec3 localMin(0.0f), localMax(0.0f);
-                if (obj.GetLocalBounds(localMin, localMax)) {
-                    glm::vec3 localCorners[8] = {
-                        { localMin.x, localMin.y, localMin.z },
-                        { localMax.x, localMin.y, localMin.z },
-                        { localMin.x, localMax.y, localMin.z },
-                        { localMax.x, localMax.y, localMin.z },
-                        { localMin.x, localMin.y, localMax.z },
-                        { localMax.x, localMin.y, localMax.z },
-                        { localMin.x, localMax.y, localMax.z },
-                        { localMax.x, localMax.y, localMax.z }
-                    };
-
-                    glm::vec3 worldCorners[8];
-                    for (int c = 0; c < 8; ++c) {
-                        worldCorners[c] = glm::vec3(model * glm::vec4(localCorners[c], 1.0f));
-                    }
-
-                    // Test against all 6 frustum planes
-                    bool outsideFrustum = false;
-                    for (int p = 0; p < 6; ++p) {
-                        bool allOutsidePlane = true;
-                        for (int c = 0; c < 8; ++c) {
-                            float dist = frustumPlanes[p].x * worldCorners[c].x +
-                                         frustumPlanes[p].y * worldCorners[c].y +
-                                         frustumPlanes[p].z * worldCorners[c].z +
-                                         frustumPlanes[p].w;
-                            if (dist >= -0.05f) { // slight margin to prevent border popping
-                                allOutsidePlane = false;
-                                break;
-                            }
-                        }
-                        if (allOutsidePlane) {
-                            outsideFrustum = true;
-                            break;
-                        }
-                    }
-
-                    if (outsideFrustum) {
-                        obj.isHidden = true;
-                        isBatchVisible = false;
-                    }
-                }
-            }
-
             glm::vec3 objPos = glm::vec3(model[3]);
             glm::vec3 diff = cameraPos - objPos;
             float distSq = glm::dot(diff, diff);
@@ -1856,7 +1788,7 @@ struct RenderBatch {
         // 3. Highlight Selected Object: Outline + Collision Wireframe
         if (selectedId != -1) {
             GameObject* selObj = FindObject(selectedId);
-            if (selObj && selObj->visible && !selObj->isHidden) {
+            if (selObj && selObj->visible) {
                 uint32_t outlineStart = (uint32_t)outIndices.size();
                 glm::vec3 greenOutlineColor{0.0f, 1.0f, 0.25f};
                 AppendObjectEdgeOutline(outVertices, outIndices, *selObj, cameraPos, greenOutlineColor);
@@ -1907,7 +1839,7 @@ struct RenderBatch {
             uint32_t boundsStart = (uint32_t)outIndices.size();
             glm::vec3 boundsColor{0.2f, 0.7f, 1.0f};
             for (const auto& obj : objects) {
-                if (!obj.visible || obj.isHidden || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isLight || IsLightPrimitive(obj.type) || obj.isUserInterface || obj.type == PrimitiveType::UserInterface || obj.type == PrimitiveType::Empty) continue;
+                if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isLight || IsLightPrimitive(obj.type) || obj.isUserInterface || obj.type == PrimitiveType::UserInterface || obj.type == PrimitiveType::Empty) continue;
                 if (obj.mesh.vertices.empty()) continue;
 
                 glm::vec3 minB(1e9f), maxB(-1e9f);
