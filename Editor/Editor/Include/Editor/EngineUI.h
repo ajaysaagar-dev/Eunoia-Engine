@@ -499,10 +499,7 @@ public:
     bool showSkyboxEditor = false;
     bool showSkyboxSettingsModal = false;
     bool showPostProcessingModal = false;
-    bool showRayTracingSettingsModal = false;
-    bool showAtmosphereModal = false;
     bool showPostProcessSystemModal = false;
-    bool showOcclusionCullingModal = false;
     bool showNewSkyboxPopup = false;
     char newSkyboxNameBuf[64] = "Skybox_New";
     SkyboxAsset activeSkybox;
@@ -699,10 +696,7 @@ private:
     void RenderWaterEditor(Scene& scene);
     void RenderWorldSkyboxSettingsModal(Scene& scene);
     void RenderPostProcessingModal(Scene& scene);
-    void RenderRayTracingSettingsModal(Scene& scene);
-    void RenderAtmosphereModal(Scene& scene);
     void RenderPostProcessSystemModal(Scene& scene);
-    void RenderOcclusionCullingModal(Scene& scene);
     void RenderReferenceViewer(Scene& scene);
     void RenderCookModal();
     void RenderHelpModal();

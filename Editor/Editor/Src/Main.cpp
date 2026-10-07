@@ -46,7 +46,6 @@
 #include <Water/WaterSystem.h>
 #include <LightsBaking/LightBakeManager.h>
 #include <Graphics/GraphicsSystem.h>
-#include <RayTracing/RayTracingSystem.h>
 #include <UISystem/CustomUI/CustomUIManager.h>
 #include <sstream>
 
@@ -4687,16 +4686,6 @@ void renderFrame()
 		// Restore main viewport and scissor
 		g_commandList->RSSetViewports(1, &viewport);
 		g_commandList->RSSetScissorRects(1, &scissor);
-	}
-
-	if (need3DSceneRender && Eunoia::RayTracing::RayTracingSystem::Get().IsEnabled())
-	{
-		uint32_t vpPixels = (uint32_t)(vw * vh);
-		const auto& rts = Eunoia::RayTracing::RayTracingSystem::Get().GetSettings();
-		uint32_t rRays = rts.enableRTR ? (vpPixels * std::max(1u, (uint32_t)rts.quality)) : 0;
-		uint32_t sRays = rts.enableRTS ? (vpPixels / 2) : 0;
-		uint32_t aoRays = rts.enableRTAO ? (vpPixels * (uint32_t)std::max(1, rts.rtaoSamples)) : 0;
-		Eunoia::RayTracing::RayTracingSystem::Get().RecordFrameRays(rRays, sRays, aoRays, 1.2f);
 	}
 
 	// ----------------------------------------------------

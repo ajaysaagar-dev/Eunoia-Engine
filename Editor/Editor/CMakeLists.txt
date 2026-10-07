@@ -7,12 +7,6 @@ set(EDITOR_SOURCES
     Src/EditorGizmoSystem.cpp
     ${EUNOIA_ROOT}/Plugins/Post-Process-System/Source/PostProcessSystem.cpp
     ${EUNOIA_ROOT}/Plugins/Post-Process-System/Source/PostProcessPlugin.cpp
-    ${EUNOIA_ROOT}/Plugins/RayTracing/Source/RayTracingSystem.cpp
-    ${EUNOIA_ROOT}/Plugins/RayTracing/Source/RayTracingPlugin.cpp
-    ${EUNOIA_ROOT}/Plugins/VolumetricAtmosphere/Source/VolumetricAtmosphere.cpp
-    ${EUNOIA_ROOT}/Plugins/VolumetricAtmosphere/Source/VolumetricAtmospherePlugin.cpp
-    ${EUNOIA_ROOT}/Plugins/OcclusionCulling/Source/OcclusionCullingSystem.cpp
-    ${EUNOIA_ROOT}/Plugins/OcclusionCulling/Source/OcclusionCullingPlugin.cpp
     # ImGui
     ${EUNOIA_DEPS}/imgui/imgui.cpp
     ${EUNOIA_DEPS}/imgui/imgui_draw.cpp
@@ -28,9 +22,6 @@ add_executable(Eunoia-Editor ${EDITOR_SOURCES})
 target_include_directories(Eunoia-Editor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Include
     ${EUNOIA_ROOT}/Plugins/Post-Process-System/Include
-    ${EUNOIA_ROOT}/Plugins/RayTracing/Include
-    ${EUNOIA_ROOT}/Plugins/VolumetricAtmosphere/Include
-    ${EUNOIA_ROOT}/Plugins/OcclusionCulling/Include
     ${EUNOIA_DEPS}/imgui
     ${EUNOIA_DEPS}/imgui/backends
     ${EUNOIA_GLFW_ROOT}/include

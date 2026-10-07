@@ -1,7 +1,0 @@
-{
-    "name": "OcclusionCulling",
-    "version": "1.0.0",
-    "description": "GPU-based occlusion culling using DX12 hardware occlusion queries. Tiled Forward+ (Forward+) renderer with 2.5D culling for ultra-high light counts.",
-    "author": "Eunoia Engine",
-    "dependencies": []
-}
