@@ -1,16 +1,16 @@
 cmake_minimum_required(VERSION 3.15)
-project(GPUParticles)
+project(PostProcessSystem)
 
 set(CMAKE_CXX_STANDARD 17)
 
-file(GLOB_RECURSE GPUPART_SOURCES
+file(GLOB_RECURSE PP_SOURCES
     "Source/*.cpp"
-    "Include/GPUParticles/*.h"
+    "Include/PostProcess/*.h"
 )
 
-add_library(GPUParticles STATIC ${GPUPART_SOURCES})
+add_library(PostProcessSystem STATIC ${PP_SOURCES})
 
-target_include_directories(GPUParticles PUBLIC
+target_include_directories(PostProcessSystem PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/Include
     ${EUNOIA_ROOT}/Engine/EngineCore/Include
     ${EUNOIA_DEPS}/glm

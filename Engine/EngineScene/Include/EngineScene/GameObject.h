@@ -12,7 +12,7 @@
 #include <LightsBaking/LightBakeTypes.h>
 #include <Collisions/CollisionTypes.h>
 #include <Physics/PhysicsTypes.h>
-#include <UISystem3D/UI3DTypes.h>
+#include <UISystem/UITypes.h>
 
 enum class LightType {
     Directional,

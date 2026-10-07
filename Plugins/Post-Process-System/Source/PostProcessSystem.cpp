@@ -1,9 +1,9 @@
-#include <AdvancedPostProcess/AdvancedPostProcessSystem.h>
+#include <PostProcess/PostProcessSystem.h>
 
 namespace Eunoia { namespace PostProcess {
 
-void AdvancedPostProcessSystem::Initialize() {
-    // WickedEngine defaults
+void PostProcessSystem::Initialize() {
+    // Post Processing Defaults
     m_settings.bloom.enabled          = true;
     m_settings.bloom.threshold        = 1.0f;
     m_settings.bloom.strength         = 0.5f;
@@ -38,25 +38,39 @@ void AdvancedPostProcessSystem::Initialize() {
 
     m_settings.edgeOutline.enabled    = false;
     m_settings.edgeOutline.thickness  = 1.0f;
+
+    // Screen Space Effects Defaults
+    m_settings.sse.ao.mode        = SSAOMode::SSAO;
+    m_settings.sse.ao.radius      = 0.5f;
+    m_settings.sse.ao.power       = 1.5f;
+    m_settings.sse.ao.sampleCount = 16;
+    m_settings.sse.ao.enableBlur  = true;
+    m_settings.sse.ssr.enableSSR  = false;
+    m_settings.sse.refractions.enableRefractions = false;
 }
 
-void AdvancedPostProcessSystem::Shutdown() {
+void PostProcessSystem::Shutdown() {
 }
 
-void AdvancedPostProcessSystem::Apply(const AdvancedPostProcessSettings& settings) {
+void PostProcessSystem::Apply(const PostProcessSettings& settings) {
     m_settings = settings;
 }
 
-void AdvancedPostProcessSystem::Update(float /*deltaTime*/) {
-    // Eye adaptation temporal update would accumulate luminance histogram here
+void PostProcessSystem::Update(float /*deltaTime*/) {
 }
 
-void AdvancedPostProcessSystem::ApplyPreset(PostProcessPreset preset) {
+void PostProcessSystem::ApplyPreset(PostProcessPreset preset) {
     switch (preset) {
         case PostProcessPreset::Off:
-            m_settings = AdvancedPostProcessSettings{};
             m_settings.bloom.enabled = false;
             m_settings.lensFlare.enabled = false;
+            m_settings.motionBlur.enabled = false;
+            m_settings.dof.enabled = false;
+            m_settings.lightShafts.enabled = false;
+            m_settings.chromaticAberration.enabled = false;
+            m_settings.eyeAdaptation.enabled = false;
+            m_settings.sharpen.enabled = false;
+            m_settings.edgeOutline.enabled = false;
             break;
         case PostProcessPreset::GameBalanced:
             m_settings.bloom.enabled          = true;
@@ -105,6 +119,43 @@ void AdvancedPostProcessSystem::ApplyPreset(PostProcessPreset preset) {
             m_settings.chromaticAberration.enabled = true;
             m_settings.chromaticAberration.amount  = 0.005f;
             m_settings.eyeAdaptation.enabled  = false;
+            break;
+    }
+}
+
+void PostProcessSystem::ApplySSEQualityPreset(int level) {
+    switch (level) {
+        case 0: // Off
+            m_settings.sse.ao.mode       = SSAOMode::Disabled;
+            m_settings.sse.ssr.enableSSR = false;
+            break;
+        case 1: // Low
+            m_settings.sse.ao.mode        = SSAOMode::SSAO;
+            m_settings.sse.ao.sampleCount = 8;
+            m_settings.sse.ao.radius      = 0.3f;
+            m_settings.sse.ssr.enableSSR  = false;
+            break;
+        case 2: // Medium
+            m_settings.sse.ao.mode        = SSAOMode::SSAO;
+            m_settings.sse.ao.sampleCount = 16;
+            m_settings.sse.ao.radius      = 0.5f;
+            m_settings.sse.ssr.enableSSR  = true;
+            m_settings.sse.ssr.maxRaySteps= 32;
+            break;
+        case 3: // High
+            m_settings.sse.ao.mode        = SSAOMode::HBAO;
+            m_settings.sse.ao.radius      = 0.6f;
+            m_settings.sse.ssr.enableSSR  = true;
+            m_settings.sse.ssr.maxRaySteps= 64;
+            m_settings.sse.refractions.enableRefractions = true;
+            break;
+        case 4: // Ultra
+            m_settings.sse.ao.mode        = SSAOMode::MSAO;
+            m_settings.sse.ao.radius      = 0.7f;
+            m_settings.sse.ssr.enableSSR  = true;
+            m_settings.sse.ssr.maxRaySteps= 128;
+            m_settings.sse.ssr.enableDenoiser = true;
+            m_settings.sse.refractions.enableRefractions = true;
             break;
     }
 }

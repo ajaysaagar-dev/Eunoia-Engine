@@ -1,0 +1,7 @@
+{
+    "name": "Post-Process-System",
+    "version": "1.0.0",
+    "description": "Unified post-processing and optical effects system including Bloom, Depth of Field, Motion Blur, God Rays, Lens Flares, Color Grading, Tone Mapping, Eye Adaptation, SSAO, HBAO, MSAO, SSSR, and Screen Space Refractions.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

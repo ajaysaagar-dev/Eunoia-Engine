@@ -87,10 +87,28 @@ struct UISystemProxy {
     }
 };
 
-} // namespace EunoiaUI
-
 // Global instance variable & alias so scripts can write: UISystem.Add(UI); UISystem.RemoveAll(); UISystem::Add(UI);
 inline EunoiaUI::UISystemProxy UISystem;
 inline EunoiaUI::UISystemProxy uiSystem;
 using UISystemProxyType = EunoiaUI::UISystemProxy;
 using UISystemService = EunoiaUI::UISystemManager;
+
+namespace EunoiaUI {
+class UISystem3DManager {
+public:
+    static UISystem3DManager& Get() {
+        static UISystem3DManager inst;
+        return inst;
+    }
+    void ClearAll() {}
+    UserInterface* CreateNewUI3D(const std::string& name, const std::string& path) {
+        return UISystemManager::Get().CreateNewUI(name, path);
+    }
+    void RenderAllScene3DUI(void* /*imDrawListPtr*/, void* /*scene*/, const void* /*camera*/,
+                            const glm::vec4& /*vpRect*/, bool /*isGameView*/) {}
+    template<typename TScene, typename TCamera>
+    void RenderAllScene3DUI(void* /*imDrawListPtr*/, TScene& /*scene*/, const TCamera& /*camera*/,
+                            const glm::vec4& /*vpRect*/, bool /*isGameView*/) {}
+};
+}
+

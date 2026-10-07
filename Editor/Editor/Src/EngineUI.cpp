@@ -36,19 +36,12 @@
 #include <VisualBehaviuors/VisualBehaviourInstance.h>
 #include <UISystem/UIEditorWindow.h>
 #include <UISystem/UISystem.h>
-#include <UISystem3D/UISystem3D.h>
 #include <Collisions/CollisionTypes.h>
 #include <Collisions/CollisionSystem.h>
 #include <RayTracing/RayTracingSystem.h>
 #include <VolumetricAtmosphere/VolumetricAtmosphere.h>
-#include <WeatherSystem/WeatherSystem.h>
-#include <GlobalIllumination/GlobalIllumination.h>
-#include <ScreenSpaceEffects/ScreenSpaceEffectsSystem.h>
-#include <AdvancedPostProcess/AdvancedPostProcessSystem.h>
-#include <Tessellation/TessellationSystem.h>
-#include <GPUParticles/GPUParticleSystem.h>
+#include <PostProcess/PostProcessSystem.h>
 #include <OcclusionCulling/OcclusionCullingSystem.h>
-#include <AdvancedReflections/AdvancedReflectionsSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -3050,29 +3043,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showAtmosphereModal) {
         RenderAtmosphereModal(scene);
     }
-    if (showWeatherModal) {
-        RenderWeatherModal(scene);
-    }
-    if (showDDGIModal) {
-        RenderDDGIModal(scene);
-    }
-    if (showSSEModal) {
-        RenderSSEModal(scene);
-    }
-    if (showAdvPostProcessModal) {
-        RenderAdvPostProcessModal(scene);
-    }
-    if (showTessellationModal) {
-        RenderTessellationModal(scene);
-    }
-    if (showGPUParticlesModal) {
-        RenderGPUParticlesModal(scene);
+    if (showPostProcessSystemModal) {
+        RenderPostProcessSystemModal(scene);
     }
     if (showOcclusionCullingModal) {
         RenderOcclusionCullingModal(scene);
-    }
-    if (showAdvReflectionsModal) {
-        RenderAdvReflectionsModal(scene);
     }
 
     // 7. Asset Reference Viewer (dev.md Section 33)
@@ -3807,7 +3782,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Full Post Processing Settings...", nullptr, showPostProcessingModal)) showPostProcessingModal = true;
-                    if (ImGui::MenuItem("Advanced Post Processing...", nullptr, showAdvPostProcessModal)) showAdvPostProcessModal = true;
+                    if (ImGui::MenuItem("Post-Process System Pipeline...", nullptr, showPostProcessSystemModal)) showPostProcessSystemModal = true;
                     ImGui::EndMenu();
                 }
 
@@ -8595,197 +8570,14 @@ void EngineUI::RenderAtmosphereModal(Scene& scene) {
     ImGui::End();
 }
 
-void EngineUI::RenderWeatherModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(600, 580), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Dynamic Weather & Precipitation (Adria DX12)###WeatherWin", &showWeatherModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& ws = Eunoia::Weather::WeatherSystem::Get();
-        auto& s = ws.GetSettingsRef();
-
-        ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Dynamic Weather & GPU Precipitation System");
-        ImGui::TextWrapped("Simulates real-time rain particles, ground surface wetness accumulation, puddle formation, and raindrop ripple dynamics.");
-        ImGui::Separator();
-
-        const char* weathers[] = { "Clear", "Cloudy", "Light Rain", "Heavy Rain", "Thunderstorm", "Foggy" };
-        int currentW = (int)s.activeWeather;
-        if (ImGui::Combo("Active Weather State", &currentW, weathers, IM_ARRAYSIZE(weathers))) {
-            ws.SetWeather((Eunoia::Weather::WeatherType)currentW);
-        }
-        ImGui::Spacing();
-
-        if (ImGui::CollapsingHeader("PRECIPITATION & RAIN SIMULATION", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            ImGui::Checkbox("Enable Rain Simulation", &s.rain.enableRain);
-            if (s.rain.enableRain) {
-                ImGui::SliderFloat("Rain Intensity", &s.rain.rainIntensity, 0.0f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Fall Speed", &s.rain.rainSpeed, 2.0f, 30.0f, "%.1f m/s");
-                ImGui::SliderFloat("Streak Length", &s.rain.rainStreakLength, 0.1f, 2.0f, "%.2f m");
-                ImGui::SliderFloat3("Wind Velocity", &s.rain.windVelocity.x, -20.0f, 20.0f, "%.1f");
-                ImGui::SliderInt("Max Droplet Count", &s.rain.maxRainDroplets, 1024, 65536);
-            }
-            ImGui::Spacing();
-        }
-
-        if (ImGui::CollapsingHeader("SURFACE WETNESS & PUDDLES", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            ImGui::Checkbox("Enable Surface Wetness & Puddle Reflection", &s.rain.enablePuddles);
-            if (s.rain.enablePuddles) {
-                ImGui::ProgressBar(s.rain.currentWetness, ImVec2(-1, 0), "Wetness Level");
-                ImGui::SliderFloat("Wetness Accumulation Rate", &s.rain.wetnessAccumulationRate, 0.005f, 0.2f, "%.3f");
-                ImGui::SliderFloat("Surface Drying Rate", &s.rain.dryingRate, 0.001f, 0.1f, "%.3f");
-                ImGui::SliderFloat("Puddle Scale", &s.rain.puddleScale, 0.05f, 1.0f, "%.2f");
-                ImGui::SliderFloat("Ripple Frequency", &s.rain.puddleRippleSpeed, 0.1f, 5.0f, "%.1f");
-                ImGui::SliderFloat("Puddle Reflectivity", &s.rain.puddleReflectivity, 0.5f, 1.0f, "%.2f");
-            }
-            ImGui::Spacing();
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Reset Weather##ResetW", ImVec2(140, 30))) {
-            ws.SetWeather(Eunoia::Weather::WeatherType::Clear);
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Close##CloseWModal", ImVec2(100, 30))) {
-            showWeatherModal = false;
-        }
-    }
-    ImGui::End();
-}
-
-void EngineUI::RenderDDGIModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(620, 560), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Dynamic Diffuse Global Illumination (DDGI)###DDGIWin", &showDDGIModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& gi = Eunoia::GI::GlobalIllumination::Get();
-        auto& s = gi.GetSettingsRef();
-        const auto& stats = gi.GetStats();
-
-        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.3f, 1.0f), "Dynamic Diffuse Global Illumination (DDGI)");
-        ImGui::TextWrapped("Real-time multi-bounce indirect diffuse radiance calculated via a 3D irradiance & distance probe field.");
-        ImGui::Separator();
-
-        ImGui::TextDisabled("Probes: %u | Total Rays/Frame: %u | Update Time: %.2f ms",
-            stats.totalProbes, stats.totalRaysCast, stats.updateTimeMs);
-        ImGui::Spacing();
-
-        ImGui::Checkbox("Enable DDGI Irradiance Field", &s.enableDDGI);
-        ImGui::SameLine();
-        ImGui::Checkbox("Visualize Probe Grid", &s.visualizeProbes);
-        ImGui::Spacing();
-
-        if (ImGui::CollapsingHeader("PROBE GRID CONFIGURATION", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            ImGui::SliderFloat3("Volume Center", &s.origin.x, -100.0f, 100.0f, "%.1f");
-            ImGui::SliderFloat3("Volume Extents", &s.extents.x, 10.0f, 200.0f, "%.1f m");
-            ImGui::SliderInt3("Probe Grid Resolution", &s.probeCounts.x, 4, 32);
-            ImGui::SliderInt("Rays Per Probe", &s.raysPerProbe, 32, 256);
-            ImGui::SliderFloat("Max Ray Distance", &s.maxRayDistance, 5.0f, 100.0f, "%.1f m");
-            ImGui::Spacing();
-        }
-
-        if (ImGui::CollapsingHeader("TEMPORAL HYSTERESIS & BIAS", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            ImGui::SliderFloat("Temporal Blend Hysteresis", &s.hysteresis, 0.8f, 0.99f, "%.3f");
-            ImGui::SliderFloat("Energy Preservation Factor", &s.energyPreservation, 0.5f, 1.0f, "%.2f");
-            ImGui::SliderFloat("Normal Surface Bias", &s.normalBias, 0.01f, 0.5f, "%.2f");
-            ImGui::SliderFloat("View Vector Bias", &s.viewBias, 0.01f, 1.0f, "%.2f");
-            if (s.visualizeProbes) {
-                ImGui::SliderFloat("Probe Gizmo Radius", &s.probeVisualizationRadius, 0.05f, 1.0f, "%.2f m");
-            }
-            ImGui::Spacing();
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Reset DDGI##ResetDDGI", ImVec2(140, 30))) {
-            s = Eunoia::GI::DDGIVolumeSettings();
-        }
-        ImGui::SameLine();
-        if (ImGui::Button("Close##CloseDDGIModal", ImVec2(100, 30))) {
-            showDDGIModal = false;
-        }
-    }
-    ImGui::End();
-}
-
-void EngineUI::RenderSSEModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(600, 520), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Screen Space Effects (SSAO / HBAO / MSAO / SSSR)###SSEWin", &showSSEModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& sse = Eunoia::SSE::ScreenSpaceEffectsSystem::Get();
-        auto& s = sse.GetSettingsRef();
-
-        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "Screen Space Ambient Occlusion & Reflection Pipeline");
-        ImGui::TextWrapped("High-performance screen space estimators ported with multi-scale sampling techniques from WickedEngine.");
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("AMBIENT OCCLUSION (AO)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            const char* aoModes[] = { "Disabled", "SSAO (Brute Force)", "HBAO (Horizon Based)", "MSAO (Multi-Scale)" };
-            int currentMode = static_cast<int>(s.ao.mode);
-            if (ImGui::Combo("AO Technique", &currentMode, aoModes, IM_ARRAYSIZE(aoModes))) {
-                s.ao.mode = static_cast<Eunoia::SSE::SSAOMode>(currentMode);
-            }
-
-            if (s.ao.mode != Eunoia::SSE::SSAOMode::Disabled) {
-                ImGui::SliderFloat("Sampling Radius", &s.ao.radius, 0.1f, 3.0f, "%.2f m");
-                ImGui::SliderFloat("Power / Intensity", &s.ao.power, 0.5f, 5.0f, "%.2f");
-                ImGui::SliderFloat("Depth Bias", &s.ao.bias, 0.001f, 0.1f, "%.4f");
-                ImGui::SliderInt("Sample Count", &s.ao.sampleCount, 4, 64);
-                ImGui::Checkbox("Bilateral Blur Filter", &s.ao.enableBlur);
-                if (s.ao.enableBlur) {
-                    ImGui::SliderFloat("Blur Sigma", &s.ao.blurSigma, 0.5f, 5.0f, "%.1f");
-                }
-                ImGui::Checkbox("Temporal Accumulation", &s.ao.enableTemporalAO);
-                if (s.ao.enableTemporalAO) {
-                    ImGui::SliderFloat("Temporal Hysteresis", &s.ao.temporalBlend, 0.5f, 0.99f, "%.2f");
-                }
-
-                if (s.ao.mode == Eunoia::SSE::SSAOMode::HBAO) {
-                    ImGui::TextDisabled("HBAO Parameters:");
-                    ImGui::SliderFloat("Angle Bias", &s.ao.hbaoAngleBias, 0.0f, 0.5f, "%.2f rad");
-                    ImGui::SliderInt("Ray Directions", &s.ao.hbaoDirections, 4, 16);
-                    ImGui::SliderInt("Steps Per Direction", &s.ao.hbaoSteps, 2, 8);
-                } else if (s.ao.mode == Eunoia::SSE::SSAOMode::MSAO) {
-                    ImGui::TextDisabled("MSAO Parameters:");
-                    ImGui::SliderFloat("Multi-Scale Multiplier", &s.ao.msaoRadiusMultiplier, 1.5f, 5.0f, "%.1f");
-                }
-            }
-        }
-
-        if (ImGui::CollapsingHeader("STOCHASTIC SCREEN SPACE REFLECTIONS (SSSR)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable SSSR", &s.ssr.enableSSR);
-            if (s.ssr.enableSSR) {
-                ImGui::SliderFloat("Roughness Cutoff", &s.ssr.roughnessThreshold, 0.1f, 1.0f, "%.2f");
-                ImGui::SliderInt("Max Ray Steps", &s.ssr.maxRaySteps, 16, 256);
-                ImGui::SliderFloat("Thickness Bias", &s.ssr.thickness, 0.01f, 0.5f, "%.3f m");
-                ImGui::SliderFloat("Temporal Blend", &s.ssr.temporalBlend, 0.5f, 0.99f, "%.2f");
-                ImGui::Checkbox("Spatio-Temporal Denoiser", &s.ssr.enableDenoiser);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("SCREEN SPACE REFRACTIONS", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable Screen Space Refraction", &s.refractions.enableRefractions);
-            if (s.refractions.enableRefractions) {
-                ImGui::SliderFloat("Refraction Blur", &s.refractions.blurStrength, 0.001f, 0.1f, "%.3f");
-                ImGui::SliderFloat("Index of Refraction (IOR)", &s.refractions.indexOfRefraction, 1.0f, 2.5f, "%.2f");
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Close##CloseSSEModal", ImVec2(100, 30))) {
-            showSSEModal = false;
-        }
-    }
-    ImGui::End();
-}
-
-void EngineUI::RenderAdvPostProcessModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(640, 580), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Advanced Post Processing Pipeline###AdvPPWin", &showAdvPostProcessModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& pp = Eunoia::PostProcess::AdvancedPostProcessSystem::Get();
+void EngineUI::RenderPostProcessSystemModal(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(660, 620), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Post-Process System Pipeline###PostProcessSystemWin", &showPostProcessSystemModal, ImGuiWindowFlags_NoCollapse)) {
+        auto& pp = Eunoia::PostProcess::PostProcessSystem::Get();
         auto& s = pp.GetSettingsRef();
 
-        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.8f, 1.0f), "WickedEngine Optics & Post Processing");
-        ImGui::TextWrapped("Physically based exposure, depth of field, bloom mipchain downsampling, and optical lens artifacts.");
+        ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.8f, 1.0f), "Post-Process System (Optics, Lens, Screen-Space Effects)");
+        ImGui::TextWrapped("Unified post processing pipeline consolidating Bloom, Depth of Field, Motion Blur, Lens Flares, God Rays, Chromatic Aberration, SSAO/HBAO/MSAO, and Screen Space Reflections.");
         ImGui::Separator();
 
         if (ImGui::CollapsingHeader("BLOOM & EMISSIVE BLEED", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -8799,7 +8591,59 @@ void EngineUI::RenderAdvPostProcessModal(Scene& scene) {
             }
         }
 
-        if (ImGui::CollapsingHeader("BOKEH DEPTH OF FIELD", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("SCREEN SPACE AMBIENT OCCLUSION (AO)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            const char* aoModes[] = { "Disabled", "SSAO (Brute Force)", "HBAO (Horizon Based)", "MSAO (Multi-Scale)" };
+            int currentMode = static_cast<int>(s.sse.ao.mode);
+            if (ImGui::Combo("AO Technique", &currentMode, aoModes, IM_ARRAYSIZE(aoModes))) {
+                s.sse.ao.mode = static_cast<Eunoia::PostProcess::SSAOMode>(currentMode);
+            }
+
+            if (s.sse.ao.mode != Eunoia::PostProcess::SSAOMode::Disabled) {
+                ImGui::SliderFloat("Sampling Radius", &s.sse.ao.radius, 0.1f, 3.0f, "%.2f m");
+                ImGui::SliderFloat("Power / Intensity", &s.sse.ao.power, 0.5f, 5.0f, "%.2f");
+                ImGui::SliderFloat("Depth Bias", &s.sse.ao.bias, 0.001f, 0.1f, "%.4f");
+                ImGui::SliderInt("Sample Count", &s.sse.ao.sampleCount, 4, 64);
+                ImGui::Checkbox("Bilateral Blur Filter", &s.sse.ao.enableBlur);
+                if (s.sse.ao.enableBlur) {
+                    ImGui::SliderFloat("Blur Sigma", &s.sse.ao.blurSigma, 0.5f, 5.0f, "%.1f");
+                }
+                ImGui::Checkbox("Temporal Accumulation", &s.sse.ao.enableTemporalAO);
+                if (s.sse.ao.enableTemporalAO) {
+                    ImGui::SliderFloat("Temporal Hysteresis", &s.sse.ao.temporalBlend, 0.5f, 0.99f, "%.2f");
+                }
+
+                if (s.sse.ao.mode == Eunoia::PostProcess::SSAOMode::HBAO) {
+                    ImGui::TextDisabled("HBAO Parameters:");
+                    ImGui::SliderFloat("Angle Bias", &s.sse.ao.hbaoAngleBias, 0.0f, 0.5f, "%.2f rad");
+                    ImGui::SliderInt("Ray Directions", &s.sse.ao.hbaoDirections, 4, 16);
+                    ImGui::SliderInt("Steps Per Direction", &s.sse.ao.hbaoSteps, 2, 8);
+                } else if (s.sse.ao.mode == Eunoia::PostProcess::SSAOMode::MSAO) {
+                    ImGui::TextDisabled("MSAO Parameters:");
+                    ImGui::SliderFloat("Multi-Scale Multiplier", &s.sse.ao.msaoRadiusMultiplier, 1.5f, 5.0f, "%.1f");
+                }
+            }
+        }
+
+        if (ImGui::CollapsingHeader("STOCHASTIC SCREEN SPACE REFLECTIONS (SSSR)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Enable SSSR", &s.sse.ssr.enableSSR);
+            if (s.sse.ssr.enableSSR) {
+                ImGui::SliderFloat("Roughness Cutoff", &s.sse.ssr.roughnessThreshold, 0.1f, 1.0f, "%.2f");
+                ImGui::SliderInt("Max Ray Steps", &s.sse.ssr.maxRaySteps, 16, 256);
+                ImGui::SliderFloat("Thickness Bias", &s.sse.ssr.thickness, 0.01f, 0.5f, "%.3f m");
+                ImGui::SliderFloat("Temporal Blend", &s.sse.ssr.temporalBlend, 0.5f, 0.99f, "%.2f");
+                ImGui::Checkbox("Spatio-Temporal Denoiser", &s.sse.ssr.enableDenoiser);
+            }
+        }
+
+        if (ImGui::CollapsingHeader("SCREEN SPACE REFRACTIONS")) {
+            ImGui::Checkbox("Enable Screen Space Refraction", &s.sse.refractions.enableRefractions);
+            if (s.sse.refractions.enableRefractions) {
+                ImGui::SliderFloat("Refraction Blur", &s.sse.refractions.blurStrength, 0.001f, 0.1f, "%.3f");
+                ImGui::SliderFloat("Index of Refraction (IOR)", &s.sse.refractions.indexOfRefraction, 1.0f, 2.5f, "%.2f");
+            }
+        }
+
+        if (ImGui::CollapsingHeader("BOKEH DEPTH OF FIELD")) {
             ImGui::Checkbox("Enable Bokeh DOF", &s.dof.enabled);
             if (s.dof.enabled) {
                 ImGui::SliderFloat("Focal Distance", &s.dof.focusDistance, 0.5f, 100.0f, "%.1f m");
@@ -8811,7 +8655,7 @@ void EngineUI::RenderAdvPostProcessModal(Scene& scene) {
             }
         }
 
-        if (ImGui::CollapsingHeader("MOTION BLUR", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("MOTION BLUR")) {
             ImGui::Checkbox("Enable Motion Blur", &s.motionBlur.enabled);
             if (s.motionBlur.enabled) {
                 ImGui::SliderFloat("Blur Strength", &s.motionBlur.strength, 0.1f, 3.0f, "%.2f");
@@ -8866,104 +8710,8 @@ void EngineUI::RenderAdvPostProcessModal(Scene& scene) {
 
         ImGui::Separator();
         ImGui::Spacing();
-        if (ImGui::Button("Close##CloseAdvPPModal", ImVec2(100, 30))) {
-            showAdvPostProcessModal = false;
-        }
-    }
-    ImGui::End();
-}
-
-void EngineUI::RenderTessellationModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(560, 440), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Hardware Tessellation Pipeline###TessWin", &showTessellationModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& ts = Eunoia::Tessellation::TessellationSystem::Get();
-        auto& s = ts.GetSettingsRef();
-
-        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "DirectX 12 Hardware Tessellation (Hull & Domain Shaders)");
-        ImGui::TextWrapped("Curved silhouette smoothing (PN Triangles) and heightmap displacement mapping from WickedEngine.");
-        ImGui::Separator();
-
-        const char* modes[] = { "Disabled", "Silhouette Smoothing (PN Triangles)", "Displacement Mapping", "Combined (PN + Displacement)" };
-        int currentMode = static_cast<int>(s.mode);
-        if (ImGui::Combo("Tessellation Mode", &currentMode, modes, IM_ARRAYSIZE(modes))) {
-            s.mode = static_cast<Eunoia::Tessellation::TessellationMode>(currentMode);
-        }
-
-        if (s.mode != Eunoia::Tessellation::TessellationMode::Disabled) {
-            ImGui::SliderFloat("Tessellation Factor", &s.tessellationFactor, 1.0f, 64.0f, "%.0f");
-            ImGui::Checkbox("Distance-Based Adaptive LOD", &s.adaptiveLOD);
-            if (s.adaptiveLOD) {
-                ImGui::SliderFloat("Near Distance (Max Tess)", &s.lodDistanceMin, 1.0f, 20.0f, "%.1f m");
-                ImGui::SliderFloat("Far Distance (Min Tess)", &s.lodDistanceMax, 20.0f, 200.0f, "%.1f m");
-            }
-
-            if (s.mode == Eunoia::Tessellation::TessellationMode::SilhouetteSmoothing || s.mode == Eunoia::Tessellation::TessellationMode::Combined) {
-                ImGui::SliderFloat("PN Curvature Blend", &s.pnBlend, 0.0f, 1.0f, "%.2f");
-            }
-
-            if (s.mode == Eunoia::Tessellation::TessellationMode::DisplacementMapping || s.mode == Eunoia::Tessellation::TessellationMode::Combined) {
-                ImGui::SliderFloat("Displacement Height Scale", &s.displacementScale, 0.0f, 2.0f, "%.3f m");
-                ImGui::SliderFloat("Displacement Bias", &s.displacementBias, -1.0f, 1.0f, "%.3f");
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Close##CloseTessModal", ImVec2(100, 30))) {
-            showTessellationModal = false;
-        }
-    }
-    ImGui::End();
-}
-
-void EngineUI::RenderGPUParticlesModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(600, 500), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("✨ GPU Particle & Hair Systems###GPUParticlesWin", &showGPUParticlesModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& gp = Eunoia::GPUParticles::GPUParticleSystem::Get();
-        auto& s = gp.GetSettingsRef();
-
-        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.7f, 1.0f), "GPU Compute-Based Particle & Hair Simulation");
-        ImGui::TextWrapped("Compute shader accelerated particle emitters (point, mesh surface, animated mesh) and foliage grass hair.");
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("COMPUTE EMITTED PARTICLES", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable GPU Emitted Particles", &s.enableGPUParticles);
-            if (s.enableGPUParticles) {
-                const char* sources[] = { "Point Origin", "Mesh Triangle Surface", "Animated Skinned Mesh" };
-                int currentSrc = static_cast<int>(s.emitter.emitSource);
-                if (ImGui::Combo("Emission Source", &currentSrc, sources, IM_ARRAYSIZE(sources))) {
-                    s.emitter.emitSource = static_cast<Eunoia::GPUParticles::ParticleEmitSource>(currentSrc);
-                }
-
-                ImGui::SliderInt("Max Particles", (int*)&s.emitter.maxParticles, 1000, 200000);
-                ImGui::SliderFloat("Spawn Rate", &s.emitter.emitRate, 10.0f, 5000.0f, "%.0f /s");
-                ImGui::SliderFloat("Lifetime", &s.emitter.particleLifetime, 0.1f, 10.0f, "%.1f s");
-                ImGui::SliderFloat("Size", &s.emitter.particleSize, 0.005f, 0.5f, "%.3f m");
-                ImGui::SliderFloat3("Gravity Vector", &s.emitter.gravity.x, -20.0f, 20.0f, "%.1f");
-                ImGui::ColorEdit4("Start Color", &s.emitter.startColor.x);
-                ImGui::ColorEdit4("End Color", &s.emitter.endColor.x);
-                ImGui::Checkbox("Depth Soft Particles", &s.emitter.softParticles);
-                ImGui::Checkbox("GPU Bitonic Sort", &s.emitter.gpuSorting);
-            }
-        }
-
-        if (ImGui::CollapsingHeader("HAIR & VEGETATION PARTICLES", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable Hair / Grass Particle System", &s.enableHairParticles);
-            if (s.enableHairParticles) {
-                ImGui::SliderInt("Strand Count", (int*)&s.hair.strandCount, 1000, 100000);
-                ImGui::SliderFloat("Strand Length", &s.hair.strandLength, 0.05f, 2.0f, "%.2f m");
-                ImGui::SliderFloat("Strand Width", &s.hair.strandWidth, 0.001f, 0.02f, "%.4f m");
-                ImGui::ColorEdit4("Root Color", &s.hair.rootColor.x);
-                ImGui::ColorEdit4("Tip Color", &s.hair.tipColor.x);
-                ImGui::SliderFloat("Wind Physics Gust", &s.hair.windStrength, 0.0f, 2.0f, "%.2f");
-                ImGui::SliderFloat("LOD Fade Distance", &s.hair.lodDistance, 10.0f, 200.0f, "%.0f m");
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Close##CloseGPUParticlesModal", ImVec2(100, 30))) {
-            showGPUParticlesModal = false;
+        if (ImGui::Button("Close##ClosePPSModal", ImVec2(100, 30))) {
+            showPostProcessSystemModal = false;
         }
     }
     ImGui::End();
@@ -9014,69 +8762,7 @@ void EngineUI::RenderOcclusionCullingModal(Scene& scene) {
     ImGui::End();
 }
 
-void EngineUI::RenderAdvReflectionsModal(Scene& scene) {
-    ImGui::SetNextWindowSize(ImVec2(600, 480), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Advanced Reflection Pipeline###AdvRefWin", &showAdvReflectionsModal, ImGuiWindowFlags_NoCollapse)) {
-        auto& ref = Eunoia::Reflections::AdvancedReflectionsSystem::Get();
-        auto& s = ref.GetSettingsRef();
 
-        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Multi-Tier Reflection Architecture (Planar + Cubemap + SSR)");
-        ImGui::TextWrapped("Hybrid reflections blending real-time planar mirrors, local parallax-corrected cubemaps, and stochastic screen space raymarching.");
-        ImGui::Separator();
-
-        if (ImGui::CollapsingHeader("REAL-TIME PLANAR REFLECTIONS", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable Planar Reflections", &s.planar.enabled);
-            if (s.planar.enabled) {
-                const char* planarResolutions[] = { "256x256", "512x512", "1024x1024", "2048x2048" };
-                int resIndex = (s.planar.resolution == 256) ? 0 : (s.planar.resolution == 512) ? 1 : (s.planar.resolution == 1024) ? 2 : 3;
-                if (ImGui::Combo("Planar Resolution", &resIndex, planarResolutions, IM_ARRAYSIZE(planarResolutions))) {
-                    int resValues[] = { 256, 512, 1024, 2048 };
-                    s.planar.resolution = resValues[resIndex];
-                }
-                ImGui::SliderFloat("Roughness Fade Threshold", &s.planar.roughnessCutoff, 0.01f, 0.5f, "%.2f");
-                ImGui::SliderFloat4("Plane Equation (Nx, Ny, Nz, D)", &s.planar.reflectionPlane.x, -1.0f, 1.0f, "%.2f");
-            }
-        }
-
-        if (ImGui::CollapsingHeader("DYNAMIC CUBEMAP PROBES", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable Cubemap Reflections", &s.cubemap.enabled);
-            if (s.cubemap.enabled) {
-                const char* types[] = { "Static Pre-baked", "Dynamic Real-Time" };
-                int curType = static_cast<int>(s.cubemap.type);
-                if (ImGui::Combo("Cubemap Update Mode", &curType, types, IM_ARRAYSIZE(types))) {
-                    s.cubemap.type = static_cast<Eunoia::Reflections::CubemapType>(curType);
-                }
-                if (s.cubemap.type == Eunoia::Reflections::CubemapType::Dynamic) {
-                    ImGui::SliderInt("Update Interval (Frames)", &s.cubemap.updateEveryNFrames, 1, 30);
-                }
-                ImGui::Checkbox("Parallax Correction (Local Box Projection)", &s.cubemap.useParallaxCorrection);
-                if (s.cubemap.useParallaxCorrection) {
-                    ImGui::SliderFloat3("Capture Extents", &s.cubemap.captureExtents.x, 1.0f, 50.0f, "%.1f m");
-                }
-            }
-        }
-
-        if (ImGui::CollapsingHeader("STOCHASTIC SCREEN SPACE REFLECTIONS (SSSR)", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Checkbox("Enable SSR##AdvRef", &s.ssr.enabled);
-            if (s.ssr.enabled) {
-                const char* qModes[] = { "Low", "Medium", "High", "Ultra" };
-                int curQ = static_cast<int>(s.ssr.quality);
-                if (ImGui::Combo("Raymarch Quality", &curQ, qModes, IM_ARRAYSIZE(qModes))) {
-                    s.ssr.quality = static_cast<Eunoia::Reflections::SSRQuality>(curQ);
-                }
-                ImGui::Checkbox("Hierarchical Z-Buffer Raymarch (HiZ)", &s.ssr.useHierarchicalZ);
-                ImGui::Checkbox("Fallback to Cubemap on Miss", &s.ssr.fallbackToCubemap);
-            }
-        }
-
-        ImGui::Separator();
-        ImGui::Spacing();
-        if (ImGui::Button("Close##CloseRefModal", ImVec2(100, 30))) {
-            showAdvReflectionsModal = false;
-        }
-    }
-    ImGui::End();
-}
 
 bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
     if (rawName.empty()) return false;
