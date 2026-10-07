@@ -285,7 +285,25 @@ struct DX12GpuTexture {
 
 static std::vector<ID3D12Resource*> g_allocatedTextures;
 static std::unordered_map<std::string, DX12GpuTexture> g_gpuTextureMap;
-static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_materialDescriptorTables;
+struct MaterialTableEntry {
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = {};
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = {};
+	std::string albedo;
+	std::string normal;
+	std::string rough;
+	std::string metal;
+	std::string ao;
+	std::string opacity;
+	std::string emission;
+};
+
+struct SkyboxTableEntry {
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = {};
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = {};
+	std::string texturePath;
+};
+
+static std::unordered_map<std::string, MaterialTableEntry> g_materialDescriptorTables;
 
 static DX12GpuTexture g_fallbackWhite;
 static DX12GpuTexture g_fallbackNormal;
@@ -326,7 +344,7 @@ static ID3D12PipelineState* g_shadowPipelineState = nullptr;
 
 static ID3D12RootSignature* g_skyboxRootSignature = nullptr;
 static ID3D12PipelineState* g_skyboxPipelineState = nullptr;
-static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_skyboxDescriptorTables;
+static std::unordered_map<std::string, SkyboxTableEntry> g_skyboxDescriptorTables;
 
 static ID3D12Resource* g_shadowConstantBuffer = nullptr;
 static void* g_pShadowConstantMapped = nullptr;
@@ -1087,7 +1105,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 	std::string key = albedo + "|" + normal + "|" + rough + "|" + metal + "|" + ao + "|" + opacity + "|" + emission;
 	auto it = g_materialDescriptorTables.find(key);
 	if (it != g_materialDescriptorTables.end()) {
-		return it->second;
+		return it->second.baseGpu;
 	}
 
 	DX12GpuTexture texAlbedo   = (!albedo.empty() && albedo != "none")
@@ -1134,7 +1152,17 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
 		s_hasFallbackTable = true;
 	}
 
-	g_materialDescriptorTables[key] = baseGpu;
+	MaterialTableEntry entry;
+	entry.baseCpu = baseCpu;
+	entry.baseGpu = baseGpu;
+	entry.albedo = albedo;
+	entry.normal = normal;
+	entry.rough = rough;
+	entry.metal = metal;
+	entry.ao = ao;
+	entry.opacity = opacity;
+	entry.emission = emission;
+	g_materialDescriptorTables[key] = entry;
 	return baseGpu;
 }
 
@@ -1143,7 +1171,7 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSkyboxTable(const std::string& texturePat
 	std::string key = texturePath.empty() ? "__default_skybox__" : texturePath;
 	auto it = g_skyboxDescriptorTables.find(key);
 	if (it != g_skyboxDescriptorTables.end()) {
-		return it->second;
+		return it->second.baseGpu;
 	}
 
 	DX12GpuTexture tex = (!texturePath.empty() && texturePath != "none")
@@ -1164,7 +1192,11 @@ D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSkyboxTable(const std::string& texturePat
 	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
 	g_d3dDevice->CopyDescriptorsSimple(1, baseCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-	g_skyboxDescriptorTables[key] = baseGpu;
+	SkyboxTableEntry entry;
+	entry.baseCpu = baseCpu;
+	entry.baseGpu = baseGpu;
+	entry.texturePath = texturePath;
+	g_skyboxDescriptorTables[key] = entry;
 	return baseGpu;
 }
 
@@ -1193,6 +1225,8 @@ void UpdateAllTextureLODClamps()
 	if (!g_d3dDevice) return;
 
 	int maxRes = TextureManager::Get().GetMaxTextureResolution();
+
+	// 1. Update standalone texture SRVs in g_gpuTextureMap with new ResourceMinLODClamp
 	for (auto& pair : g_gpuTextureMap)
 	{
 		DX12GpuTexture& tex = pair.second;
@@ -1215,6 +1249,53 @@ void UpdateAllTextureLODClamps()
 			srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
 		}
 		g_d3dDevice->CreateShaderResourceView(tex.resource, &srvDesc, tex.cpuHandle);
+	}
+
+	// 2. Re-copy updated descriptors into all active contiguous material descriptor tables
+	for (auto& kv : g_materialDescriptorTables)
+	{
+		MaterialTableEntry& entry = kv.second;
+		if (entry.baseCpu.ptr == 0) continue;
+
+		DX12GpuTexture texAlbedo   = (!entry.albedo.empty() && entry.albedo != "none")
+			? GetOrLoadGPUTexture(entry.albedo, g_fallbackWhite, TextureUsageSlot::BaseColor)
+			: g_fallbackWhite;
+		DX12GpuTexture texNormal   = GetOrLoadGPUTexture(entry.normal,   g_fallbackNormal, TextureUsageSlot::Normal);
+		DX12GpuTexture texRough    = GetOrLoadGPUTexture(entry.rough,    g_fallbackRoughness, TextureUsageSlot::Roughness);
+		DX12GpuTexture texMetal    = GetOrLoadGPUTexture(entry.metal,    g_fallbackMetallic, TextureUsageSlot::Metallic);
+		DX12GpuTexture texAO       = GetOrLoadGPUTexture(entry.ao,       g_fallbackAO, TextureUsageSlot::AO);
+		DX12GpuTexture texOpacity  = (!entry.opacity.empty() && entry.opacity != "none")
+			? GetOrLoadGPUTexture(entry.opacity, g_fallbackWhite, TextureUsageSlot::Opacity)
+			: g_fallbackWhite;
+		DX12GpuTexture texEmission = (!entry.emission.empty() && entry.emission != "none")
+			? GetOrLoadGPUTexture(entry.emission, g_fallbackBlack, TextureUsageSlot::Emission)
+			: g_fallbackBlack;
+
+		DX12GpuTexture slots[7] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity, texEmission };
+		for (int i = 0; i < 7; ++i) {
+			D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (slots[i].resource && slots[i].cpuHandle.ptr != 0)
+				? slots[i].cpuHandle
+				: (i == 6 ? g_fallbackBlack.cpuHandle : g_fallbackWhite.cpuHandle);
+			D3D12_CPU_DESCRIPTOR_HANDLE dst = entry.baseCpu;
+			dst.ptr += (SIZE_T)i * g_srvDescriptorSize;
+			g_d3dDevice->CopyDescriptorsSimple(1, dst, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+		}
+	}
+
+	// 3. Re-copy updated descriptors into all active skybox descriptor tables
+	for (auto& kv : g_skyboxDescriptorTables)
+	{
+		SkyboxTableEntry& entry = kv.second;
+		if (entry.baseCpu.ptr == 0) continue;
+
+		DX12GpuTexture tex = (!entry.texturePath.empty() && entry.texturePath != "none")
+			? GetOrLoadGPUTexture(entry.texturePath, g_fallbackWhite, TextureUsageSlot::BaseColor)
+			: g_fallbackWhite;
+
+		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0)
+			? tex.cpuHandle
+			: g_fallbackWhite.cpuHandle;
+		g_d3dDevice->CopyDescriptorsSimple(1, entry.baseCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 	}
 }
 
