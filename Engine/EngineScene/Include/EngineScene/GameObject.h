@@ -942,6 +942,7 @@ struct GameObject {
         tags = std::move(other.tags);
         scene = other.scene;
         Transform.gameObject = this;
+        Transform.InitProxies();
         behaviours = std::move(other.behaviours);
         for (auto& b : behaviours) {
             if (b) b->SetOwner(this);
@@ -1012,6 +1013,7 @@ struct GameObject {
         physics = other.physics;
         scene = other.scene;
         Transform.gameObject = this;
+        Transform.InitProxies();
         behaviours.clear();
         for (const auto& b : other.behaviours) {
             if (b) {

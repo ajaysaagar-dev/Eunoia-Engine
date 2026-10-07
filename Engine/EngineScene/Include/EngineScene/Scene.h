@@ -1647,7 +1647,7 @@ struct RenderBatch {
         // Keep all geometry in deterministic vertex/index buffer positions (preventing buffer shuffling & TAA ghosting).
         // Frustum culling marks each batch's isVisible flag so the GPU draw call can be skipped during viewport rasterization.
         struct CandidateEntry {
-            const GameObject* obj;
+            size_t objIndex;
             glm::mat4 model;
             float distSq;
             bool isVisible;
@@ -1675,7 +1675,8 @@ struct RenderBatch {
             }
         }
 
-        for (auto& obj : objects) {
+        for (size_t objIdx = 0; objIdx < objects.size(); ++objIdx) {
+            auto& obj = objects[objIdx];
             obj.isHidden = false;
 
             if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
@@ -1738,9 +1739,9 @@ struct RenderBatch {
 
             bool isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
             if (isTrans) {
-                transparentEntries.push_back({ &obj, model, distSq, isBatchVisible });
+                transparentEntries.push_back({ objIdx, model, distSq, isBatchVisible });
             } else {
-                opaqueEntries.push_back({ &obj, model, distSq, isBatchVisible });
+                opaqueEntries.push_back({ objIdx, model, distSq, isBatchVisible });
             }
         }
 
@@ -1758,7 +1759,8 @@ struct RenderBatch {
         sortedEntries.insert(sortedEntries.end(), transparentEntries.begin(), transparentEntries.end());
 
         for (const auto& entry : sortedEntries) {
-            const auto& obj = *entry.obj;
+            if (entry.objIndex >= objects.size()) continue;
+            const auto& obj = objects[entry.objIndex];
             const glm::mat4& model = entry.model;
             float distSq = entry.distSq;
 
