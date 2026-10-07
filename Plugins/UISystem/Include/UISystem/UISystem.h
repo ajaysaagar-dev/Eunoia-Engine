@@ -87,6 +87,8 @@ struct UISystemProxy {
     }
 };
 
+} // namespace EunoiaUI
+
 // Global instance variable & alias so scripts can write: UISystem.Add(UI); UISystem.RemoveAll(); UISystem::Add(UI);
 inline EunoiaUI::UISystemProxy UISystem;
 inline EunoiaUI::UISystemProxy uiSystem;
