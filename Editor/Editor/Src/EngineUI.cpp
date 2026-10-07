@@ -3765,6 +3765,42 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::EndMenu();
                 }
 
+                // ================================================================
+                // TEXTURE RESOLUTION & STREAMING
+                // ================================================================
+                if (ImGui::BeginMenu("Texture")) {
+                    ImGui::TextDisabled("Max Streaming Resolution:");
+                    ImGui::Separator();
+
+                    struct TexResOption {
+                        TextureQuality quality;
+                        const char* label;
+                        const char* desc;
+                    };
+                    static const TexResOption resOptions[] = {
+                        { TextureQuality::None,   "Native (Unconstrained)", "Render all textures at native resolution without clamp" },
+                        { TextureQuality::Max,    "4K (4096 x 4096)",       "Max texture resolution 4K. Textures > 4K are clamped to 4K" },
+                        { TextureQuality::Ultra,  "2K (2048 x 2048)",       "Max texture resolution 2K. 4K textures in level stream as 2K" },
+                        { TextureQuality::High,   "1K (1024 x 1024)",       "Max texture resolution 1K. Textures > 1K stream as 1K" },
+                        { TextureQuality::Medium, "512 x 512",              "Max texture resolution 512. Textures > 512 stream as 512" },
+                        { TextureQuality::Low,    "256 x 256",              "Max texture resolution 256. Textures > 256 stream as 256" }
+                    };
+
+                    for (const auto& opt : resOptions) {
+                        bool isSelected = (currentTextureQuality == opt.quality);
+                        if (ImGui::MenuItem(opt.label, nullptr, isSelected)) {
+                            ApplyTextureQuality(opt.quality);
+                            SaveEditorConfig();
+                            AddLog("LogRenderer", std::string("Max Texture Streaming Resolution set to: ") + opt.label, 0);
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("%s\n(Textures natively <= max limit remain unscaled; higher resolutions clamped via D3D12 MinLODClamp)", opt.desc);
+                        }
+                    }
+
+                    ImGui::EndMenu();
+                }
+
                 ImGui::EndMenu();
             }
 
