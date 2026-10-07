@@ -613,8 +613,52 @@ struct GameObject {
     int materialDebugMode = 0;       // 0=Final PBR, 1..10 diagnostic modes
 
     bool visible = true;
+    bool isHidden = false; // Runtime hidden flag (e.g. culled when static object is outside viewport)
     bool autoRotate = false;
     glm::vec3 autoRotateSpeed{0.0f, 45.0f, 0.0f}; // deg/sec
+
+    bool IsHidden() const { return isHidden || !visible; }
+
+    mutable glm::vec3 cachedLocalMin{0.0f};
+    mutable glm::vec3 cachedLocalMax{0.0f};
+    mutable bool hasCachedBounds = false;
+
+    bool GetLocalBounds(glm::vec3& outMin, glm::vec3& outMax) const {
+        if (hasCachedBounds) {
+            outMin = cachedLocalMin;
+            outMax = cachedLocalMax;
+            return true;
+        }
+        if (mesh.vertices.empty()) {
+            outMin = outMax = glm::vec3(0.0f);
+            return false;
+        }
+        glm::vec3 minB(1e9f), maxB(-1e9f);
+        bool anyValid = false;
+        for (const auto& v : mesh.vertices) {
+            if (std::isnan(v.pos.x) || std::isnan(v.pos.y) || std::isnan(v.pos.z) ||
+                !std::isfinite(v.pos.x) || !std::isfinite(v.pos.y) || !std::isfinite(v.pos.z)) {
+                continue;
+            }
+            minB = glm::min(minB, v.pos);
+            maxB = glm::max(maxB, v.pos);
+            anyValid = true;
+        }
+        if (!anyValid) {
+            outMin = outMax = glm::vec3(0.0f);
+            return false;
+        }
+        cachedLocalMin = minB;
+        cachedLocalMax = maxB;
+        hasCachedBounds = true;
+        outMin = minB;
+        outMax = maxB;
+        return true;
+    }
+
+    void InvalidateBounds() {
+        hasCachedBounds = false;
+    }
 
     std::string meshFilePath = "";
     bool isImportedMesh = false;
@@ -872,6 +916,7 @@ struct GameObject {
         aoChannel = other.aoChannel;
         materialDebugMode = other.materialDebugMode;
         visible = other.visible;
+        isHidden = other.isHidden;
         autoRotate = other.autoRotate;
         autoRotateSpeed = other.autoRotateSpeed;
         meshFilePath = std::move(other.meshFilePath);
@@ -942,6 +987,7 @@ struct GameObject {
         aoChannel = other.aoChannel;
         materialDebugMode = other.materialDebugMode;
         visible = other.visible;
+        isHidden = other.isHidden;
         autoRotate = other.autoRotate;
         autoRotateSpeed = other.autoRotateSpeed;
         meshFilePath = other.meshFilePath;

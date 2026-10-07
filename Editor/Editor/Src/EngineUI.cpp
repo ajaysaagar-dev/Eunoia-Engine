@@ -4566,7 +4566,11 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
             obj.visible = !obj.visible;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
+            if (obj.isHidden) {
+                ImGui::SetTooltip("Actor is hidden (outside viewport, type static)");
+            } else {
+                ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
+            }
         }
         ImGui::PopStyleColor(3);
     } else {
@@ -4574,7 +4578,11 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
             obj.visible = !obj.visible;
         }
         if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Toggle Visibility");
+            if (obj.isHidden) {
+                ImGui::SetTooltip("Actor is hidden (outside viewport, type static)");
+            } else {
+                ImGui::SetTooltip("Toggle Visibility");
+            }
         }
     }
     ImGui::SameLine();
@@ -5330,6 +5338,10 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
             if (active) ImGui::PopStyleColor();
             if (i < 2) ImGui::SameLine();
+        }
+        if (obj->mobility == Mobility::Static && obj->isHidden) {
+            ImGui::SameLine();
+            ImGui::TextColored(ImVec4(0.85f, 0.75f, 0.25f, 1.0f), "[Hidden - Outside Viewport]");
         }
 
         ImGui::Separator();

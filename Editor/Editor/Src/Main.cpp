@@ -58,7 +58,10 @@ public:
         return s_instance;
     }
     void BeginFrame() {}
-    void UpdateFrustum(const glm::mat4&) {}
+    void UpdateFrustum(const glm::mat4& vp) { m_viewProj = vp; }
+    const glm::mat4& GetFrustum() const { return m_viewProj; }
+private:
+    glm::mat4 m_viewProj{1.0f};
 };
 
 class MeshClusterCullingSystem {
