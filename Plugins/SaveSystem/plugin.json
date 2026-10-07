@@ -1,0 +1,10 @@
+{
+  "name": "SaveSystem",
+  "version": "1.0.0",
+  "author": "Eunoia Engine",
+  "description": "Cross-level and local persistent game save system supporting Global and Level-scoped dynamic items.",
+  "category": "Gameplay",
+  "dependencies": [],
+  "entryPoint": "Plugins/SaveSystem/Source/SaveSystemPlugin.cpp",
+  "includeDir": "Plugins/SaveSystem/Include"
+}

@@ -1,0 +1,7 @@
+{
+    "name": "GPUParticles",
+    "version": "1.0.0",
+    "description": "GPU-based particle systems from WickedEngine: emit from point/mesh/animated mesh, soft particles, hair particle systems for grass and vegetation.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

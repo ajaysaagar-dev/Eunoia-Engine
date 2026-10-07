@@ -1,0 +1,7 @@
+{
+    "name": "AdvancedPostProcess",
+    "version": "1.0.0",
+    "description": "Advanced post-processing pipeline from WickedEngine: Bloom, Motion Blur, Bokeh Depth of Field, Chromatic Aberration, Lens Flare, Light Shafts, Eye Adaptation (HDR), Sharpen Filter, Edge Outline.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

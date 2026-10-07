@@ -1,0 +1,11 @@
+{
+    "name": "UISystem",
+    "version": "1.0.0",
+    "description": "User Interface visual canvas, widgets, drag-and-drop designer, and runtime UI system for Eunoia Engine.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "ui",
+    "core": true,
+    "dependencies": ["engine", "scene"],
+    "provides": ["IUISystem"]
+}

@@ -1,0 +1,7 @@
+{
+    "name": "Tessellation",
+    "version": "1.0.0",
+    "description": "GPU hardware tessellation from WickedEngine: silhouette smoothing (PN triangles), displacement mapping tessellation with adaptive LOD.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

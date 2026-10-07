@@ -1,0 +1,251 @@
+#pragma once
+#include <string>
+#include <vector>
+#include <algorithm>
+#include <cmath>
+#include <iostream>
+#include <glm/glm.hpp>
+#include <Collisions/CollisionTypes.h>
+
+struct GameObject;
+
+namespace Eunoia {
+namespace RayTrace {
+
+struct RayTraceParams {
+    int ignoreObjectId = -1;
+    const GameObject* ignoreObject = nullptr;
+    bool ignoreTriggers = false;
+    bool ignoreInvisible = true;
+    float maxDistance = 100000.0f;
+
+    RayTraceParams() = default;
+    RayTraceParams(int ignoreId) : ignoreObjectId(ignoreId) {}
+    RayTraceParams(const GameObject* ignoreObj) : ignoreObject(ignoreObj) {}
+};
+
+struct GameObjectHitProxy {
+    GameObject* ptr = nullptr;
+
+    // Direct Name accessor supporting Hit.GameObject.Name
+    struct NameAccessor {
+        const GameObjectHitProxy* parent = nullptr;
+        NameAccessor(const GameObjectHitProxy* p = nullptr) : parent(p) {}
+
+        std::string str() const;
+        operator std::string() const { return str(); }
+        const char* c_str() const;
+        bool empty() const { return str().empty(); }
+        size_t size() const { return str().size(); }
+        size_t length() const { return str().length(); }
+        bool operator==(const std::string& other) const { return str() == other; }
+        bool operator==(const char* other) const { return str() == (other ? other : ""); }
+        bool operator!=(const std::string& other) const { return str() != other; }
+        bool operator!=(const char* other) const { return str() != (other ? other : ""); }
+        friend std::ostream& operator<<(std::ostream& os, const NameAccessor& na) {
+            os << na.str();
+            return os;
+        }
+    };
+
+    NameAccessor Name{this};
+    NameAccessor name{this};
+
+    GameObjectHitProxy(GameObject* p = nullptr) : ptr(p), Name(this), name(this) {}
+    GameObjectHitProxy(const GameObjectHitProxy& other) : ptr(other.ptr), Name(this), name(this) {}
+    GameObjectHitProxy(GameObjectHitProxy&& other) noexcept : ptr(other.ptr), Name(this), name(this) { other.ptr = nullptr; }
+    GameObjectHitProxy& operator=(const GameObjectHitProxy& other) {
+        ptr = other.ptr;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+    GameObjectHitProxy& operator=(GameObjectHitProxy&& other) noexcept {
+        ptr = other.ptr;
+        other.ptr = nullptr;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+    GameObjectHitProxy& operator=(GameObject* p) {
+        ptr = p;
+        Name.parent = this;
+        name.parent = this;
+        return *this;
+    }
+
+    // Implicit conversion to GameObject* and GameObject&
+    operator GameObject*() const { return ptr; }
+    operator GameObject&() const;
+    GameObject* operator->() const { return ptr; }
+    GameObject& operator*() const;
+    bool operator==(std::nullptr_t) const { return ptr == nullptr; }
+    bool operator!=(std::nullptr_t) const { return ptr != nullptr; }
+    explicit operator bool() const { return ptr != nullptr; }
+
+    // Member forwards with dot syntax
+    int GetId() const;
+    glm::vec3 GetPosition() const;
+    glm::vec3 GetRotation() const;
+    glm::vec3 GetScale() const;
+
+    // Tags forwards (supporting .GameObject.GetTags(), .GameObject.AddTag(...), etc.)
+    std::vector<std::string> GetTags() const;
+    std::vector<std::string> getTags() const;
+    bool HasTag(const std::string& tag) const;
+    bool hasTag(const std::string& tag) const;
+    void AddTag(const std::string& tag);
+    void addTag(const std::string& tag);
+    bool RemoveTag(const std::string& tag);
+    bool removeTag(const std::string& tag);
+    void RemoveAllTag();
+    void RemoveAllTags();
+    void removeAllTag();
+    void removeAllTags();
+
+    // Destroy GameObject method (Hit.GameObject.Destroy())
+    void Destroy() const;
+    void destroy() const;
+};
+
+struct RayTraceHit {
+    // Status flag (true if hit, false if nothing hit)
+    bool Status = false;
+    bool status = false;
+    bool hasHit = false;
+
+    // Hit GameObject accessors (supporting Hit.GameObject, Hit.GameObject.Name, Hit.gameObject->...)
+    GameObjectHitProxy GameObject{nullptr};
+    ::GameObject* gameObject = nullptr;
+
+    // Hit location and geometry
+    glm::vec3 Point{0.0f};
+    glm::vec3 point{0.0f};
+    glm::vec3 Normal{0.0f, 1.0f, 0.0f};
+    glm::vec3 normal{0.0f, 1.0f, 0.0f};
+    float Distance = 0.0f;
+    float distance = 0.0f;
+    float Fraction = 1.0f;
+    float fraction = 1.0f;
+
+    // Hit metadata
+    int ObjectId = -1;
+    int objectId = -1;
+    int ModifierIndex = -1;
+    int modifierIndex = -1;
+    std::string ModifierName = "";
+    std::string modifierName = "";
+    CollisionShapeType ShapeType = CollisionShapeType::None;
+    CollisionShapeType shapeType = CollisionShapeType::None;
+
+    RayTraceHit() : GameObject(nullptr) {}
+    RayTraceHit(const RayTraceHit& other) {
+        *this = other;
+    }
+    RayTraceHit& operator=(const RayTraceHit& other) {
+        if (this == &other) return *this;
+        Status = other.Status;
+        status = other.status;
+        hasHit = other.hasHit;
+        GameObject = other.GameObject;
+        gameObject = other.gameObject;
+        Point = other.Point;
+        point = other.point;
+        Normal = other.Normal;
+        normal = other.normal;
+        Distance = other.Distance;
+        distance = other.distance;
+        Fraction = other.Fraction;
+        fraction = other.fraction;
+        ObjectId = other.ObjectId;
+        objectId = other.objectId;
+        ModifierIndex = other.ModifierIndex;
+        modifierIndex = other.modifierIndex;
+        ModifierName = other.ModifierName;
+        modifierName = other.modifierName;
+        ShapeType = other.ShapeType;
+        shapeType = other.shapeType;
+        return *this;
+    }
+    RayTraceHit(RayTraceHit&& other) noexcept {
+        *this = std::move(other);
+    }
+    RayTraceHit& operator=(RayTraceHit&& other) noexcept {
+        if (this == &other) return *this;
+        Status = other.Status;
+        status = other.status;
+        hasHit = other.hasHit;
+        GameObject = std::move(other.GameObject);
+        gameObject = other.gameObject;
+        Point = other.Point;
+        point = other.point;
+        Normal = other.Normal;
+        normal = other.normal;
+        Distance = other.Distance;
+        distance = other.distance;
+        Fraction = other.Fraction;
+        fraction = other.fraction;
+        ObjectId = other.ObjectId;
+        objectId = other.objectId;
+        ModifierIndex = other.ModifierIndex;
+        modifierIndex = other.modifierIndex;
+        ModifierName = std::move(other.ModifierName);
+        modifierName = std::move(other.modifierName);
+        ShapeType = other.ShapeType;
+        shapeType = other.shapeType;
+        return *this;
+    }
+
+    void SetHit(bool hit, ::GameObject* obj, const glm::vec3& pt, const glm::vec3& n, float dist, float frac, int objId, int modIdx, const std::string& modName, CollisionShapeType shape);
+
+    // Evaluates to true if an object was hit
+    explicit operator bool() const {
+        return Status && (gameObject != nullptr);
+    }
+
+    bool operator!() const {
+        return !Status || (gameObject == nullptr);
+    }
+
+    // Direct pointer operator to hit GameObject
+    ::GameObject* operator->() const {
+        return gameObject;
+    }
+
+    ::GameObject& operator*() const;
+    operator ::GameObject*() const {
+        return gameObject;
+    }
+    operator ::GameObject&() const;
+
+    ::GameObject* GetGameObject() const {
+        return gameObject;
+    }
+
+    ::GameObject& Get() const;
+
+    bool IsValid() const {
+        return Status && (gameObject != nullptr);
+    }
+
+    // Tag helpers on Hit
+    std::vector<std::string> GetTags() const { return GameObject.GetTags(); }
+    std::vector<std::string> getTags() const { return GameObject.GetTags(); }
+    bool HasTag(const std::string& tag) const { return GameObject.HasTag(tag); }
+    bool hasTag(const std::string& tag) const { return GameObject.HasTag(tag); }
+    void AddTag(const std::string& tag) { GameObject.AddTag(tag); }
+    void addTag(const std::string& tag) { GameObject.AddTag(tag); }
+    bool RemoveTag(const std::string& tag) { return GameObject.RemoveTag(tag); }
+    bool removeTag(const std::string& tag) { return GameObject.RemoveTag(tag); }
+    void RemoveAllTag() { GameObject.RemoveAllTag(); }
+    void RemoveAllTags() { GameObject.RemoveAllTags(); }
+    void removeAllTag() { GameObject.RemoveAllTag(); }
+    void removeAllTags() { GameObject.RemoveAllTags(); }
+};
+
+} // namespace RayTrace
+} // namespace Eunoia
+
+using RayTraceHit = Eunoia::RayTrace::RayTraceHit;
+using RayTraceParams = Eunoia::RayTrace::RayTraceParams;
+using GameObjectHitProxy = Eunoia::RayTrace::GameObjectHitProxy;

@@ -1,0 +1,6401 @@
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3.h>
+#include <GLFW/glfw3native.h>
+
+#include <windows.h>
+#include <dwmapi.h>
+#include <d3d12.h>
+#include <d3d12sdklayers.h>
+#include <dxgi1_6.h>
+#include <d3dcompiler.h>
+
+#define GLM_FORCE_RADIANS
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
+#include <glm/vec4.hpp>
+#include <glm/mat4x4.hpp>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
+#include <cstdlib>
+#include <iostream>
+#include <vector>
+#include <string>
+#include <chrono>
+#include <algorithm>
+#include <cstdint>
+#include <unordered_map>
+#include <filesystem>
+
+#include <EngineAssets/Geometry.h>
+#include <EngineScene/GameObject.h>
+#include <EngineScene/Level.h>
+#include <EngineScene/LevelSerializer.h>
+#include <EngineRenderer/Camera.h>
+#include <Editor/EngineUI.h>
+#include <Editor/EditorGizmoSystem.h>
+#include <EngineAssets/TextureManager.h>
+#include <EngineAssets/DirectXTex.h>
+#include <EngineAssets/DirectXTexD3D12.h>
+#include <EngineAssets/AssetSystem.h>
+#include <EngineAssets/MeshImporter.h>
+#include <EnginePlatform/InputSystem.h>
+#include <EngineCore/EngineLogger.h>
+#include <EngineScene/ScreenPrint.h>
+#include <Editor/StartupSplash.h>
+#include <Water/WaterSystem.h>
+#include <LightsBaking/LightBakeManager.h>
+#include <Graphics/GraphicsSystem.h>
+#include <RayTracing/RayTracingSystem.h>
+#include <UISystem/CustomUI/CustomUIManager.h>
+#include <sstream>
+
+namespace Eunoia {
+class ViewportOnlyRenderer {
+public:
+    static ViewportOnlyRenderer& Get() {
+        static ViewportOnlyRenderer s_instance;
+        return s_instance;
+    }
+    void BeginFrame() {}
+    void UpdateFrustum(const glm::mat4&) {}
+};
+
+class MeshClusterCullingSystem {
+public:
+    static MeshClusterCullingSystem& Get() {
+        static MeshClusterCullingSystem s_instance;
+        return s_instance;
+    }
+    bool IsInitialized() const { return false; }
+    void Initialize(ID3D12Device* = nullptr, ID3D12CommandQueue* = nullptr, UINT = 0, UINT = 0) {}
+    void UpdateCamera(const glm::mat4&, const glm::mat4&, const glm::vec3&, const glm::vec4*, float, float) {}
+    void ExecuteCullingPass(ID3D12GraphicsCommandList*, Scene&, ID3D12Resource*, D3D12_RESOURCE_STATES) {}
+    bool RenderClusteredBatch(ID3D12GraphicsCommandList*, const Scene::RenderBatch&) { return false; }
+    void FetchStatistics() {}
+    void Shutdown() {}
+    void Resize(UINT, UINT) {}
+};
+}
+
+extern "C" {
+    unsigned char *stbi_load(char const *filename, int *x, int *y, int *channels_in_file, int desired_channels);
+    void stbi_image_free(void *retval_from_stbi_load);
+}
+
+#include "imgui.h"
+#include "ImGuizmo.h"
+#include "backends/imgui_impl_glfw.h"
+#include "backends/imgui_impl_dx12.h"
+
+// Configuration matching UI_Ref.svg blueprint
+const int WIDTH = 1728;
+const int HEIGHT = 1117;
+const UINT FRAME_COUNT = 2;
+
+// Real-Time Shadow Mapping Configuration
+const UINT SHADOW_MAP_WIDTH = 2048;
+const UINT SHADOW_MAP_HEIGHT = 2048;
+const UINT POINT_SHADOW_MAP_SIZE = 512;
+const UINT MAX_SHADOW_POINT_LIGHTS = 4;
+const UINT MAX_SHADOW_SPOT_LIGHTS = 4;
+
+// Real-Time Lights Configuration (Directional, Point, Spot, Area)
+const int MAX_POINT_LIGHTS = 64;
+
+static UINT g_currentDirShadowRes = 2048;
+static UINT g_currentPointShadowRes = 512;
+static UINT g_currentSpotShadowRes = 1024;
+static UINT g_activePointLightResolutions[MAX_SHADOW_POINT_LIGHTS] = { 512, 512, 512, 512 };
+static UINT g_activeSpotLightResolutions[MAX_SHADOW_SPOT_LIGHTS] = { 1024, 1024, 1024, 1024 };
+
+// HLSL Constant Buffer struct (must be 256-byte aligned in D3D12)
+struct alignas(256) SceneConstantBuffer
+{
+	glm::mat4 mvp;
+	glm::mat4 lightSpaceMatrix;
+	glm::vec3 cameraPos;
+	float ambientIntensity;
+	glm::vec3 lightDir;
+	float shadowBias;
+	glm::vec3 lightColor;
+	float shadowStrength;
+	float pcfRadius;
+	float enableShadows;
+	float shadowMapSize;
+	float numPointLights;
+	glm::vec4 ambientColor;
+	glm::vec4 pointLightPosRange[MAX_POINT_LIGHTS];
+	glm::vec4 pointLightColorIntensity[MAX_POINT_LIGHTS];
+	glm::vec4 pointLightDirType[MAX_POINT_LIGHTS];
+	glm::vec4 pointLightSpotAreaParams[MAX_POINT_LIGHTS];
+	glm::vec4 pointLightShadowParams[MAX_POINT_LIGHTS];
+	glm::mat4 spotLightSpaceMatrices[MAX_SHADOW_SPOT_LIGHTS];
+	float enablePostProcessing;
+	float postExposureEV;
+	float postExposureMultiplier;
+	float postTonemapper;
+	float postSaturation;
+	float postContrast;
+	float postGamma;
+	float padPost;
+	glm::vec4 postColorFilter;
+	float maxShadowDistance;
+	float padShadow[3];
+};
+
+struct alignas(256) ShadowConstantBuffer
+{
+	glm::mat4 lightSpaceMatrix;
+};
+
+struct MaterialShaderConstants
+{
+	float baseColor[3];
+	float metallic;
+	float roughness;
+	float normalStrength;
+	float specular;
+	float emissiveIntensity;
+	float emissiveColor[3];
+	float isUnlit;
+	float hasAlbedoTex;
+	float hasNormalTex;
+	float hasRoughTex;
+	float hasAoTex;
+	float receiveShadows;
+	float uvScale[2];
+	float pad0;
+	float blendMode;
+	float opacity;
+	float opacityMaskClipValue;
+	float hasOpacityTex;
+	float normalMapYFlip;
+	float roughnessChannel;
+	float metallicChannel;
+	float aoChannel;
+	float materialDebugMode;
+	float hasMetalTex;
+	float hasEmissionTex;
+	float pad3;
+};
+static_assert(sizeof(MaterialShaderConstants) == 128, "MaterialShaderConstants must be 128 bytes (32 floats)");
+
+struct SkyboxShaderConstants
+{
+	glm::mat4 invViewProj;
+	glm::vec3 cameraPos;
+	float exposure;
+	glm::vec3 tint;
+	float rotation;
+	float hasHdrTex;
+	float ambientContribution;
+	float pad0;
+	float pad1;
+};
+static_assert(sizeof(SkyboxShaderConstants) == 112, "SkyboxShaderConstants must be 112 bytes (28 floats)");
+
+// Window & GLFW
+static GLFWwindow* g_window = nullptr;
+static int g_currentWidth = WIDTH;
+static int g_currentHeight = HEIGHT;
+
+// DirectX 12 Core Objects
+static IDXGIFactory4* g_dxgiFactory = nullptr;
+static ID3D12Device* g_d3dDevice = nullptr;
+static ID3D12CommandQueue* g_commandQueue = nullptr;
+static IDXGISwapChain3* g_swapChain = nullptr;
+static ID3D12DescriptorHeap* g_rtvDescHeap = nullptr;
+static ID3D12DescriptorHeap* g_dsvDescHeap = nullptr;
+static ID3D12DescriptorHeap* g_srvDescHeap = nullptr;
+static UINT g_rtvDescriptorSize = 0;
+static UINT g_srvDescriptorSize = 0;
+
+static ID3D12Resource* g_renderTargets[FRAME_COUNT] = {};
+
+// Offscreen Scene Render Targets & Real-Time Anti-Aliasing (dev.md)
+static ID3D12Resource* g_sceneRenderTarget = nullptr;
+static ID3D12Resource* g_sceneHistoryRenderTarget = nullptr;
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneRtvHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneHistoryRtvHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_sceneSrvGpuHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_sceneHistorySrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_sceneHistorySrvGpuHandle = {};
+static ID3D12RootSignature* g_antiAliasingRootSignature = nullptr;
+static ID3D12PipelineState* g_antiAliasingPipelineState = nullptr;
+static uint64_t g_globalFrameCounter = 0;
+static glm::vec2 g_currentJitter = { 0.0f, 0.0f };
+static ID3D12CommandAllocator* g_commandAllocators[FRAME_COUNT] = {};
+static ID3D12GraphicsCommandList* g_commandLists[FRAME_COUNT] = {};
+static ID3D12GraphicsCommandList* g_commandList = nullptr;
+
+static ID3D12Resource* g_depthStencilBuffer = nullptr;
+
+// Synchronization
+static UINT g_frameIndex = 0;
+static HANDLE g_fenceEvent = nullptr;
+static ID3D12Fence* g_fence = nullptr;
+static UINT64 g_fenceValues[FRAME_COUNT] = {};
+static UINT64 g_globalFenceValue = 0;
+
+// Pipeline & Shaders
+static ID3D12RootSignature* g_rootSignature = nullptr;
+static ID3D12PipelineState* g_pipelineState = nullptr;
+
+// Dynamic Scene Buffers
+const size_t MAX_SCENE_VERTICES = 1000000;
+const size_t MAX_SCENE_INDICES  = 3000000;
+
+static ID3D12Resource* g_vertexBuffer = nullptr;
+static ID3D12Resource* g_indexBuffer = nullptr;
+static ID3D12Resource* g_constantBuffer = nullptr;
+
+static D3D12_VERTEX_BUFFER_VIEW g_vertexBufferView = {};
+static D3D12_INDEX_BUFFER_VIEW  g_indexBufferView = {};
+
+static void* g_pVertexMapped = nullptr;
+static void* g_pIndexMapped = nullptr;
+static void* g_pConstantMapped = nullptr;
+
+static uint32_t g_currentVertexCount = 0;
+static uint32_t g_currentIndexCount = 0;
+
+// ImGui & Engine SRV allocation tracking
+static const UINT SRV_HEAP_CAPACITY = 8192; // Must match srvHeapDesc.NumDescriptors in initD3D12
+static UINT g_srvDescriptorAllocIndex = 0;
+static bool g_deviceLost = false;
+
+// Game Engine State
+static Scene g_scene;
+static OrbitCamera g_camera;
+static EngineUI g_engineUI;
+static std::vector<Scene::RenderBatch> g_sceneBatches;
+static size_t g_numPureSceneBatches = 0;
+
+struct DX12GpuTexture {
+	ID3D12Resource* resource = nullptr;
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle{};
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuHandle{};
+	int width = 0;
+	int height = 0;
+	UINT mipLevels = 1;
+	DXGI_FORMAT format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	bool isCubemap = false;
+};
+
+static std::vector<ID3D12Resource*> g_allocatedTextures;
+static std::unordered_map<std::string, DX12GpuTexture> g_gpuTextureMap;
+static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_materialDescriptorTables;
+
+static DX12GpuTexture g_fallbackWhite;
+static DX12GpuTexture g_fallbackNormal;
+static DX12GpuTexture g_fallbackRoughness;
+static DX12GpuTexture g_fallbackMetallic;
+static DX12GpuTexture g_fallbackAO;
+static DX12GpuTexture g_fallbackMissing;
+static DX12GpuTexture g_fallbackBlack;  // Used as no-op lightmap when no bake is active
+
+// Lightmap SRV (t9) – filled by the light baking system or the black fallback
+static D3D12_CPU_DESCRIPTOR_HANDLE g_lightmapSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_lightmapSrvGpuHandle = {};
+static bool g_lightmapSrvInHeap = false; // true once the dedicated slot has been written
+
+// Real-Time Directional Shadow Resources
+static ID3D12Resource* g_shadowDepthBuffer = nullptr;
+static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowDsvHandle = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_shadowSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_shadowSrvGpuHandle = {};
+static bool g_isDirectionalLightBaked = false;
+
+// Real-Time Point Light Shadow Cubemap Array Resources
+static ID3D12Resource* g_pointShadowDepthBuffer = nullptr;
+static D3D12_CPU_DESCRIPTOR_HANDLE g_pointShadowDsvHandles[MAX_SHADOW_POINT_LIGHTS * 6] = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_pointShadowSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_pointShadowSrvGpuHandle = {};
+static int g_activeShadowPointLights = 0;
+
+// Real-Time Spot / Area Light Shadow 2D Array Resources
+static ID3D12Resource* g_spotShadowDepthBuffer = nullptr;
+static D3D12_CPU_DESCRIPTOR_HANDLE g_spotShadowDsvHandles[MAX_SHADOW_SPOT_LIGHTS] = {};
+static D3D12_CPU_DESCRIPTOR_HANDLE g_spotShadowSrvCpuHandle = {};
+static D3D12_GPU_DESCRIPTOR_HANDLE g_spotShadowSrvGpuHandle = {};
+static int g_activeShadowSpotLights = 0;
+
+static ID3D12RootSignature* g_shadowRootSignature = nullptr;
+static ID3D12PipelineState* g_shadowPipelineState = nullptr;
+
+static ID3D12RootSignature* g_skyboxRootSignature = nullptr;
+static ID3D12PipelineState* g_skyboxPipelineState = nullptr;
+static std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> g_skyboxDescriptorTables;
+
+static ID3D12Resource* g_shadowConstantBuffer = nullptr;
+static void* g_pShadowConstantMapped = nullptr;
+
+static UINT g_dsvDescriptorSize = 0;
+
+// Dedicated Upload Fence & Allocator (avoids frame fence collision)
+static ID3D12CommandAllocator* g_uploadCmdAlloc = nullptr;
+static ID3D12GraphicsCommandList* g_uploadCmdList = nullptr;
+static ID3D12Fence* g_uploadFence = nullptr;
+static HANDLE g_uploadFenceEvent = nullptr;
+static UINT64 g_uploadFenceValue = 0;
+
+// Mouse tracking
+static bool s_isLeftMouseDown = false;
+static bool s_isRightMouseDown = false;
+static bool s_isMiddleMouseDown = false;
+static bool s_firstMouseAfterCapture = true;
+static double s_lastMouseX = 0.0, s_lastMouseY = 0.0;
+static glm::vec3 s_camVelocity(0.0f);
+bool g_pendingPickClick = false;
+#define s_pendingPickClick g_pendingPickClick
+
+// Forward declarations for real-time graphics pipelines
+int createAntiAliasingPipeline();
+int createSceneRenderTargets(int width, int height);
+
+// D3D12 Helper Functions
+inline D3D12_RESOURCE_BARRIER CreateTransitionBarrier(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after)
+{
+	D3D12_RESOURCE_BARRIER barrier = {};
+	barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	barrier.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE;
+	barrier.Transition.pResource = resource;
+	barrier.Transition.StateBefore = before;
+	barrier.Transition.StateAfter = after;
+	barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+	return barrier;
+}
+
+inline D3D12_HEAP_PROPERTIES CreateHeapProperties(D3D12_HEAP_TYPE type)
+{
+	D3D12_HEAP_PROPERTIES props = {};
+	props.Type = type;
+	props.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_UNKNOWN;
+	props.MemoryPoolPreference = D3D12_MEMORY_POOL_UNKNOWN;
+	props.CreationNodeMask = 1;
+	props.VisibleNodeMask = 1;
+	return props;
+}
+
+inline D3D12_RESOURCE_DESC CreateBufferResourceDesc(UINT64 size)
+{
+	D3D12_RESOURCE_DESC desc = {};
+	desc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	desc.Alignment = 0;
+	desc.Width = size;
+	desc.Height = 1;
+	desc.DepthOrArraySize = 1;
+	desc.MipLevels = 1;
+	desc.Format = DXGI_FORMAT_UNKNOWN;
+	desc.SampleDesc.Count = 1;
+	desc.SampleDesc.Quality = 0;
+	desc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	desc.Flags = D3D12_RESOURCE_FLAG_NONE;
+	return desc;
+}
+
+// Returns false (and logs once) if the heap is full instead of writing OOB.
+bool TryAllocSrvDescriptors(UINT count, UINT& outBaseIndex)
+{
+	if (g_srvDescriptorAllocIndex + count > SRV_HEAP_CAPACITY)
+	{
+		static bool warned = false;
+		if (!warned)
+		{
+			std::cerr << "[SRV HEAP] Exhausted (" << SRV_HEAP_CAPACITY
+			          << " descriptors). Further textures/materials will use fallbacks.\n";
+			g_engineUI.AddLog("LogRecovery",
+				"SRV descriptor heap is full — new textures/materials will show as fallback until you restart or free assets.", 2);
+			warned = true;
+		}
+		return false;
+	}
+	outBaseIndex = g_srvDescriptorAllocIndex;
+	g_srvDescriptorAllocIndex += count;
+	return true;
+}
+
+// ImGui SRV Descriptor Allocator Callbacks
+static void ImGui_SrvAlloc(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE* out_cpu, D3D12_GPU_DESCRIPTOR_HANDLE* out_gpu)
+{
+	UINT idx = 0;
+	if (!TryAllocSrvDescriptors(1, idx))
+	{
+		// Safe fallback: return heap slot 0
+		*out_cpu = info->SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+		*out_gpu = info->SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+		return;
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu = info->SrvDescriptorHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu = info->SrvDescriptorHeap->GetGPUDescriptorHandleForHeapStart();
+	cpu.ptr += (SIZE_T)idx * g_srvDescriptorSize;
+	gpu.ptr += (UINT64)idx * g_srvDescriptorSize;
+	*out_cpu = cpu;
+	*out_gpu = gpu;
+}
+
+static void ImGui_SrvFree(ImGui_ImplDX12_InitInfo* info, D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
+{
+	// Linear allocator - no-op
+}
+
+static std::vector<std::string> g_recordedFrameOps;
+static std::vector<std::string> g_frameOpHistory[FRAME_COUNT];
+
+void RecordGpuBreadcrumbOp(const char* desc)
+{
+	if (desc)
+	{
+		g_recordedFrameOps.push_back(desc);
+	}
+}
+
+static const char* GetDredOpName(D3D12_AUTO_BREADCRUMB_OP op)
+{
+	switch (op)
+	{
+	case D3D12_AUTO_BREADCRUMB_OP_SETMARKER: return "SetMarker";
+	case D3D12_AUTO_BREADCRUMB_OP_BEGINEVENT: return "BeginEvent";
+	case D3D12_AUTO_BREADCRUMB_OP_ENDEVENT: return "EndEvent";
+	case D3D12_AUTO_BREADCRUMB_OP_DRAWINSTANCED: return "DrawInstanced";
+	case D3D12_AUTO_BREADCRUMB_OP_DRAWINDEXEDINSTANCED: return "DrawIndexedInstanced";
+	case D3D12_AUTO_BREADCRUMB_OP_EXECUTEINDIRECT: return "ExecuteIndirect";
+	case D3D12_AUTO_BREADCRUMB_OP_DISPATCH: return "Dispatch";
+	case D3D12_AUTO_BREADCRUMB_OP_COPYBUFFERREGION: return "CopyBufferRegion";
+	case D3D12_AUTO_BREADCRUMB_OP_COPYTEXTUREREGION: return "CopyTextureRegion";
+	case D3D12_AUTO_BREADCRUMB_OP_COPYRESOURCE: return "CopyResource";
+	case D3D12_AUTO_BREADCRUMB_OP_COPYTILES: return "CopyTiles";
+	case D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCE: return "ResolveSubresource";
+	case D3D12_AUTO_BREADCRUMB_OP_CLEARRENDERTARGETVIEW: return "ClearRenderTargetView";
+	case D3D12_AUTO_BREADCRUMB_OP_CLEARUNORDEREDACCESSVIEW: return "ClearUnorderedAccessView";
+	case D3D12_AUTO_BREADCRUMB_OP_CLEARDEPTHSTENCILVIEW: return "ClearDepthStencilView";
+	case D3D12_AUTO_BREADCRUMB_OP_RESOURCEBARRIER: return "ResourceBarrier";
+	case D3D12_AUTO_BREADCRUMB_OP_EXECUTEBUNDLE: return "ExecuteBundle";
+	case D3D12_AUTO_BREADCRUMB_OP_PRESENT: return "Present";
+	case D3D12_AUTO_BREADCRUMB_OP_RESOLVEQUERYDATA: return "ResolveQueryData";
+	case D3D12_AUTO_BREADCRUMB_OP_BEGINSUBMISSION: return "BeginSubmission";
+	case D3D12_AUTO_BREADCRUMB_OP_ENDSUBMISSION: return "EndSubmission";
+	case D3D12_AUTO_BREADCRUMB_OP_DECODEFRAME: return "DecodeFrame";
+	case D3D12_AUTO_BREADCRUMB_OP_PROCESSFRAMES: return "ProcessFrames";
+	case D3D12_AUTO_BREADCRUMB_OP_ATOMICCOPYBUFFERUINT: return "AtomicCopyBufferUint";
+	case D3D12_AUTO_BREADCRUMB_OP_ATOMICCOPYBUFFERUINT64: return "AtomicCopyBufferUint64";
+	case D3D12_AUTO_BREADCRUMB_OP_RESOLVESUBRESOURCEREGION: return "ResolveSubresourceRegion";
+	case D3D12_AUTO_BREADCRUMB_OP_WRITEBUFFERIMMEDIATE: return "WriteBufferImmediate";
+	default: return "UnknownOp";
+	}
+}
+
+static void DumpDREDInformation()
+{
+	ID3D12DeviceRemovedExtendedData1* dred = nullptr;
+	std::stringstream logStream;
+	if (g_d3dDevice && SUCCEEDED(g_d3dDevice->QueryInterface(IID_PPV_ARGS(&dred))))
+	{
+		D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs = {};
+		if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs)))
+		{
+			std::cerr << "[DRED] AutoBreadcrumbs output captured:\n";
+			logStream << "[DRED] AutoBreadcrumbs output captured:\n";
+			const D3D12_AUTO_BREADCRUMB_NODE1* node = breadcrumbs.pHeadAutoBreadcrumbNode;
+			int nodeIdx = 0;
+			while (node)
+			{
+				std::wcerr << L"[DRED] Node " << nodeIdx << L" - Command List: "
+				           << (node->pCommandListDebugNameW ? node->pCommandListDebugNameW : L"(unnamed)")
+				           << L", Command Queue: "
+				           << (node->pCommandQueueDebugNameW ? node->pCommandQueueDebugNameW : L"(unnamed)")
+				           << L"\n";
+				logStream << "[DRED] Node " << nodeIdx << " - Command List: "
+				          << (node->pCommandListDebugNameA ? node->pCommandListDebugNameA : "(unnamed)")
+				          << "\n";
+				if (node->pLastBreadcrumbValue && node->BreadcrumbCount > 0)
+				{
+					UINT completed = *node->pLastBreadcrumbValue;
+					std::cerr << "[DRED]   Completed ops: " << completed
+					          << " / " << node->BreadcrumbCount << " total ops\n";
+					logStream << "[DRED]   Completed ops: " << completed << " / " << node->BreadcrumbCount << " total ops\n";
+					if (node->pCommandHistory)
+					{
+						UINT startOp = completed > 4 ? completed - 4 : 0;
+						for (UINT opIdx = startOp; opIdx < node->BreadcrumbCount && opIdx <= completed + 2; ++opIdx)
+						{
+							const char* status = (opIdx < completed) ? "[COMPLETED]" : ((opIdx == completed) ? "--> [CURRENT/HUNG]" : "[PENDING]");
+							std::string desc = "(untracked)";
+							if (opIdx < g_recordedFrameOps.size())
+							{
+								desc = g_recordedFrameOps[opIdx];
+							}
+							else
+							{
+								for (UINT f = 0; f < FRAME_COUNT; ++f)
+								{
+									if (opIdx < g_frameOpHistory[f].size())
+									{
+										desc = g_frameOpHistory[f][opIdx];
+										break;
+									}
+								}
+							}
+							std::cerr << "[DRED]     Op " << opIdx << " " << status << ": "
+							          << GetDredOpName(node->pCommandHistory[opIdx])
+							          << " -- " << desc << "\n";
+							logStream << "[DRED]     Op " << opIdx << " " << status << ": "
+							          << GetDredOpName(node->pCommandHistory[opIdx])
+							          << " -- " << desc << "\n";
+						}
+					}
+				}
+				node = node->pNext;
+				nodeIdx++;
+			}
+		}
+
+		D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault = {};
+		if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault)) &&
+			pageFault.PageFaultVA != 0)
+		{
+			std::cerr << "[DRED] GPU page fault at VA 0x" << std::hex << pageFault.PageFaultVA << std::dec << "\n";
+			logStream << "[DRED] GPU page fault at VA 0x" << std::hex << pageFault.PageFaultVA << std::dec << "\n";
+
+			std::cerr << "[DRED] Known Engine Resource Memory Map:\n";
+			logStream << "[DRED] Known Engine Resource Memory Map:\n";
+			if (g_vertexBuffer) {
+				UINT64 va = g_vertexBuffer->GetGPUVirtualAddress();
+				std::cerr << "  g_vertexBuffer:         [0x" << std::hex << va << " - 0x" << (va + MAX_SCENE_VERTICES * sizeof(Vertex)) << std::dec << "]\n";
+				logStream << "  g_vertexBuffer:         [0x" << std::hex << va << " - 0x" << (va + MAX_SCENE_VERTICES * sizeof(Vertex)) << std::dec << "]\n";
+			}
+			if (g_indexBuffer) {
+				UINT64 va = g_indexBuffer->GetGPUVirtualAddress();
+				std::cerr << "  g_indexBuffer:          [0x" << std::hex << va << " - 0x" << (va + MAX_SCENE_INDICES * sizeof(uint32_t)) << std::dec << "]\n";
+				logStream << "  g_indexBuffer:          [0x" << std::hex << va << " - 0x" << (va + MAX_SCENE_INDICES * sizeof(uint32_t)) << std::dec << "]\n";
+			}
+			if (g_constantBuffer) {
+				UINT64 va = g_constantBuffer->GetGPUVirtualAddress();
+				std::cerr << "  g_constantBuffer:       [0x" << std::hex << va << " - 0x" << (va + sizeof(SceneConstantBuffer)) << std::dec << "]\n";
+				logStream << "  g_constantBuffer:       [0x" << std::hex << va << " - 0x" << (va + sizeof(SceneConstantBuffer)) << std::dec << "]\n";
+			}
+			if (g_shadowConstantBuffer) {
+				UINT64 va = g_shadowConstantBuffer->GetGPUVirtualAddress();
+				std::cerr << "  g_shadowConstantBuffer: [0x" << std::hex << va << " - 0x" << (va + sizeof(ShadowConstantBuffer)) << std::dec << "]\n";
+				logStream << "  g_shadowConstantBuffer: [0x" << std::hex << va << " - 0x" << (va + sizeof(ShadowConstantBuffer)) << std::dec << "]\n";
+			}
+			if (g_srvDescHeap) {
+				UINT64 va = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart().ptr;
+				std::cerr << "  g_srvDescHeap (GPU):    [0x" << std::hex << va << " - 0x" << (va + (UINT64)SRV_HEAP_CAPACITY * g_srvDescriptorSize) << std::dec << "]\n";
+				logStream << "  g_srvDescHeap (GPU):    [0x" << std::hex << va << " - 0x" << (va + (UINT64)SRV_HEAP_CAPACITY * g_srvDescriptorSize) << std::dec << "]\n";
+			}
+			for (const auto& kv : g_gpuTextureMap) {
+				std::cerr << "  Texture '" << kv.first << "': SRV_GPU=0x" << std::hex << kv.second.gpuHandle.ptr << std::dec << "\n";
+				logStream << "  Texture '" << kv.first << "': SRV_GPU=0x" << std::hex << kv.second.gpuHandle.ptr << std::dec << "\n";
+			}
+
+			const D3D12_DRED_ALLOCATION_NODE1* allocNode = pageFault.pHeadExistingAllocationNode;
+			int allocCount = 0;
+			while (allocNode)
+			{
+				allocCount++;
+				std::cerr << "[DRED] Existing Allocation #" << allocCount << " (type: 0x" << std::hex << (UINT)allocNode->AllocationType << std::dec << "): ";
+				logStream << "[DRED] Existing Allocation #" << allocCount << " (type: 0x" << std::hex << (UINT)allocNode->AllocationType << std::dec << "): ";
+				if (allocNode->ObjectNameA) {
+					std::cerr << allocNode->ObjectNameA;
+					logStream << allocNode->ObjectNameA;
+				} else if (allocNode->ObjectNameW) {
+					std::wcerr << allocNode->ObjectNameW;
+					logStream << "(wide name)";
+				} else {
+					std::cerr << "(unnamed)";
+					logStream << "(unnamed)";
+				}
+				std::cerr << " (pObject=" << allocNode->pObject << ")\n";
+				logStream << " (pObject=" << allocNode->pObject << ")\n";
+				allocNode = allocNode->pNext;
+			}
+			if (allocCount == 0) {
+				std::cerr << "[DRED]   (No matching existing allocation found by driver)\n";
+				logStream << "[DRED]   (No matching existing allocation found by driver)\n";
+			}
+
+			const D3D12_DRED_ALLOCATION_NODE1* freedNode = pageFault.pHeadRecentFreedAllocationNode;
+			int freedCount = 0;
+			while (freedNode)
+			{
+				freedCount++;
+				std::cerr << "[DRED] Recent Freed Allocation #" << freedCount << " (type: 0x" << std::hex << (UINT)freedNode->AllocationType << std::dec << "): ";
+				logStream << "[DRED] Recent Freed Allocation #" << freedCount << " (type: 0x" << std::hex << (UINT)freedNode->AllocationType << std::dec << "): ";
+				if (freedNode->ObjectNameA) {
+					std::cerr << freedNode->ObjectNameA;
+					logStream << freedNode->ObjectNameA;
+				} else if (freedNode->ObjectNameW) {
+					std::wcerr << freedNode->ObjectNameW;
+					logStream << "(wide name)";
+				} else {
+					std::cerr << "(unnamed)";
+					logStream << "(unnamed)";
+				}
+				std::cerr << " (pObject=" << freedNode->pObject << ")\n";
+				logStream << " (pObject=" << freedNode->pObject << ")\n";
+				freedNode = freedNode->pNext;
+			}
+			if (freedCount == 0) {
+				std::cerr << "[DRED]   (No matching recently freed allocation found by driver)\n";
+				logStream << "[DRED]   (No matching recently freed allocation found by driver)\n";
+			}
+		}
+		dred->Release();
+	}
+
+	EngineLogger::Get().LogError("DirectX12", 0x887A0006, "DXGI_ERROR_DEVICE_HUNG / GPU Page Fault", logStream.str());
+}
+
+static std::vector<ID3D12Resource*> g_deferredReleases;
+
+void SafeDeferredRelease(ID3D12Resource*& pRes)
+{
+	if (pRes)
+	{
+		g_deferredReleases.push_back(pRes);
+		pRes = nullptr;
+	}
+}
+
+void FlushDeferredReleases()
+{
+	if (g_deferredReleases.empty()) return;
+	for (auto* res : g_deferredReleases)
+	{
+		if (res)
+		{
+			res->Release();
+		}
+	}
+	g_deferredReleases.clear();
+}
+
+bool SafeWaitForFence(ID3D12Fence* fence, UINT64 targetValue, HANDLE eventHandle, DWORD timeoutMs = 5000, const char* context = "GPU Fence")
+{
+	if (!fence || !eventHandle || g_deviceLost) return false;
+
+	if (fence->GetCompletedValue() >= targetValue) return true;
+
+	ResetEvent(eventHandle);
+	fence->SetEventOnCompletion(targetValue, eventHandle);
+
+	while (fence->GetCompletedValue() < targetValue)
+	{
+		DWORD waitRes = WaitForSingleObject(eventHandle, timeoutMs);
+
+		if (waitRes == WAIT_OBJECT_0)
+		{
+			if (fence->GetCompletedValue() >= targetValue)
+			{
+				return true;
+			}
+		}
+		else if (waitRes == WAIT_TIMEOUT)
+		{
+			std::cerr << "[RECOVERY] Engine detected stall at " << context << " (target fence: " << targetValue
+			          << ", completed: " << fence->GetCompletedValue() << ", timeout: " << timeoutMs << "ms)!\n";
+
+			HRESULT removedReason = g_d3dDevice ? g_d3dDevice->GetDeviceRemovedReason() : S_OK;
+			if (FAILED(removedReason))
+			{
+				g_deviceLost = true;
+				std::cerr << "[RECOVERY] D3D12 Device Removed reason: 0x" << std::hex << removedReason << std::dec << "\n";
+				DumpDREDInformation();
+				g_engineUI.AddLog("LogRecovery", "GPU Device Lost/Removed detected (0x" + std::to_string(removedReason) + "). Please save work if possible and restart editor.", 3);
+				return false;
+			}
+
+			// Try a secondary wait of 3000ms before giving up
+			DWORD waitRetry = WaitForSingleObject(eventHandle, 3000);
+			if (waitRetry == WAIT_OBJECT_0 && fence->GetCompletedValue() >= targetValue)
+			{
+				return true;
+			}
+
+			removedReason = g_d3dDevice ? g_d3dDevice->GetDeviceRemovedReason() : S_OK;
+			if (FAILED(removedReason))
+			{
+				g_deviceLost = true;
+				std::cerr << "[RECOVERY] D3D12 Device Removed on retry: 0x" << std::hex << removedReason << std::dec << "\n";
+				DumpDREDInformation();
+				g_engineUI.AddLog("LogRecovery", "GPU Device Lost/Removed detected on retry.", 3);
+			}
+			else
+			{
+				g_engineUI.AddLog("LogRecovery", std::string("Engine wait timeout at ") + context + ". GPU is taking longer than expected.", 1);
+			}
+
+			return false;
+		}
+		else
+		{
+			break;
+		}
+	}
+
+	return fence->GetCompletedValue() >= targetValue;
+}
+
+void WaitForGpuIdle()
+{
+	if (!g_commandQueue || !g_fence || g_deviceLost) return;
+
+	const UINT64 fenceToWait = ++g_globalFenceValue;
+	HRESULT hr = g_commandQueue->Signal(g_fence, fenceToWait);
+	if (FAILED(hr)) return;
+
+	if (g_fence->GetCompletedValue() < fenceToWait)
+	{
+		HANDLE tempEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		if (tempEvent)
+		{
+			hr = g_fence->SetEventOnCompletion(fenceToWait, tempEvent);
+			if (SUCCEEDED(hr))
+			{
+				while (g_fence->GetCompletedValue() < fenceToWait)
+				{
+					DWORD res = WaitForSingleObject(tempEvent, 5000);
+					if (res == WAIT_OBJECT_0)
+					{
+						break;
+					}
+					else if (res == WAIT_TIMEOUT)
+					{
+						HRESULT removedReason = g_d3dDevice ? g_d3dDevice->GetDeviceRemovedReason() : S_OK;
+						if (FAILED(removedReason))
+						{
+							g_deviceLost = true;
+							DumpDREDInformation();
+							break;
+						}
+					}
+					else
+					{
+						break;
+					}
+				}
+			}
+			CloseHandle(tempEvent);
+		}
+	}
+
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		g_fenceValues[i] = fenceToWait;
+	}
+}
+
+DX12GpuTexture UploadTextureToD3D12(const DirectX::ScratchImage& scratch, const std::string& debugName = "")
+{
+	DX12GpuTexture result = {};
+	if (scratch.GetImageCount() == 0 || !g_d3dDevice || !g_uploadCmdAlloc || !g_uploadCmdList || !g_uploadFence) return result;
+
+	const DirectX::TexMetadata& meta = scratch.GetMetadata();
+	if (meta.width == 0 || meta.height == 0) return result;
+
+	ID3D12Resource* tex = nullptr;
+	HRESULT hr = DirectX::CreateTexture(g_d3dDevice, meta, &tex);
+	if (FAILED(hr) || !tex) {
+		std::cerr << "[TEXTURE UPLOAD] Failed to create D3D12 texture resource: hr=0x" << std::hex << hr << std::dec << "\n";
+		return result;
+	}
+
+	if (!debugName.empty()) {
+		std::wstring wname(debugName.begin(), debugName.end());
+		tex->SetName(wname.c_str());
+	} else {
+		tex->SetName(L"Texture_DirectXTex");
+	}
+
+	std::vector<D3D12_SUBRESOURCE_DATA> subresources;
+	hr = DirectX::PrepareUpload(g_d3dDevice, scratch.GetImages(), scratch.GetImageCount(), meta, subresources);
+	if (FAILED(hr) || subresources.empty()) {
+		tex->Release();
+		return result;
+	}
+
+	UINT numSub = static_cast<UINT>(subresources.size());
+	UINT64 uploadSize = DirectX::GetRequiredIntermediateSize(g_d3dDevice, tex, 0, numSub);
+
+	D3D12_RESOURCE_DESC upDesc = CreateBufferResourceDesc(uploadSize);
+	D3D12_HEAP_PROPERTIES upHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+	ID3D12Resource* uploadBuf = nullptr;
+	hr = g_d3dDevice->CreateCommittedResource(&upHeap, D3D12_HEAP_FLAG_NONE, &upDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&uploadBuf));
+	if (FAILED(hr) || !uploadBuf) {
+		tex->Release();
+		return result;
+	}
+	uploadBuf->SetName(L"Texture_Upload_Staging_Mips");
+
+	g_uploadCmdAlloc->Reset();
+	g_uploadCmdList->Reset(g_uploadCmdAlloc, nullptr);
+
+	DirectX::UpdateSubresources(g_d3dDevice, g_uploadCmdList, tex, uploadBuf, 0, 0, numSub, subresources.data());
+
+	D3D12_RESOURCE_BARRIER b = CreateTransitionBarrier(tex, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+	g_uploadCmdList->ResourceBarrier(1, &b);
+
+	g_uploadCmdList->Close();
+	ID3D12CommandList* lists[] = { g_uploadCmdList };
+	g_commandQueue->ExecuteCommandLists(1, lists);
+
+	g_uploadFenceValue++;
+	g_commandQueue->Signal(g_uploadFence, g_uploadFenceValue);
+	bool uploadOk = SafeWaitForFence(g_uploadFence, g_uploadFenceValue, g_uploadFenceEvent, 10000, "UploadTextureMips");
+
+	if (!uploadOk) {
+		std::cerr << "[TEXTURE UPLOAD] Fence wait failed for texture (" << meta.width << "x" << meta.height << ")\n";
+		if (uploadBuf) uploadBuf->Release();
+		if (tex) tex->Release();
+		return result;
+	}
+
+	uploadBuf->Release();
+
+	UINT descIdx = 0;
+	if (!TryAllocSrvDescriptors(1, descIdx)) {
+		tex->Release();
+		return result;
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE cpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	cpu.ptr += (SIZE_T)descIdx * g_srvDescriptorSize;
+	gpu.ptr += (UINT64)descIdx * g_srvDescriptorSize;
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = meta.format;
+
+	float lodClamp = TextureManager::CalculateTextureMinLOD(
+		static_cast<int>(meta.width), static_cast<int>(meta.height),
+		TextureManager::Get().GetMaxTextureResolution());
+
+	if (meta.IsCubemap()) {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+		srvDesc.TextureCube.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.TextureCube.MostDetailedMip = 0;
+		srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
+	} else {
+		srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+		srvDesc.Texture2D.MipLevels = static_cast<UINT>(meta.mipLevels);
+		srvDesc.Texture2D.MostDetailedMip = 0;
+		srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
+	}
+
+	g_d3dDevice->CreateShaderResourceView(tex, &srvDesc, cpu);
+
+	result.resource = tex;
+	result.cpuHandle = cpu;
+	result.gpuHandle = gpu;
+	result.width = static_cast<int>(meta.width);
+	result.height = static_cast<int>(meta.height);
+	result.mipLevels = static_cast<UINT>(meta.mipLevels);
+	result.format = meta.format;
+	result.isCubemap = meta.IsCubemap();
+
+	g_allocatedTextures.push_back(tex);
+	return result;
+}
+
+DX12GpuTexture UploadTextureToD3D12(const void* pixels, int width, int height, const std::string& debugName = "", bool isNormalMap = false)
+{
+	DX12GpuTexture result = {};
+	if (!pixels || width <= 0 || height <= 0) return result;
+
+	// Wrap pixels and generate mip chain using DirectXTex
+	DirectX::Image baseImg;
+	baseImg.width = static_cast<size_t>(width);
+	baseImg.height = static_cast<size_t>(height);
+	baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	baseImg.rowPitch = static_cast<size_t>(width * 4);
+	baseImg.slicePitch = static_cast<size_t>(width * height * 4);
+	baseImg.pixels = const_cast<uint8_t*>(static_cast<const uint8_t*>(pixels));
+
+	uint32_t filterFlags = DirectX::TEX_FILTER_BOX;
+	if (isNormalMap) filterFlags |= DirectX::TEX_FILTER_NORMAL_NORMALIZE;
+	else filterFlags |= DirectX::TEX_FILTER_SRGB;
+
+	DirectX::ScratchImage mipChain;
+	if (DirectX::GenerateMipMaps(baseImg, filterFlags, 0, mipChain)) {
+		return UploadTextureToD3D12(mipChain, debugName);
+	}
+
+	// Fallback single-level image if mip generation failed
+	DirectX::ScratchImage single;
+	if (single.InitializeFromImage(baseImg)) {
+		return UploadTextureToD3D12(single, debugName);
+	}
+	return result;
+}
+
+void InitFallbackTextures()
+{
+	uint32_t whitePix = 0xFFFFFFFF;
+	g_fallbackWhite = UploadTextureToD3D12(&whitePix, 1, 1, "Fallback_White");
+
+	uint8_t normalPix[4] = { 128, 128, 255, 255 };
+	g_fallbackNormal = UploadTextureToD3D12(normalPix, 1, 1, "Fallback_Normal", true);
+
+	uint32_t roughPix = 0xFFFFFFFF;
+	g_fallbackRoughness = UploadTextureToD3D12(&roughPix, 1, 1, "Fallback_Roughness");
+
+	uint32_t metalPix = 0xFF000000;
+	g_fallbackMetallic = UploadTextureToD3D12(&metalPix, 1, 1, "Fallback_Metallic");
+
+	uint32_t aoPix = 0xFFFFFFFF;
+	g_fallbackAO = UploadTextureToD3D12(&aoPix, 1, 1, "Fallback_AO");
+
+	uint32_t blackPix = 0xFF000000;
+	g_fallbackBlack = UploadTextureToD3D12(&blackPix, 1, 1, "Fallback_Black");
+
+	// Missing texture checkerboard fallback from dev.md Section 20
+	CachedTexture* checker = AssetManager::Get().GetMissingTextureFallback();
+	if (checker && !checker->data.empty() && checker->width > 0 && checker->height > 0) {
+		g_fallbackMissing = UploadTextureToD3D12(checker->data.data(), checker->width, checker->height, "Fallback_MissingChecker");
+	} else {
+		g_fallbackMissing = g_fallbackWhite;
+	}
+}
+
+// Allocate a persistent SRV heap slot for the lightmap (t9). Call once after InitFallbackTextures().
+void InitLightmapSrvSlot()
+{
+	UINT idx = 0;
+	if (!TryAllocSrvDescriptors(1, idx))
+	{
+		std::cerr << "[LightBake] Failed to allocate SRV heap slot for lightmap.\n";
+		return;
+	}
+	D3D12_CPU_DESCRIPTOR_HANDLE cpuBase = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE gpuBase = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	g_lightmapSrvCpuHandle.ptr = cpuBase.ptr + (SIZE_T)idx * g_srvDescriptorSize;
+	g_lightmapSrvGpuHandle.ptr = gpuBase.ptr + (UINT64)idx * g_srvDescriptorSize;
+
+	// Write the black fallback so the slot is always valid
+	if (g_fallbackBlack.resource)
+	{
+		g_d3dDevice->CopyDescriptorsSimple(
+			1, g_lightmapSrvCpuHandle, g_fallbackBlack.cpuHandle,
+			D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	}
+	g_lightmapSrvInHeap = true;
+}
+
+
+
+DX12GpuTexture GetOrLoadGPUTexture(const std::string& name, const DX12GpuTexture& fallback, TextureUsageSlot slot = TextureUsageSlot::BaseColor)
+{
+	if (name.empty() || name == "none") return fallback;
+
+	std::string resolved = name;
+	const AssetMetadata* meta = AssetRegistry::Get().FindByVirtualPath(name);
+	if (!meta) {
+		AssetID id = AssetID::FromString(name);
+		if (id.IsValid()) meta = AssetRegistry::Get().FindById(id);
+	}
+	if (meta && !meta->sourcePath.empty()) {
+		resolved = meta->sourcePath;
+	} else {
+		std::string tmResolved = TextureManager::Get().ResolvePath(name);
+		if (!tmResolved.empty()) resolved = tmResolved;
+	}
+
+	bool isNormal = (slot == TextureUsageSlot::Normal);
+	std::string cacheKey = resolved + "@slot=" + std::to_string((int)slot);
+	auto it = g_gpuTextureMap.find(cacheKey);
+	if (it != g_gpuTextureMap.end()) {
+		return it->second;
+	}
+
+	// Single-source decoded pixels from TextureManager cache (zero duplicate disk reads)
+	CachedTexture* cached = TextureManager::Get().GetTexture(resolved, slot);
+	if (!cached || !cached->valid) {
+		return fallback;
+	}
+
+	DX12GpuTexture tex;
+	if (cached->scratchImage.GetImageCount() > 0) {
+		tex = UploadTextureToD3D12(cached->scratchImage, resolved);
+	} else if (!cached->data.empty() && cached->width > 0 && cached->height > 0) {
+		tex = UploadTextureToD3D12(cached->data.data(), cached->width, cached->height, resolved, isNormal);
+	}
+
+	if (tex.resource) {
+		g_gpuTextureMap[cacheKey] = tex;
+		return tex;
+	}
+	return fallback;
+}
+
+void InvalidateGpuTexture(const std::string& name)
+{
+	TextureManager::Get().InvalidateTexture(name);
+	for (int s = 0; s < 6; ++s) {
+		g_gpuTextureMap.erase(name + "@slot=" + std::to_string(s));
+	}
+}
+
+// Update the lightmap SRV slot with the current baked texture (or reset to black).
+// Call once per frame before scene draw calls.
+void UpdateLightmapSrv()
+{
+	if (!g_lightmapSrvInHeap) return;
+
+	auto& baker = Eunoia::LightBakeManager::Get();
+	static uint64_t s_lastLightmapRev = 0;
+	uint64_t curRev = baker.GetLightmapRevision();
+	if (curRev != s_lastLightmapRev)
+	{
+		s_lastLightmapRev = curRev;
+		std::string activePath = baker.GetActiveLightmapTexturePath();
+		if (!activePath.empty())
+		{
+			InvalidateGpuTexture(activePath);
+		}
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = g_fallbackBlack.cpuHandle;
+
+	if (baker.HasActiveLightmap())
+	{
+		std::string lmPath = baker.GetActiveLightmapTexturePath();
+		if (!lmPath.empty())
+		{
+			DX12GpuTexture lmTex = GetOrLoadGPUTexture(lmPath, g_fallbackBlack, TextureUsageSlot::BaseColor);
+			if (lmTex.resource && lmTex.cpuHandle.ptr != 0)
+				srcCpu = lmTex.cpuHandle;
+		}
+	}
+
+	g_d3dDevice->CopyDescriptorsSimple(
+		1, g_lightmapSrvCpuHandle, srcCpu,
+		D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateMaterialTable(
+	const std::string& albedo,
+	const std::string& normal,
+	const std::string& rough,
+	const std::string& metal,
+	const std::string& ao,
+	const std::string& opacity,
+	const std::string& emission = "")
+{
+	std::string key = albedo + "|" + normal + "|" + rough + "|" + metal + "|" + ao + "|" + opacity + "|" + emission;
+	auto it = g_materialDescriptorTables.find(key);
+	if (it != g_materialDescriptorTables.end()) {
+		return it->second;
+	}
+
+	DX12GpuTexture texAlbedo   = (!albedo.empty() && albedo != "none")
+		? GetOrLoadGPUTexture(albedo, g_fallbackWhite, TextureUsageSlot::BaseColor)
+		: g_fallbackWhite;
+	DX12GpuTexture texNormal   = GetOrLoadGPUTexture(normal,   g_fallbackNormal, TextureUsageSlot::Normal);
+	DX12GpuTexture texRough    = GetOrLoadGPUTexture(rough,    g_fallbackRoughness, TextureUsageSlot::Roughness);
+	DX12GpuTexture texMetal    = GetOrLoadGPUTexture(metal,    g_fallbackMetallic, TextureUsageSlot::Metallic);
+	DX12GpuTexture texAO       = GetOrLoadGPUTexture(ao,       g_fallbackAO, TextureUsageSlot::AO);
+	DX12GpuTexture texOpacity  = (!opacity.empty() && opacity != "none")
+		? GetOrLoadGPUTexture(opacity, g_fallbackWhite, TextureUsageSlot::Opacity)
+		: g_fallbackWhite;
+	DX12GpuTexture texEmission = (!emission.empty() && emission != "none")
+		? GetOrLoadGPUTexture(emission, g_fallbackBlack, TextureUsageSlot::Emission)
+		: g_fallbackBlack;
+
+	static D3D12_GPU_DESCRIPTOR_HANDLE s_fallbackTable = {};
+	static bool s_hasFallbackTable = false;
+
+	UINT baseIdx = 0;
+	if (!TryAllocSrvDescriptors(7, baseIdx))
+	{
+		if (s_hasFallbackTable) {
+			return s_fallbackTable;
+		}
+		return g_srvDescHeap ? g_srvDescHeap->GetGPUDescriptorHandleForHeapStart() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	baseCpu.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+	baseGpu.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+	DX12GpuTexture slots[7] = { texAlbedo, texNormal, texRough, texMetal, texAO, texOpacity, texEmission };
+	for (int i = 0; i < 7; ++i) {
+		D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (slots[i].resource && slots[i].cpuHandle.ptr != 0) ? slots[i].cpuHandle : (i == 6 ? g_fallbackBlack.cpuHandle : g_fallbackWhite.cpuHandle);
+		D3D12_CPU_DESCRIPTOR_HANDLE dst = baseCpu;
+		dst.ptr += (SIZE_T)i * g_srvDescriptorSize;
+		g_d3dDevice->CopyDescriptorsSimple(1, dst, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	}
+
+	if (!s_hasFallbackTable) {
+		s_fallbackTable = baseGpu;
+		s_hasFallbackTable = true;
+	}
+
+	g_materialDescriptorTables[key] = baseGpu;
+	return baseGpu;
+}
+
+D3D12_GPU_DESCRIPTOR_HANDLE GetOrCreateSkyboxTable(const std::string& texturePath)
+{
+	std::string key = texturePath.empty() ? "__default_skybox__" : texturePath;
+	auto it = g_skyboxDescriptorTables.find(key);
+	if (it != g_skyboxDescriptorTables.end()) {
+		return it->second;
+	}
+
+	DX12GpuTexture tex = (!texturePath.empty() && texturePath != "none")
+		? GetOrLoadGPUTexture(texturePath, g_fallbackWhite, TextureUsageSlot::BaseColor)
+		: g_fallbackWhite;
+
+	UINT baseIdx = 0;
+	if (!TryAllocSrvDescriptors(1, baseIdx))
+	{
+		return g_srvDescHeap ? g_srvDescHeap->GetGPUDescriptorHandleForHeapStart() : D3D12_GPU_DESCRIPTOR_HANDLE{};
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE baseCpu = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	D3D12_GPU_DESCRIPTOR_HANDLE baseGpu = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+	baseCpu.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+	baseGpu.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE srcCpu = (tex.resource && tex.cpuHandle.ptr != 0) ? tex.cpuHandle : g_fallbackWhite.cpuHandle;
+	g_d3dDevice->CopyDescriptorsSimple(1, baseCpu, srcCpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+	g_skyboxDescriptorTables[key] = baseGpu;
+	return baseGpu;
+}
+
+// Pre-upload all textures and material descriptor tables needed by current scene batches
+// Runs BEFORE renderFrame() resets the frame command list, eliminating GPU command queue deadlocks
+void PreRenderUploadTextures()
+{
+	for (const auto& batch : g_sceneBatches)
+	{
+		if (batch.indexCount == 0) continue;
+		GetOrCreateMaterialTable(
+			batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex, batch.emissionTex);
+	}
+
+	if (g_scene.enableSkybox && !g_scene.skyboxTexturePath.empty())
+	{
+		GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+	}
+}
+
+// Updates the D3D12 Shader Resource View (SRV) ResourceMinLODClamp for all active textures in real time.
+// Zero reallocation, zero disk read, zero GPU stall.
+// If a texture's native resolution is <= maxAllowedResolution (e.g. 2K texture in 4K quality), it retains full native sharpness (0.0f clamp).
+void UpdateAllTextureLODClamps()
+{
+	if (!g_d3dDevice) return;
+
+	int maxRes = TextureManager::Get().GetMaxTextureResolution();
+	for (auto& pair : g_gpuTextureMap)
+	{
+		DX12GpuTexture& tex = pair.second;
+		if (!tex.resource || tex.cpuHandle.ptr == 0) continue;
+
+		float lodClamp = TextureManager::CalculateTextureMinLOD(tex.width, tex.height, maxRes);
+
+		D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+		srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+		srvDesc.Format = tex.format;
+		if (tex.isCubemap) {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+			srvDesc.TextureCube.MipLevels = tex.mipLevels;
+			srvDesc.TextureCube.MostDetailedMip = 0;
+			srvDesc.TextureCube.ResourceMinLODClamp = lodClamp;
+		} else {
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = tex.mipLevels;
+			srvDesc.Texture2D.MostDetailedMip = 0;
+			srvDesc.Texture2D.ResourceMinLODClamp = lodClamp;
+		}
+		g_d3dDevice->CreateShaderResourceView(tex.resource, &srvDesc, tex.cpuHandle);
+	}
+}
+
+int createDepthStencilView(int width, int height)
+{
+	if (g_depthStencilBuffer)
+	{
+		g_depthStencilBuffer->Release();
+		g_depthStencilBuffer = nullptr;
+	}
+
+	D3D12_RESOURCE_DESC depthDesc = {};
+	depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthDesc.Alignment = 0;
+	depthDesc.Width = (UINT64)width;
+	depthDesc.Height = (UINT)height;
+	depthDesc.DepthOrArraySize = 1;
+	depthDesc.MipLevels = 1;
+	depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	depthDesc.SampleDesc.Count = 1;
+	depthDesc.SampleDesc.Quality = 0;
+	depthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE depthClear = {};
+	depthClear.Format = DXGI_FORMAT_D32_FLOAT;
+	depthClear.DepthStencil.Depth = 1.0f;
+	depthClear.DepthStencil.Stencil = 0;
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&depthDesc,
+		D3D12_RESOURCE_STATE_DEPTH_WRITE,
+		&depthClear,
+		IID_PPV_ARGS(&g_depthStencilBuffer)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12 depth stencil buffer: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	g_depthStencilBuffer->SetName(L"g_depthStencilBuffer");
+
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	g_d3dDevice->CreateDepthStencilView(g_depthStencilBuffer, &dsvDesc, dsvHandle);
+
+	return EXIT_SUCCESS;
+}
+
+int createDirectionalShadowResource(UINT dirRes = 2048)
+{
+	if (!g_d3dDevice) return EXIT_FAILURE;
+
+	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
+		if (r < 256) r = 256;
+		if (r > 4096) r = 4096;
+		if (r <= 384) return 256;
+		if (r <= 768) return 512;
+		if (r <= 1536) return 1024;
+		if (r <= 3072) return 2048;
+		return 4096;
+	};
+	dirRes = SnapRes(dirRes, 2048);
+
+	// Defer release of prior buffer
+	SafeDeferredRelease(g_shadowDepthBuffer);
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+	D3D12_RESOURCE_DESC depthDesc = {};
+	depthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	depthDesc.Alignment = 0;
+	depthDesc.Width = dirRes;
+	depthDesc.Height = dirRes;
+	depthDesc.DepthOrArraySize = 1;
+	depthDesc.MipLevels = 1;
+	depthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	depthDesc.SampleDesc.Count = 1;
+	depthDesc.SampleDesc.Quality = 0;
+	depthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	depthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE depthClear = {};
+	depthClear.Format = DXGI_FORMAT_D32_FLOAT;
+	depthClear.DepthStencil.Depth = 1.0f;
+	depthClear.DepthStencil.Stencil = 0;
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&depthDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&depthClear,
+		IID_PPV_ARGS(&g_shadowDepthBuffer)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12 directional shadow depth buffer: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	g_shadowDepthBuffer->SetName(L"g_shadowDepthBuffer");
+
+	// Create DSV at index 1 of g_dsvDescHeap
+	D3D12_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+	dsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
+	dsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+
+	g_shadowDsvHandle = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	g_shadowDsvHandle.ptr += (SIZE_T)1 * g_dsvDescriptorSize;
+	g_d3dDevice->CreateDepthStencilView(g_shadowDepthBuffer, &dsvDesc, g_shadowDsvHandle);
+
+	// Create SRV in g_srvDescHeap for directional shadow map
+	if (g_shadowSrvCpuHandle.ptr == 0)
+	{
+		UINT descIdx = 0;
+		TryAllocSrvDescriptors(1, descIdx);
+		g_shadowSrvCpuHandle = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_shadowSrvGpuHandle = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		g_shadowSrvCpuHandle.ptr += (SIZE_T)descIdx * g_srvDescriptorSize;
+		g_shadowSrvGpuHandle.ptr += (UINT64)descIdx * g_srvDescriptorSize;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	srvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+	srvDesc.Texture2D.MipLevels = 1;
+	g_d3dDevice->CreateShaderResourceView(g_shadowDepthBuffer, &srvDesc, g_shadowSrvCpuHandle);
+
+	g_currentDirShadowRes = dirRes;
+	return EXIT_SUCCESS;
+}
+
+int createPointShadowResource(UINT ptRes = 512)
+{
+	if (!g_d3dDevice) return EXIT_FAILURE;
+
+	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
+		if (r < 256) r = 256;
+		if (r > 4096) r = 4096;
+		if (r <= 384) return 256;
+		if (r <= 768) return 512;
+		if (r <= 1536) return 1024;
+		if (r <= 3072) return 2048;
+		return 4096;
+	};
+	ptRes = SnapRes(ptRes, 512);
+
+	SafeDeferredRelease(g_pointShadowDepthBuffer);
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+	D3D12_RESOURCE_DESC ptDepthDesc = {};
+	ptDepthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	ptDepthDesc.Alignment = 0;
+	ptDepthDesc.Width = ptRes;
+	ptDepthDesc.Height = ptRes;
+	ptDepthDesc.DepthOrArraySize = MAX_SHADOW_POINT_LIGHTS * 6; // 24
+	ptDepthDesc.MipLevels = 1;
+	ptDepthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	ptDepthDesc.SampleDesc.Count = 1;
+	ptDepthDesc.SampleDesc.Quality = 0;
+	ptDepthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	ptDepthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE ptDepthClear = {};
+	ptDepthClear.Format = DXGI_FORMAT_D32_FLOAT;
+	ptDepthClear.DepthStencil.Depth = 1.0f;
+	ptDepthClear.DepthStencil.Stencil = 0;
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&ptDepthDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&ptDepthClear,
+		IID_PPV_ARGS(&g_pointShadowDepthBuffer)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12 point shadow depth buffer: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	g_pointShadowDepthBuffer->SetName(L"g_pointShadowDepthBuffer");
+
+	// Create 24 DSVs at indices 2..25 of g_dsvDescHeap
+	for (UINT i = 0; i < MAX_SHADOW_POINT_LIGHTS * 6; ++i)
+	{
+		D3D12_DEPTH_STENCIL_VIEW_DESC ptDsvDesc = {};
+		ptDsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		ptDsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+		ptDsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+		ptDsvDesc.Texture2DArray.FirstArraySlice = i;
+		ptDsvDesc.Texture2DArray.ArraySize = 1;
+		ptDsvDesc.Texture2DArray.MipSlice = 0;
+
+		g_pointShadowDsvHandles[i] = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_pointShadowDsvHandles[i].ptr += (SIZE_T)(2 + i) * g_dsvDescriptorSize;
+		g_d3dDevice->CreateDepthStencilView(g_pointShadowDepthBuffer, &ptDsvDesc, g_pointShadowDsvHandles[i]);
+	}
+
+	// Create SRV in g_srvDescHeap for TextureCubeArray
+	if (g_pointShadowSrvCpuHandle.ptr == 0)
+	{
+		UINT ptDescIdx = 0;
+		TryAllocSrvDescriptors(1, ptDescIdx);
+		g_pointShadowSrvCpuHandle = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_pointShadowSrvGpuHandle = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		g_pointShadowSrvCpuHandle.ptr += (SIZE_T)ptDescIdx * g_srvDescriptorSize;
+		g_pointShadowSrvGpuHandle.ptr += (UINT64)ptDescIdx * g_srvDescriptorSize;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC ptSrvDesc = {};
+	ptSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	ptSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	ptSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBEARRAY;
+	ptSrvDesc.TextureCubeArray.First2DArrayFace = 0;
+	ptSrvDesc.TextureCubeArray.NumCubes = MAX_SHADOW_POINT_LIGHTS;
+	ptSrvDesc.TextureCubeArray.MipLevels = 1;
+	g_d3dDevice->CreateShaderResourceView(g_pointShadowDepthBuffer, &ptSrvDesc, g_pointShadowSrvCpuHandle);
+
+	g_currentPointShadowRes = ptRes;
+	return EXIT_SUCCESS;
+}
+
+int createSpotShadowResource(UINT spotRes = 1024)
+{
+	if (!g_d3dDevice) return EXIT_FAILURE;
+
+	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
+		if (r < 256) r = 256;
+		if (r > 4096) r = 4096;
+		if (r <= 384) return 256;
+		if (r <= 768) return 512;
+		if (r <= 1536) return 1024;
+		if (r <= 3072) return 2048;
+		return 4096;
+	};
+	spotRes = SnapRes(spotRes, 1024);
+
+	SafeDeferredRelease(g_spotShadowDepthBuffer);
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+	D3D12_RESOURCE_DESC spotDepthDesc = {};
+	spotDepthDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	spotDepthDesc.Alignment = 0;
+	spotDepthDesc.Width = spotRes;
+	spotDepthDesc.Height = spotRes;
+	spotDepthDesc.DepthOrArraySize = MAX_SHADOW_SPOT_LIGHTS; // 4
+	spotDepthDesc.MipLevels = 1;
+	spotDepthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+	spotDepthDesc.SampleDesc.Count = 1;
+	spotDepthDesc.SampleDesc.Quality = 0;
+	spotDepthDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	spotDepthDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
+
+	D3D12_CLEAR_VALUE spotDepthClear = {};
+	spotDepthClear.Format = DXGI_FORMAT_D32_FLOAT;
+	spotDepthClear.DepthStencil.Depth = 1.0f;
+	spotDepthClear.DepthStencil.Stencil = 0;
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&spotDepthDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&spotDepthClear,
+		IID_PPV_ARGS(&g_spotShadowDepthBuffer)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12 spot shadow depth buffer: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	g_spotShadowDepthBuffer->SetName(L"g_spotShadowDepthBuffer");
+
+	// Create 4 DSVs at indices 26..29 of g_dsvDescHeap
+	for (UINT i = 0; i < MAX_SHADOW_SPOT_LIGHTS; ++i)
+	{
+		D3D12_DEPTH_STENCIL_VIEW_DESC spotDsvDesc = {};
+		spotDsvDesc.Format = DXGI_FORMAT_D32_FLOAT;
+		spotDsvDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2DARRAY;
+		spotDsvDesc.Flags = D3D12_DSV_FLAG_NONE;
+		spotDsvDesc.Texture2DArray.FirstArraySlice = i;
+		spotDsvDesc.Texture2DArray.ArraySize = 1;
+		spotDsvDesc.Texture2DArray.MipSlice = 0;
+
+		g_spotShadowDsvHandles[i] = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_spotShadowDsvHandles[i].ptr += (SIZE_T)(26 + i) * g_dsvDescriptorSize;
+		g_d3dDevice->CreateDepthStencilView(g_spotShadowDepthBuffer, &spotDsvDesc, g_spotShadowDsvHandles[i]);
+	}
+
+	// Create SRV in g_srvDescHeap for Texture2DArray
+	if (g_spotShadowSrvCpuHandle.ptr == 0)
+	{
+		UINT spotDescIdx = 0;
+		TryAllocSrvDescriptors(1, spotDescIdx);
+		g_spotShadowSrvCpuHandle = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_spotShadowSrvGpuHandle = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+		g_spotShadowSrvCpuHandle.ptr += (SIZE_T)spotDescIdx * g_srvDescriptorSize;
+		g_spotShadowSrvGpuHandle.ptr += (UINT64)spotDescIdx * g_srvDescriptorSize;
+	}
+
+	D3D12_SHADER_RESOURCE_VIEW_DESC spotSrvDesc = {};
+	spotSrvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+	spotSrvDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	spotSrvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+	spotSrvDesc.Texture2DArray.FirstArraySlice = 0;
+	spotSrvDesc.Texture2DArray.ArraySize = MAX_SHADOW_SPOT_LIGHTS;
+	spotSrvDesc.Texture2DArray.MipLevels = 1;
+	g_d3dDevice->CreateShaderResourceView(g_spotShadowDepthBuffer, &spotSrvDesc, g_spotShadowSrvCpuHandle);
+
+	g_currentSpotShadowRes = spotRes;
+	return EXIT_SUCCESS;
+}
+
+int createShadowResources(UINT dirRes = 2048, UINT ptRes = 512, UINT spotRes = 1024)
+{
+	createDirectionalShadowResource(dirRes);
+	createPointShadowResource(ptRes);
+	createSpotShadowResource(spotRes);
+
+	// 4. Shadow Constant Buffer (upload heap: slot 0 for directional, slots 1..24 for point lights, slots 25..28 for spot lights)
+	if (!g_shadowConstantBuffer)
+	{
+		UINT64 shadowCbSize = (UINT64)(1 + MAX_SHADOW_POINT_LIGHTS * 6 + MAX_SHADOW_SPOT_LIGHTS) * 256;
+		D3D12_RESOURCE_DESC cbDesc = CreateBufferResourceDesc(shadowCbSize);
+		D3D12_HEAP_PROPERTIES uploadHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+		g_d3dDevice->CreateCommittedResource(
+			&uploadHeap, D3D12_HEAP_FLAG_NONE, &cbDesc,
+			D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_shadowConstantBuffer)
+		);
+		if (g_shadowConstantBuffer) g_shadowConstantBuffer->SetName(L"g_shadowConstantBuffer");
+		D3D12_RANGE readRange = { 0, 0 };
+		g_shadowConstantBuffer->Map(0, &readRange, &g_pShadowConstantMapped);
+	}
+
+	return EXIT_SUCCESS;
+}
+
+int createSceneRenderTargets(int width, int height)
+{
+	if (!g_d3dDevice || width <= 0 || height <= 0) return EXIT_FAILURE;
+
+	SafeDeferredRelease(g_sceneRenderTarget);
+	SafeDeferredRelease(g_sceneHistoryRenderTarget);
+
+	D3D12_HEAP_PROPERTIES heapProps = CreateHeapProperties(D3D12_HEAP_TYPE_DEFAULT);
+
+	D3D12_RESOURCE_DESC rtDesc = {};
+	rtDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+	rtDesc.Alignment = 0;
+	rtDesc.Width = (UINT64)width;
+	rtDesc.Height = (UINT)height;
+	rtDesc.DepthOrArraySize = 1;
+	rtDesc.MipLevels = 1;
+	rtDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	rtDesc.SampleDesc.Count = 1;
+	rtDesc.SampleDesc.Quality = 0;
+	rtDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+	rtDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
+
+	D3D12_CLEAR_VALUE clearVal = {};
+	clearVal.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	clearVal.Color[0] = g_scene.clearColor.r;
+	clearVal.Color[1] = g_scene.clearColor.g;
+	clearVal.Color[2] = g_scene.clearColor.b;
+	clearVal.Color[3] = 1.0f;
+
+	HRESULT hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&rtDesc,
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		&clearVal,
+		IID_PPV_ARGS(&g_sceneRenderTarget)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create D3D12 scene render target: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_sceneRenderTarget->SetName(L"g_sceneRenderTarget");
+
+	hr = g_d3dDevice->CreateCommittedResource(
+		&heapProps,
+		D3D12_HEAP_FLAG_NONE,
+		&rtDesc,
+		D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+		&clearVal,
+		IID_PPV_ARGS(&g_sceneHistoryRenderTarget)
+	);
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create D3D12 scene history render target: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_sceneHistoryRenderTarget->SetName(L"g_sceneHistoryRenderTarget");
+
+	if (g_rtvDescHeap)
+	{
+		g_sceneRtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_sceneRtvHandle.ptr += (SIZE_T)(FRAME_COUNT + 0) * g_rtvDescriptorSize;
+		g_d3dDevice->CreateRenderTargetView(g_sceneRenderTarget, nullptr, g_sceneRtvHandle);
+
+		g_sceneHistoryRtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+		g_sceneHistoryRtvHandle.ptr += (SIZE_T)(FRAME_COUNT + 1) * g_rtvDescriptorSize;
+		g_d3dDevice->CreateRenderTargetView(g_sceneHistoryRenderTarget, nullptr, g_sceneHistoryRtvHandle);
+	}
+
+	if (g_srvDescHeap)
+	{
+		if (g_sceneSrvCpuHandle.ptr == 0)
+		{
+			UINT baseIdx = 0;
+			if (TryAllocSrvDescriptors(2, baseIdx))
+			{
+				g_sceneSrvCpuHandle = g_srvDescHeap->GetCPUDescriptorHandleForHeapStart();
+				g_sceneSrvGpuHandle = g_srvDescHeap->GetGPUDescriptorHandleForHeapStart();
+				g_sceneSrvCpuHandle.ptr += (SIZE_T)baseIdx * g_srvDescriptorSize;
+				g_sceneSrvGpuHandle.ptr += (UINT64)baseIdx * g_srvDescriptorSize;
+
+				g_sceneHistorySrvCpuHandle.ptr = g_sceneSrvCpuHandle.ptr + g_srvDescriptorSize;
+				g_sceneHistorySrvGpuHandle.ptr = g_sceneSrvGpuHandle.ptr + (UINT64)g_srvDescriptorSize;
+			}
+		}
+
+		if (g_sceneSrvCpuHandle.ptr != 0)
+		{
+			D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+			srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+			srvDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+			srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+			srvDesc.Texture2D.MipLevels = 1;
+
+			g_d3dDevice->CreateShaderResourceView(g_sceneRenderTarget, &srvDesc, g_sceneSrvCpuHandle);
+			g_d3dDevice->CreateShaderResourceView(g_sceneHistoryRenderTarget, &srvDesc, g_sceneHistorySrvCpuHandle);
+		}
+	}
+
+	return EXIT_SUCCESS;
+}
+
+void EnsureShadowBuffers(UINT reqDirRes, UINT reqPtRes, UINT reqSpotRes)
+{
+	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
+		if (r < 256) r = 256;
+		if (r > 4096) r = 4096;
+		if (r <= 384) return 256;
+		if (r <= 768) return 512;
+		if (r <= 1536) return 1024;
+		if (r <= 3072) return 2048;
+		return 4096;
+	};
+	reqDirRes = SnapRes(reqDirRes, 2048);
+	reqPtRes = SnapRes(reqPtRes, 512);
+	reqSpotRes = SnapRes(reqSpotRes, 1024);
+
+	bool needDir  = (!g_shadowDepthBuffer || reqDirRes != g_currentDirShadowRes);
+	bool needPt   = (!g_pointShadowDepthBuffer || reqPtRes != g_currentPointShadowRes);
+	bool needSpot = (!g_spotShadowDepthBuffer || reqSpotRes != g_currentSpotShadowRes);
+
+	if (needDir || needPt || needSpot)
+	{
+		WaitForGpuIdle();
+		FlushDeferredReleases();
+
+		if (needDir)  createDirectionalShadowResource(reqDirRes);
+		if (needPt)   createPointShadowResource(reqPtRes);
+		if (needSpot) createSpotShadowResource(reqSpotRes);
+	}
+}
+
+int initD3D12(HWND hwnd)
+{
+	UINT dxgiFactoryFlags = 0;
+
+#if defined(_DEBUG) || defined(EUNOIA_D3D12_DEBUG)
+	{
+		ID3D12Debug* debugController = nullptr;
+		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&debugController))))
+		{
+			debugController->EnableDebugLayer();
+
+			ID3D12Debug1* debugController1 = nullptr;
+			if (SUCCEEDED(debugController->QueryInterface(IID_PPV_ARGS(&debugController1))))
+			{
+				debugController1->SetEnableGPUBasedValidation(TRUE);
+				debugController1->Release();
+			}
+			debugController->Release();
+			std::cout << "[DEBUG] D3D12 debug layer + GPU-based validation enabled.\n";
+		}
+		dxgiFactoryFlags |= DXGI_CREATE_FACTORY_DEBUG;
+	}
+#endif
+
+	// Enable DRED (Device Removed Extended Data) for auto-breadcrumbs and page fault diagnostics
+	{
+		ID3D12DeviceRemovedExtendedDataSettings* dredSettings = nullptr;
+		if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&dredSettings))))
+		{
+			dredSettings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+			dredSettings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+			dredSettings->Release();
+			std::cout << "[DEBUG] DRED (auto-breadcrumbs + page fault) enabled.\n";
+		}
+	}
+
+	// 1. Create DXGI Factory
+	HRESULT hr = CreateDXGIFactory2(dxgiFactoryFlags, IID_PPV_ARGS(&g_dxgiFactory));
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create DXGIFactory2: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	// 2. Select Hardware Adapter (Prefer High Performance / Discrete GPU via IDXGIFactory6)
+	IDXGIAdapter1* adapter = nullptr;
+	IDXGIFactory6* factory6 = nullptr;
+	if (SUCCEEDED(g_dxgiFactory->QueryInterface(IID_PPV_ARGS(&factory6))))
+	{
+		for (UINT i = 0; SUCCEEDED(factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter))); ++i)
+		{
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				adapter = nullptr;
+				continue;
+			}
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] High Performance D3D12 GPU Selected: " << descStr << std::endl;
+				break;
+			}
+			adapter->Release();
+			adapter = nullptr;
+		}
+		factory6->Release();
+	}
+
+	if (!adapter)
+	{
+		for (UINT i = 0; g_dxgiFactory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i)
+		{
+			DXGI_ADAPTER_DESC1 desc;
+			adapter->GetDesc1(&desc);
+			if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE)
+			{
+				adapter->Release();
+				continue;
+			}
+
+			if (SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, __uuidof(ID3D12Device), nullptr)))
+			{
+				char descStr[128];
+				WideCharToMultiByte(CP_ACP, 0, desc.Description, -1, descStr, sizeof(descStr), nullptr, nullptr);
+				std::cout << "[EngineRHI] Direct3D 12 Adapter: " << descStr << std::endl;
+				break;
+			}
+			adapter->Release();
+			adapter = nullptr;
+		}
+	}
+
+	// 3. Create Device
+	hr = D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g_d3dDevice));
+	if (adapter) adapter->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12Device: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+#if defined(_DEBUG) || defined(EUNOIA_D3D12_DEBUG)
+	{
+		ID3D12InfoQueue* infoQueue = nullptr;
+		if (SUCCEEDED(g_d3dDevice->QueryInterface(IID_PPV_ARGS(&infoQueue))))
+		{
+			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_CORRUPTION, TRUE);
+			infoQueue->SetBreakOnSeverity(D3D12_MESSAGE_SEVERITY_ERROR, TRUE);
+			infoQueue->Release();
+		}
+	}
+#endif
+
+	// 4. Create Command Queue
+	D3D12_COMMAND_QUEUE_DESC queueDesc = {};
+	queueDesc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
+	queueDesc.Flags = D3D12_COMMAND_QUEUE_FLAG_NONE;
+	hr = g_d3dDevice->CreateCommandQueue(&queueDesc, IID_PPV_ARGS(&g_commandQueue));
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12CommandQueue: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	g_commandQueue->SetName(L"g_commandQueue");
+
+	// 5. Create SwapChain
+	g_dxgiFactory->MakeWindowAssociation(hwnd, DXGI_MWA_NO_ALT_ENTER);
+
+	DXGI_SWAP_CHAIN_DESC1 swapChainDesc = {};
+	swapChainDesc.BufferCount = FRAME_COUNT;
+	swapChainDesc.Width = (UINT)g_currentWidth;
+	swapChainDesc.Height = (UINT)g_currentHeight;
+	swapChainDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	swapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+	swapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+	swapChainDesc.SampleDesc.Count = 1;
+
+	IDXGISwapChain1* sc = nullptr;
+	hr = g_dxgiFactory->CreateSwapChainForHwnd(g_commandQueue, hwnd, &swapChainDesc, nullptr, nullptr, &sc);
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create DXGI SwapChain: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+	sc->QueryInterface(IID_PPV_ARGS(&g_swapChain));
+	sc->Release();
+	g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
+
+	// 6. Create Descriptor Heaps (RTV, DSV, SRV)
+	D3D12_DESCRIPTOR_HEAP_DESC rtvHeapDesc = {};
+	rtvHeapDesc.NumDescriptors = FRAME_COUNT + 4;
+	rtvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
+	rtvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	g_d3dDevice->CreateDescriptorHeap(&rtvHeapDesc, IID_PPV_ARGS(&g_rtvDescHeap));
+	g_rtvDescriptorSize = g_d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
+	g_rtvDescHeap->SetName(L"g_rtvDescHeap");
+
+	D3D12_DESCRIPTOR_HEAP_DESC dsvHeapDesc = {};
+	dsvHeapDesc.NumDescriptors = 64; // Index 0: SwapChain Depth, Index 1: Directional Shadow Depth, Indices 2..25: Point Cubemap Faces, Indices 26..29: Spot/Area Slices
+	dsvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
+	dsvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
+	g_d3dDevice->CreateDescriptorHeap(&dsvHeapDesc, IID_PPV_ARGS(&g_dsvDescHeap));
+	g_dsvDescriptorSize = g_d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+	g_dsvDescHeap->SetName(L"g_dsvDescHeap");
+
+	D3D12_DESCRIPTOR_HEAP_DESC srvHeapDesc = {};
+	srvHeapDesc.NumDescriptors = SRV_HEAP_CAPACITY; // 8192
+	srvHeapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+	srvHeapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+	g_d3dDevice->CreateDescriptorHeap(&srvHeapDesc, IID_PPV_ARGS(&g_srvDescHeap));
+	g_srvDescriptorSize = g_d3dDevice->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+	g_srvDescHeap->SetName(L"g_srvDescHeap");
+
+	// 7. Create RTVs for backbuffers
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		g_swapChain->GetBuffer(i, IID_PPV_ARGS(&g_renderTargets[i]));
+		if (g_renderTargets[i])
+		{
+			std::wstring rtName = L"g_renderTarget_" + std::to_wstring(i);
+			g_renderTargets[i]->SetName(rtName.c_str());
+		}
+		g_d3dDevice->CreateRenderTargetView(g_renderTargets[i], nullptr, rtvHandle);
+		rtvHandle.ptr += g_rtvDescriptorSize;
+	}
+
+	// 8. Create Depth Stencil View, Shadow Map Resources & Scene Color Render Targets
+	createDepthStencilView(g_currentWidth, g_currentHeight);
+	createShadowResources();
+	createSceneRenderTargets(g_currentWidth, g_currentHeight);
+
+	// 9. Create Command Allocators & Lists (Per-frame for zero concurrency hazard)
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		g_d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_commandAllocators[i]));
+		if (g_commandAllocators[i])
+		{
+			std::wstring caName = L"g_commandAllocator_" + std::to_wstring(i);
+			g_commandAllocators[i]->SetName(caName.c_str());
+		}
+
+		g_d3dDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_commandAllocators[i], nullptr, IID_PPV_ARGS(&g_commandLists[i]));
+		if (g_commandLists[i])
+		{
+			std::wstring clName = L"g_commandList_" + std::to_wstring(i);
+			g_commandLists[i]->SetName(clName.c_str());
+			g_commandLists[i]->Close();
+		}
+	}
+	g_commandList = g_commandLists[0];
+
+	// 10. Create Fence & Event
+	g_d3dDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_fence));
+	g_fence->SetName(L"g_fence");
+	for (UINT i = 0; i < FRAME_COUNT; i++) g_fenceValues[i] = 0;
+	g_fenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+
+	// 11. Dedicated Upload Command Allocator, Command List, and Upload Fence
+	g_d3dDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&g_uploadCmdAlloc));
+	g_uploadCmdAlloc->SetName(L"g_uploadCmdAlloc");
+	g_d3dDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, g_uploadCmdAlloc, nullptr, IID_PPV_ARGS(&g_uploadCmdList));
+	g_uploadCmdList->SetName(L"g_uploadCmdList");
+	g_uploadCmdList->Close();
+	g_d3dDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&g_uploadFence));
+	g_uploadFence->SetName(L"g_uploadFence");
+	g_uploadFenceEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	g_uploadFenceValue = 0;
+
+	// 12. Initialize Mesh Cluster Culling Pipeline (dev.md Plugin)
+	Eunoia::MeshClusterCullingSystem::Get().Initialize(g_d3dDevice, g_commandQueue, (UINT)g_currentWidth, (UINT)g_currentHeight);
+
+	// 13. Initialize AquaTerrain DX12 Water System (dev.md Plugin)
+	Eunoia::WaterSystem::Get().Initialize(g_d3dDevice, g_commandQueue, (UINT)g_currentWidth, (UINT)g_currentHeight);
+
+	// 14. Initialize Real-Time Anti-Aliasing Pipeline (dev.md Plugin)
+	createAntiAliasingPipeline();
+
+	return EXIT_SUCCESS;
+}
+
+static HRESULT CompileOrLoadCachedShader(
+	const char* hlslSource,
+	const char* entryPoint,
+	const char* targetProfile,
+	ID3DBlob** ppBlobOut,
+	ID3DBlob** ppErrorBlobOut)
+{
+	if (!hlslSource || !entryPoint || !targetProfile || !ppBlobOut) {
+		return E_INVALIDARG;
+	}
+
+	// Compute a stable FNV-1a 64-bit hash of source + entryPoint + profile
+	std::string key = std::string(entryPoint) + "_" + targetProfile + "_" + hlslSource;
+	uint64_t hashVal = 14695981039346656037ull;
+	for (char c : key) {
+		hashVal ^= (uint8_t)c;
+		hashVal *= 1099511628211ull;
+	}
+	char hexHash[32];
+	snprintf(hexHash, sizeof(hexHash), "%016llx", (unsigned long long)hashVal);
+
+	std::filesystem::path cacheDir = "Shaders/Cache";
+	std::error_code ec;
+	if (!std::filesystem::exists(cacheDir, ec)) {
+		std::filesystem::create_directories(cacheDir, ec);
+	}
+
+	std::filesystem::path cacheFile = cacheDir / (std::string(entryPoint) + "_" + targetProfile + "_" + hexHash + ".cso");
+	if (std::filesystem::exists(cacheFile, ec)) {
+		std::ifstream f(cacheFile, std::ios::binary | std::ios::ate);
+		if (f.is_open()) {
+			std::streamsize size = f.tellg();
+			f.seekg(0, std::ios::beg);
+			if (size > 0) {
+				ID3DBlob* blob = nullptr;
+				HRESULT hr = D3DCreateBlob((SIZE_T)size, &blob);
+				if (SUCCEEDED(hr) && blob) {
+					if (f.read(reinterpret_cast<char*>(blob->GetBufferPointer()), size)) {
+						*ppBlobOut = blob;
+						return S_OK;
+					}
+					blob->Release();
+				}
+			}
+		}
+	}
+
+	// Cache miss or read failed: compile with D3DCompile
+	HRESULT hr = D3DCompile(hlslSource, strlen(hlslSource), nullptr, nullptr, nullptr, entryPoint, targetProfile, 0, 0, ppBlobOut, ppErrorBlobOut);
+	if (SUCCEEDED(hr) && *ppBlobOut) {
+		// Save compiled bytecode to cache file for instant future launches
+		std::ofstream out(cacheFile, std::ios::binary);
+		if (out.is_open()) {
+			out.write(reinterpret_cast<const char*>((*ppBlobOut)->GetBufferPointer()), (*ppBlobOut)->GetBufferSize());
+		}
+	}
+	return hr;
+}
+
+int createShadersAndPipeline()
+{
+	// 1. Root Signature (CBV b0, 32-bit constants b1, Descriptor Table t0-t6 for materials, Descriptor Table t7 for shadow map, Descriptor Table t8 for point shadows, Descriptor Table t9 for spot/area shadows, Samplers s0-s2)
+	D3D12_DESCRIPTOR_RANGE srvRange = {};
+	srvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	srvRange.NumDescriptors = 7;
+	srvRange.BaseShaderRegister = 0;
+	srvRange.RegisterSpace = 0;
+	srvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE shadowSrvRange = {};
+	shadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	shadowSrvRange.NumDescriptors = 1;
+	shadowSrvRange.BaseShaderRegister = 7;
+	shadowSrvRange.RegisterSpace = 0;
+	shadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE ptShadowSrvRange = {};
+	ptShadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	ptShadowSrvRange.NumDescriptors = 1;
+	ptShadowSrvRange.BaseShaderRegister = 8;
+	ptShadowSrvRange.RegisterSpace = 0;
+	ptShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE spotShadowSrvRange = {};
+	spotShadowSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	spotShadowSrvRange.NumDescriptors = 1;
+	spotShadowSrvRange.BaseShaderRegister = 9;
+	spotShadowSrvRange.RegisterSpace = 0;
+	spotShadowSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_DESCRIPTOR_RANGE lightmapSrvRange = {};
+	lightmapSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	lightmapSrvRange.NumDescriptors = 1;
+	lightmapSrvRange.BaseShaderRegister = 10;
+	lightmapSrvRange.RegisterSpace = 0;
+	lightmapSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParams[7] = {};
+	// 0: CBV b0 (Frame Constants)
+	rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	rootParams[0].Descriptor.ShaderRegister = 0;
+	rootParams[0].Descriptor.RegisterSpace = 0;
+	rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// 1: 32-bit Constants b1 (32 floats Material Constants)
+	rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParams[1].Constants.ShaderRegister = 1;
+	rootParams[1].Constants.RegisterSpace = 0;
+	rootParams[1].Constants.Num32BitValues = 32;
+	rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// 2: Descriptor Table t0-t6 (7 SRVs for Material Textures)
+	rootParams[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[2].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[2].DescriptorTable.pDescriptorRanges = &srvRange;
+	rootParams[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 3: Descriptor Table t7 (1 SRV for Directional Shadow Map)
+	rootParams[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[3].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[3].DescriptorTable.pDescriptorRanges = &shadowSrvRange;
+	rootParams[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 4: Descriptor Table t8 (1 SRV for Point Light Shadow Cubemap Array)
+	rootParams[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[4].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[4].DescriptorTable.pDescriptorRanges = &ptShadowSrvRange;
+	rootParams[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 5: Descriptor Table t9 (1 SRV for Spot / Area Light Shadow 2D Array)
+	rootParams[5].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[5].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[5].DescriptorTable.pDescriptorRanges = &spotShadowSrvRange;
+	rootParams[5].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// 6: Descriptor Table t10 (1 SRV for Baked Lightmap)
+	rootParams[6].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[6].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[6].DescriptorTable.pDescriptorRanges = &lightmapSrvRange;
+	rootParams[6].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_STATIC_SAMPLER_DESC staticSamplers[3] = {};
+	// Sampler 0: s0 (Anisotropic wrap for materials)
+	staticSamplers[0].Filter = D3D12_FILTER_ANISOTROPIC;
+	staticSamplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	staticSamplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	staticSamplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	staticSamplers[0].MipLODBias = 0.0f;
+	staticSamplers[0].MaxAnisotropy = 16;
+	staticSamplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_NEVER;
+	staticSamplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	staticSamplers[0].MinLOD = 0.0f;
+	staticSamplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+	staticSamplers[0].ShaderRegister = 0;
+	staticSamplers[0].RegisterSpace = 0;
+	staticSamplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// Sampler 1: s1 (Hardware PCF Comparison Sampler for 2D Directional & Spot Shadow Maps)
+	staticSamplers[1].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+	staticSamplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_BORDER;
+	staticSamplers[1].MipLODBias = 0.0f;
+	staticSamplers[1].MaxAnisotropy = 1;
+	staticSamplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	staticSamplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+	staticSamplers[1].MinLOD = 0.0f;
+	staticSamplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	staticSamplers[1].ShaderRegister = 1;
+	staticSamplers[1].RegisterSpace = 0;
+	staticSamplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// Sampler 2: s2 (Hardware PCF Comparison Sampler for Point Light Cube Shadows - Clamp for seamless edges)
+	staticSamplers[2].Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+	staticSamplers[2].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSamplers[2].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSamplers[2].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	staticSamplers[2].MipLODBias = 0.0f;
+	staticSamplers[2].MaxAnisotropy = 1;
+	staticSamplers[2].ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	staticSamplers[2].BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+	staticSamplers[2].MinLOD = 0.0f;
+	staticSamplers[2].MaxLOD = D3D12_FLOAT32_MAX;
+	staticSamplers[2].ShaderRegister = 2;
+	staticSamplers[2].RegisterSpace = 0;
+	staticSamplers[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC rootSigDesc = {};
+	rootSigDesc.NumParameters = 7;
+	rootSigDesc.pParameters = rootParams;
+	rootSigDesc.NumStaticSamplers = 3;
+	rootSigDesc.pStaticSamplers = staticSamplers;
+	rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ID3DBlob* serializedRootSig = nullptr;
+	ID3DBlob* errorBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serializedRootSig, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob)
+		{
+			std::cerr << "RootSig serialization error: " << (char*)errorBlob->GetBufferPointer() << std::endl;
+			errorBlob->Release();
+		}
+		return EXIT_FAILURE;
+	}
+	g_d3dDevice->CreateRootSignature(0, serializedRootSig->GetBufferPointer(), serializedRootSig->GetBufferSize(), IID_PPV_ARGS(&g_rootSignature));
+	serializedRootSig->Release();
+
+	// 2. Compile Main HLSL Shaders with Hardware PBR, 2K Textures & Real-Time Directional, Point, Spot, Area Shadows
+	const char* hlslSource = R"(
+		cbuffer FrameConstants : register(b0)
+		{
+			float4x4 mvp;
+			float4x4 lightSpaceMatrix;
+			float3 cameraPos;
+			float ambientIntensity;
+			float3 lightDir;
+			float shadowBias;
+			float3 lightColor;
+			float shadowStrength;
+			float pcfRadius;
+			float enableShadows;
+			float shadowMapSize;
+			float numPointLights;
+			float4 ambientColor;
+			float4 pointLightPosRange[64];
+			float4 pointLightColorIntensity[64];
+			float4 pointLightDirType[64];
+			float4 pointLightSpotAreaParams[64];
+			float4 pointLightShadowParams[64];
+			float4x4 spotLightSpaceMatrices[4];
+			float enablePostProcessing;
+			float postExposureEV;
+			float postExposureMultiplier;
+			float postTonemapper;
+			float postSaturation;
+			float postContrast;
+			float postGamma;
+			float spotShadowAllocSize; // passed via cb.padPost for distance-adaptive viewport scaling
+			float4 postColorFilter;
+			float maxShadowDistance;
+			float3 padShadow;
+		};
+
+		cbuffer MaterialConstants : register(b1)
+		{
+			float3 baseColor;
+			float metallic;
+			float roughness;
+			float normalStrength;
+			float specular;
+			float emissiveIntensity;
+			float3 emissiveColor;
+			float isUnlit;
+			float hasAlbedoTex;
+			float hasNormalTex;
+			float hasRoughTex;
+			float hasAoTex;
+			float receiveShadows;
+			float2 uvScale;
+			float pad0;
+			float blendMode;
+			float opacity;
+			float opacityMaskClipValue;
+			float hasOpacityTex;
+			float normalMapYFlip;
+			float roughnessChannel;
+			float metallicChannel;
+			float aoChannel;
+			float materialDebugMode;
+			float hasMetalTex;
+			float hasEmissionTex;
+			float pad3;
+		};
+
+		Texture2D g_albedoTex   : register(t0);
+		Texture2D g_normalTex   : register(t1);
+		Texture2D g_roughTex    : register(t2);
+		Texture2D g_metalTex    : register(t3);
+		Texture2D g_aoTex       : register(t4);
+		Texture2D g_opacityTex  : register(t5);
+		Texture2D g_emissiveTex : register(t6);
+		Texture2D g_shadowMap   : register(t7);
+		TextureCubeArray g_pointShadowMap : register(t8);
+		Texture2DArray g_spotShadowMap : register(t9);
+		Texture2D g_lightmapTex : register(t10);
+
+		SamplerState g_sampler : register(s0);
+		SamplerComparisonState g_shadowSampler : register(s1);
+		SamplerComparisonState g_pointShadowSampler : register(s2);
+
+		struct VSInput
+		{
+			float3 position : POSITION;
+			float3 normal   : NORMAL;
+			float2 uv       : TEXCOORD;
+			float3 color    : COLOR;
+			float4 tangent  : TANGENT;
+		};
+
+		struct PSInput
+		{
+			float4 position    : SV_POSITION;
+			float3 worldPos    : WORLD_POS;
+			float3 normal      : NORMAL;
+			float2 uv          : TEXCOORD;
+			float3 color       : COLOR;
+			float4 shadowCoord : SHADOW_COORD;
+			float4 tangent     : TANGENT;
+		};
+
+		float SamplePbrChannel(float4 smp, float chIdx)
+		{
+			if (chIdx < 0.5f) return smp.r;
+			if (chIdx < 1.5f) return smp.g;
+			if (chIdx < 2.5f) return smp.b;
+			return smp.a;
+		}
+
+		PSInput VSMain(VSInput input)
+		{
+			PSInput output;
+			output.position = mul(mvp, float4(input.position, 1.0f));
+			output.worldPos = input.position;
+			output.normal   = input.normal;
+			output.uv       = input.uv;
+			output.color    = input.color;
+			output.shadowCoord = mul(lightSpaceMatrix, float4(input.position, 1.0f));
+			output.tangent  = input.tangent;
+			return output;
+		}
+
+		#define M_PI 3.14159265359f
+
+		// ============================================================================
+		// NVIDIA Falcor & WickedEngine Microfacet BRDF Formulation
+		// Isotropic GGX Normal Distribution (NDF)
+		// ============================================================================
+		float D_GGX(float alpha, float NoH)
+		{
+			float a2 = max(alpha * alpha, 0.00001f);
+			float d = ((NoH * a2 - NoH) * NoH + 1.0f);
+			return a2 / (d * d * M_PI);
+		}
+
+		// Height-Correlated Smith Masking-Shadowing Function (Eric Heitz / Falcor evalMaskingSmithGGXCorrelated)
+		float V_SmithGGXCorrelated(float alpha, float NoV, float NoL)
+		{
+			float a2 = max(alpha * alpha, 0.00001f);
+			float lambdaV = NoL * sqrt((NoV - a2 * NoV) * NoV + a2);
+			float lambdaL = NoV * sqrt((NoL - a2 * NoL) * NoL + a2);
+			return 0.5f / max(lambdaV + lambdaL, 0.00001f);
+		}
+
+		// Schlick Fresnel with f0 and f90 (NVIDIA Falcor Fresnel.slang)
+		float3 F_Schlick(float3 f0, float3 f90, float VoH)
+		{
+			return f0 + (f90 - f0) * pow(clamp(1.0f - VoH, 0.0f, 1.0f), 5.0f);
+		}
+
+		float3 F_Schlick(float3 f0, float VoH)
+		{
+			return F_Schlick(f0, float3(1.0f, 1.0f, 1.0f), VoH);
+		}
+
+		// Disney Burley Retro-Reflective Diffuse BRDF (Brent Burley 2012 / Falcor)
+		float3 Diffuse_Burley(float3 albedo, float roughness, float NoV, float NoL, float VoH)
+		{
+			float FD90 = 0.5f + 2.0f * VoH * VoH * roughness;
+			float FdV = 1.0f + (FD90 - 1.0f) * pow(clamp(1.0f - NoV, 0.0f, 1.0f), 5.0f);
+			float FdL = 1.0f + (FD90 - 1.0f) * pow(clamp(1.0f - NoL, 0.0f, 1.0f), 5.0f);
+			return albedo * ((FdV * FdL) / M_PI);
+		}
+
+		// NVIDIA Falcor Pre-Integrated Specular Environment Integral GGX (Ray Tracing Gems Ch. 32)
+		// Multi-scattering energy compensation polynomial for photorealistic metallic & dielectric sheen
+		float3 ApproxSpecularIntegralGGX(float3 specularReflectance, float alpha, float cosTheta)
+		{
+			cosTheta = abs(cosTheta);
+			float4 X = float4(1.0f, cosTheta, cosTheta * cosTheta, cosTheta * cosTheta * cosTheta);
+			float4 Y = float4(1.0f, alpha, alpha * alpha, alpha * alpha * alpha);
+
+			float2x2 M1 = float2x2(0.995367f, -1.38839f, -0.24751f, 1.97442f);
+			float3x3 M2 = float3x3(1.0f, 2.68132f, 52.366f, 16.0932f, -3.98452f, 59.3013f, -5.18731f, 255.259f, 2544.07f);
+			float2x2 M3 = float2x2(-0.0564526f, 3.82901f, 16.91f, -11.0303f);
+			float3x3 M4 = float3x3(1.0f, 4.11118f, -1.37886f, 19.3254f, -28.9947f, 16.9514f, 0.545386f, 96.0994f, -79.4492f);
+
+			float bias = dot(mul(M1, X.xy), Y.xy) / max(dot(mul(M2, X.xyw), Y.xyw), 0.0001f);
+			float scale = dot(mul(M3, X.xy), Y.xy) / max(dot(mul(M4, X.xzw), Y.xyw), 0.0001f);
+
+			float luma = dot(specularReflectance, float3(0.3333f, 0.3333f, 0.3333f));
+			bias *= saturate(luma * 50.0f);
+
+			return specularReflectance * max(scale, 0.0f) + max(bias, 0.0f);
+		}
+
+		// ============================================================================
+		// WickedEngine Gran Turismo 7 Uchimura Tonemap Curve (tonemapCS.hlsl)
+		// ============================================================================
+		float UchimuraCurve(float x, float P, float a, float m, float l, float c, float b)
+		{
+			float l0 = ((P - m) * l) / a;
+			float S0 = m + l0;
+			float S1 = m + a * l0;
+			float C2 = (a * P) / max(P - S1, 0.0001f);
+			float CP = -C2 / P;
+
+			float w0 = 1.0f - smoothstep(0.0f, m, x);
+			float w2 = step(m + l0, x);
+			float w1 = 1.0f - w0 - w2;
+
+			float T = m * pow(max(x / m, 0.0f), c) + b;
+			float S = P - (P - S1) * exp(CP * (x - S0));
+			float L = m + a * (x - m);
+
+			return T * w0 + L * w1 + S * w2;
+		}
+
+		float3 Uchimura(float3 color)
+		{
+			const float P = 1.0f;
+			const float a = 1.0f;
+			const float m = 0.22f;
+			const float l = 0.4f;
+			const float c = 1.33f;
+			const float b = 0.0f;
+			return float3(
+				UchimuraCurve(color.r, P, a, m, l, c, b),
+				UchimuraCurve(color.g, P, a, m, l, c, b),
+				UchimuraCurve(color.b, P, a, m, l, c, b)
+			);
+		}
+
+		// ============================================================================
+		// WickedEngine ACES Fitted RRT+ODT Curve (tonemapCS.hlsl)
+		// ============================================================================
+		float3 ACESFitted(float3 color)
+		{
+			static const float3x3 ACESInputMat = {
+				0.59719f, 0.35458f, 0.04823f,
+				0.07600f, 0.90834f, 0.01566f,
+				0.02840f, 0.13383f, 0.83777f
+			};
+			static const float3x3 ACESOutputMat = {
+				 1.60475f, -0.53108f, -0.07367f,
+				-0.10208f,  1.10813f, -0.00605f,
+				-0.00327f, -0.07276f,  1.07602f
+			};
+
+			color = mul(ACESInputMat, color);
+			color = clamp(color, 0.0f, 100.0f);
+			float3 a = color * (color + 0.0245786f) - 0.000090537f;
+			float3 b = color * (0.983729f * color + 0.4329510f) + 0.238081f;
+			color = a / b;
+			color = mul(ACESOutputMat, color);
+			return saturate(color);
+		}
+
+		// ============================================================================
+		// NVIDIA Falcor & Hable Uncharted 2 Filmic Tonemapper (ToneMapping.ps.slang)
+		// ============================================================================
+		float3 Uncharted2Tonemap(float3 x)
+		{
+			const float A = 0.22f; // Shoulder Strength
+			const float B = 0.30f; // Linear Strength
+			const float C = 0.10f; // Linear Angle
+			const float D = 0.20f; // Toe Strength
+			const float E = 0.01f; // Toe Numerator
+			const float F = 0.30f; // Toe Denominator
+			return ((x * (A * x + C * B) + D * E) / (x * (A * x + B) + D * F)) - (E / F);
+		}
+
+		float3 ToneMapHable(float3 color)
+		{
+			float exposureBias = 2.0f;
+			float3 curr = Uncharted2Tonemap(exposureBias * color);
+			float3 whiteScale = 1.0f / Uncharted2Tonemap(float3(11.2f, 11.2f, 11.2f));
+			return curr * whiteScale;
+		}
+
+		static const float2 poissonDisk16[16] = {
+			float2(-0.94201624f, -0.39906216f),
+			float2( 0.94558609f, -0.76890725f),
+			float2(-0.09418410f, -0.92938870f),
+			float2( 0.34495938f,  0.29387760f),
+			float2(-0.91588581f,  0.45771432f),
+			float2(-0.81544232f, -0.87912464f),
+			float2(-0.38277543f,  0.27676845f),
+			float2( 0.97484398f,  0.75648379f),
+			float2( 0.44323325f, -0.97511554f),
+			float2( 0.53742981f, -0.47373420f),
+			float2(-0.26496911f, -0.41893023f),
+			float2( 0.79197514f,  0.19090188f),
+			float2(-0.24188840f,  0.99706507f),
+			float2(-0.81409955f,  0.91437590f),
+			float2( 0.19984126f,  0.78641367f),
+			float2( 0.14383161f, -0.14100790f)
+		};
+
+		float CalculateShadow(float3 worldPos, float3 N, float3 L)
+		{
+			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
+
+			// Distance range culling: Only shadows within maxShadowDistance are rendered and shown
+			float distToCam = length(worldPos - cameraPos);
+			if (distToCam >= maxShadowDistance) return 1.0f;
+
+			float cosTheta = saturate(dot(N, L));
+			float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
+
+			float lightScale = length(lightSpaceMatrix[0].xyz);
+			float texelSizeWorld = (lightScale > 0.00001f) ? (2.0f / (shadowMapSize * lightScale)) : 0.02f;
+
+			// Precision normal offset bias to prevent self-shadowing without detaching dynamic character shadows
+			float normalBias = texelSizeWorld * (0.6f * sinTheta + 0.1f);
+			float3 biasedWorldPos = worldPos + N * normalBias;
+
+			float4 shadowCoord = mul(lightSpaceMatrix, float4(biasedWorldPos, 1.0f));
+			float3 projCoords = shadowCoord.xyz / shadowCoord.w;
+
+			if (projCoords.z > 1.0f || projCoords.z < 0.0f ||
+				projCoords.x < -1.0f || projCoords.x > 1.0f ||
+				projCoords.y < -1.0f || projCoords.y > 1.0f)
+			{
+				return 1.0f;
+			}
+
+			float2 shadowUV;
+			shadowUV.x = projCoords.x * 0.5f + 0.5f;
+			shadowUV.y = -projCoords.y * 0.5f + 0.5f;
+
+			float borderDist = min(min(shadowUV.x, 1.0f - shadowUV.x), min(shadowUV.y, 1.0f - shadowUV.y));
+			if (borderDist <= 0.0f) return 1.0f;
+			float fade = saturate(borderDist * 10.0f);
+
+			float zBorderDist = min(projCoords.z, 1.0f - projCoords.z);
+			fade = min(fade, saturate(zBorderDist * 10.0f));
+
+			float depthBias = max(shadowBias * (1.0f - cosTheta), shadowBias * 0.15f);
+			float currentDepth = projCoords.z - depthBias;
+
+			float texelSize = 1.0f / shadowMapSize;
+			float filterRadius = texelSize * max(pcfRadius, 0.5f);
+
+			float shadow = 0.0f;
+			[unroll]
+			for (int i = 0; i < 16; ++i)
+			{
+				float2 offset = poissonDisk16[i] * filterRadius;
+				shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+			}
+			shadow /= 16.0f;
+
+			float rawShadow = lerp(1.0f - shadowStrength, 1.0f, shadow);
+			float finalShadow = lerp(1.0f, rawShadow, fade);
+
+			// Smooth edge fade as camera distance approaches maxShadowDistance (outer 15% range)
+			float distFade = 1.0f;
+			float fadeStart = maxShadowDistance * 0.85f;
+			if (distToCam > fadeStart)
+			{
+				distFade = 1.0f - saturate((distToCam - fadeStart) / max(maxShadowDistance - fadeStart, 0.001f));
+			}
+			return lerp(1.0f, finalShadow, distFade);
+		}
+
+		static const float3 pointShadowOffsets[16] = {
+			float3( 0.577f,  0.577f,  0.577f), float3(-0.577f,  0.577f,  0.577f),
+			float3( 0.577f, -0.577f,  0.577f), float3(-0.577f, -0.577f,  0.577f),
+			float3( 0.577f,  0.577f, -0.577f), float3(-0.577f,  0.577f, -0.577f),
+			float3( 0.577f, -0.577f, -0.577f), float3(-0.577f, -0.577f, -0.577f),
+			float3( 1.0f,  0.0f,  0.0f), float3(-1.0f,  0.0f,  0.0f),
+			float3( 0.0f,  1.0f,  0.0f), float3( 0.0f, -1.0f,  0.0f),
+			float3( 0.0f,  0.0f,  1.0f), float3( 0.0f,  0.0f, -1.0f),
+			float3( 0.707f,  0.707f,  0.0f), float3(-0.707f, -0.707f,  0.0f)
+		};
+
+		float CalculatePointShadow(int shadowIdx, float3 worldPos, float3 pPos, float pRange, float3 N, float shadowRes, float sBias, float sStrength)
+		{
+			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
+
+			float distToCam = length(worldPos - cameraPos);
+			if (distToCam >= maxShadowDistance) return 1.0f;
+
+			float3 toFrag = worldPos - pPos;
+			float currentDist = length(toFrag);
+			if (currentDist >= pRange || currentDist <= 0.001f) return 1.0f;
+
+			float3 L = -toFrag / currentDist;
+			float cosTheta = saturate(dot(N, L));
+
+			float worldBias = max(sBias * 20.0f * (1.0f - cosTheta), sBias * 5.0f);
+
+			float absZ = max(abs(toFrag.x), max(abs(toFrag.y), abs(toFrag.z)));
+			float nearZ = 0.05f;
+			float farZ = max(pRange, 5.0f);
+
+			float biasedZ = max(absZ - worldBias, nearZ);
+			if (biasedZ >= farZ) return 1.0f;
+
+			float refDepth = saturate((farZ / (farZ - nearZ)) - (farZ * nearZ / (farZ - nearZ)) / max(biasedZ, 0.0001f));
+
+			float filterScale = 512.0f / max(shadowRes, 128.0f);
+			float diskRadius = (0.008f + 0.020f * saturate(currentDist / farZ)) * max(pcfRadius, 0.5f) * filterScale;
+
+			float shadow = 0.0f;
+			[unroll]
+			for (int k = 0; k < 16; ++k)
+			{
+				float3 sampleDir = toFrag + pointShadowOffsets[k] * diskRadius;
+				shadow += g_pointShadowMap.SampleCmpLevelZero(g_pointShadowSampler, float4(sampleDir, (float)shadowIdx), refDepth);
+			}
+			shadow /= 16.0f;
+
+			float distFade = saturate((pRange - currentDist) / max(pRange * 0.1f, 0.5f));
+			float finalShadow = lerp(1.0f - sStrength, 1.0f, shadow);
+			return lerp(1.0f, finalShadow, distFade);
+		}
+
+		float CalculateSpotShadow(int shadowIdx, float3 worldPos, float3 N, float3 L, float4x4 spotMatrix, float shadowRes, float sBias, float sStrength)
+		{
+			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
+
+			float distToCam = length(worldPos - cameraPos);
+			if (distToCam >= maxShadowDistance) return 1.0f;
+
+			float cosTheta = saturate(dot(N, L));
+			float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
+
+			float safeAllocRes = max(spotShadowAllocSize, 256.0f);
+			float safeShadowRes = max(shadowRes, 128.0f);
+
+			float texelSize = 1.0f / safeShadowRes;
+			float normalBias = texelSize * (0.8f * sinTheta + 0.2f);
+			float3 biasedWorldPos = worldPos + N * normalBias;
+
+			float4 shadowCoord = mul(spotMatrix, float4(biasedWorldPos, 1.0f));
+			float3 projCoords = shadowCoord.xyz / shadowCoord.w;
+
+			if (projCoords.z > 1.0f || projCoords.z < 0.0f ||
+				projCoords.x < -1.0f || projCoords.x > 1.0f ||
+				projCoords.y < -1.0f || projCoords.y > 1.0f)
+			{
+				return 1.0f;
+			}
+
+			float2 shadowUV;
+			shadowUV.x = projCoords.x * 0.5f + 0.5f;
+			shadowUV.y = -projCoords.y * 0.5f + 0.5f;
+
+			// Distance-adaptive shadow viewport scaling:
+			// Maps [0, 1] projection space into the allocated [0, uvScale] slice viewport
+			float uvScale = saturate(safeShadowRes / safeAllocRes);
+			float2 scaledUV = shadowUV * uvScale;
+
+			float depthBias = max(sBias * (1.0f - cosTheta), sBias * 0.15f);
+			float currentDepth = projCoords.z - depthBias;
+
+			float filterRadius = (1.0f / safeAllocRes) * max(pcfRadius, 0.5f);
+			float shadow = 0.0f;
+			[unroll]
+			for (int k = 0; k < 16; ++k)
+			{
+				float2 offset = poissonDisk16[k] * filterRadius;
+				float2 sampleUV = clamp(scaledUV + offset, float2(0.0005f, 0.0005f), float2(uvScale - 0.0005f, uvScale - 0.0005f));
+				shadow += g_spotShadowMap.SampleCmpLevelZero(g_shadowSampler, float3(sampleUV, (float)shadowIdx), currentDepth);
+			}
+			shadow /= 16.0f;
+
+			return lerp(1.0f - sStrength, 1.0f, shadow);
+		}
+
+		float4 PSMain(PSInput input) : SV_TARGET
+		{
+			float2 uv = input.uv * uvScale;
+
+			float currentOpacity = opacity;
+			if (hasOpacityTex > 0.5f)
+			{
+				currentOpacity *= g_opacityTex.Sample(g_sampler, uv).r;
+			}
+
+			if (blendMode > 0.5f && blendMode < 1.5f)
+			{
+				clip(currentOpacity - opacityMaskClipValue);
+			}
+
+			float3 V = normalize(cameraPos - input.worldPos);
+			float3 L = normalize(lightDir);
+			float3 H = normalize(L + V);
+
+			float3 N = normalize(input.normal);
+			float3 T = normalize(input.tangent.xyz);
+			T = normalize(T - dot(T, N) * N);
+			float3 B = normalize(cross(N, T) * input.tangent.w);
+			float3x3 TBN = float3x3(T, B, N);
+
+			if (hasNormalTex > 0.5f && normalStrength > 0.01f)
+			{
+				float3 nSample = g_normalTex.Sample(g_sampler, uv).rgb * 2.0f - 1.0f;
+				if (normalMapYFlip > 0.5f)
+				{
+					nSample.y = -nSample.y;
+				}
+				nSample.xy *= normalStrength;
+				nSample = normalize(nSample);
+				N = normalize(mul(nSample, TBN));
+			}
+
+			float3 albedo = baseColor;
+			if (hasAlbedoTex > 0.5f)
+			{
+				float4 albedoSample = g_albedoTex.Sample(g_sampler, uv);
+				albedo = pow(max(albedoSample.rgb, 0.0001f), 2.2f) * baseColor;
+			}
+
+			float rough = roughness;
+			if (hasRoughTex > 0.5f)
+			{
+				float4 rSamp = g_roughTex.Sample(g_sampler, uv);
+				rough = SamplePbrChannel(rSamp, roughnessChannel);
+			}
+			rough = clamp(rough, 0.04f, 1.0f);
+
+			float metal = metallic;
+			if (hasMetalTex > 0.5f)
+			{
+				float4 mSamp = g_metalTex.Sample(g_sampler, uv);
+				metal = clamp(SamplePbrChannel(mSamp, metallicChannel), 0.0f, 1.0f);
+			}
+
+			float ao = 1.0f;
+			if (hasAoTex > 0.5f)
+			{
+				float4 aoSamp = g_aoTex.Sample(g_sampler, uv);
+				ao = clamp(SamplePbrChannel(aoSamp, aoChannel), 0.05f, 1.0f);
+			}
+
+			// Diagnostic Material Debug Modes (dev.md Section 11 & 15)
+			if (materialDebugMode > 0.5f && materialDebugMode < 1.5f) // 1: Base Color Only
+			{
+				return float4(pow(saturate(albedo), 1.0f / 2.2f), currentOpacity);
+			}
+			else if (materialDebugMode > 1.5f && materialDebugMode < 2.5f) // 2: Normal Visualization
+			{
+				return float4(N * 0.5f + 0.5f, currentOpacity);
+			}
+			else if (materialDebugMode > 2.5f && materialDebugMode < 3.5f) // 3: Roughness
+			{
+				return float4(rough, rough, rough, currentOpacity);
+			}
+			else if (materialDebugMode > 3.5f && materialDebugMode < 4.5f) // 4: Metallic
+			{
+				return float4(metal, metal, metal, currentOpacity);
+			}
+			else if (materialDebugMode > 4.5f && materialDebugMode < 5.5f) // 5: AO
+			{
+				return float4(ao, ao, ao, currentOpacity);
+			}
+			else if (materialDebugMode > 5.5f && materialDebugMode < 6.5f) // 6: Tangent
+			{
+				return float4(T * 0.5f + 0.5f, currentOpacity);
+			}
+			else if (materialDebugMode > 6.5f && materialDebugMode < 7.5f) // 7: Bitangent
+			{
+				return float4(B * 0.5f + 0.5f, currentOpacity);
+			}
+			else if (materialDebugMode > 7.5f && materialDebugMode < 8.5f) // 8: Vertex Normal
+			{
+				float3 vN = normalize(input.normal);
+				return float4(vN * 0.5f + 0.5f, currentOpacity);
+			}
+			else if (materialDebugMode > 8.5f && materialDebugMode < 9.5f) // 9: UV0
+			{
+				return float4(frac(uv.x), frac(uv.y), 0.0f, currentOpacity);
+			}
+			else if (materialDebugMode > 9.5f && materialDebugMode < 10.5f) // 10: Simple Diffuse (diagnostic)
+			{
+				float3 vN = normalize(input.normal);
+				float3 simpleDiff = albedo * (max(dot(vN, L), 0.0f) * lightColor + ambientColor.rgb * ambientIntensity);
+				return float4(pow(saturate(simpleDiff), 1.0f / 2.2f), currentOpacity);
+			}
+
+			float3 emissive = emissiveColor * emissiveIntensity;
+			if (hasEmissionTex > 0.5f)
+			{
+				float4 emSample = g_emissiveTex.Sample(g_sampler, uv);
+				float3 emLinear = pow(max(emSample.rgb, 0.0001f), 2.2f);
+				emissive = emLinear * emissiveColor * max(emissiveIntensity, 1.0f);
+			}
+
+			if (isUnlit > 0.5f)
+			{
+				float3 unlitBase = (length(input.color) > 0.001f && hasAlbedoTex < 0.5f) ? (input.color * albedo) : albedo;
+				return float4(pow(saturate(unlitBase + emissive), 1.0f / 2.2f), currentOpacity);
+			}
+
+			float NdotL = saturate(dot(N, L));
+			float NdotV = max(dot(N, V), 0.0001f);
+			float NdotH = saturate(dot(N, H));
+			float VdotH = saturate(dot(V, H));
+
+			float3 F0 = lerp(float3(0.04f * specular * 2.0f, 0.04f * specular * 2.0f, 0.04f * specular * 2.0f), albedo, metal);
+			float3 F = F_Schlick(F0, VdotH);
+
+			float roughnessBRDF = rough * rough;
+			float D = D_GGX(roughnessBRDF, NdotH);
+			float Vis = V_SmithGGXCorrelated(roughnessBRDF, NdotV, NdotL);
+			float3 specBRDF = D * Vis * F;
+			// NVIDIA Falcor & Disney Retro-Reflective Diffuse BRDF
+			float3 diffBRDF = (1.0f - F) * (1.0f - metal) * Diffuse_Burley(albedo, rough, NdotV, NdotL, VdotH);
+
+			// Directional Sun Light with Shadows (WickedEngine Cascade & Poisson PCF)
+			float shadowFactor = CalculateShadow(input.worldPos, N, L);
+			float3 directLit = (diffBRDF + specBRDF) * NdotL * lightColor * shadowFactor;
+
+			// Ambient & Indirect Lighting with Falcor Multi-Scattering Specular Energy Preservation
+			float3 ambCol = ambientColor.rgb;
+			float3 ambientDiff = albedo * ambCol * ambientIntensity * (1.0f - metal) * ao;
+			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
+			float3 ambientSpec = ambSpecEnergy * ambCol * ambientIntensity * ao;
+
+			// Multiple Lights (Point, Spot, Area) - WickedEngine Forward+ Lighting & Falcor Disney Diffuse
+			float3 pointLightsContribution = float3(0, 0, 0);
+			int numLights = min((int)numPointLights, 64);
+			[loop]
+			for (int i = 0; i < numLights; ++i)
+			{
+				float3 pPos = pointLightPosRange[i].xyz;
+				float pRange = pointLightPosRange[i].w;
+				float3 pCol = pointLightColorIntensity[i].xyz;
+				float pIntensity = pointLightColorIntensity[i].w;
+				float3 lDir = pointLightDirType[i].xyz;
+				int lType = (int)(pointLightDirType[i].w + 0.5f);
+				float4 spParams = pointLightSpotAreaParams[i];
+				float4 shParams = pointLightShadowParams[i];
+				int shadowIdx = (int)shParams.x;
+				float sStrength = shParams.y;
+				float sBias = shParams.z;
+				float shadowRes = shParams.w;
+
+				float3 toLight = pPos - input.worldPos;
+				float dist = length(toLight);
+				if (dist < pRange && dist > 0.0001f)
+				{
+					float3 pL = toLight / dist;
+					float3 pH = normalize(pL + V);
+					float pNdotL = saturate(dot(N, pL));
+					float pNdotH = saturate(dot(N, pH));
+					float pVdotH = saturate(dot(V, pH));
+
+					float attenExp = max(spParams.z, 0.2f);
+					float normDist = dist / max(pRange, 0.0001f);
+					float distAtten = saturate(1.0f - normDist);
+					distAtten = pow(distAtten, attenExp) / (dist * dist + 1.0f);
+
+					float spotAngleAtten = 1.0f;
+					if (lType == 2) // Spot Light
+					{
+						float cosDir = dot(normalize(lDir), -pL);
+						float cosInner = spParams.x;
+						float cosOuter = spParams.y;
+						spotAngleAtten = saturate((cosDir - cosOuter) / max(cosInner - cosOuter, 0.001f));
+						spotAngleAtten = spotAngleAtten * spotAngleAtten;
+
+						// Smooth range ending dissolve
+						float rangeSmooth = clamp(spParams.w, 0.001f, 1.0f);
+						float rangeDissolve = saturate((1.0f - normDist) / rangeSmooth);
+						rangeDissolve = rangeDissolve * rangeDissolve * (3.0f - 2.0f * rangeDissolve);
+						distAtten *= rangeDissolve;
+					}
+					else if (lType == 3) // Area Light
+					{
+						float twoSided = spParams.w;
+						float forwardDot = dot(normalize(lDir), -pL);
+						if (twoSided < 0.5f && forwardDot <= 0.0f)
+						{
+							spotAngleAtten = 0.0f;
+						}
+						else
+						{
+							spotAngleAtten = saturate(abs(forwardDot) * 1.2f);
+						}
+					}
+
+					if (distAtten * spotAngleAtten > 0.00001f)
+					{
+						float3 pF = F_Schlick(F0, pVdotH);
+						float pD = D_GGX(roughnessBRDF, pNdotH);
+						float pVis = V_SmithGGXCorrelated(roughnessBRDF, NdotV, pNdotL);
+						float3 pSpec = pD * pVis * pF;
+						float3 pDiff = (1.0f - pF) * (1.0f - metal) * Diffuse_Burley(albedo, rough, NdotV, pNdotL, pVdotH);
+
+						float pShadowFactor = 1.0f;
+						if (enableShadows > 0.5f && shadowIdx >= 0 && shadowIdx < 4 && receiveShadows > 0.5f)
+						{
+							if (lType == 1) // Point Light
+							{
+								pShadowFactor = CalculatePointShadow(shadowIdx, input.worldPos, pPos, pRange, N, shadowRes, sBias, sStrength);
+							}
+							else if (lType == 2 || lType == 3) // Spot or Area Light
+							{
+								float4x4 sMatrix = spotLightSpaceMatrices[shadowIdx];
+								pShadowFactor = CalculateSpotShadow(shadowIdx, input.worldPos, N, pL, sMatrix, shadowRes, sBias, sStrength);
+							}
+						}
+
+						pointLightsContribution += (pDiff + pSpec) * pNdotL * pCol * pIntensity * distAtten * spotAngleAtten * pShadowFactor;
+					}
+				}
+			}
+
+			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
+			float hasLightmap = input.color.z;
+			float3 bakedLit = float3(0.0f, 0.0f, 0.0f);
+			if (hasLightmap > 0.5f)
+			{
+				float3 bakedIllum = g_lightmapTex.Sample(g_sampler, input.color.xy).rgb;
+				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
+				bakedLit = pkD * albedo * bakedIllum;
+			}
+			else if (length(input.color.rgb) > 0.0001f)
+			{
+				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
+				bakedLit = pkD * albedo * input.color.rgb;
+			}
+			float3 litColor = ambientDiff + ambientSpec + bakedLit + directLit + pointLightsContribution + emissive;
+
+			// Post Processing: Color Grading, Exposure, and Tone Mapping (Falcor & WickedEngine)
+			if (enablePostProcessing > 0.5f)
+			{
+				// 1. Exposure (EV Compensation & Multiplier)
+				float evFactor = exp2(postExposureEV);
+				litColor *= (evFactor * max(postExposureMultiplier, 0.0f));
+
+				// 2. Color Filter / White Balance Tint
+				litColor *= max(postColorFilter.rgb, float3(0, 0, 0));
+
+				// 3. Contrast (Linear Power Curve)
+				if (abs(postContrast - 1.0f) > 0.001f)
+				{
+					litColor = pow(max(litColor, 0.00001f), max(postContrast, 0.01f));
+				}
+
+				// 4. Tonemapping (Falcor Uncharted 2, WickedEngine ACES Fitted, Reinhard, Uchimura GT7)
+				if (postTonemapper > 0.5f && postTonemapper < 1.5f)
+				{
+					// ACES Fitted (WickedEngine ACESInputMat & ACESOutputMat RRT+ODT fit)
+					litColor = ACESFitted(litColor);
+				}
+				else if (postTonemapper > 1.5f && postTonemapper < 2.5f)
+				{
+					// Reinhard tonemapping
+					litColor = litColor / (litColor + 1.0f);
+				}
+				else if (postTonemapper > 2.5f && postTonemapper < 3.5f)
+				{
+					// Uchimura (Gran Turismo 7 curve from WickedEngine tonemapCS.hlsl)
+					litColor = Uchimura(litColor);
+				}
+				else if (postTonemapper > 3.5f)
+				{
+					// NVIDIA Falcor & Hable Uncharted 2 Filmic Operator
+					litColor = ToneMapHable(litColor);
+				}
+
+				// 5. Saturation
+				if (abs(postSaturation - 1.0f) > 0.001f)
+				{
+					float luma = dot(litColor, float3(0.2126f, 0.7152f, 0.0722f));
+					litColor = lerp(float3(luma, luma, luma), litColor, max(postSaturation, 0.0f));
+				}
+
+				// 6. Gamma correction
+				float invGamma = 1.0f / max(2.2f * max(postGamma, 0.1f), 0.01f);
+				litColor = pow(saturate(litColor), invGamma);
+			}
+			else
+			{
+				litColor = pow(saturate(litColor), 1.0f / 2.2f);
+			}
+
+			return float4(litColor, currentOpacity);
+		}
+	)";
+
+	ID3DBlob* vertexShader = nullptr;
+	ID3DBlob* pixelShader = nullptr;
+
+	hr = CompileOrLoadCachedShader(hlslSource, "VSMain", "vs_5_0", &vertexShader, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	hr = CompileOrLoadCachedShader(hlslSource, "PSMain", "ps_5_0", &pixelShader, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	// 3. Input Layout (Position, Normal, UV, Color, Tangent)
+	static_assert(sizeof(Vertex) == 60, "Vertex struct size must be exactly 60 bytes matching input layout");
+	static_assert(offsetof(Vertex, position) == 0,  "Vertex position offset mismatch");
+	static_assert(offsetof(Vertex, normal)   == 12, "Vertex normal offset mismatch");
+	static_assert(offsetof(Vertex, uv)       == 24, "Vertex uv offset mismatch");
+	static_assert(offsetof(Vertex, color)    == 32, "Vertex color offset mismatch");
+	static_assert(offsetof(Vertex, tangent)  == 44, "Vertex tangent offset mismatch");
+
+	D3D12_INPUT_ELEMENT_DESC inputElementDescs[] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 0,  D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 12, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, 24, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 32, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 },
+		{ "TANGENT",  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 44, D3D12_INPUT_CLASSIFICATION_PER_VERTEX_DATA, 0 }
+	};
+
+	// 4. Graphics Pipeline State Object (PSO) for Main Lit Pass
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.InputLayout = { inputElementDescs, 5 };
+	psoDesc.pRootSignature = g_rootSignature;
+	psoDesc.VS = { vertexShader->GetBufferPointer(), vertexShader->GetBufferSize() };
+	psoDesc.PS = { pixelShader->GetBufferPointer(), pixelShader->GetBufferSize() };
+
+	psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Double sided for editor
+	psoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+	psoDesc.RasterizerState.DepthClipEnable = TRUE;
+
+	psoDesc.BlendState.RenderTarget[0].BlendEnable = TRUE;
+	psoDesc.BlendState.RenderTarget[0].SrcBlend = D3D12_BLEND_SRC_ALPHA;
+	psoDesc.BlendState.RenderTarget[0].DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+	psoDesc.BlendState.RenderTarget[0].BlendOp = D3D12_BLEND_OP_ADD;
+	psoDesc.BlendState.RenderTarget[0].SrcBlendAlpha = D3D12_BLEND_ONE;
+	psoDesc.BlendState.RenderTarget[0].DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+	psoDesc.BlendState.RenderTarget[0].BlendOpAlpha = D3D12_BLEND_OP_ADD;
+	psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+	psoDesc.DepthStencilState.DepthEnable = TRUE;
+	psoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	psoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	psoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&g_pipelineState));
+	vertexShader->Release();
+	pixelShader->Release();
+
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create D3D12 Graphics Pipeline State: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	// 5. Shadow Pass Root Signature & Pipeline State
+	D3D12_ROOT_PARAMETER shadowRootParam = {};
+	shadowRootParam.ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+	shadowRootParam.Descriptor.ShaderRegister = 0;
+	shadowRootParam.Descriptor.RegisterSpace = 0;
+	shadowRootParam.ShaderVisibility = D3D12_SHADER_VISIBILITY_VERTEX;
+
+	D3D12_ROOT_SIGNATURE_DESC shadowRootSigDesc = {};
+	shadowRootSigDesc.NumParameters = 1;
+	shadowRootSigDesc.pParameters = &shadowRootParam;
+	shadowRootSigDesc.NumStaticSamplers = 0;
+	shadowRootSigDesc.pStaticSamplers = nullptr;
+	shadowRootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ID3DBlob* serializedShadowRootSig = nullptr;
+	hr = D3D12SerializeRootSignature(&shadowRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serializedShadowRootSig, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Shadow RootSig serialization error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	g_d3dDevice->CreateRootSignature(0, serializedShadowRootSig->GetBufferPointer(), serializedShadowRootSig->GetBufferSize(), IID_PPV_ARGS(&g_shadowRootSignature));
+	serializedShadowRootSig->Release();
+
+	const char* shadowHlsl = R"(
+		cbuffer ShadowConstants : register(b0)
+		{
+			float4x4 lightSpaceMatrix;
+		};
+
+		struct VSInput
+		{
+			float3 position : POSITION;
+			float3 normal   : NORMAL;
+			float2 uv       : TEXCOORD;
+			float3 color    : COLOR;
+		};
+
+		float4 VSShadow(VSInput input) : SV_POSITION
+		{
+			return mul(lightSpaceMatrix, float4(input.position, 1.0f));
+		}
+	)";
+
+	ID3DBlob* shadowVS = nullptr;
+	hr = CompileOrLoadCachedShader(shadowHlsl, "VSShadow", "vs_5_0", &shadowVS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Shadow VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC shadowPsoDesc = {};
+	shadowPsoDesc.InputLayout = { inputElementDescs, 4 };
+	shadowPsoDesc.pRootSignature = g_shadowRootSignature;
+	shadowPsoDesc.VS = { shadowVS->GetBufferPointer(), shadowVS->GetBufferSize() };
+	shadowPsoDesc.PS = { nullptr, 0 }; // Depth-only pass
+	shadowPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	shadowPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	shadowPsoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+	shadowPsoDesc.RasterizerState.DepthClipEnable = TRUE;
+	shadowPsoDesc.RasterizerState.DepthBias = 50;
+	shadowPsoDesc.RasterizerState.SlopeScaledDepthBias = 1.0f;
+	shadowPsoDesc.DepthStencilState.DepthEnable = TRUE;
+	shadowPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+	shadowPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+	shadowPsoDesc.DepthStencilState.StencilEnable = FALSE;
+	shadowPsoDesc.SampleMask = UINT_MAX;
+	shadowPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	shadowPsoDesc.NumRenderTargets = 0;
+	shadowPsoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	shadowPsoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&shadowPsoDesc, IID_PPV_ARGS(&g_shadowPipelineState));
+	shadowVS->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create shadow PSO: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	// 5. Create Skybox Root Signature and Pipeline State
+	D3D12_ROOT_PARAMETER skyboxRootParams[2] = {};
+
+	// Root Parameter 0: 28 32-bit constants for Skybox (invViewProj, cameraPos, exposure, tint, rotation, hasHdrTex, ambientContribution)
+	skyboxRootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	skyboxRootParams[0].Constants.ShaderRegister = 0;
+	skyboxRootParams[0].Constants.RegisterSpace = 0;
+	skyboxRootParams[0].Constants.Num32BitValues = 28;
+	skyboxRootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// Root Parameter 1: Descriptor Table (1 SRV: t0, Texture2D HDR Skybox)
+	D3D12_DESCRIPTOR_RANGE skyboxSrvRange = {};
+	skyboxSrvRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	skyboxSrvRange.NumDescriptors = 1;
+	skyboxSrvRange.BaseShaderRegister = 0;
+	skyboxSrvRange.RegisterSpace = 0;
+	skyboxSrvRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	skyboxRootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	skyboxRootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+	skyboxRootParams[1].DescriptorTable.pDescriptorRanges = &skyboxSrvRange;
+	skyboxRootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// Static Sampler for Skybox: Linear Wrap
+	D3D12_STATIC_SAMPLER_DESC skyboxSampler = {};
+	skyboxSampler.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	skyboxSampler.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	skyboxSampler.AddressW = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
+	skyboxSampler.MipLODBias = 0.0f;
+	skyboxSampler.MaxAnisotropy = 1;
+	skyboxSampler.ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	skyboxSampler.BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	skyboxSampler.MinLOD = 0.0f;
+	skyboxSampler.MaxLOD = D3D12_FLOAT32_MAX;
+	skyboxSampler.ShaderRegister = 0;
+	skyboxSampler.RegisterSpace = 0;
+	skyboxSampler.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC skyboxRootSigDesc = {};
+	skyboxRootSigDesc.NumParameters = 2;
+	skyboxRootSigDesc.pParameters = skyboxRootParams;
+	skyboxRootSigDesc.NumStaticSamplers = 1;
+	skyboxRootSigDesc.pStaticSamplers = &skyboxSampler;
+	skyboxRootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_NONE;
+
+	ID3DBlob* serializedSkyboxRootSig = nullptr;
+	hr = D3D12SerializeRootSignature(&skyboxRootSigDesc, D3D_ROOT_SIGNATURE_VERSION_1, &serializedSkyboxRootSig, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox RootSig error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	g_d3dDevice->CreateRootSignature(0, serializedSkyboxRootSig->GetBufferPointer(), serializedSkyboxRootSig->GetBufferSize(), IID_PPV_ARGS(&g_skyboxRootSignature));
+	serializedSkyboxRootSig->Release();
+
+	const char* skyboxHlsl = R"(
+		cbuffer SkyboxConstants : register(b0)
+		{
+			float4x4 invViewProj;
+			float3 cameraPos;
+			float exposure;
+			float3 tint;
+			float rotation;
+			float hasHdrTex;
+			float ambientContribution;
+			float2 padding;
+		};
+
+		struct SkyboxVSOutput
+		{
+			float4 position : SV_Position;
+			float2 clipPos : TEXCOORD0;
+		};
+
+		SkyboxVSOutput VSSkybox(uint vertexId : SV_VertexID)
+		{
+			SkyboxVSOutput output;
+			float2 uv = float2((vertexId << 1) & 2, vertexId & 2);
+			output.position = float4(uv * float2(2.0f, -2.0f) + float2(-1.0f, 1.0f), 1.0f, 1.0f);
+			output.clipPos = output.position.xy;
+			return output;
+		}
+
+		Texture2D g_skyboxTexture : register(t0);
+		SamplerState g_skyboxSampler : register(s0);
+
+		float4 PSSkybox(SkyboxVSOutput input) : SV_Target
+		{
+			float4 unprojected = mul(invViewProj, float4(input.clipPos, 1.0f, 1.0f));
+			float3 dir = normalize(unprojected.xyz / max(abs(unprojected.w), 1e-6f));
+			float rad = radians(rotation);
+			float cosR = cos(rad);
+			float sinR = sin(rad);
+			float3 rotDir;
+			rotDir.x = dir.x * cosR - dir.z * sinR;
+			rotDir.y = dir.y;
+			rotDir.z = dir.x * sinR + dir.z * cosR;
+
+			float3 color;
+			if (hasHdrTex > 0.5f)
+			{
+				const float PI = 3.14159265358979323846f;
+				float u = 0.5f + atan2(rotDir.z, rotDir.x) / (2.0f * PI);
+				float v = 0.5f - asin(clamp(rotDir.y, -1.0f, 1.0f)) / PI;
+				color = g_skyboxTexture.Sample(g_skyboxSampler, float2(u, v)).rgb;
+			}
+			else
+			{
+				float t = 0.5f * (rotDir.y + 1.0f);
+				color = lerp(float3(0.08f, 0.10f, 0.14f), float3(0.25f, 0.45f, 0.75f), saturate(t));
+				float horizon = 1.0f - abs(rotDir.y);
+				color += float3(0.18f, 0.18f, 0.15f) * pow(saturate(horizon), 6.0f);
+			}
+
+			color *= tint * exposure;
+			color = color / (color + 1.0f);
+			color = pow(saturate(color), 1.0f / 2.2f);
+			return float4(color, 1.0f);
+		}
+	)";
+
+	ID3DBlob* skyboxVS = nullptr;
+	ID3DBlob* skyboxPS = nullptr;
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "VSSkybox", "vs_5_0", &skyboxVS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox VS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+	hr = CompileOrLoadCachedShader(skyboxHlsl, "PSSkybox", "ps_5_0", &skyboxPS, &errorBlob);
+	if (FAILED(hr))
+	{
+		if (errorBlob) { std::cerr << "Skybox PS compile error: " << (char*)errorBlob->GetBufferPointer() << std::endl; errorBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC skyboxPsoDesc = {};
+	skyboxPsoDesc.InputLayout = { nullptr, 0 };
+	skyboxPsoDesc.pRootSignature = g_skyboxRootSignature;
+	skyboxPsoDesc.VS = { skyboxVS->GetBufferPointer(), skyboxVS->GetBufferSize() };
+	skyboxPsoDesc.PS = { skyboxPS->GetBufferPointer(), skyboxPS->GetBufferSize() };
+	skyboxPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	skyboxPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	skyboxPsoDesc.RasterizerState.FrontCounterClockwise = FALSE;
+	skyboxPsoDesc.RasterizerState.DepthClipEnable = TRUE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+	skyboxPsoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	skyboxPsoDesc.DepthStencilState.DepthEnable = TRUE;
+	skyboxPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO; // Don't write depth!
+	skyboxPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL; // Draw only where depth is 1.0 (empty background)
+	skyboxPsoDesc.DepthStencilState.StencilEnable = FALSE;
+	skyboxPsoDesc.SampleMask = UINT_MAX;
+	skyboxPsoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	skyboxPsoDesc.NumRenderTargets = 1;
+	skyboxPsoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	skyboxPsoDesc.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	skyboxPsoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&skyboxPsoDesc, IID_PPV_ARGS(&g_skyboxPipelineState));
+	skyboxVS->Release();
+	skyboxPS->Release();
+	if (FAILED(hr))
+	{
+		std::cerr << "Failed to create skybox PSO: " << hr << std::endl;
+		return EXIT_FAILURE;
+	}
+
+	return EXIT_SUCCESS;
+}
+
+int createAntiAliasingPipeline()
+{
+	if (!g_d3dDevice) return EXIT_FAILURE;
+
+	// 1. Root Signature
+	D3D12_DESCRIPTOR_RANGE texTableRange = {};
+	texTableRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+	texTableRange.NumDescriptors = 2; // t0: SceneTexture, t1: HistoryTexture
+	texTableRange.BaseShaderRegister = 0;
+	texTableRange.RegisterSpace = 0;
+	texTableRange.OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
+
+	D3D12_ROOT_PARAMETER rootParams[2] = {};
+	// Param 0: 32-bit constants (12 floats)
+	rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_32BIT_CONSTANTS;
+	rootParams[0].Constants.ShaderRegister = 0;
+	rootParams[0].Constants.RegisterSpace = 0;
+	rootParams[0].Constants.Num32BitValues = 12;
+	rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
+
+	// Param 1: SRV table (t0..t1)
+	rootParams[1].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+	rootParams[1].DescriptorTable.NumDescriptorRanges = 1;
+	rootParams[1].DescriptorTable.pDescriptorRanges = &texTableRange;
+	rootParams[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_STATIC_SAMPLER_DESC samplers[2] = {};
+	// s0: Linear Clamp
+	samplers[0].Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
+	samplers[0].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[0].MipLODBias = 0.0f;
+	samplers[0].MaxAnisotropy = 1;
+	samplers[0].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	samplers[0].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	samplers[0].MinLOD = 0.0f;
+	samplers[0].MaxLOD = D3D12_FLOAT32_MAX;
+	samplers[0].ShaderRegister = 0;
+	samplers[0].RegisterSpace = 0;
+	samplers[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	// s1: Point Clamp
+	samplers[1].Filter = D3D12_FILTER_MIN_MAG_MIP_POINT;
+	samplers[1].AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+	samplers[1].MipLODBias = 0.0f;
+	samplers[1].MaxAnisotropy = 1;
+	samplers[1].ComparisonFunc = D3D12_COMPARISON_FUNC_ALWAYS;
+	samplers[1].BorderColor = D3D12_STATIC_BORDER_COLOR_TRANSPARENT_BLACK;
+	samplers[1].MinLOD = 0.0f;
+	samplers[1].MaxLOD = D3D12_FLOAT32_MAX;
+	samplers[1].ShaderRegister = 1;
+	samplers[1].RegisterSpace = 0;
+	samplers[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+
+	D3D12_ROOT_SIGNATURE_DESC rsDesc = {};
+	rsDesc.NumParameters = 2;
+	rsDesc.pParameters = rootParams;
+	rsDesc.NumStaticSamplers = 2;
+	rsDesc.pStaticSamplers = samplers;
+	rsDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+	ID3DBlob* sigBlob = nullptr;
+	ID3DBlob* errBlob = nullptr;
+	HRESULT hr = D3D12SerializeRootSignature(&rsDesc, D3D_ROOT_SIGNATURE_VERSION_1, &sigBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA RootSig error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	hr = g_d3dDevice->CreateRootSignature(0, sigBlob->GetBufferPointer(), sigBlob->GetBufferSize(), IID_PPV_ARGS(&g_antiAliasingRootSignature));
+	sigBlob->Release();
+	if (FAILED(hr)) return EXIT_FAILURE;
+	g_antiAliasingRootSignature->SetName(L"g_antiAliasingRootSignature");
+
+	// 2. Load/Compile Shaders
+	std::string hlslSource;
+	std::ifstream shaderFile("Shaders/AntiAliasing.hlsl");
+	if (shaderFile.is_open())
+	{
+		std::stringstream ss;
+		ss << shaderFile.rdbuf();
+		hlslSource = ss.str();
+	}
+	if (hlslSource.empty())
+	{
+		std::ifstream fallbackFile("../Shaders/AntiAliasing.hlsl");
+		if (fallbackFile.is_open())
+		{
+			std::stringstream ss;
+			ss << fallbackFile.rdbuf();
+			hlslSource = ss.str();
+		}
+	}
+	if (hlslSource.empty())
+	{
+		std::cerr << "[Graphics] Could not read Shaders/AntiAliasing.hlsl!\n";
+		return EXIT_FAILURE;
+	}
+
+	ID3DBlob* vsBlob = nullptr;
+	ID3DBlob* psBlob = nullptr;
+	hr = CompileOrLoadCachedShader(hlslSource.c_str(), "VS_AntiAliasing", "vs_5_0", &vsBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA VS error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		return EXIT_FAILURE;
+	}
+
+	hr = CompileOrLoadCachedShader(hlslSource.c_str(), "PS_AntiAliasing", "ps_5_0", &psBlob, &errBlob);
+	if (FAILED(hr))
+	{
+		if (errBlob) { std::cerr << "[Graphics] AA PS error: " << (char*)errBlob->GetBufferPointer() << "\n"; errBlob->Release(); }
+		if (vsBlob) vsBlob->Release();
+		return EXIT_FAILURE;
+	}
+
+	// 3. Pipeline State
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDesc = {};
+	psoDesc.pRootSignature = g_antiAliasingRootSignature;
+	psoDesc.VS = { vsBlob->GetBufferPointer(), vsBlob->GetBufferSize() };
+	psoDesc.PS = { psBlob->GetBufferPointer(), psBlob->GetBufferSize() };
+	psoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
+	psoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	psoDesc.BlendState.RenderTarget[0].BlendEnable = FALSE;
+	psoDesc.BlendState.RenderTarget[0].RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+	psoDesc.DepthStencilState.DepthEnable = FALSE;
+	psoDesc.DepthStencilState.StencilEnable = FALSE;
+	psoDesc.SampleMask = UINT_MAX;
+	psoDesc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE;
+	psoDesc.NumRenderTargets = 1;
+	psoDesc.RTVFormats[0] = DXGI_FORMAT_R8G8B8A8_UNORM;
+	psoDesc.SampleDesc.Count = 1;
+
+	hr = g_d3dDevice->CreateGraphicsPipelineState(&psoDesc, IID_PPV_ARGS(&g_antiAliasingPipelineState));
+	vsBlob->Release();
+	psBlob->Release();
+
+	if (FAILED(hr))
+	{
+		std::cerr << "[Graphics] Failed to create Anti-Aliasing PSO: 0x" << std::hex << hr << std::dec << "\n";
+		return EXIT_FAILURE;
+	}
+	g_antiAliasingPipelineState->SetName(L"g_antiAliasingPipelineState");
+	std::cout << "[Graphics] Real-time Anti-Aliasing pipeline initialized successfully.\n";
+	return EXIT_SUCCESS;
+}
+
+int createDynamicBuffers()
+{
+	// 1. Vertex Buffer
+	UINT64 vertexBufferSize = MAX_SCENE_VERTICES * sizeof(Vertex);
+	D3D12_HEAP_PROPERTIES uploadHeap = CreateHeapProperties(D3D12_HEAP_TYPE_UPLOAD);
+	D3D12_RESOURCE_DESC vBufferDesc = CreateBufferResourceDesc(vertexBufferSize);
+
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &vBufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_vertexBuffer)
+	);
+	if (g_vertexBuffer) g_vertexBuffer->SetName(L"g_vertexBuffer");
+
+	D3D12_RANGE readRange = { 0, 0 };
+	g_vertexBuffer->Map(0, &readRange, &g_pVertexMapped);
+
+	g_vertexBufferView.BufferLocation = g_vertexBuffer->GetGPUVirtualAddress();
+	g_vertexBufferView.StrideInBytes = sizeof(Vertex);
+	g_vertexBufferView.SizeInBytes = (UINT)vertexBufferSize;
+
+	// 2. Index Buffer
+	UINT64 indexBufferSize = MAX_SCENE_INDICES * sizeof(uint32_t);
+	D3D12_RESOURCE_DESC iBufferDesc = CreateBufferResourceDesc(indexBufferSize);
+
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &iBufferDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_indexBuffer)
+	);
+	if (g_indexBuffer) g_indexBuffer->SetName(L"g_indexBuffer");
+
+	g_indexBuffer->Map(0, &readRange, &g_pIndexMapped);
+
+	g_indexBufferView.BufferLocation = g_indexBuffer->GetGPUVirtualAddress();
+	g_indexBufferView.Format = DXGI_FORMAT_R32_UINT;
+	g_indexBufferView.SizeInBytes = (UINT)indexBufferSize;
+
+	// 3. Constant Buffer
+	UINT64 cbSize = (sizeof(SceneConstantBuffer) + 255) & ~255;
+	D3D12_RESOURCE_DESC cbDesc = CreateBufferResourceDesc(cbSize * 2);
+
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &cbDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_constantBuffer)
+	);
+	if (g_constantBuffer) g_constantBuffer->SetName(L"g_constantBuffer");
+
+	g_constantBuffer->Map(0, &readRange, &g_pConstantMapped);
+
+	return EXIT_SUCCESS;
+}
+
+static void SyncViewportCameraToLevelCamera()
+{
+	// In Play Mode, camera is completely static unless controlled by a behaviour script.
+	// Viewport mouse dragging never alters the camera actor.
+	return;
+}
+
+static void SyncLevelCameraToViewportCamera()
+{
+	if (g_scene.isPlayMode)
+	{
+		GameObject* camObj = nullptr;
+		if (g_scene.activeLevelCameraId != -1)
+		{
+			camObj = g_scene.FindObject(g_scene.activeLevelCameraId);
+		}
+		if (!camObj)
+		{
+			for (auto& obj : g_scene.objects)
+			{
+				if (obj.isCamera || obj.type == PrimitiveType::Camera)
+				{
+					camObj = &obj;
+					g_scene.activeLevelCameraId = obj.id;
+					break;
+				}
+			}
+		}
+		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
+		{
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
+
+			g_camera.yaw = worldRot.y;
+			g_camera.pitch = -std::clamp(worldRot.x, -89.0f, 89.0f);
+			g_camera.fov = camObj->camera.fov;
+			g_camera.isOrthographic = camObj->camera.isOrthographic;
+			g_camera.orthoSize = camObj->camera.orthoSize;
+			g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+			g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
+			g_camera.distance = 0.001f;
+			g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+		}
+	}
+}
+
+void updateSceneGeometry()
+{
+	SyncLevelCameraToViewportCamera();
+	static std::vector<Vertex> sceneVertices;
+	static std::vector<uint32_t> sceneIndices;
+
+	EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+	float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+	glm::mat4 view = g_camera.GetViewMatrix();
+	glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+	glm::mat4 viewProj = proj * view;
+
+	Eunoia::ViewportOnlyRenderer::Get().BeginFrame();
+	Eunoia::ViewportOnlyRenderer::Get().UpdateFrustum(viewProj);
+
+	g_scene.BuildSceneMesh(sceneVertices, sceneIndices, g_sceneBatches, g_camera.GetPosition(), &viewProj);
+	g_numPureSceneBatches = g_sceneBatches.size();
+
+	// Light & Camera Editor Gizmos (dev.md)
+	Eunoia::EditorGizmoSystem::Get().RenderGizmos(g_scene, g_camera.GetPosition(), sceneVertices, sceneIndices, g_sceneBatches);
+
+	g_currentVertexCount = (uint32_t)std::min(sceneVertices.size(), MAX_SCENE_VERTICES);
+	g_currentIndexCount  = (uint32_t)std::min(sceneIndices.size(), MAX_SCENE_INDICES);
+
+	// Clamp out-of-bounds indices to 0 to prevent GPU vertex fetch page faults
+	for (size_t i = 0; i < g_currentIndexCount; ++i)
+	{
+		if (sceneIndices[i] >= g_currentVertexCount)
+		{
+			sceneIndices[i] = 0;
+		}
+	}
+
+	if (g_pVertexMapped && g_currentVertexCount > 0)
+	{
+		memcpy(g_pVertexMapped, sceneVertices.data(), g_currentVertexCount * sizeof(Vertex));
+	}
+	if (g_pIndexMapped && g_currentIndexCount > 0)
+	{
+		memcpy(g_pIndexMapped, sceneIndices.data(), g_currentIndexCount * sizeof(uint32_t));
+	}
+}
+
+// Returns active camera position based on current mode:
+// Viewport Editor Mode: returns Viewport Camera eye position (g_camera.GetPosition()).
+// Game Mode: returns the active game level camera position (or g_camera.GetPosition()).
+static glm::vec3 GetActiveCameraPosition()
+{
+	if (g_scene.isPlayMode && g_scene.activeLevelCameraId != -1)
+	{
+		const GameObject* camObj = g_scene.FindObjectConst(g_scene.activeLevelCameraId);
+		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
+		{
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			return glm::vec3(worldMat[3]);
+		}
+	}
+	return g_camera.GetPosition();
+}
+
+// WickedEngine-inspired Distance-Adaptive Shadow Resolution (Shadow LOD) Calculator
+// Nearest shadow renders at full base resolution set in the Details panel for that light,
+// while distant shadows dynamically scale down to lower resolutions (or cull) to boost performance.
+static UINT CalculateDistanceShadowResolution(UINT baseRes, float dist, float range, float maxShadowDist)
+{
+	if (baseRes == 0) return 0;
+	if (maxShadowDist > 0.1f && dist > maxShadowDist) return 0; // Hard cull beyond shadow distance
+
+	float safeRange = std::max(range, 0.5f);
+	float safeDist = std::max(dist, 0.001f);
+
+	// WickedEngine scaling ratio: amount = range / dist
+	float amount = 1.0f;
+	if (safeDist > safeRange * 1.25f)
+	{
+		amount = (safeRange * 1.25f) / safeDist;
+	}
+
+	// Distance culling if very distant relative to light range
+	if (safeDist > safeRange * 5.0f && safeDist > 70.0f)
+	{
+		return 0; // Culled: 0 draw calls
+	}
+
+	float targetRes = (float)baseRes * amount;
+	if (targetRes >= (float)baseRes * 0.70f)
+	{
+		return baseRes; // Nearest shadow: full resolution configured in Details panel
+	}
+	else if (targetRes >= (float)baseRes * 0.35f)
+	{
+		return std::max(baseRes / 2, 256u); // Distance shadow: half resolution
+	}
+	else if (targetRes >= (float)baseRes * 0.18f)
+	{
+		return std::max(baseRes / 4, 128u); // Further shadow: quarter resolution
+	}
+	else
+	{
+		return std::max(baseRes / 8, 128u); // Furthest shadow: minimum resolution
+	}
+}
+
+// Distance LOD candidate structures for shadow lights
+struct ShadowLightCandidate {
+	size_t lightIndex;
+	float distToCam;
+	UINT effectiveRes;
+};
+
+static std::unordered_map<size_t, int> g_frameLightShadowSlot;
+static std::unordered_map<size_t, UINT> g_frameLightEffectiveRes;
+
+void updateConstantBuffer()
+{
+	if (!g_pConstantMapped) return;
+
+	SyncLevelCameraToViewportCamera();
+	g_scene.SyncLightPositionsFromActors();
+
+	glm::vec3 activeCamPos = GetActiveCameraPosition();
+
+	// Distance-Adaptive Shadow Resolution (WickedEngine Distance LOD Reference)
+	// Prioritize shadow-casting lights by proximity to active camera (viewport camera or game camera)
+	std::vector<ShadowLightCandidate> ptCandidates;
+	std::vector<ShadowLightCandidate> spotCandidates;
+
+	g_frameLightShadowSlot.clear();
+	g_frameLightEffectiveRes.clear();
+
+	if (g_scene.enableShadows)
+	{
+		for (size_t i = 0; i < g_scene.pointLights.size(); ++i)
+		{
+			const auto& pl = g_scene.pointLights[i];
+			if (!pl.enabled || !pl.castShadows || pl.bakeState == Eunoia::LightBakeState::Baked) continue;
+
+			float distToCam = glm::distance(activeCamPos, pl.position);
+			UINT baseRes = (UINT)std::clamp(pl.shadowResolution, 256, 4096);
+			float maxDist = (pl.shadowDistance > 0.1f) ? pl.shadowDistance : 50.0f;
+			if (g_scene.shadowDistance > 1.0f && maxDist > g_scene.shadowDistance) {
+				maxDist = g_scene.shadowDistance;
+			}
+			if (distToCam > maxDist + pl.range) continue; // Distance culled
+			UINT effRes = CalculateDistanceShadowResolution(baseRes, distToCam, pl.range, maxDist);
+
+			if (effRes == 0) continue; // Distance culled (0 draw calls)
+
+			if (pl.type == LightType::Point)
+			{
+				ptCandidates.push_back({ i, distToCam, effRes });
+			}
+			else if (pl.type == LightType::Spot || pl.type == LightType::Area)
+			{
+				spotCandidates.push_back({ i, distToCam, effRes });
+			}
+		}
+	}
+
+	// Sort nearest first so closest lights to the active camera receive primary shadow slots and highest resolution
+	std::sort(ptCandidates.begin(), ptCandidates.end(), [](const ShadowLightCandidate& a, const ShadowLightCandidate& b) {
+		return a.distToCam < b.distToCam;
+	});
+	std::sort(spotCandidates.begin(), spotCandidates.end(), [](const ShadowLightCandidate& a, const ShadowLightCandidate& b) {
+		return a.distToCam < b.distToCam;
+	});
+
+	int activeShadowPointLights = 0;
+	UINT reqPtRes = 0;
+	for (size_t k = 0; k < ptCandidates.size() && activeShadowPointLights < (int)MAX_SHADOW_POINT_LIGHTS; ++k)
+	{
+		int slot = activeShadowPointLights++;
+		g_frameLightShadowSlot[ptCandidates[k].lightIndex] = slot;
+		g_frameLightEffectiveRes[ptCandidates[k].lightIndex] = ptCandidates[k].effectiveRes;
+		g_activePointLightResolutions[slot] = ptCandidates[k].effectiveRes;
+		if (ptCandidates[k].effectiveRes > reqPtRes) reqPtRes = ptCandidates[k].effectiveRes;
+	}
+
+	int activeShadowSpotLights = 0;
+	UINT reqSpotRes = 0;
+	for (size_t k = 0; k < spotCandidates.size() && activeShadowSpotLights < (int)MAX_SHADOW_SPOT_LIGHTS; ++k)
+	{
+		int slot = activeShadowSpotLights++;
+		g_frameLightShadowSlot[spotCandidates[k].lightIndex] = slot;
+		g_frameLightEffectiveRes[spotCandidates[k].lightIndex] = spotCandidates[k].effectiveRes;
+		g_activeSpotLightResolutions[slot] = spotCandidates[k].effectiveRes;
+		if (spotCandidates[k].effectiveRes > reqSpotRes) reqSpotRes = spotCandidates[k].effectiveRes;
+	}
+
+	if (reqPtRes == 0) reqPtRes = 512;
+	if (reqSpotRes == 0) reqSpotRes = 1024;
+	UINT reqDirRes = (UINT)g_scene.shadowResolution;
+
+	EnsureShadowBuffers(reqDirRes, reqPtRes, reqSpotRes);
+
+	EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+	float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+	if (aspect <= 0.01f || std::isnan(aspect)) aspect = 1.777f;
+
+	glm::mat4 model = glm::mat4(1.0f);
+	glm::mat4 view  = g_camera.GetViewMatrix();
+	glm::mat4 proj  = g_camera.GetProjectionMatrix(aspect);
+
+	g_currentJitter = glm::vec2(0.0f, 0.0f);
+	auto currentAaMethod = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+	bool isTemporalAA = (currentAaMethod == Eunoia::AntiAliasingMethod::TAA ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::TSR ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::DLSS ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::FSR ||
+	                     currentAaMethod == Eunoia::AntiAliasingMethod::XeSS);
+	if (isTemporalAA && vpRect.width > 1.0f && vpRect.height > 1.0f)
+	{
+		g_currentJitter = Eunoia::GraphicsSystem::Get().GetTemporalJitter(g_globalFrameCounter, (uint32_t)vpRect.width, (uint32_t)vpRect.height);
+		proj[2][0] += (2.0f * g_currentJitter.x) / vpRect.width;
+		proj[2][1] += (2.0f * g_currentJitter.y) / vpRect.height;
+	}
+	++g_globalFrameCounter;
+
+	// Update Mesh Cluster Culling Camera (dev.md Section 6, 15, 16)
+	if (Eunoia::MeshClusterCullingSystem::Get().IsInitialized())
+	{
+		glm::mat4 vp = proj * view;
+		glm::vec4 frustumPlanes[6];
+		frustumPlanes[0] = glm::vec4(vp[0][3] + vp[0][0], vp[1][3] + vp[1][0], vp[2][3] + vp[2][0], vp[3][3] + vp[3][0]); // Left
+		frustumPlanes[1] = glm::vec4(vp[0][3] - vp[0][0], vp[1][3] - vp[1][0], vp[2][3] - vp[2][0], vp[3][3] - vp[3][0]); // Right
+		frustumPlanes[2] = glm::vec4(vp[0][3] + vp[0][1], vp[1][3] + vp[1][1], vp[2][3] + vp[2][1], vp[3][3] + vp[3][1]); // Bottom
+		frustumPlanes[3] = glm::vec4(vp[0][3] - vp[0][1], vp[1][3] - vp[1][1], vp[2][3] - vp[2][1], vp[3][3] - vp[3][1]); // Top
+		frustumPlanes[4] = glm::vec4(vp[0][2], vp[1][2], vp[2][2], vp[3][2]);                                                 // Near
+		frustumPlanes[5] = glm::vec4(vp[0][3] - vp[0][2], vp[1][3] - vp[1][2], vp[2][3] - vp[2][2], vp[3][3] - vp[3][2]); // Far
+		for (int p = 0; p < 6; ++p)
+		{
+			float len = glm::length(glm::vec3(frustumPlanes[p]));
+			if (len > 1e-6f) frustumPlanes[p] /= len;
+		}
+		Eunoia::MeshClusterCullingSystem::Get().UpdateCamera(
+			view, proj, g_camera.GetPosition(), frustumPlanes, vpRect.width, vpRect.height
+		);
+	}
+
+	// Light View-Projection for Directional Sun Light
+	glm::vec3 lightDir = g_scene.lightDirection;
+	float lLen = glm::length(lightDir);
+	if (lLen > 0.0001f && !std::isnan(lLen) && std::isfinite(lLen)) {
+		lightDir /= lLen;
+	} else {
+		lightDir = glm::vec3(0.6f, 1.0f, 0.8f);
+	}
+
+	// Calculate Camera Frustum Focused Directional Shadow Frustum
+	// This bounds the shadow map strictly around the active player/camera view area,
+	// maintaining high, stable shadow texel resolution regardless of falling objects or physics motion.
+	glm::vec3 camPos = g_camera.GetPosition();
+	glm::vec3 camForward = g_camera.GetForward();
+	glm::vec3 camUp = g_camera.GetUp();
+	glm::vec3 camRight = g_camera.GetRight();
+
+	if (!std::isfinite(camPos.x) || !std::isfinite(camPos.y) || !std::isfinite(camPos.z)) camPos = glm::vec3(0.0f);
+	if (!std::isfinite(camForward.x) || !std::isfinite(camForward.y) || !std::isfinite(camForward.z) || glm::length(camForward) < 1e-4f) camForward = glm::vec3(0.0f, 0.0f, -1.0f);
+	if (!std::isfinite(camUp.x) || !std::isfinite(camUp.y) || !std::isfinite(camUp.z) || glm::length(camUp) < 1e-4f) camUp = glm::vec3(0.0f, 1.0f, 0.0f);
+	if (!std::isfinite(camRight.x) || !std::isfinite(camRight.y) || !std::isfinite(camRight.z) || glm::length(camRight) < 1e-4f) camRight = glm::vec3(1.0f, 0.0f, 0.0f);
+
+	float maxDist = (g_scene.shadowDistance > 1.0f) ? g_scene.shadowDistance : 60.0f;
+	float shadowDist = std::clamp(maxDist, 5.0f, g_camera.farPlane);
+	float nearZ = std::max(0.1f, g_camera.nearPlane);
+
+	float fovY = glm::radians(std::clamp(g_camera.fov, 10.0f, 120.0f));
+	float tanHalfFovY = std::tan(fovY * 0.5f);
+
+	float nearH = 2.0f * tanHalfFovY * nearZ;
+	float nearW = nearH * aspect;
+	float farH = 2.0f * tanHalfFovY * shadowDist;
+	float farW = farH * aspect;
+
+	if (g_camera.isOrthographic) {
+		nearH = (g_camera.orthoSize > 0.01f ? g_camera.orthoSize : 5.0f) * 2.0f;
+		nearW = nearH * aspect;
+		farH = nearH;
+		farW = nearW;
+	}
+
+	glm::vec3 nearCenter = camPos + camForward * nearZ;
+	glm::vec3 farCenter = camPos + camForward * shadowDist;
+
+	glm::vec3 frustumCorners[8] = {
+		nearCenter + camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f),
+		nearCenter + camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f),
+		nearCenter - camUp * (nearH * 0.5f) - camRight * (nearW * 0.5f),
+		nearCenter - camUp * (nearH * 0.5f) + camRight * (nearW * 0.5f),
+		farCenter + camUp * (farH * 0.5f) - camRight * (farW * 0.5f),
+		farCenter + camUp * (farH * 0.5f) + camRight * (farW * 0.5f),
+		farCenter - camUp * (farH * 0.5f) - camRight * (farW * 0.5f),
+		farCenter - camUp * (farH * 0.5f) + camRight * (farW * 0.5f)
+	};
+
+	glm::vec3 frustumCenter(0.0f);
+	for (int i = 0; i < 8; ++i) {
+		frustumCenter += frustumCorners[i];
+	}
+	frustumCenter /= 8.0f;
+
+	float shadowRadius = 0.0f;
+	for (int i = 0; i < 8; ++i) {
+		float dist = glm::length(frustumCorners[i] - frustumCenter);
+		if (dist > shadowRadius && std::isfinite(dist)) shadowRadius = dist;
+	}
+	if (shadowRadius < 15.0f || !std::isfinite(shadowRadius)) shadowRadius = 15.0f;
+
+	// Quantize shadow radius in 2.0m steps to eliminate projection breathing
+	shadowRadius = std::ceil(shadowRadius * 0.5f) * 2.0f;
+
+	float orthoHalfSize = shadowRadius + 2.0f;
+	float lightDistance = shadowRadius * 2.0f + 25.0f; // Pull back light to catch casters outside view
+	glm::vec3 up = (std::abs(lightDir.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+
+	// Light-space texel snapping to lock shadow texel grid to world space and prevent swimming/shimmering
+	glm::mat4 lightViewIdentity = glm::lookAt(lightDir * lightDistance, glm::vec3(0.0f), up);
+	glm::vec4 centerInLightView = lightViewIdentity * glm::vec4(frustumCenter, 1.0f);
+	float worldUnitsPerTexel = (2.0f * orthoHalfSize) / (float)std::max((int)g_currentDirShadowRes, 256);
+	if (worldUnitsPerTexel > 1e-6f) {
+		centerInLightView.x = std::floor(centerInLightView.x / worldUnitsPerTexel) * worldUnitsPerTexel;
+		centerInLightView.y = std::floor(centerInLightView.y / worldUnitsPerTexel) * worldUnitsPerTexel;
+	}
+	glm::vec3 snappedCenter = glm::vec3(glm::inverse(lightViewIdentity) * centerInLightView);
+	glm::vec3 lightPos = snappedCenter + lightDir * lightDistance;
+	glm::mat4 lightView = glm::lookAt(lightPos, snappedCenter, up);
+
+	float nearPlane = 1.0f;
+	float farPlane = lightDistance + shadowRadius * 2.0f + 25.0f;
+	glm::mat4 lightProj = glm::ortho(-orthoHalfSize, orthoHalfSize, -orthoHalfSize, orthoHalfSize, nearPlane, farPlane);
+	glm::mat4 lightSpaceMatrix = lightProj * lightView;
+
+	// Calculate 8 NDC corners of the light frustum in world space for debug wireframe rendering
+	glm::mat4 invLightSpace = glm::inverse(lightSpaceMatrix);
+	const glm::vec4 ndcCorners[8] = {
+		// Near plane: Z = 0
+		{ -1.0f, -1.0f, 0.0f, 1.0f },
+		{  1.0f, -1.0f, 0.0f, 1.0f },
+		{  1.0f,  1.0f, 0.0f, 1.0f },
+		{ -1.0f,  1.0f, 0.0f, 1.0f },
+		// Far plane: Z = 1
+		{ -1.0f, -1.0f, 1.0f, 1.0f },
+		{  1.0f, -1.0f, 1.0f, 1.0f },
+		{  1.0f,  1.0f, 1.0f, 1.0f },
+		{ -1.0f,  1.0f, 1.0f, 1.0f },
+	};
+	for (int i = 0; i < 8; ++i) {
+		glm::vec4 wp = invLightSpace * ndcCorners[i];
+		if (std::abs(wp.w) > 1e-5f) {
+			g_scene.lightFrustumCorners[i] = glm::vec3(wp) / wp.w;
+		}
+	}
+	g_scene.hasLightFrustumCorners = true;
+
+	if (g_pShadowConstantMapped)
+	{
+		ShadowConstantBuffer scb = {};
+		scb.lightSpaceMatrix = lightSpaceMatrix;
+		memcpy(g_pShadowConstantMapped, &scb, sizeof(scb));
+	}
+
+	SceneConstantBuffer cb = {};
+	cb.mvp = proj * view * model;
+	cb.lightSpaceMatrix = lightSpaceMatrix;
+	cb.cameraPos = g_camera.GetPosition();
+	cb.ambientIntensity = g_scene.ambientIntensity;
+	cb.ambientColor = glm::vec4(g_scene.ambientColor, 1.0f);
+	if (g_scene.enableSkybox && g_scene.enableSkyboxLighting)
+	{
+		float skyAmbient = g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse * (g_scene.skyboxExposure * 0.5f);
+		cb.ambientIntensity = g_scene.ambientIntensity + skyAmbient;
+		glm::vec3 tintLight = g_scene.skyboxLightingColor * g_scene.skyboxTint;
+		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, tintLight, 0.7f), 1.0f);
+	}
+	g_isDirectionalLightBaked = false;
+	for (const auto& obj : g_scene.objects) {
+		if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional && obj.light.bakeState == Eunoia::LightBakeState::Baked) {
+			g_isDirectionalLightBaked = true;
+			break;
+		}
+	}
+	cb.lightDir = lightDir;
+	cb.shadowBias = g_scene.shadowBias;
+	cb.lightColor = g_isDirectionalLightBaked ? glm::vec3(0.0f) : (g_scene.lightColor * g_scene.lightIntensity);
+	cb.shadowStrength = g_isDirectionalLightBaked ? 0.0f : g_scene.shadowStrength;
+	cb.pcfRadius = g_scene.pcfRadius;
+	cb.enableShadows = (g_scene.enableShadows && !g_isDirectionalLightBaked) ? 1.0f : 0.0f;
+	cb.shadowMapSize = (float)g_currentDirShadowRes;
+
+	// Post Processing parameters (Color Grading & Exposure)
+	cb.enablePostProcessing = g_scene.enablePostProcessing ? 1.0f : 0.0f;
+	cb.postExposureEV = g_scene.postExposureEV;
+	cb.postExposureMultiplier = g_scene.postExposureMultiplier;
+	cb.postTonemapper = (float)g_scene.postTonemapper;
+	cb.postSaturation = g_scene.postSaturation;
+	cb.postContrast = g_scene.postContrast;
+	cb.postGamma = g_scene.postGamma;
+	cb.padPost = (float)g_currentSpotShadowRes; // Pass spot shadow buffer allocation size to HLSL for distance-adaptive viewport scaling
+
+	// Calculate white balance adjusted color filter
+	glm::vec3 ppFilter = g_scene.postColorFilter;
+	float tempDelta = (g_scene.postColorTemperature - 6500.0f) / 6500.0f;
+	ppFilter.r *= (1.0f - tempDelta * 0.35f);
+	ppFilter.b *= (1.0f + tempDelta * 0.35f);
+	ppFilter.g *= (1.0f + g_scene.postColorTint * 0.20f);
+	ppFilter = glm::max(ppFilter, glm::vec3(0.0f));
+	cb.postColorFilter = glm::vec4(ppFilter, 1.0f);
+	cb.maxShadowDistance = (g_scene.shadowDistance > 1.0f) ? g_scene.shadowDistance : 60.0f;
+	cb.padShadow[0] = 0.0f;
+	cb.padShadow[1] = 0.0f;
+	cb.padShadow[2] = 0.0f;
+
+	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
+	int activePointLights = 0;
+
+	for (size_t i = 0; i < g_scene.pointLights.size() && activePointLights < MAX_POINT_LIGHTS; ++i)
+	{
+		const auto& pl = g_scene.pointLights[i];
+		if (!pl.enabled) continue;
+		if (pl.bakeState == Eunoia::LightBakeState::Baked) continue; // Baked lights bypass realtime light submission
+
+		cb.pointLightPosRange[activePointLights] = glm::vec4(pl.position, pl.range);
+		cb.pointLightColorIntensity[activePointLights] = glm::vec4(pl.color, pl.intensity);
+
+		glm::vec3 dir = pl.direction;
+		float dLen = glm::length(dir);
+		if (dLen > 0.0001f) dir /= dLen;
+		else dir = glm::vec3(0.0f, -1.0f, 0.0f);
+
+		cb.pointLightDirType[activePointLights] = glm::vec4(dir, (float)pl.type);
+
+		if (pl.type == LightType::Spot)
+		{
+			float cosInner = std::cos(glm::radians(std::min(pl.innerConeAngle, pl.outerConeAngle)));
+			float cosOuter = std::cos(glm::radians(std::max(pl.innerConeAngle, pl.outerConeAngle)));
+			float smoothing = std::clamp(pl.rangeSmoothing, 0.001f, 1.0f);
+			cb.pointLightSpotAreaParams[activePointLights] = glm::vec4(cosInner, cosOuter, pl.attenuation, smoothing);
+		}
+		else if (pl.type == LightType::Area)
+		{
+			cb.pointLightSpotAreaParams[activePointLights] = glm::vec4(pl.width, pl.height, pl.attenuation, pl.twoSided ? 1.0f : 0.0f);
+		}
+		else
+		{
+			cb.pointLightSpotAreaParams[activePointLights] = glm::vec4(0.0f, 0.0f, pl.attenuation, 0.0f);
+		}
+
+		int shadowSlot = -1;
+		UINT effectiveRes = (UINT)pl.shadowResolution;
+		auto itSlot = g_frameLightShadowSlot.find(i);
+		if (itSlot != g_frameLightShadowSlot.end())
+		{
+			shadowSlot = itSlot->second;
+			effectiveRes = g_frameLightEffectiveRes[i];
+
+			if (pl.type == LightType::Point)
+			{
+				if (g_pShadowConstantMapped)
+				{
+					float nearZ = 0.05f;
+					float farZ = std::max(pl.range, 5.0f);
+					glm::mat4 ptProj = glm::perspectiveLH_ZO(glm::radians(90.0f), 1.0f, nearZ, farZ);
+					glm::vec3 pos = pl.position;
+
+					glm::mat4 faceViews[6] = {
+						glm::lookAtLH(pos, pos + glm::vec3( 1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)), // +X (Face 0)
+						glm::lookAtLH(pos, pos + glm::vec3(-1.0f,  0.0f,  0.0f), glm::vec3(0.0f, 1.0f,  0.0f)), // -X (Face 1)
+						glm::lookAtLH(pos, pos + glm::vec3( 0.0f,  1.0f,  0.0f), glm::vec3(0.0f, 0.0f, -1.0f)), // +Y (Face 2)
+						glm::lookAtLH(pos, pos + glm::vec3( 0.0f, -1.0f,  0.0f), glm::vec3(0.0f, 0.0f,  1.0f)), // -Y (Face 3)
+						glm::lookAtLH(pos, pos + glm::vec3( 0.0f,  0.0f,  1.0f), glm::vec3(0.0f, 1.0f,  0.0f)), // +Z (Face 4)
+						glm::lookAtLH(pos, pos + glm::vec3( 0.0f,  0.0f, -1.0f), glm::vec3(0.0f, 1.0f,  0.0f))  // -Z (Face 5)
+					};
+
+					for (int f = 0; f < 6; ++f)
+					{
+						ShadowConstantBuffer ptScb = {};
+						ptScb.lightSpaceMatrix = ptProj * faceViews[f];
+						UINT64 faceOffset = (UINT64)(1 + shadowSlot * 6 + f) * 256;
+						memcpy((uint8_t*)g_pShadowConstantMapped + faceOffset, &ptScb, sizeof(ptScb));
+					}
+				}
+			}
+			else if (pl.type == LightType::Spot || pl.type == LightType::Area)
+			{
+				float fov = (pl.type == LightType::Spot) ? std::max(pl.outerConeAngle * 2.0f, 5.0f) : 120.0f;
+				fov = std::min(fov, 160.0f);
+				float nearZ = 0.05f;
+				float farZ = std::max(pl.range, 5.0f);
+				glm::mat4 spotProj = glm::perspectiveLH_ZO(glm::radians(fov), 1.0f, nearZ, farZ);
+				glm::vec3 spotUp = (std::abs(dir.y) > 0.99f) ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(0.0f, 1.0f, 0.0f);
+				glm::mat4 spotView = glm::lookAtLH(pl.position, pl.position + dir, spotUp);
+				glm::mat4 spotLightSpace = spotProj * spotView;
+
+				cb.spotLightSpaceMatrices[shadowSlot] = spotLightSpace;
+
+				if (g_pShadowConstantMapped)
+				{
+					ShadowConstantBuffer spotScb = {};
+					spotScb.lightSpaceMatrix = spotLightSpace;
+					UINT64 spotOffset = (UINT64)(1 + MAX_SHADOW_POINT_LIGHTS * 6 + shadowSlot) * 256;
+					memcpy((uint8_t*)g_pShadowConstantMapped + spotOffset, &spotScb, sizeof(spotScb));
+				}
+			}
+		}
+
+		cb.pointLightShadowParams[activePointLights] = glm::vec4(
+			(float)shadowSlot,
+			pl.shadowStrength,
+			pl.shadowBias,
+			(float)effectiveRes
+		);
+
+		activePointLights++;
+	}
+
+	cb.numPointLights = (float)activePointLights;
+	g_activeShadowPointLights = activeShadowPointLights;
+	g_activeShadowSpotLights = activeShadowSpotLights;
+
+	memcpy(g_pConstantMapped, &cb, sizeof(cb));
+
+	// If Camera Picture-in-Picture (PiP) preview is active, compute and upload camera's view/projection into slot 1
+	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
+	if (pipRect.active && g_pConstantMapped)
+	{
+		GameObject* camObj = g_scene.FindObject(pipRect.selectedCameraId);
+		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera))
+		{
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
+
+			OrbitCamera pipCam;
+			pipCam.yaw = worldRot.y;
+			pipCam.pitch = -std::clamp(worldRot.x, -89.0f, 89.0f);
+			pipCam.fov = camObj->camera.fov;
+			pipCam.isOrthographic = camObj->camera.isOrthographic;
+			pipCam.orthoSize = camObj->camera.orthoSize;
+			pipCam.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+			pipCam.farPlane = std::max(1.0f, camObj->camera.farPlane);
+			pipCam.distance = 0.001f;
+			pipCam.target = worldPos + pipCam.GetForward() * 0.001f;
+
+			float pipAspect = (pipRect.width > 0.0f && pipRect.height > 0.0f) ? (pipRect.width / pipRect.height) : 1.777f;
+			glm::mat4 pipView = pipCam.GetViewMatrix();
+			glm::mat4 pipProj = pipCam.GetProjectionMatrix(pipAspect);
+
+			SceneConstantBuffer pipCb = cb;
+			pipCb.mvp = pipProj * pipView * model;
+			pipCb.cameraPos = pipCam.GetPosition();
+
+			memcpy((uint8_t*)g_pConstantMapped + sizeof(SceneConstantBuffer), &pipCb, sizeof(pipCb));
+		}
+	}
+}
+
+void resizeBuffers(int width, int height)
+{
+	if (width <= 0 || height <= 0) return;
+
+	WaitForGpuIdle();
+
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		if (g_renderTargets[i])
+		{
+			g_renderTargets[i]->Release();
+			g_renderTargets[i] = nullptr;
+		}
+	}
+
+	g_swapChain->ResizeBuffers(FRAME_COUNT, (UINT)width, (UINT)height, DXGI_FORMAT_R8G8B8A8_UNORM, 0);
+	g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
+
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		g_swapChain->GetBuffer(i, IID_PPV_ARGS(&g_renderTargets[i]));
+		g_d3dDevice->CreateRenderTargetView(g_renderTargets[i], nullptr, rtvHandle);
+		rtvHandle.ptr += g_rtvDescriptorSize;
+	}
+
+	createDepthStencilView(width, height);
+	createSceneRenderTargets(width, height);
+	g_engineUI.RequestViewportRedraw(15);
+}
+
+void renderFrame()
+{
+	if (g_deviceLost) return;
+
+	g_commandList = g_commandLists[g_frameIndex];
+	g_commandAllocators[g_frameIndex]->Reset();
+	g_commandList->Reset(g_commandAllocators[g_frameIndex], nullptr);
+
+	g_recordedFrameOps.clear();
+
+	// Update the lightmap SRV descriptor slot (t9) each frame
+	UpdateLightmapSrv();
+
+	// ----------------------------------------------------
+	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
+	// ----------------------------------------------------
+	bool canRender3DScene = (g_engineUI.isGameOnlyWindow || g_engineUI.isInitialSceneLoaded);
+	bool need3DSceneRender = (canRender3DScene && (g_engineUI.isGameOnlyWindow ||
+	                                              g_scene.isPlayMode ||
+	                                              g_engineUI.isPlayModeActive ||
+	                                              g_engineUI.realtimeViewport ||
+	                                              g_engineUI.viewportRedrawCountdown > 0));
+
+	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows && !g_isDirectionalLightBaked)
+	{
+		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
+			g_shadowDepthBuffer,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] ShadowDepthBuffer -> DEPTH_WRITE");
+		g_commandList->ResourceBarrier(1, &shadowBarrier);
+
+		D3D12_VIEWPORT shadowViewport = { 0.0f, 0.0f, (float)g_currentDirShadowRes, (float)g_currentDirShadowRes, 0.0f, 1.0f };
+		D3D12_RECT shadowScissor = { 0, 0, (LONG)g_currentDirShadowRes, (LONG)g_currentDirShadowRes };
+		g_commandList->RSSetViewports(1, &shadowViewport);
+		g_commandList->RSSetScissorRects(1, &shadowScissor);
+
+		RecordGpuBreadcrumbOp("[ClearDSV] ShadowDepthBuffer");
+		g_commandList->ClearDepthStencilView(g_shadowDsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		g_commandList->OMSetRenderTargets(0, nullptr, FALSE, &g_shadowDsvHandle);
+
+		g_commandList->SetGraphicsRootSignature(g_shadowRootSignature);
+		g_commandList->SetPipelineState(g_shadowPipelineState);
+		g_commandList->SetGraphicsRootConstantBufferView(0, g_shadowConstantBuffer->GetGPUVirtualAddress());
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		for (size_t bIdx = 0; bIdx < g_sceneBatches.size(); ++bIdx)
+		{
+			const auto& batch = g_sceneBatches[bIdx];
+			if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.castShadows || batch.isUnlit) continue;
+			UINT drawCount = std::min(batch.indexCount, g_currentIndexCount - batch.startIndex);
+			if (drawCount == 0) continue;
+
+			char opDesc[128];
+			snprintf(opDesc, sizeof(opDesc), "[ShadowDraw] Batch %zu count=%u start=%u", bIdx, drawCount, batch.startIndex);
+			RecordGpuBreadcrumbOp(opDesc);
+
+			g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
+		}
+
+		D3D12_RESOURCE_BARRIER shadowReadBarrier = CreateTransitionBarrier(
+			g_shadowDepthBuffer,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] ShadowDepthBuffer -> PIXEL_SHADER_RESOURCE");
+		g_commandList->ResourceBarrier(1, &shadowReadBarrier);
+	}
+
+	// ----------------------------------------------------
+	// PASS 1.5: Point Light Shadow Cubemap Array Pass (up to 4 lights * 6 faces)
+	// ----------------------------------------------------
+	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_pointShadowDepthBuffer && g_shadowPipelineState && g_activeShadowPointLights > 0)
+	{
+		D3D12_RESOURCE_BARRIER ptBarrier = CreateTransitionBarrier(
+			g_pointShadowDepthBuffer,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] PointShadowDepthBuffer -> DEPTH_WRITE");
+		g_commandList->ResourceBarrier(1, &ptBarrier);
+
+		g_commandList->SetGraphicsRootSignature(g_shadowRootSignature);
+		g_commandList->SetPipelineState(g_shadowPipelineState);
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		for (int l = 0; l < g_activeShadowPointLights; ++l)
+		{
+			UINT ptRes = g_activePointLightResolutions[l];
+			if (ptRes == 0) continue; // Distance culled (0 draw calls)
+
+			D3D12_VIEWPORT ptViewport = { 0.0f, 0.0f, (float)ptRes, (float)ptRes, 0.0f, 1.0f };
+			D3D12_RECT ptScissor = { 0, 0, (LONG)ptRes, (LONG)ptRes };
+			g_commandList->RSSetViewports(1, &ptViewport);
+			g_commandList->RSSetScissorRects(1, &ptScissor);
+
+			for (int f = 0; f < 6; ++f)
+			{
+				int dsvIdx = l * 6 + f;
+				g_commandList->ClearDepthStencilView(g_pointShadowDsvHandles[dsvIdx], D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+				g_commandList->OMSetRenderTargets(0, nullptr, FALSE, &g_pointShadowDsvHandles[dsvIdx]);
+
+				UINT64 faceCbOffset = (UINT64)(1 + l * 6 + f) * 256;
+				g_commandList->SetGraphicsRootConstantBufferView(0, g_shadowConstantBuffer->GetGPUVirtualAddress() + faceCbOffset);
+
+				for (size_t bIdx = 0; bIdx < g_sceneBatches.size(); ++bIdx)
+				{
+					const auto& batch = g_sceneBatches[bIdx];
+					if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.castShadows || batch.isUnlit) continue;
+					UINT drawCount = (UINT)std::min((size_t)batch.indexCount, (size_t)(g_currentIndexCount - batch.startIndex));
+					if (drawCount == 0) continue;
+					g_commandList->DrawIndexedInstanced(drawCount, 1, (UINT)batch.startIndex, 0, 0);
+				}
+			}
+		}
+
+		D3D12_RESOURCE_BARRIER ptReadBarrier = CreateTransitionBarrier(
+			g_pointShadowDepthBuffer,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] PointShadowDepthBuffer -> PIXEL_SHADER_RESOURCE");
+		g_commandList->ResourceBarrier(1, &ptReadBarrier);
+	}
+
+	// ----------------------------------------------------
+	// PASS 1.8: Spot & Area Light Shadow 2D Array Pass (up to 4 lights)
+	// ----------------------------------------------------
+	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_spotShadowDepthBuffer && g_shadowPipelineState && g_activeShadowSpotLights > 0)
+	{
+		D3D12_RESOURCE_BARRIER spotBarrier = CreateTransitionBarrier(
+			g_spotShadowDepthBuffer,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] SpotShadowDepthBuffer -> DEPTH_WRITE");
+		g_commandList->ResourceBarrier(1, &spotBarrier);
+
+		g_commandList->SetGraphicsRootSignature(g_shadowRootSignature);
+		g_commandList->SetPipelineState(g_shadowPipelineState);
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		for (int s = 0; s < g_activeShadowSpotLights; ++s)
+		{
+			UINT spotRes = g_activeSpotLightResolutions[s];
+			if (spotRes == 0) continue; // Distance culled (0 draw calls)
+
+			D3D12_VIEWPORT spotViewport = { 0.0f, 0.0f, (float)spotRes, (float)spotRes, 0.0f, 1.0f };
+			D3D12_RECT spotScissor = { 0, 0, (LONG)spotRes, (LONG)spotRes };
+			g_commandList->RSSetViewports(1, &spotViewport);
+			g_commandList->RSSetScissorRects(1, &spotScissor);
+
+			g_commandList->ClearDepthStencilView(g_spotShadowDsvHandles[s], D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+			g_commandList->OMSetRenderTargets(0, nullptr, FALSE, &g_spotShadowDsvHandles[s]);
+
+			UINT64 spotCbOffset = (UINT64)(1 + MAX_SHADOW_POINT_LIGHTS * 6 + s) * 256;
+			g_commandList->SetGraphicsRootConstantBufferView(0, g_shadowConstantBuffer->GetGPUVirtualAddress() + spotCbOffset);
+
+			for (size_t bIdx = 0; bIdx < g_sceneBatches.size(); ++bIdx)
+			{
+				const auto& batch = g_sceneBatches[bIdx];
+				if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.castShadows || batch.isUnlit) continue;
+				UINT drawCount = (UINT)std::min((size_t)batch.indexCount, (size_t)(g_currentIndexCount - batch.startIndex));
+				if (drawCount == 0) continue;
+				g_commandList->DrawIndexedInstanced(drawCount, 1, (UINT)batch.startIndex, 0, 0);
+			}
+		}
+
+		D3D12_RESOURCE_BARRIER spotReadBarrier = CreateTransitionBarrier(
+			g_spotShadowDepthBuffer,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		);
+		RecordGpuBreadcrumbOp("[Barrier] SpotShadowDepthBuffer -> PIXEL_SHADER_RESOURCE");
+		g_commandList->ResourceBarrier(1, &spotReadBarrier);
+	}
+
+	// ----------------------------------------------------
+	// PASS 1.9: Mesh Cluster Culling GPU Compute Pass (dev.md Sections 5, 8, 9, 10)
+	// ----------------------------------------------------
+	if (need3DSceneRender && !g_deviceLost && Eunoia::MeshClusterCullingSystem::Get().IsInitialized())
+	{
+		RecordGpuBreadcrumbOp("[Compute] MeshClusterCulling ExecuteCullingPass");
+		Eunoia::MeshClusterCullingSystem::Get().ExecuteCullingPass(
+			g_commandList, g_scene, g_depthStencilBuffer, D3D12_RESOURCE_STATE_DEPTH_WRITE
+		);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2: Main Scene PBR Lit Pass with Shadows & Point Lights
+	// ----------------------------------------------------
+	D3D12_RESOURCE_BARRIER barrier = CreateTransitionBarrier(
+		g_renderTargets[g_frameIndex],
+		D3D12_RESOURCE_STATE_PRESENT,
+		D3D12_RESOURCE_STATE_RENDER_TARGET
+	);
+	char bufRtvBarrier[96];
+	snprintf(bufRtvBarrier, sizeof(bufRtvBarrier), "[Barrier] BackBuffer[%u] -> RENDER_TARGET", g_frameIndex);
+	RecordGpuBreadcrumbOp(bufRtvBarrier);
+	g_commandList->ResourceBarrier(1, &barrier);
+
+	// Restrict 3D Viewport & Scissor to the Center Viewport (matching UI_Ref.svg blueprint)
+	EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+	float vx = std::max(0.0f, std::min((float)g_currentWidth - 1.0f, vpRect.x));
+	float vy = std::max(0.0f, std::min((float)g_currentHeight - 1.0f, vpRect.y));
+	float vw = std::max(1.0f, std::min((float)g_currentWidth - vx, vpRect.width));
+	float vh = std::max(1.0f, std::min((float)g_currentHeight - vy, vpRect.height));
+
+	D3D12_VIEWPORT viewport = { vx, vy, vw, vh, 0.0f, 1.0f };
+	D3D12_RECT scissor = { (LONG)vx, (LONG)vy, (LONG)(vx + vw), (LONG)(vy + vh) };
+	g_commandList->RSSetViewports(1, &viewport);
+	g_commandList->RSSetScissorRects(1, &scissor);
+
+	// Clear RTV & DSV
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = g_rtvDescHeap->GetCPUDescriptorHandleForHeapStart();
+	rtvHandle.ptr += (SIZE_T)g_frameIndex * g_rtvDescriptorSize;
+
+	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
+
+	const float clearColor[4] = {
+		g_scene.enableSkybox ? g_scene.clearColor.r : 0.0f,
+		g_scene.enableSkybox ? g_scene.clearColor.g : 0.0f,
+		g_scene.enableSkybox ? g_scene.clearColor.b : 0.0f,
+		1.0f
+	};
+	char bufClearRtv[64];
+	snprintf(bufClearRtv, sizeof(bufClearRtv), "[ClearRTV] BackBuffer[%u]", g_frameIndex);
+	RecordGpuBreadcrumbOp(bufClearRtv);
+
+	if (g_engineUI.isGameOnlyWindow)
+	{
+		g_commandList->ClearRenderTargetView(rtvHandle, clearColor, 0, nullptr);
+	}
+	else
+	{
+		// First clear entire backbuffer to editor background #2B2B2B (RGB 0.169f, 0.169f, 0.169f)
+		const float editorBgColor[4] = { 0.169f, 0.169f, 0.169f, 1.0f };
+		g_commandList->ClearRenderTargetView(rtvHandle, editorBgColor, 0, nullptr);
+	}
+
+	D3D12_CPU_DESCRIPTOR_HANDLE activeSceneRtv = rtvHandle;
+	if (g_sceneRenderTarget && g_antiAliasingPipelineState)
+	{
+		activeSceneRtv = g_sceneRtvHandle;
+		if (need3DSceneRender)
+		{
+			g_commandList->ClearRenderTargetView(g_sceneRtvHandle, clearColor, 0, nullptr);
+			RecordGpuBreadcrumbOp("[ClearDSV] DepthStencilBuffer");
+			g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		}
+	}
+	else if (!g_engineUI.isGameOnlyWindow)
+	{
+		// Fallback: Clear viewport area of backbuffer directly
+		if (need3DSceneRender)
+		{
+			g_commandList->ClearRenderTargetView(rtvHandle, clearColor, 1, &scissor);
+			RecordGpuBreadcrumbOp("[ClearDSV] DepthStencilBuffer");
+			g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		}
+	}
+	else
+	{
+		if (need3DSceneRender)
+		{
+			RecordGpuBreadcrumbOp("[ClearDSV] DepthStencilBuffer");
+			g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 0, nullptr);
+		}
+	}
+
+	g_commandList->OMSetRenderTargets(1, &activeSceneRtv, FALSE, &dsvHandle);
+
+	// Set Descriptor Heap (for ImGui and scene resources)
+	ID3D12DescriptorHeap* descriptorHeaps[] = { g_srvDescHeap };
+	g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+	// 1. Draw 3D Scene Primitives with Hardware PBR, Full Texture Resolution & Real-Time Shadows
+	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0)
+	{
+		g_commandList->SetGraphicsRootSignature(g_rootSignature);
+		g_commandList->SetPipelineState(g_pipelineState);
+		g_commandList->SetGraphicsRootConstantBufferView(0, g_constantBuffer->GetGPUVirtualAddress());
+		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		for (size_t bIdx = 0; bIdx < g_sceneBatches.size(); ++bIdx)
+		{
+			const auto& batch = g_sceneBatches[bIdx];
+			if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.isVisible) continue;
+			UINT drawCount = std::min(batch.indexCount, g_currentIndexCount - batch.startIndex);
+			if (drawCount == 0) continue;
+
+			MaterialShaderConstants matConsts = {};
+			matConsts.baseColor[0] = batch.baseColor.r;
+			matConsts.baseColor[1] = batch.baseColor.g;
+			matConsts.baseColor[2] = batch.baseColor.b;
+			matConsts.metallic = batch.metallic;
+			matConsts.roughness = batch.roughness;
+			matConsts.normalStrength = batch.normalStrength;
+			matConsts.specular = batch.specular;
+			matConsts.emissiveIntensity = batch.emissiveIntensity;
+			matConsts.emissiveColor[0] = batch.emissiveColor.r;
+			matConsts.emissiveColor[1] = batch.emissiveColor.g;
+			matConsts.emissiveColor[2] = batch.emissiveColor.b;
+			matConsts.isUnlit = (batch.isUnlit || g_engineUI.viewMode == 1) ? 1.0f : 0.0f;
+			matConsts.hasAlbedoTex = (!batch.albedoTex.empty() && batch.albedoTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasNormalTex = (!batch.normalTex.empty() && batch.normalTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasRoughTex  = (!batch.roughTex.empty() && batch.roughTex != "none")  ? 1.0f : 0.0f;
+			matConsts.hasAoTex     = (!batch.aoTex.empty() && batch.aoTex != "none")        ? 1.0f : 0.0f;
+			matConsts.receiveShadows = batch.receiveShadows ? 1.0f : 0.0f;
+			matConsts.uvScale[0] = batch.uvScale.x != 0.0f ? batch.uvScale.x : 1.0f;
+			matConsts.uvScale[1] = batch.uvScale.y != 0.0f ? batch.uvScale.y : 1.0f;
+			matConsts.blendMode = (float)batch.blendMode;
+			matConsts.opacity = batch.opacity;
+			matConsts.opacityMaskClipValue = batch.opacityMaskClipValue > 0.0f ? batch.opacityMaskClipValue : 0.333f;
+			matConsts.hasOpacityTex = (!batch.opacityTex.empty() && batch.opacityTex != "none") ? 1.0f : 0.0f;
+			matConsts.normalMapYFlip = batch.normalMapYFlip ? 1.0f : 0.0f;
+			matConsts.roughnessChannel = (float)batch.roughnessChannel;
+			matConsts.metallicChannel = (float)batch.metallicChannel;
+			matConsts.aoChannel = (float)batch.aoChannel;
+			matConsts.materialDebugMode = (float)batch.materialDebugMode;
+			matConsts.hasMetalTex = (!batch.metalTex.empty() && batch.metalTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasEmissionTex = (!batch.emissionTex.empty() && batch.emissionTex != "none") ? 1.0f : 0.0f;
+
+			g_commandList->SetGraphicsRoot32BitConstants(1, 32, &matConsts, 0);
+
+			D3D12_GPU_DESCRIPTOR_HANDLE tableHandle = GetOrCreateMaterialTable(
+				batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex, batch.emissionTex);
+			if (tableHandle.ptr == 0) continue;
+
+			char bufSceneDraw[160];
+			snprintf(bufSceneDraw, sizeof(bufSceneDraw), "[SceneDraw] Batch %zu (%s) count=%u start=%u table=0x%llx",
+				bIdx, batch.albedoTex.empty() ? "untextured" : batch.albedoTex.c_str(),
+				drawCount, batch.startIndex, (unsigned long long)tableHandle.ptr);
+			RecordGpuBreadcrumbOp(bufSceneDraw);
+
+			g_commandList->SetGraphicsRootDescriptorTable(2, tableHandle);
+
+			// GPU Mesh Cluster Culling branch (dev.md Sections 10, 11)
+			if (batch.meshClusterCulling && Eunoia::MeshClusterCullingSystem::Get().IsInitialized())
+			{
+				char bufSceneIndirect[160];
+				snprintf(bufSceneIndirect, sizeof(bufSceneIndirect), "[SceneDraw-ClusterCull] Batch %zu (%s) ExecuteIndirect",
+					bIdx, batch.albedoTex.empty() ? "untextured" : batch.albedoTex.c_str());
+				RecordGpuBreadcrumbOp(bufSceneIndirect);
+
+				bool rendered = Eunoia::MeshClusterCullingSystem::Get().RenderClusteredBatch(g_commandList, batch);
+				if (!rendered)
+				{
+					// Safe fallback to standard rasterization if cluster execution is skipped or has no visible clusters
+					g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
+				}
+			}
+			else
+			{
+				// Standard rasterization path for objects with Mesh Cluster Culling OFF (zero overhead)
+				g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
+			}
+		}
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
+	// ----------------------------------------------------
+	if (need3DSceneRender && !g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	{
+		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
+		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+		g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+		EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+		if (aspect <= 0.01f || std::isnan(aspect)) aspect = 1.777f;
+
+		glm::mat4 view = g_camera.GetViewMatrix();
+		glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+		glm::mat4 skyboxView = glm::mat4(glm::mat3(view));
+		glm::mat4 invVP = glm::inverse(proj * skyboxView);
+
+		SkyboxShaderConstants skyConsts = {};
+		skyConsts.invViewProj = invVP;
+		skyConsts.cameraPos = glm::vec3(0.0f);
+		skyConsts.exposure = g_scene.skyboxExposure;
+		skyConsts.tint = g_scene.skyboxTint;
+		skyConsts.rotation = g_scene.skyboxRotation;
+		skyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
+
+		bool hasHdrTex = !g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none";
+		skyConsts.hasHdrTex = hasHdrTex ? 1.0f : 0.0f;
+
+		g_commandList->SetGraphicsRoot32BitConstants(0, 28, &skyConsts, 0);
+
+		D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+		if (skyTable.ptr != 0)
+		{
+			g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+		}
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.3: AquaTerrain DX12 Water System (Simulation & Translucent Render)
+	// ----------------------------------------------------
+	if (need3DSceneRender && !g_deviceLost && Eunoia::WaterSystem::Get().IsInitialized())
+	{
+		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain GPU Simulation");
+		Eunoia::WaterSystem::Get().Simulate(g_commandList, g_scene);
+
+		RecordGpuBreadcrumbOp("[Water Pass] AquaTerrain Water Render");
+		EngineUI::ViewportRect vpRectW = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+		float aspectW = (vpRectW.width > 0 && vpRectW.height > 0) ? (vpRectW.width / vpRectW.height) : 1.777f;
+		if (aspectW <= 0.01f || std::isnan(aspectW)) aspectW = 1.777f;
+
+		glm::mat4 viewW = g_camera.GetViewMatrix();
+		glm::mat4 projW = g_camera.GetProjectionMatrix(aspectW);
+		glm::vec3 camPosW = g_camera.GetPosition();
+
+		Eunoia::WaterSystem::Get().Render(
+			g_commandList,
+			g_scene,
+			viewW,
+			projW,
+			camPosW,
+			g_depthStencilBuffer,
+			D3D12_RESOURCE_STATE_DEPTH_WRITE,
+			g_camera.nearPlane,
+			g_camera.farPlane,
+			(float)g_currentWidth,
+			(float)g_currentHeight,
+			g_vertexBuffer,
+			g_vertexBufferView,
+			g_indexBuffer,
+			g_indexBufferView,
+			g_pVertexMapped,
+			g_pIndexMapped
+		);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.5: Selected Camera Picture-in-Picture (PiP) Hardware Pass
+	// ----------------------------------------------------
+	EngineUI::CameraPipRect pipRect = g_engineUI.GetCameraPipRect((float)g_currentWidth, (float)g_currentHeight, g_scene);
+	if (need3DSceneRender && !g_deviceLost && pipRect.active && g_currentIndexCount > 0 && g_numPureSceneBatches > 0)
+	{
+		float px = std::max(0.0f, std::min((float)g_currentWidth - 1.0f, pipRect.x));
+		float py = std::max(0.0f, std::min((float)g_currentHeight - 1.0f, pipRect.y));
+		float pw = std::max(1.0f, std::min((float)g_currentWidth - px, pipRect.width));
+		float ph = std::max(1.0f, std::min((float)g_currentHeight - py, pipRect.height));
+
+		D3D12_VIEWPORT pipViewport = { px, py, pw, ph, 0.0f, 1.0f };
+		D3D12_RECT pipScissor = { (LONG)px, (LONG)py, (LONG)(px + pw), (LONG)(py + ph) };
+
+		RecordGpuBreadcrumbOp("[PiP Pass] Selected Camera Preview");
+		g_commandList->RSSetViewports(1, &pipViewport);
+		g_commandList->RSSetScissorRects(1, &pipScissor);
+
+		// Clear Depth & Stencil exclusively within the PiP rect for a fresh camera z-buffer
+		g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &pipScissor);
+		// Clear PiP color rectangle to scene background clear color
+		g_commandList->ClearRenderTargetView(activeSceneRtv, clearColor, 1, &pipScissor);
+
+		// Set camera Constant Buffer from Slot 1 (Camera MVP & Pos)
+		g_commandList->SetGraphicsRootSignature(g_rootSignature);
+		g_commandList->SetPipelineState(g_pipelineState);
+		g_commandList->SetGraphicsRootConstantBufferView(0, g_constantBuffer->GetGPUVirtualAddress() + sizeof(SceneConstantBuffer));
+		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_vertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_indexBufferView);
+
+		// Render all pure scene geometry (batches [0, g_numPureSceneBatches))
+		// This automatically excludes editor-only gizmos (lights, camera frustum lines, transform gizmo, grid)
+		for (size_t bIdx = 0; bIdx < g_numPureSceneBatches; ++bIdx)
+		{
+			const auto& batch = g_sceneBatches[bIdx];
+			if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0) continue;
+			UINT drawCount = (UINT)std::min((size_t)batch.indexCount, (size_t)(g_currentIndexCount - batch.startIndex));
+			if (drawCount == 0) continue;
+
+			MaterialShaderConstants matConsts = {};
+			matConsts.baseColor[0] = batch.baseColor.r;
+			matConsts.baseColor[1] = batch.baseColor.g;
+			matConsts.baseColor[2] = batch.baseColor.b;
+			matConsts.metallic     = batch.metallic;
+			matConsts.roughness    = batch.roughness;
+			matConsts.normalStrength = batch.normalStrength;
+			matConsts.specular     = batch.specular;
+			matConsts.emissiveIntensity = batch.emissiveIntensity;
+			matConsts.emissiveColor[0] = batch.emissiveColor.r;
+			matConsts.emissiveColor[1] = batch.emissiveColor.g;
+			matConsts.emissiveColor[2] = batch.emissiveColor.b;
+			matConsts.isUnlit      = (batch.isUnlit || g_engineUI.viewMode == 1) ? 1.0f : 0.0f;
+			matConsts.hasAlbedoTex = (!batch.albedoTex.empty() && batch.albedoTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasNormalTex = (!batch.normalTex.empty() && batch.normalTex != "none") ? 1.0f : 0.0f;
+			matConsts.hasRoughTex  = (!batch.roughTex.empty() && batch.roughTex != "none")  ? 1.0f : 0.0f;
+			matConsts.hasAoTex     = (!batch.aoTex.empty() && batch.aoTex != "none")        ? 1.0f : 0.0f;
+			matConsts.receiveShadows = batch.receiveShadows ? 1.0f : 0.0f;
+			matConsts.uvScale[0]   = batch.uvScale.x != 0.0f ? batch.uvScale.x : 1.0f;
+			matConsts.uvScale[1]   = batch.uvScale.y != 0.0f ? batch.uvScale.y : 1.0f;
+			matConsts.blendMode    = (float)batch.blendMode;
+			matConsts.opacity      = batch.opacity;
+			matConsts.opacityMaskClipValue = batch.opacityMaskClipValue > 0.0f ? batch.opacityMaskClipValue : 0.333f;
+			matConsts.hasOpacityTex = (!batch.opacityTex.empty() && batch.opacityTex != "none") ? 1.0f : 0.0f;
+			matConsts.normalMapYFlip = batch.normalMapYFlip ? 1.0f : 0.0f;
+			matConsts.roughnessChannel = (float)batch.roughnessChannel;
+			matConsts.metallicChannel = (float)batch.metallicChannel;
+			matConsts.aoChannel = (float)batch.aoChannel;
+			matConsts.materialDebugMode = (float)batch.materialDebugMode;
+
+			g_commandList->SetGraphicsRoot32BitConstants(1, 32, &matConsts, 0);
+
+			D3D12_GPU_DESCRIPTOR_HANDLE tableHandle = GetOrCreateMaterialTable(
+				batch.albedoTex, batch.normalTex, batch.roughTex, batch.metalTex, batch.aoTex, batch.opacityTex);
+			if (tableHandle.ptr == 0) continue;
+
+			g_commandList->SetGraphicsRootDescriptorTable(2, tableHandle);
+			g_commandList->DrawIndexedInstanced(drawCount, 1, (UINT)batch.startIndex, 0, 0);
+		}
+
+		if (g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+		{
+			g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
+			g_commandList->SetPipelineState(g_skyboxPipelineState);
+
+			const GameObject* selCamObj = g_scene.FindObject(pipRect.selectedCameraId);
+			glm::mat4 pipView = selCamObj ? glm::inverse(g_scene.GetWorldMatrix(*selCamObj)) : g_camera.GetViewMatrix();
+			glm::mat4 skyboxPipView = glm::mat4(glm::mat3(pipView));
+			float pipAspect = (ph > 0.0f) ? (pw / ph) : 1.777f;
+			float pipFov = (selCamObj && selCamObj->camera.fov > 0.0f) ? glm::radians(selCamObj->camera.fov) : glm::radians(45.0f);
+			glm::mat4 pipProj = glm::perspective(pipFov, pipAspect, 0.1f, 500.0f);
+			glm::mat4 pipInvVP = glm::inverse(pipProj * skyboxPipView);
+
+			SkyboxShaderConstants pipSkyConsts = {};
+			pipSkyConsts.invViewProj = pipInvVP;
+			pipSkyConsts.cameraPos = glm::vec3(0.0f);
+			pipSkyConsts.exposure = g_scene.skyboxExposure;
+			pipSkyConsts.tint = g_scene.skyboxTint;
+			pipSkyConsts.rotation = g_scene.skyboxRotation;
+			pipSkyConsts.ambientContribution = g_scene.enableSkyboxLighting ? (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse) : 0.0f;
+			pipSkyConsts.hasHdrTex = (!g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none") ? 1.0f : 0.0f;
+
+			g_commandList->SetGraphicsRoot32BitConstants(0, 28, &pipSkyConsts, 0);
+			D3D12_GPU_DESCRIPTOR_HANDLE skyTable = GetOrCreateSkyboxTable(g_scene.skyboxTexturePath);
+			if (skyTable.ptr != 0)
+			{
+				g_commandList->SetGraphicsRootDescriptorTable(1, skyTable);
+			}
+			g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+			g_commandList->DrawInstanced(3, 1, 0, 0);
+		}
+
+		// Restore main viewport and scissor
+		g_commandList->RSSetViewports(1, &viewport);
+		g_commandList->RSSetScissorRects(1, &scissor);
+	}
+
+	if (need3DSceneRender && Eunoia::RayTracing::RayTracingSystem::Get().IsEnabled())
+	{
+		uint32_t vpPixels = (uint32_t)(vw * vh);
+		const auto& rts = Eunoia::RayTracing::RayTracingSystem::Get().GetSettings();
+		uint32_t rRays = rts.enableRTR ? (vpPixels * std::max(1u, (uint32_t)rts.quality)) : 0;
+		uint32_t sRays = rts.enableRTS ? (vpPixels / 2) : 0;
+		uint32_t aoRays = rts.enableRTAO ? (vpPixels * (uint32_t)std::max(1, rts.rtaoSamples)) : 0;
+		Eunoia::RayTracing::RayTracingSystem::Get().RecordFrameRays(rRays, sRays, aoRays, 1.2f);
+	}
+
+	// ----------------------------------------------------
+	// PASS 2.6: Real-Time Anti-Aliasing Resolve Pass (dev.md)
+	// Resolves g_sceneRenderTarget to backbuffer with active AA method
+	// ----------------------------------------------------
+	if (canRender3DScene && g_sceneRenderTarget && g_antiAliasingPipelineState && g_antiAliasingRootSignature)
+	{
+		RecordGpuBreadcrumbOp("[AntiAliasing] Resolve Pass");
+
+		// Transition scene render target to pixel shader resource
+		D3D12_RESOURCE_BARRIER toSrvBarrier = CreateTransitionBarrier(
+			g_sceneRenderTarget,
+			D3D12_RESOURCE_STATE_RENDER_TARGET,
+			D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE
+		);
+		g_commandList->ResourceBarrier(1, &toSrvBarrier);
+
+		// Output to BackBuffer inside 3D viewport region
+		g_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+		g_commandList->RSSetViewports(1, &viewport);
+		g_commandList->RSSetScissorRects(1, &scissor);
+
+		g_commandList->SetGraphicsRootSignature(g_antiAliasingRootSignature);
+		g_commandList->SetPipelineState(g_antiAliasingPipelineState);
+
+		ID3D12DescriptorHeap* descriptorHeaps[] = { g_srvDescHeap };
+		g_commandList->SetDescriptorHeaps(1, descriptorHeaps);
+
+		// Root descriptor table t0..t1 (Current scene + History)
+		g_commandList->SetGraphicsRootDescriptorTable(1, g_sceneSrvGpuHandle);
+
+		uint32_t aaMethodVal = (uint32_t)Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+		struct alignas(16) {
+			uint32_t method;
+			float totalWidth;
+			float totalHeight;
+			float invTotalWidth;
+			float invTotalHeight;
+			float jitterX;
+			float jitterY;
+			uint32_t frameCount;
+			float sharpness;
+			float pad[3];
+		} aaParams = {
+			aaMethodVal,
+			(float)g_currentWidth,
+			(float)g_currentHeight,
+			1.0f / (float)g_currentWidth,
+			1.0f / (float)g_currentHeight,
+			need3DSceneRender ? g_currentJitter.x : 0.0f,
+			need3DSceneRender ? g_currentJitter.y : 0.0f,
+			(uint32_t)g_globalFrameCounter,
+			1.0f,
+			{ 0.0f, 0.0f, 0.0f }
+		};
+		g_commandList->SetGraphicsRoot32BitConstants(0, 12, &aaParams, 0);
+
+		// Draw full-screen triangle to resolve into viewport area of BackBuffer
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->DrawInstanced(3, 1, 0, 0);
+
+		// If temporal AA is active, copy current frame to history buffer
+		bool isTemporal = (aaMethodVal == 1 || aaMethodVal == 2 || aaMethodVal >= 8);
+		if (need3DSceneRender && isTemporal && g_sceneHistoryRenderTarget)
+		{
+			D3D12_RESOURCE_BARRIER copyBarriers[2] = {
+				CreateTransitionBarrier(g_sceneRenderTarget, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_SOURCE),
+				CreateTransitionBarrier(g_sceneHistoryRenderTarget, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE, D3D12_RESOURCE_STATE_COPY_DEST)
+			};
+			g_commandList->ResourceBarrier(2, copyBarriers);
+
+			g_commandList->CopyResource(g_sceneHistoryRenderTarget, g_sceneRenderTarget);
+
+			D3D12_RESOURCE_BARRIER restoreBarriers[2] = {
+				CreateTransitionBarrier(g_sceneRenderTarget, D3D12_RESOURCE_STATE_COPY_SOURCE, D3D12_RESOURCE_STATE_RENDER_TARGET),
+				CreateTransitionBarrier(g_sceneHistoryRenderTarget, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE)
+			};
+			g_commandList->ResourceBarrier(2, restoreBarriers);
+		}
+		else
+		{
+			// Transition scene target back to RENDER_TARGET for next frame
+			D3D12_RESOURCE_BARRIER toRtBarrier = CreateTransitionBarrier(
+				g_sceneRenderTarget,
+				D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+				D3D12_RESOURCE_STATE_RENDER_TARGET
+			);
+			g_commandList->ResourceBarrier(1, &toRtBarrier);
+		}
+	}
+	else if (!canRender3DScene && !g_engineUI.isGameOnlyWindow)
+	{
+		const float vpBg[4] = { 0.12f, 0.12f, 0.14f, 1.0f };
+		g_commandList->ClearRenderTargetView(rtvHandle, vpBg, 1, &scissor);
+	}
+
+	// Reset viewport & scissor for ImGui to full window
+	D3D12_VIEWPORT guiViewport = { 0.0f, 0.0f, (float)g_currentWidth, (float)g_currentHeight, 0.0f, 1.0f };
+	D3D12_RECT guiScissor = { 0, 0, (LONG)g_currentWidth, (LONG)g_currentHeight };
+	g_commandList->RSSetViewports(1, &guiViewport);
+	g_commandList->RSSetScissorRects(1, &guiScissor);
+	g_commandList->OMSetRenderTargets(1, &rtvHandle, FALSE, nullptr);
+
+	// 2. Render Unreal Engine 5 UI with Dear ImGui
+	ImDrawData* drawData = ImGui::GetDrawData();
+	if (drawData)
+	{
+		ImGui_ImplDX12_RenderDrawData(drawData, g_commandList);
+	}
+
+	// 3. Render Standalone Custom UI Framework (DX12-native render pass)
+	Eunoia::UI::CustomUIManager::Get().Render(g_commandList, g_currentWidth, g_currentHeight);
+
+	// Transition BackBuffer to Present
+	barrier = CreateTransitionBarrier(
+		g_renderTargets[g_frameIndex],
+		D3D12_RESOURCE_STATE_RENDER_TARGET,
+		D3D12_RESOURCE_STATE_PRESENT
+	);
+	char bufPresentBarrier[96];
+	snprintf(bufPresentBarrier, sizeof(bufPresentBarrier), "[Barrier] BackBuffer[%u] -> PRESENT", g_frameIndex);
+	RecordGpuBreadcrumbOp(bufPresentBarrier);
+	g_commandList->ResourceBarrier(1, &barrier);
+
+	g_commandList->Close();
+
+	ID3D12CommandList* commandLists[] = { g_commandList };
+	g_commandQueue->ExecuteCommandLists(1, commandLists);
+	g_frameOpHistory[g_frameIndex] = g_recordedFrameOps;
+
+	HRESULT hrPresent = g_swapChain->Present(1, 0);
+	if (hrPresent == DXGI_ERROR_DEVICE_REMOVED || hrPresent == DXGI_ERROR_DEVICE_RESET)
+	{
+		g_deviceLost = true;
+		HRESULT reason = g_d3dDevice ? g_d3dDevice->GetDeviceRemovedReason() : hrPresent;
+		std::cerr << "[RECOVERY] Present detected device loss (0x" << std::hex << reason << std::dec << ")\n";
+		DumpDREDInformation();
+		g_engineUI.AddLog("LogRecovery", "GPU Device Lost/Removed detected on Present. Please save work and restart editor.", 3);
+		return;
+	}
+
+	// Signal fence for current frame
+	const UINT64 currentFenceValue = ++g_globalFenceValue;
+	g_commandQueue->Signal(g_fence, currentFenceValue);
+	g_fenceValues[g_frameIndex] = currentFenceValue;
+
+	// Advance to next backbuffer
+	g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
+
+	// Wait if the next backbuffer is still in-flight
+	if (g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
+	{
+		SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "renderFrame frame fence");
+	}
+
+	// Update non-stalling readback statistics for Mesh Cluster Culling (dev.md Section 14)
+	if (Eunoia::MeshClusterCullingSystem::Get().IsInitialized())
+	{
+		Eunoia::MeshClusterCullingSystem::Get().FetchStatistics();
+	}
+
+	// Decrement on-demand viewport redraw settle counter
+	if (g_engineUI.viewportRedrawCountdown > 0)
+	{
+		g_engineUI.viewportRedrawCountdown--;
+	}
+}
+
+void cleanUpD3D12()
+{
+	WaitForGpuIdle();
+	FlushDeferredReleases();
+	Eunoia::MeshClusterCullingSystem::Get().Shutdown();
+	Eunoia::WaterSystem::Get().Shutdown();
+	Eunoia::UI::CustomUIManager::Get().Shutdown();
+
+	ImGui_ImplDX12_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
+
+	if (g_vertexBuffer) { g_vertexBuffer->Unmap(0, nullptr); g_vertexBuffer->Release(); g_vertexBuffer = nullptr; }
+	if (g_indexBuffer) { g_indexBuffer->Unmap(0, nullptr); g_indexBuffer->Release(); g_indexBuffer = nullptr; }
+	if (g_constantBuffer) { g_constantBuffer->Unmap(0, nullptr); g_constantBuffer->Release(); g_constantBuffer = nullptr; }
+	if (g_shadowConstantBuffer) { g_shadowConstantBuffer->Unmap(0, nullptr); g_shadowConstantBuffer->Release(); g_shadowConstantBuffer = nullptr; }
+	g_pVertexMapped = nullptr;
+	g_pIndexMapped = nullptr;
+	g_pConstantMapped = nullptr;
+	g_pShadowConstantMapped = nullptr;
+
+	for (auto* tex : g_allocatedTextures) {
+		if (tex) tex->Release();
+	}
+	g_allocatedTextures.clear();
+	g_gpuTextureMap.clear();
+	g_materialDescriptorTables.clear();
+
+	if (g_depthStencilBuffer) { g_depthStencilBuffer->Release(); g_depthStencilBuffer = nullptr; }
+	if (g_shadowDepthBuffer) { g_shadowDepthBuffer->Release(); g_shadowDepthBuffer = nullptr; }
+	if (g_pointShadowDepthBuffer) { g_pointShadowDepthBuffer->Release(); g_pointShadowDepthBuffer = nullptr; }
+	if (g_spotShadowDepthBuffer) { g_spotShadowDepthBuffer->Release(); g_spotShadowDepthBuffer = nullptr; }
+
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		if (g_commandLists[i]) { g_commandLists[i]->Release(); g_commandLists[i] = nullptr; }
+		if (g_renderTargets[i]) { g_renderTargets[i]->Release(); g_renderTargets[i] = nullptr; }
+		if (g_commandAllocators[i]) { g_commandAllocators[i]->Release(); g_commandAllocators[i] = nullptr; }
+	}
+	g_commandList = nullptr;
+
+	if (g_pipelineState) { g_pipelineState->Release(); g_pipelineState = nullptr; }
+	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
+	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
+	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
+
+	if (g_sceneRenderTarget) { g_sceneRenderTarget->Release(); g_sceneRenderTarget = nullptr; }
+	if (g_sceneHistoryRenderTarget) { g_sceneHistoryRenderTarget->Release(); g_sceneHistoryRenderTarget = nullptr; }
+	if (g_antiAliasingPipelineState) { g_antiAliasingPipelineState->Release(); g_antiAliasingPipelineState = nullptr; }
+	if (g_antiAliasingRootSignature) { g_antiAliasingRootSignature->Release(); g_antiAliasingRootSignature = nullptr; }
+	g_sceneSrvCpuHandle.ptr = 0;
+	g_sceneSrvGpuHandle.ptr = 0;
+	g_sceneHistorySrvCpuHandle.ptr = 0;
+	g_sceneHistorySrvGpuHandle.ptr = 0;
+
+	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
+	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }
+	if (g_srvDescHeap) { g_srvDescHeap->Release(); g_srvDescHeap = nullptr; }
+
+	if (g_uploadCmdList) { g_uploadCmdList->Release(); g_uploadCmdList = nullptr; }
+	if (g_uploadCmdAlloc) { g_uploadCmdAlloc->Release(); g_uploadCmdAlloc = nullptr; }
+	if (g_uploadFence) { g_uploadFence->Release(); g_uploadFence = nullptr; }
+	if (g_uploadFenceEvent) { CloseHandle(g_uploadFenceEvent); g_uploadFenceEvent = nullptr; }
+
+	if (g_fence) { g_fence->Release(); g_fence = nullptr; }
+	if (g_fenceEvent) { CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
+
+	if (g_swapChain) { g_swapChain->Release(); g_swapChain = nullptr; }
+	if (g_commandQueue) { g_commandQueue->Release(); g_commandQueue = nullptr; }
+	if (g_d3dDevice) { g_d3dDevice->Release(); g_d3dDevice = nullptr; }
+	if (g_dxgiFactory) { g_dxgiFactory->Release(); g_dxgiFactory = nullptr; }
+
+	g_srvDescriptorAllocIndex = 0;
+	g_globalFenceValue = 0;
+	g_uploadFenceValue = 0;
+	for (UINT i = 0; i < FRAME_COUNT; i++) g_fenceValues[i] = 0;
+}
+
+// GLFW Callbacks
+static void frameBufferResizeCallback(GLFWwindow* window, int width, int height)
+{
+	g_currentWidth = width;
+	g_currentHeight = height;
+	resizeBuffers(width, height);
+	Eunoia::MeshClusterCullingSystem::Get().Resize((UINT)width, (UINT)height);
+	Eunoia::WaterSystem::Get().Resize((UINT)width, (UINT)height);
+}
+
+static bool RayTriangleIntersect(
+	const glm::vec3& orig, const glm::vec3& dir,
+	const glm::vec3& v0, const glm::vec3& v1, const glm::vec3& v2,
+	float& t)
+{
+	const float EPSILON = 1e-7f;
+	glm::vec3 edge1 = v1 - v0;
+	glm::vec3 edge2 = v2 - v0;
+	glm::vec3 h = glm::cross(dir, edge2);
+	float a = glm::dot(edge1, h);
+	if (a > -EPSILON && a < EPSILON) return false;
+
+	float f = 1.0f / a;
+	glm::vec3 s = orig - v0;
+	float u = f * glm::dot(s, h);
+	if (u < 0.0f || u > 1.0f) return false;
+
+	glm::vec3 q = glm::cross(s, edge1);
+	float v = f * glm::dot(dir, q);
+	if (v < 0.0f || u + v > 1.0f) return false;
+
+	float localT = f * glm::dot(edge2, q);
+	if (localT > EPSILON)
+	{
+		t = localT;
+		return true;
+	}
+	return false;
+}
+
+static void PickObjectAtCursor(float mouseX, float mouseY)
+{
+	if (g_currentWidth <= 0 || g_currentHeight <= 0) return;
+
+	EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+	if (mouseX < vpRect.x || mouseX > vpRect.x + vpRect.width ||
+	    mouseY < vpRect.y || mouseY > vpRect.y + vpRect.height)
+	{
+		return;
+	}
+
+	float localMouseX = mouseX - vpRect.x;
+	float localMouseY = mouseY - vpRect.y;
+
+	float ndcX = (2.0f * localMouseX) / vpRect.width - 1.0f;
+	float ndcY = 1.0f - (2.0f * localMouseY) / vpRect.height;
+
+	float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
+	glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+	glm::mat4 view = g_camera.GetViewMatrix();
+	glm::mat4 vp = proj * view;
+	float vpDet = glm::determinant(vp);
+	if (std::abs(vpDet) < 1e-6f || std::isnan(vpDet)) return;
+	glm::mat4 invVP = glm::inverse(vp);
+
+	glm::vec4 nearPointWorld = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+	glm::vec4 farPointWorld  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+
+	if (nearPointWorld.w != 0.0f) nearPointWorld /= nearPointWorld.w;
+	if (farPointWorld.w != 0.0f)  farPointWorld  /= farPointWorld.w;
+
+	glm::vec3 rayOrigin = glm::vec3(nearPointWorld);
+	glm::vec3 rayDiff = glm::vec3(farPointWorld - nearPointWorld);
+	float rayDiffLen = glm::length(rayDiff);
+	if (rayDiffLen < 1e-6f || std::isnan(rayDiffLen)) return;
+	glm::vec3 rayDir = rayDiff / rayDiffLen;
+
+	// 1. Check if user clicked on a Light Sprite Billboard in screen space
+	int closestLightId = -1;
+	float closestLightDist2D = 25.0f; // pixel tolerance for clicking icon
+	for (const auto& obj : g_scene.objects)
+	{
+		if (!obj.visible || !obj.isLight) continue;
+		glm::vec3 worldPos = g_scene.GetWorldPosition(obj);
+		glm::vec4 clip = vp * glm::vec4(worldPos, 1.0f);
+		if (clip.w <= 0.05f) continue;
+		glm::vec3 ndcLight = glm::vec3(clip) / clip.w;
+		if (ndcLight.z < -1.0f || ndcLight.z > 1.0f) continue;
+
+		float screenX = (ndcLight.x * 0.5f + 0.5f) * (float)g_currentWidth;
+		float screenY = ((1.0f - ndcLight.y) * 0.5f) * (float)g_currentHeight;
+
+		float dist2D = std::hypot(mouseX - screenX, mouseY - screenY);
+		if (dist2D < closestLightDist2D)
+		{
+			closestLightDist2D = dist2D;
+			closestLightId = obj.id;
+		}
+	}
+
+	if (closestLightId != -1)
+	{
+		g_scene.selectedId = closestLightId;
+		GameObject* hitObj = g_scene.FindObject(closestLightId);
+		if (hitObj)
+		{
+			g_engineUI.AddLog("LogActor", "Selected Light: " + hitObj->name, 0);
+		}
+		return;
+	}
+
+	int closestId = -1;
+	float closestDist = 1e9f;
+
+	for (const auto& obj : g_scene.objects)
+	{
+		if (!obj.visible || obj.mesh.vertices.empty()) continue;
+
+		glm::mat4 model = g_scene.GetWorldMatrix(obj);
+		float modelDet = glm::determinant(model);
+		if (std::abs(modelDet) < 1e-6f || std::isnan(modelDet)) continue;
+		glm::mat4 invModel = glm::inverse(model);
+
+		glm::vec3 localRayOrig = glm::vec3(invModel * glm::vec4(rayOrigin, 1.0f));
+		glm::vec3 unnormLocalRayDir = glm::vec3(invModel * glm::vec4(rayDir, 0.0f));
+		float lrdLen = glm::length(unnormLocalRayDir);
+		if (lrdLen < 1e-6f || std::isnan(lrdLen)) continue;
+		glm::vec3 localRayDir = unnormLocalRayDir / lrdLen;
+
+		const auto& verts = obj.mesh.vertices;
+		const auto& inds  = obj.mesh.indices;
+
+		for (size_t i = 0; i + 2 < inds.size(); i += 3)
+		{
+			const glm::vec3& v0 = verts[inds[i]].pos;
+			const glm::vec3& v1 = verts[inds[i + 1]].pos;
+			const glm::vec3& v2 = verts[inds[i + 2]].pos;
+
+			float t = 0.0f;
+			if (RayTriangleIntersect(localRayOrig, localRayDir, v0, v1, v2, t))
+			{
+				glm::vec3 localHit = localRayOrig + localRayDir * t;
+				glm::vec3 worldHit = glm::vec3(model * glm::vec4(localHit, 1.0f));
+				float worldDist = glm::dot(worldHit - rayOrigin, rayDir);
+
+				if (worldDist > 0.0f && worldDist < closestDist)
+				{
+					closestDist = worldDist;
+					closestId = obj.id;
+				}
+			}
+		}
+	}
+
+	if (closestId != -1)
+	{
+		g_scene.selectedId = closestId;
+		GameObject* hitObj = g_scene.FindObject(closestId);
+		if (hitObj)
+		{
+			g_engineUI.AddLog("LogActor", "Selected Actor: " + hitObj->name, 0);
+			EngineLogger::Get().LogAction("OBJECT_SELECTED", hitObj->name, "ID: " + std::to_string(closestId));
+		}
+	}
+	else
+	{
+		// Clicked empty background: deselect
+		g_scene.selectedId = -1;
+		EngineLogger::Get().LogAction("DESELECT_ALL", "None", "Clicked background");
+	}
+}
+
+static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)
+{
+	if (g_scene.isPlayMode)
+	{
+		if (button == GLFW_MOUSE_BUTTON_LEFT) s_isLeftMouseDown = (action == GLFW_PRESS);
+		else if (button == GLFW_MOUSE_BUTTON_MIDDLE) s_isMiddleMouseDown = (action == GLFW_PRESS);
+		else if (button == GLFW_MOUSE_BUTTON_RIGHT) s_isRightMouseDown = (action == GLFW_PRESS);
+		return;
+	}
+
+	ImGuiIO& io = ImGui::GetIO();
+	g_engineUI.RequestViewportRedraw(10);
+
+	if (button == GLFW_MOUSE_BUTTON_LEFT)
+	{
+		s_isLeftMouseDown = (action == GLFW_PRESS);
+		EngineLogger::Get().LogAction(action == GLFW_PRESS ? "MOUSE_PRESS_LEFT" : "MOUSE_RELEASE_LEFT");
+		if (action == GLFW_PRESS)
+		{
+			bool isAlt = (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+			              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
+			bool isPopupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+			if (!g_scene.isPlayMode && !isAlt && !g_camera.isFlying && !io.WantCaptureMouse && !isPopupOpen && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
+			{
+				s_pendingPickClick = true;
+			}
+		}
+	}
+	else if (button == GLFW_MOUSE_BUTTON_MIDDLE)
+	{
+		s_isMiddleMouseDown = (action == GLFW_PRESS);
+	}
+	else if (button == GLFW_MOUSE_BUTTON_RIGHT)
+	{
+		if (action == GLFW_PRESS)
+		{
+			s_isRightMouseDown = true;
+			bool isAlt = (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+			              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
+			bool wantCapture = io.WantCaptureMouse;
+			if (!isAlt && !wantCapture)
+			{
+				double mx, my;
+				glfwGetCursorPos(window, &mx, &my);
+				EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
+				if (mx >= vpRect.x && mx <= vpRect.x + vpRect.width &&
+				    my >= vpRect.y && my <= vpRect.y + vpRect.height)
+				{
+					g_camera.isFlying = true;
+					s_firstMouseAfterCapture = true;
+					glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+					InputSystem::Get().ResetMouseDelta();
+				}
+			}
+		}
+		else if (action == GLFW_RELEASE)
+		{
+			s_isRightMouseDown = false;
+			g_camera.isFlying = false;
+			if (!InputSystem::Get().IsCursorLocked())
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			}
+			else
+			{
+				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			}
+			InputSystem::Get().ResetMouseDelta();
+		}
+	}
+}
+
+static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
+{
+	double deltaX = xpos - s_lastMouseX;
+	double deltaY = ypos - s_lastMouseY;
+	s_lastMouseX = xpos;
+	s_lastMouseY = ypos;
+
+	if (InputSystem::Get().IsCursorLocked())
+	{
+		ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+		if (glfwGetInputMode(window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+		{
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+		}
+	}
+	else
+	{
+		if (glfwGetInputMode(window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+		{
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+		}
+	}
+
+	if (g_scene.isPlayMode)
+	{
+		// Game mode: Camera is static unless controlled by a behaviour script
+		return;
+	}
+
+	if (s_firstMouseAfterCapture && g_camera.isFlying)
+	{
+		s_lastMouseX = xpos;
+		s_lastMouseY = ypos;
+		s_firstMouseAfterCapture = false;
+		return;
+	}
+
+	ImGuiIO& io = ImGui::GetIO();
+	if (ImGuizmo::IsUsing()) return;
+
+	bool isAlt = (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+	              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
+
+	// 1. Fly Camera (Hold RMB + Mouse Movement -> Look around)
+	if (g_camera.isFlying && s_isRightMouseDown && !isAlt)
+	{
+		g_camera.LookAround((float)deltaX, (float)deltaY);
+		SyncViewportCameraToLevelCamera();
+		g_engineUI.RequestViewportRedraw(10);
+		return;
+	}
+
+	bool wantCapture = io.WantCaptureMouse;
+	if (wantCapture || ImGuizmo::IsOver()) return;
+
+	// 2. Alt Navigation (Unreal Engine Maya-style viewport controls)
+	if (isAlt)
+	{
+		if (s_isLeftMouseDown)
+		{
+			// Alt + LMB + Drag: Orbit around pivot/selected object
+			g_camera.Orbit((float)deltaX, (float)deltaY);
+			SyncViewportCameraToLevelCamera();
+			g_engineUI.RequestViewportRedraw(10);
+		}
+		else if (s_isRightMouseDown)
+		{
+			// Alt + RMB + Drag: Dolly/zoom
+			g_camera.Dolly((float)(deltaX - deltaY));
+			SyncViewportCameraToLevelCamera();
+			g_engineUI.RequestViewportRedraw(10);
+		}
+		else if (s_isMiddleMouseDown)
+		{
+			// Alt + MMB + Drag: Pan/track
+			g_camera.Pan((float)deltaX, (float)deltaY);
+			SyncViewportCameraToLevelCamera();
+			g_engineUI.RequestViewportRedraw(10);
+		}
+	}
+	else
+	{
+		// Non-Alt navigation
+		if (s_isMiddleMouseDown)
+		{
+			g_camera.Pan((float)deltaX, (float)deltaY);
+			SyncViewportCameraToLevelCamera();
+			g_engineUI.RequestViewportRedraw(10);
+		}
+	}
+}
+
+static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
+{
+	InputSystem::ScrollCallback(window, xoffset, yoffset);
+
+	if (g_scene.isPlayMode)
+	{
+		// Game mode: Viewport zoom is disabled
+		return;
+	}
+
+	ImGuiIO& io = ImGui::GetIO();
+
+	if (s_isRightMouseDown && g_camera.isFlying)
+	{
+		// RMB + Mouse Wheel Up/Down: Increase/Decrease camera speed
+		g_camera.AdjustSpeed((float)yoffset);
+		g_engineUI.cameraSpeed = g_camera.moveSpeed;
+		g_engineUI.RequestViewportRedraw(10);
+	}
+	else
+	{
+		bool wantCapture = io.WantCaptureMouse;
+		if (wantCapture) return;
+		g_camera.Zoom((float)yoffset);
+		SyncViewportCameraToLevelCamera();
+		g_engineUI.RequestViewportRedraw(10);
+	}
+}
+
+static void dropCallback(GLFWwindow* window, int count, const char** paths)
+{
+	if (count > 0 && paths && paths[0]) {
+		EngineLogger::Get().LogAction("FILE_DROP", paths[0], "Count: " + std::to_string(count));
+	}
+	g_engineUI.HandleFileDrop(paths, count);
+}
+
+bool RecoverD3D12Device(HWND hwnd)
+{
+	std::cerr << "[RECOVERY] Attempting full DirectX 12 device recovery and state restoration...\n";
+	EngineLogger::Get().LogAction("DEVICE_RECOVERY_START", "DirectX12", "Attempting full D3D12 device recreation.");
+
+	// 1. Release all mapped buffers and hardware resources
+	FlushDeferredReleases();
+	if (g_vertexBuffer) { g_vertexBuffer->Unmap(0, nullptr); g_vertexBuffer->Release(); g_vertexBuffer = nullptr; }
+	if (g_indexBuffer) { g_indexBuffer->Unmap(0, nullptr); g_indexBuffer->Release(); g_indexBuffer = nullptr; }
+	if (g_constantBuffer) { g_constantBuffer->Unmap(0, nullptr); g_constantBuffer->Release(); g_constantBuffer = nullptr; }
+	if (g_shadowConstantBuffer) { g_shadowConstantBuffer->Unmap(0, nullptr); g_shadowConstantBuffer->Release(); g_shadowConstantBuffer = nullptr; }
+	g_pVertexMapped = nullptr;
+	g_pIndexMapped = nullptr;
+	g_pConstantMapped = nullptr;
+	g_pShadowConstantMapped = nullptr;
+
+	for (auto* tex : g_allocatedTextures) {
+		if (tex) tex->Release();
+	}
+	g_allocatedTextures.clear();
+	g_gpuTextureMap.clear();
+	g_materialDescriptorTables.clear();
+
+	if (g_depthStencilBuffer) { g_depthStencilBuffer->Release(); g_depthStencilBuffer = nullptr; }
+	if (g_shadowDepthBuffer) { g_shadowDepthBuffer->Release(); g_shadowDepthBuffer = nullptr; }
+	if (g_pointShadowDepthBuffer) { g_pointShadowDepthBuffer->Release(); g_pointShadowDepthBuffer = nullptr; }
+	if (g_spotShadowDepthBuffer) { g_spotShadowDepthBuffer->Release(); g_spotShadowDepthBuffer = nullptr; }
+	g_shadowSrvCpuHandle = {}; g_shadowSrvGpuHandle = {};
+	g_pointShadowSrvCpuHandle = {}; g_pointShadowSrvGpuHandle = {};
+	g_spotShadowSrvCpuHandle = {}; g_spotShadowSrvGpuHandle = {};
+
+	for (UINT i = 0; i < FRAME_COUNT; i++)
+	{
+		if (g_commandLists[i]) { g_commandLists[i]->Release(); g_commandLists[i] = nullptr; }
+		if (g_renderTargets[i]) { g_renderTargets[i]->Release(); g_renderTargets[i] = nullptr; }
+		if (g_commandAllocators[i]) { g_commandAllocators[i]->Release(); g_commandAllocators[i] = nullptr; }
+	}
+	g_commandList = nullptr;
+
+	if (g_pipelineState) { g_pipelineState->Release(); g_pipelineState = nullptr; }
+	if (g_rootSignature) { g_rootSignature->Release(); g_rootSignature = nullptr; }
+	if (g_shadowPipelineState) { g_shadowPipelineState->Release(); g_shadowPipelineState = nullptr; }
+	if (g_shadowRootSignature) { g_shadowRootSignature->Release(); g_shadowRootSignature = nullptr; }
+	if (g_skyboxPipelineState) { g_skyboxPipelineState->Release(); g_skyboxPipelineState = nullptr; }
+	if (g_skyboxRootSignature) { g_skyboxRootSignature->Release(); g_skyboxRootSignature = nullptr; }
+	g_skyboxDescriptorTables.clear();
+
+	if (g_rtvDescHeap) { g_rtvDescHeap->Release(); g_rtvDescHeap = nullptr; }
+	if (g_dsvDescHeap) { g_dsvDescHeap->Release(); g_dsvDescHeap = nullptr; }
+	if (g_srvDescHeap) { g_srvDescHeap->Release(); g_srvDescHeap = nullptr; }
+
+	if (g_uploadCmdList) { g_uploadCmdList->Release(); g_uploadCmdList = nullptr; }
+	if (g_uploadCmdAlloc) { g_uploadCmdAlloc->Release(); g_uploadCmdAlloc = nullptr; }
+	if (g_uploadFence) { g_uploadFence->Release(); g_uploadFence = nullptr; }
+	if (g_uploadFenceEvent) { CloseHandle(g_uploadFenceEvent); g_uploadFenceEvent = nullptr; }
+
+	if (g_fence) { g_fence->Release(); g_fence = nullptr; }
+	if (g_fenceEvent) { CloseHandle(g_fenceEvent); g_fenceEvent = nullptr; }
+
+	Eunoia::UI::CustomUIManager::Get().Shutdown();
+	if (g_swapChain) { g_swapChain->Release(); g_swapChain = nullptr; }
+	if (g_commandQueue) { g_commandQueue->Release(); g_commandQueue = nullptr; }
+	if (g_d3dDevice) { g_d3dDevice->Release(); g_d3dDevice = nullptr; }
+	if (g_dxgiFactory) { g_dxgiFactory->Release(); g_dxgiFactory = nullptr; }
+
+	g_srvDescriptorAllocIndex = 0;
+	g_globalFenceValue = 0;
+	g_uploadFenceValue = 0;
+	for (UINT i = 0; i < FRAME_COUNT; i++) g_fenceValues[i] = 0;
+
+	// Shutdown ImGui DX12 backend
+	ImGui_ImplDX12_Shutdown();
+
+	// Brief sleep to allow OS graphics driver reset to complete
+	Sleep(150);
+
+	// 2. Re-create D3D12 device, swap chain, allocators, views
+	if (initD3D12(hwnd) != EXIT_SUCCESS) {
+		std::cerr << "[RECOVERY] initD3D12 failed during recovery!\n";
+		return false;
+	}
+
+	if (createShadersAndPipeline() != EXIT_SUCCESS) {
+		std::cerr << "[RECOVERY] createShadersAndPipeline failed during recovery!\n";
+		return false;
+	}
+
+	if (createDynamicBuffers() != EXIT_SUCCESS) {
+		std::cerr << "[RECOVERY] createDynamicBuffers failed during recovery!\n";
+		return false;
+	}
+
+	// 3. Re-initialize ImGui DX12 backend
+	ImGui_ImplDX12_InitInfo init_info = {};
+	init_info.Device = g_d3dDevice;
+	init_info.CommandQueue = g_commandQueue;
+	init_info.NumFramesInFlight = FRAME_COUNT;
+	init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	init_info.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	init_info.SrvDescriptorHeap = g_srvDescHeap;
+	init_info.SrvDescriptorAllocFn = ImGui_SrvAlloc;
+	init_info.SrvDescriptorFreeFn  = ImGui_SrvFree;
+	ImGui_ImplDX12_Init(&init_info);
+
+	// 4. Reload textures & fallbacks
+	InitFallbackTextures();
+	InitLightmapSrvSlot();
+	Eunoia::UI::CustomUIManager::Get().Initialize(g_d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM);
+	DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
+	g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
+	g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
+	g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
+	g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
+	g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
+	g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
+
+	DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
+	g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
+	DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
+	g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+	DX12GpuTexture eyeIcon = GetOrLoadGPUTexture("Resources/Icons/Outliner/Eye.png", g_fallbackWhite);
+	g_engineUI.outlinerEyeIconGpuHandle = eyeIcon.gpuHandle.ptr;
+
+	DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+	g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+	DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+	g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+	DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+	g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+	DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+	g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+	DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+	g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+	DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+	g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+	DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+	g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+	DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+	g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+
+	// 5. Pre-upload textures & rebuild scene geometry
+	PreRenderUploadTextures();
+	updateSceneGeometry();
+	updateConstantBuffer();
+
+	g_deviceLost = false;
+	std::cerr << "[RECOVERY] D3D12 device successfully recovered and state restored!\n";
+	EngineLogger::Get().LogAction("DEVICE_RECOVERED", "DirectX12", "GPU device recovered from reset. Session restored to exact condition.");
+	g_engineUI.AddLog("LogRecovery", "DirectX 12 graphics device successfully recovered — resumed exact session state.", 0);
+	return true;
+}
+
+// ============================================================================
+// Custom Window Frame & Window Procedure for Editor
+// Provides borderless dark custom frame, native resize borders, snap, and DWM shadow
+// ============================================================================
+static WNDPROC g_originalWndProc = nullptr;
+
+static LRESULT CALLBACK CustomWindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	switch (uMsg)
+	{
+	case WM_NCCALCSIZE:
+	{
+		if (wParam == TRUE)
+		{
+			// Returning 0 removes default OS caption and borders; client area fills entire window
+			if (IsZoomed(hwnd))
+			{
+				// When maximized, adjust the client rect to match monitor work area (avoids 8px overflow)
+				HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+				MONITORINFO mi = { sizeof(mi) };
+				if (GetMonitorInfo(hMon, &mi))
+				{
+					NCCALCSIZE_PARAMS* p = (NCCALCSIZE_PARAMS*)lParam;
+					p->rgrc[0] = mi.rcWork;
+				}
+				return 0;
+			}
+			return 0;
+		}
+		return 0;
+	}
+
+	case WM_GETMINMAXINFO:
+	{
+		MINMAXINFO* mmi = (MINMAXINFO*)lParam;
+		HMONITOR hMon = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+		MONITORINFO mi = { sizeof(mi) };
+		if (GetMonitorInfo(hMon, &mi))
+		{
+			mmi->ptMaxPosition.x = mi.rcWork.left - mi.rcMonitor.left;
+			mmi->ptMaxPosition.y = mi.rcWork.top - mi.rcMonitor.top;
+			mmi->ptMaxSize.x = mi.rcWork.right - mi.rcWork.left;
+			mmi->ptMaxSize.y = mi.rcWork.bottom - mi.rcWork.top;
+		}
+		mmi->ptMinTrackSize.x = 800;
+		mmi->ptMinTrackSize.y = 500;
+		return 0;
+	}
+
+	case WM_NCHITTEST:
+	{
+		if (IsZoomed(hwnd))
+		{
+			return HTCLIENT;
+		}
+
+		POINT pt = { (short)LOWORD(lParam), (short)HIWORD(lParam) };
+		RECT rc;
+		GetWindowRect(hwnd, &rc);
+
+		const int BORDER_SIZE = 7;
+		bool left   = (pt.x >= rc.left && pt.x < rc.left + BORDER_SIZE);
+		bool right  = (pt.x <= rc.right && pt.x > rc.right - BORDER_SIZE);
+		bool top    = (pt.y >= rc.top && pt.y < rc.top + BORDER_SIZE);
+		bool bottom = (pt.y <= rc.bottom && pt.y > rc.bottom - BORDER_SIZE);
+
+		if (top && left)     return HTTOPLEFT;
+		if (top && right)    return HTTOPRIGHT;
+		if (bottom && left)  return HTBOTTOMLEFT;
+		if (bottom && right) return HTBOTTOMRIGHT;
+		if (left)            return HTLEFT;
+		if (right)           return HTRIGHT;
+		if (top)             return HTTOP;
+		if (bottom)          return HTBOTTOM;
+
+		return HTCLIENT;
+	}
+
+	case WM_NCACTIVATE:
+		return TRUE;
+	}
+
+	return CallWindowProc(g_originalWndProc, hwnd, uMsg, wParam, lParam);
+}
+
+static void SetupCustomWindowFrame(HWND hwnd)
+{
+	if (!hwnd) return;
+
+	LONG_PTR style = GetWindowLongPtr(hwnd, GWL_STYLE);
+	style |= WS_THICKFRAME | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_CAPTION | WS_SYSMENU;
+	SetWindowLongPtr(hwnd, GWL_STYLE, style);
+
+	g_originalWndProc = (WNDPROC)SetWindowLongPtr(hwnd, GWLP_WNDPROC, (LONG_PTR)CustomWindowProc);
+
+	MARGINS margins = { 1, 1, 1, 1 };
+	DwmExtendFrameIntoClientArea(hwnd, &margins);
+
+	DragAcceptFiles(hwnd, TRUE);
+
+	SetWindowPos(hwnd, NULL, 0, 0, 0, 0,
+		SWP_FRAMECHANGED | SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+int main(int argc, char** argv)
+{
+	EngineLogger::Get().Init("logs.elogs");
+	EngineLogger::Get().LogAction("ENGINE_START", "Eunoia-Editor", "DirectX 12 Initializing");
+
+	bool isGameOnlyMode = false;
+	std::filesystem::path gameProjectPath;
+	std::string gameScenePath;
+	std::string gameBinPath;
+	float cmdCamYaw = 0.0f;
+	float cmdCamPitch = 0.0f;
+	glm::vec3 cmdCamTarget(0.0f);
+	float cmdCamDist = 0.001f;
+	float cmdCamFov = 60.0f;
+	bool hasCmdCam = false;
+
+	std::filesystem::path selectedProjectPath;
+	bool forceStandaloneBrowser = false;
+
+	for (int i = 1; i < argc; ++i) {
+		std::string arg = argv[i];
+		if (arg == "--game" || arg == "-game" || arg == "/game" || arg == "--play" || arg == "-play") {
+			isGameOnlyMode = true;
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameProjectPath = argv[++i];
+			}
+		} else if (arg == "--project" || arg == "-project" || arg == "-p" || arg == "/project") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				selectedProjectPath = argv[++i];
+			}
+		} else if (arg == "--browse" || arg == "--browser" || arg == "-b") {
+			forceStandaloneBrowser = true;
+		} else if (arg == "--scene" || arg == "-scene" || arg == "/scene") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameScenePath = argv[++i];
+			}
+		} else if (arg == "--bin" || arg == "-bin" || arg == "/bin") {
+			if (i + 1 < argc && argv[i + 1][0] != '-') {
+				gameBinPath = argv[++i];
+			}
+		} else if (arg == "--cam-yaw" && i + 1 < argc) {
+			cmdCamYaw = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-pitch" && i + 1 < argc) {
+			cmdCamPitch = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tx" && i + 1 < argc) {
+			cmdCamTarget.x = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-ty" && i + 1 < argc) {
+			cmdCamTarget.y = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-tz" && i + 1 < argc) {
+			cmdCamTarget.z = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-dist" && i + 1 < argc) {
+			cmdCamDist = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (arg == "--cam-fov" && i + 1 < argc) {
+			cmdCamFov = std::stof(argv[++i]);
+			hasCmdCam = true;
+		} else if (!arg.empty() && arg[0] != '-' && selectedProjectPath.empty()) {
+			std::error_code ec;
+			if (std::filesystem::exists(arg, ec)) {
+				selectedProjectPath = arg;
+			}
+		}
+	}
+
+	// 1. Initialize GLFW
+	if (!glfwInit())
+	{
+		std::cerr << "Failed to initialize GLFW!" << std::endl;
+		return -1;
+	}
+
+	if (isGameOnlyMode) {
+		selectedProjectPath = gameProjectPath.empty() ? std::filesystem::current_path() : gameProjectPath;
+		std::cerr << "[INFO] Launching in Dedicated Game Mode for: " << selectedProjectPath.string() << std::endl;
+	} else {
+		// If project wasn't explicitly given via CLI, resolve or offer browser
+		if (selectedProjectPath.empty()) {
+			if (forceStandaloneBrowser) {
+				selectedProjectPath = EngineUI::RunStandaloneProjectBrowser();
+			}
+			
+			// If still empty (browser closed or not forced), check recent projects history
+			if (selectedProjectPath.empty()) {
+				std::error_code ec;
+				std::filesystem::path recentCfg;
+				char* appdata = getenv("LOCALAPPDATA");
+				if (appdata) {
+					recentCfg = std::filesystem::path(appdata) / "EunoiaEngine" / "RecentProjects.json";
+				} else {
+					recentCfg = "RecentProjects.json";
+				}
+				if (std::filesystem::exists(recentCfg, ec)) {
+					std::ifstream rf(recentCfg);
+					if (rf.is_open()) {
+						try {
+							nlohmann::json rj;
+							rf >> rj;
+							if (rj.is_array() && !rj.empty() && rj[0].contains("rootPath")) {
+								std::string rp = rj[0]["rootPath"].get<std::string>();
+								if (std::filesystem::exists(rp, ec)) {
+									selectedProjectPath = rp;
+								}
+							}
+						} catch (...) {}
+					}
+				}
+
+				// Fallback to Unknown-13 or Default project directory
+				if (selectedProjectPath.empty()) {
+					std::filesystem::path defaultProj = "C:\\Projects\\Eunoia-Engine\\Projects\\Unknown-13";
+					if (std::filesystem::exists(defaultProj, ec)) {
+						selectedProjectPath = defaultProj;
+					} else {
+						std::filesystem::path curProj = std::filesystem::current_path() / "Projects" / "Unknown-13";
+						if (std::filesystem::exists(curProj, ec)) {
+							selectedProjectPath = curProj;
+						} else {
+							selectedProjectPath = "C:\\Projects\\Eunoia-Engine\\Projects\\Unknown-13";
+						}
+					}
+				}
+			}
+		}
+		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
+	}
+
+	auto startupStart = std::chrono::high_resolution_clock::now();
+	auto stageStart = startupStart;
+	auto logStartupStage = [&](const std::string& stageName, const std::string& desc) {
+		auto now = std::chrono::high_resolution_clock::now();
+		auto stageMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - stageStart).count();
+		auto totalMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - startupStart).count();
+		stageStart = now;
+		std::string msg = desc + " (+" + std::to_string(stageMs) + "ms, total " + std::to_string(totalMs) + "ms)";
+		EngineLogger::Get().LogAction("STARTUP_STAGE", stageName, msg);
+	};
+
+	if (!isGameOnlyMode) {
+		StartupSplash::Get().Show("Resources/Icons/eunoia.png");
+		StartupSplash::Get().PumpEvents();
+		logStartupStage("StartupSplash", "Startup splash window displayed");
+	}
+
+	// 2. Create main window (D3D12, NO_API)
+	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+	if (isGameOnlyMode) {
+		glfwWindowHint(GLFW_DECORATED, GLFW_TRUE);
+		glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+	} else {
+		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE); // Hidden during initialization behind splash!
+	}
+
+	std::string winTitle = isGameOnlyMode ? (selectedProjectPath.filename().string() + " - Game Mode") : "Eunoia-Editor";
+	g_window = glfwCreateWindow(WIDTH, HEIGHT, winTitle.c_str(), nullptr, nullptr);
+	if (!g_window)
+	{
+		std::cerr << "Failed to create GLFW window!" << std::endl;
+		StartupSplash::Get().Close();
+		glfwTerminate();
+		return -1;
+	}
+
+	HWND hwnd = glfwGetWin32Window(g_window);
+	if (!isGameOnlyMode) {
+		SetupCustomWindowFrame(hwnd);
+	}
+	g_engineUI.SetWindow(g_window);
+	g_engineUI.isGameOnlyWindow = isGameOnlyMode;
+	InputSystem::Get().SetWindow(g_window);
+
+#ifdef _WIN32
+	// Set window icon (both large for Taskbar/Alt-Tab and small for title bar / system menu)
+	HICON hIconBig = (HICON)LoadImageA(NULL, "Resources/Icons/eunoia.ico", IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+	HICON hIconSmall = (HICON)LoadImageA(NULL, "Resources/Icons/eunoia.ico", IMAGE_ICON, 16, 16, LR_LOADFROMFILE);
+	if (!hIconBig) {
+		hIconBig = LoadIconA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(1));
+	}
+	if (!hIconSmall) {
+		hIconSmall = (HICON)LoadImageA(GetModuleHandleA(NULL), MAKEINTRESOURCEA(1), IMAGE_ICON, 16, 16, 0);
+		if (!hIconSmall) hIconSmall = hIconBig;
+	}
+	if (hIconBig) {
+		SendMessageA(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIconBig);
+	}
+	if (hIconSmall) {
+		SendMessageA(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIconSmall);
+	}
+#endif
+
+	if (isGameOnlyMode) {
+		ShowWindow(hwnd, SW_SHOW);
+		UpdateWindow(hwnd);
+	}
+
+	int fbWidth = 0, fbHeight = 0;
+	glfwGetFramebufferSize(g_window, &fbWidth, &fbHeight);
+	if (fbWidth > 0 && fbHeight > 0)
+	{
+		g_currentWidth = fbWidth;
+		g_currentHeight = fbHeight;
+	}
+
+	glfwSetFramebufferSizeCallback(g_window, frameBufferResizeCallback);
+	glfwSetMouseButtonCallback(g_window, mouseButtonCallback);
+	glfwSetCursorPosCallback(g_window, cursorPosCallback);
+	glfwSetScrollCallback(g_window, scrollCallback);
+	glfwSetDropCallback(g_window, dropCallback);
+
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("PlatformWindow", "Main window created");
+
+	// 2. Initialize DirectX 12
+	if (initD3D12(hwnd) != EXIT_SUCCESS)
+	{
+		std::cerr << "DirectX 12 initialization failed!" << std::endl;
+		StartupSplash::Get().Close();
+		return -1;
+	}
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("DX12Device", "DirectX 12 device and queues initialized");
+
+	if (createShadersAndPipeline() != EXIT_SUCCESS)
+	{
+		std::cerr << "DirectX 12 pipeline creation failed!" << std::endl;
+		StartupSplash::Get().Close();
+		return -1;
+	}
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("ShadersPipeline", "Shaders and pipeline states compiled / cached");
+
+	if (createDynamicBuffers() != EXIT_SUCCESS)
+	{
+		std::cerr << "DirectX 12 buffer creation failed!" << std::endl;
+		StartupSplash::Get().Close();
+		return -1;
+	}
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("DynamicBuffers", "Dynamic buffers allocated");
+
+	// 3. Initialize Dear ImGui for DirectX 12
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO();
+	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+	io.IniFilename = nullptr; // Prevent stale off-screen positions from overriding responsive layout
+
+	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px) with fast 1x oversample
+	ImFont* mainFont = nullptr;
+	ImFontConfig fontConfig;
+	fontConfig.OversampleH = 1;
+	fontConfig.OversampleV = 1;
+	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
+		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
+	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
+		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
+	}
+
+	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons
+	if (!isGameOnlyMode && mainFont && std::filesystem::exists("C:\\Windows\\Fonts\\seguisym.ttf")) {
+		ImFontConfig symbolConfig;
+		symbolConfig.MergeMode = true;
+		symbolConfig.OversampleH = 1;
+		symbolConfig.OversampleV = 1;
+		static const ImWchar symbolRanges[] = {
+			0x2022, 0x2022, // Bullet
+			0x2190, 0x21FF, // Arrows
+			0x25A0, 0x25FF, // Geometric Shapes
+			0x2600, 0x26FF, // Miscellaneous Symbols
+			0x2700, 0x27BF, // Dingbats
+			0,
+		};
+		io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\seguisym.ttf", 18.0f, &symbolConfig, symbolRanges);
+	}
+
+	if (!mainFont) {
+		io.Fonts->AddFontDefault();
+		io.FontGlobalScale = 1.25f;
+	}
+
+	if (!isGameOnlyMode) {
+		g_engineUI.SetupTheme();
+	}
+
+	ImGui_ImplGlfw_InitForOther(g_window, true);
+
+	ImGui_ImplDX12_InitInfo init_info = {};
+	init_info.Device = g_d3dDevice;
+	init_info.CommandQueue = g_commandQueue;
+	init_info.NumFramesInFlight = FRAME_COUNT;
+	init_info.RTVFormat = DXGI_FORMAT_R8G8B8A8_UNORM;
+	init_info.DSVFormat = DXGI_FORMAT_D32_FLOAT;
+	init_info.SrvDescriptorHeap = g_srvDescHeap;
+	init_info.SrvDescriptorAllocFn = ImGui_SrvAlloc;
+	init_info.SrvDescriptorFreeFn  = ImGui_SrvFree;
+
+	ImGui_ImplDX12_Init(&init_info);
+	logStartupStage("ImGuiFonts", "Dear ImGui and fonts initialized");
+
+	InitFallbackTextures();
+	InitLightmapSrvSlot();
+	Eunoia::UI::CustomUIManager::Get().Initialize(g_d3dDevice, DXGI_FORMAT_R8G8B8A8_UNORM);
+	TextureManager::Get().RegisterQualityChangedCallback("D3D12Renderer", [](TextureQuality /*q*/, int /*maxRes*/) {
+		UpdateAllTextureLODClamps();
+	});
+	if (!isGameOnlyMode) {
+		DX12GpuTexture dirLightIcon = GetOrLoadGPUTexture("Resources/Icons/directional_light.png", g_fallbackWhite);
+		g_engineUI.directionalLightIconGpuHandle = dirLightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture ptLightIcon = GetOrLoadGPUTexture("Resources/Icons/point_light.png", g_fallbackWhite);
+		g_engineUI.pointLightIconGpuHandle = ptLightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture spotLightIcon = GetOrLoadGPUTexture("Resources/Icons/spot_light.png", g_fallbackWhite);
+		g_engineUI.spotLightIconGpuHandle = spotLightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture areaLightIcon = GetOrLoadGPUTexture("Resources/Icons/area_light.png", g_fallbackWhite);
+		g_engineUI.areaLightIconGpuHandle = areaLightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture lightIcon = GetOrLoadGPUTexture("Resources/Icons/light.png", ptLightIcon);
+		g_engineUI.lightIconGpuHandle = lightIcon.gpuHandle.ptr ? lightIcon.gpuHandle.ptr : ptLightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture skyLightIcon = GetOrLoadGPUTexture("Resources/Icons/sky_light.png", lightIcon);
+		g_engineUI.skyLightIconGpuHandle = skyLightIcon.gpuHandle.ptr ? skyLightIcon.gpuHandle.ptr : lightIcon.gpuHandle.ptr;
+
+		DX12GpuTexture cameraIcon = GetOrLoadGPUTexture("Resources/Icons/camera.png", g_fallbackWhite);
+		g_engineUI.cameraIconGpuHandle = cameraIcon.gpuHandle.ptr;
+		DX12GpuTexture engineIcon = GetOrLoadGPUTexture("Resources/Icons/eunoia.png", g_fallbackWhite);
+		g_engineUI.engineIconGpuHandle = engineIcon.gpuHandle.ptr;
+		DX12GpuTexture eyeIcon = GetOrLoadGPUTexture("Resources/Icons/Outliner/Eye.png", g_fallbackWhite);
+		g_engineUI.outlinerEyeIconGpuHandle = eyeIcon.gpuHandle.ptr;
+
+		DX12GpuTexture cbFolderIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/folder.png", g_fallbackWhite);
+		g_engineUI.cbFolderIconGpuHandle = cbFolderIcon.gpuHandle.ptr;
+		DX12GpuTexture cb3dIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/3d.png", g_fallbackWhite);
+		g_engineUI.cb3dIconGpuHandle = cb3dIcon.gpuHandle.ptr;
+		DX12GpuTexture cbMatIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/material.png", g_fallbackWhite);
+		g_engineUI.cbMaterialIconGpuHandle = cbMatIcon.gpuHandle.ptr;
+		DX12GpuTexture cbSkyIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/skybox.png", g_fallbackWhite);
+		g_engineUI.cbSkyboxIconGpuHandle = cbSkyIcon.gpuHandle.ptr;
+		DX12GpuTexture cbTexIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/texture.png", g_fallbackWhite);
+		g_engineUI.cbTextureIconGpuHandle = cbTexIcon.gpuHandle.ptr;
+		DX12GpuTexture cbLevelIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/level.png", g_fallbackWhite);
+		g_engineUI.cbLevelIconGpuHandle = cbLevelIcon.gpuHandle.ptr;
+		DX12GpuTexture cbBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/behaviour.png", g_fallbackWhite);
+		g_engineUI.cbBehaviourIconGpuHandle = cbBehIcon.gpuHandle.ptr;
+		DX12GpuTexture cbVisBehIcon = GetOrLoadGPUTexture("Resources/Icons/Content Browser/visual-behaviuor.png", g_fallbackWhite);
+		g_engineUI.cbVisualBehaviourIconGpuHandle = cbVisBehIcon.gpuHandle.ptr;
+	}
+
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("Resources", "Fallback textures and icons loaded");
+
+	// Initialize EngineUI with the project selected from the standalone Project Browser window
+	g_engineUI.InitWithProject(selectedProjectPath, g_scene, g_camera, isGameOnlyMode, gameScenePath, gameBinPath);
+
+	StartupSplash::Get().PumpEvents();
+	logStartupStage("EngineUI", "Engine UI and Asset Registry initialized");
+
+	if (!isGameOnlyMode) {
+		if (g_engineUI.pendingInitialSceneLoad) {
+			StartupSplash::Get().UpdateProgress(0.15f, "Preparing project level...");
+			g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+		}
+
+		// Fast drain staged actors and keep splash updated smoothly
+		while (g_engineUI.IsProgressiveLoadingActive()) {
+			if (!g_engineUI.m_progressiveLoader.completed) {
+				g_engineUI.m_progressiveLoader.Step(g_scene, 128);
+				float p = g_engineUI.m_progressiveLoader.progress.load();
+				std::string detail;
+				{
+					std::lock_guard<std::mutex> lock(g_engineUI.m_progressiveLoader.stateMutex);
+					detail = g_engineUI.m_progressiveLoader.currentDetail;
+				}
+				StartupSplash::Get().UpdateProgress(p, detail.empty() ? "Loading objects, lights & skyboxes..." : detail);
+			} else {
+				break;
+			}
+		}
+
+		updateSceneGeometry();
+		if (g_scene.objects.empty()) {
+			StartupSplash::Get().UpdateProgress(1.0f, "Empty level ready.");
+			logStartupStage("ScenePreload", "Empty level initialized");
+		} else {
+			StartupSplash::Get().UpdateProgress(1.0f, "Scene completely loaded (" + std::to_string(g_scene.objects.size()) + " actors).");
+			logStartupStage("ScenePreload", "Scene and actors loaded");
+		}
+
+		// Warm up GPU pipelines and render targets behind splash before revealing window to prevent blank frame
+		for (int warmup = 0; warmup < 2; ++warmup)
+		{
+			InputSystem::Get().BeginFrame();
+			glfwPollEvents();
+			InputSystem::Get().Update(g_window);
+
+			ImGui_ImplDX12_NewFrame();
+			ImGui_ImplGlfw_NewFrame();
+			ImGui::NewFrame();
+
+			bool warmupExit = false;
+			g_engineUI.Render(g_scene, g_camera, 60.0f, 16.6f, g_currentVertexCount, g_currentIndexCount, warmupExit);
+
+			ImGui::Render();
+
+			if (g_fence && g_fenceValues[g_frameIndex] > 0 && g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
+			{
+				SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "Warmup frame fence sync");
+			}
+
+			updateSceneGeometry();
+			updateConstantBuffer();
+			PreRenderUploadTextures();
+			renderFrame();
+		}
+		logStartupStage("WarmupFrames", "Warm-up frames presented behind splash");
+
+		StartupSplash::Get().Close();
+		ShowWindow(hwnd, SW_MAXIMIZE);
+		glfwShowWindow(g_window);
+		UpdateWindow(hwnd);
+		logStartupStage("EditorWindow", "Editor window opened maximized — startup complete");
+	} else {
+		updateSceneGeometry();
+	}
+
+	if (isGameOnlyMode) {
+		GameObject* camObj = nullptr;
+		if (g_scene.activeLevelCameraId != -1) {
+			camObj = g_scene.FindObject(g_scene.activeLevelCameraId);
+		}
+		if (!camObj) {
+			for (auto& obj : g_scene.objects) {
+				if (obj.isCamera || obj.type == PrimitiveType::Camera) {
+					camObj = &obj;
+					g_scene.activeLevelCameraId = obj.id;
+					break;
+				}
+			}
+		}
+		if (camObj && (camObj->isCamera || camObj->type == PrimitiveType::Camera)) {
+			glm::mat4 worldMat = g_scene.GetWorldMatrix(*camObj);
+			glm::vec3 worldPos = glm::vec3(worldMat[3]);
+			glm::vec3 worldRot = camObj->rotation;
+			if (camObj->parentId != -1)
+			{
+				const GameObject* p = g_scene.FindObjectConst(camObj->parentId);
+				while (p)
+				{
+					worldRot += p->rotation;
+					p = (p->parentId != -1) ? g_scene.FindObjectConst(p->parentId) : nullptr;
+				}
+			}
+			g_camera.yaw = worldRot.y;
+			g_camera.pitch = -std::clamp(worldRot.x, -89.0f, 89.0f);
+			g_camera.fov = camObj->camera.fov;
+			g_camera.isOrthographic = camObj->camera.isOrthographic;
+			g_camera.orthoSize = camObj->camera.orthoSize;
+			g_camera.nearPlane = std::max(0.01f, camObj->camera.nearPlane);
+			g_camera.farPlane = std::max(1.0f, camObj->camera.farPlane);
+			g_camera.distance = 0.001f;
+			g_camera.target = worldPos + g_camera.GetForward() * 0.001f;
+		} else if (hasCmdCam) {
+			g_camera.yaw = cmdCamYaw;
+			g_camera.pitch = std::clamp(cmdCamPitch, -89.0f, 89.0f);
+			g_camera.target = cmdCamTarget;
+			g_camera.distance = cmdCamDist;
+			g_camera.fov = cmdCamFov;
+		}
+		g_scene.showGrid = false;
+		g_engineUI.showGizmo = false;
+		g_scene.StartPlayMode();
+	}
+
+	auto lastTime = std::chrono::high_resolution_clock::now();
+	float frameCount = 0.0f;
+	float fpsTimer = 0.0f;
+	float currentFps = 60.0f;
+	float currentFrameTimeMs = 16.6f;
+
+	// 4. Main Event & Render Loop
+	while (!glfwWindowShouldClose(g_window))
+	{
+		InputSystem::Get().BeginFrame();
+		glfwPollEvents();
+		InputSystem::Get().Update(g_window);
+
+		auto currentTime = std::chrono::high_resolution_clock::now();
+		float deltaTime = std::chrono::duration<float, std::chrono::seconds::period>(
+			currentTime - lastTime).count();
+		lastTime = currentTime;
+
+		if (deltaTime > 0.1f) deltaTime = 0.1f;
+		ScreenPrint::System::Get().Update(deltaTime);
+
+		// Once the editor window is open and displayed (no viewport rendered initially), load the respective scene/level
+		if (!isGameOnlyMode && g_engineUI.pendingInitialSceneLoad)
+		{
+			if (g_engineUI.initialLoadFrameCountdown > 0)
+			{
+				g_engineUI.initialLoadFrameCountdown--;
+			}
+			else
+			{
+				g_engineUI.LoadPendingInitialScene(g_scene, g_camera, isGameOnlyMode);
+				updateSceneGeometry();
+			}
+		}
+
+		// Process Fly Mode (Hold RMB + W, S, A, D, E, Q) - Smooth acceleration, deceleration & ease-in-out
+		if (!g_scene.isPlayMode)
+		{
+			glm::vec3 targetVelocity(0.0f);
+
+			if (s_isRightMouseDown && g_camera.isFlying)
+			{
+				float speed = g_camera.moveSpeed;
+				if (glfwGetKey(g_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+				    glfwGetKey(g_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
+				{
+					speed *= 2.5f; // Fast fly with Shift
+				}
+
+				glm::vec3 moveDir(0.0f);
+				glm::vec3 forward = g_camera.GetForward();
+				glm::vec3 right   = g_camera.GetRight();
+				glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+				if (glfwGetKey(g_window, GLFW_KEY_W) == GLFW_PRESS) moveDir += forward;
+				if (glfwGetKey(g_window, GLFW_KEY_S) == GLFW_PRESS) moveDir -= forward;
+				if (glfwGetKey(g_window, GLFW_KEY_D) == GLFW_PRESS) moveDir += right;
+				if (glfwGetKey(g_window, GLFW_KEY_A) == GLFW_PRESS) moveDir -= right;
+				if (glfwGetKey(g_window, GLFW_KEY_E) == GLFW_PRESS) moveDir += worldUp;
+				if (glfwGetKey(g_window, GLFW_KEY_Q) == GLFW_PRESS) moveDir -= worldUp;
+
+				if (glm::length(moveDir) > 0.001f)
+				{
+					targetVelocity = glm::normalize(moveDir) * speed;
+				}
+			}
+
+			// Smooth exponential lerp (ease-in-ease-out acceleration & deceleration)
+			// Higher response rate (14.0f) during acceleration, natural smooth damping (10.0f) during stop
+			float blendRate = (glm::length(targetVelocity) > 0.001f) ? 14.0f : 10.0f;
+			float blendFactor = 1.0f - std::exp(-blendRate * deltaTime);
+			s_camVelocity = glm::mix(s_camVelocity, targetVelocity, blendFactor);
+
+			// Cut off sub-epsilon velocity to avoid drift
+			if (glm::length(s_camVelocity) < 0.005f && glm::length(targetVelocity) < 0.001f)
+			{
+				s_camVelocity = glm::vec3(0.0f);
+			}
+
+			if (glm::length(s_camVelocity) > 0.0001f)
+			{
+				g_camera.Move(s_camVelocity * deltaTime);
+				SyncViewportCameraToLevelCamera();
+				g_engineUI.RequestViewportRedraw(10);
+			}
+		}
+
+		// Generic camera motion tracking (catches any camera move/rotation from script, gizmo, focus)
+		if (!g_scene.isPlayMode)
+		{
+			static glm::vec3 s_lastCamPos(0.0f);
+			static float s_lastCamYaw = 0.0f;
+			static float s_lastCamPitch = 0.0f;
+			static glm::vec3 s_lastCamTarget(0.0f);
+			static float s_lastCamDist = 0.0f;
+			static float s_lastCamFov = 0.0f;
+			if (glm::distance(g_camera.GetPosition(), s_lastCamPos) > 1e-4f ||
+			    std::abs(g_camera.yaw - s_lastCamYaw) > 1e-4f ||
+			    std::abs(g_camera.pitch - s_lastCamPitch) > 1e-4f ||
+			    glm::distance(g_camera.target, s_lastCamTarget) > 1e-4f ||
+			    std::abs(g_camera.distance - s_lastCamDist) > 1e-4f ||
+			    std::abs(g_camera.fov - s_lastCamFov) > 1e-4f)
+			{
+				s_lastCamPos = g_camera.GetPosition();
+				s_lastCamYaw = g_camera.yaw;
+				s_lastCamPitch = g_camera.pitch;
+				s_lastCamTarget = g_camera.target;
+				s_lastCamDist = g_camera.distance;
+				s_lastCamFov = g_camera.fov;
+				g_engineUI.RequestViewportRedraw(10);
+			}
+		}
+
+		// Game Mode Exit listener (Ctrl + Delete closes standalone game or exits in-editor Play Mode)
+		if (isGameOnlyMode || g_scene.isPlayMode)
+		{
+			bool isCtrlDown = (glfwGetKey(g_window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+			                   glfwGetKey(g_window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
+			                   InputSystem::Get().IsKeyDown(Key::LeftControl) ||
+			                   InputSystem::Get().IsKeyDown(Key::RightControl) ||
+			                   ImGui::GetIO().KeyCtrl);
+			bool isDeletePressed = (InputSystem::Get().IsKeyPressed(Key::Delete) ||
+			                        glfwGetKey(g_window, GLFW_KEY_DELETE) == GLFW_PRESS);
+			if (isCtrlDown && isDeletePressed)
+			{
+				CursorState.UnLocked();
+				if (isGameOnlyMode)
+				{
+					glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+				}
+				else if (g_scene.isPlayMode)
+				{
+					g_engineUI.ExitPlayMode(g_scene, &g_camera);
+				}
+			}
+		}
+
+		frameCount += 1.0f;
+		fpsTimer += deltaTime;
+		if (fpsTimer >= 0.5f)
+		{
+			currentFps = frameCount / fpsTimer;
+			currentFrameTimeMs = (fpsTimer / frameCount) * 1000.0f;
+			frameCount = 0.0f;
+			fpsTimer = 0.0f;
+		}
+
+		// Update 3D Scene animations and runtime behaviours
+		g_scene.Update(deltaTime);
+		Eunoia::WaterSystem::Get().Update(deltaTime);
+
+		// Synchronize viewport camera dynamically as the level camera moves or rotates
+		SyncLevelCameraToViewportCamera();
+
+		// Forward input to Custom UI Framework
+		double uiMouseX = 0.0, uiMouseY = 0.0;
+		glfwGetCursorPos(g_window, &uiMouseX, &uiMouseY);
+		bool uiLeftDown = (glfwGetMouseButton(g_window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
+		static bool s_prevLeftDown = false;
+		bool uiLeftClicked = (uiLeftDown && !s_prevLeftDown);
+		bool uiLeftReleased = (!uiLeftDown && s_prevLeftDown);
+		s_prevLeftDown = uiLeftDown;
+		Eunoia::UI::CustomUIManager::Get().ProcessInput((float)uiMouseX, (float)uiMouseY, uiLeftDown, uiLeftClicked, uiLeftReleased);
+
+		// New ImGui Frame
+		ImGui_ImplDX12_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		if (InputSystem::Get().IsCursorLocked())
+		{
+			ImGui::SetMouseCursor(ImGuiMouseCursor_None);
+			if (glfwGetInputMode(g_window, GLFW_CURSOR) != GLFW_CURSOR_DISABLED)
+			{
+				glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+				if (glfwRawMouseMotionSupported())
+				{
+					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_TRUE);
+				}
+			}
+		}
+		else
+		{
+			if (glfwGetInputMode(g_window, GLFW_CURSOR) == GLFW_CURSOR_DISABLED)
+			{
+				if (glfwRawMouseMotionSupported())
+				{
+					glfwSetInputMode(g_window, GLFW_RAW_MOUSE_MOTION, GLFW_FALSE);
+				}
+				glfwSetInputMode(g_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			}
+		}
+
+		// Render Unreal Engine 5 Editor UI & 3D Gizmos
+		bool shouldExit = false;
+		g_engineUI.Render(g_scene, g_camera, currentFps, currentFrameTimeMs,
+		                  g_currentVertexCount, g_currentIndexCount, shouldExit);
+		if (shouldExit)
+		{
+			glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+		}
+
+		// Process deferred 3D object picking only if the click was NOT on an active/hovered gizmo or UI element (disabled in Play Mode)
+		if (!g_scene.isPlayMode && s_pendingPickClick)
+		{
+			s_pendingPickClick = false;
+			ImGuiIO& io = ImGui::GetIO();
+			bool isPopupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
+			if (!g_camera.isFlying && !io.WantCaptureMouse && !isPopupOpen && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
+			{
+				double mouseX, mouseY;
+				glfwGetCursorPos(g_window, &mouseX, &mouseY);
+				PickObjectAtCursor((float)mouseX, (float)mouseY);
+			}
+		}
+
+		static int s_recoveryAttempts = 0;
+
+		// Device Loss Notification Overlay (dev.md Task 3) - Only shown if automatic recovery attempts were exhausted
+		if (g_deviceLost && s_recoveryAttempts >= 3)
+		{
+			ImGui::OpenPopup("GPU Device Lost");
+			ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+			ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+			ImGui::SetNextWindowSize(ImVec2(540, 250), ImGuiCond_Appearing);
+			if (ImGui::BeginPopupModal("GPU Device Lost", nullptr, ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoMove))
+			{
+				ImGui::TextColored(ImVec4(1.0f, 0.25f, 0.25f, 1.0f), "CRITICAL: GPU Device Was Lost (Driver Reset)");
+				ImGui::Separator();
+				ImGui::Spacing();
+				ImGui::TextWrapped("The graphics driver reset or the GPU device was removed. Automatic recovery was attempted but the driver remained unresponsive.");
+				ImGui::Spacing();
+				ImGui::TextWrapped("You can retry recovery or save your level to avoid losing changes before restarting the editor.");
+				ImGui::Spacing();
+				ImGui::Separator();
+				ImGui::Spacing();
+				if (ImGui::Button("Retry Recovery", ImVec2(140, 32)))
+				{
+					s_recoveryAttempts = 0;
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Save Current Level", ImVec2(160, 32)))
+				{
+					g_engineUI.SaveLevel(g_scene);
+				}
+				ImGui::SameLine();
+				if (ImGui::Button("Restart / Exit", ImVec2(130, 32)))
+				{
+					glfwSetWindowShouldClose(g_window, GLFW_TRUE);
+				}
+				ImGui::EndPopup();
+			}
+		}
+
+		ImGui::Render();
+
+		// Update 3D Scene GPU Buffers AFTER gizmo has applied any transform changes
+		// When device is lost, attempt automatic recovery to resume from exact condition
+		if (g_deviceLost)
+		{
+			HWND hwnd = glfwGetWin32Window(g_window);
+			if (s_recoveryAttempts < 3)
+			{
+				s_recoveryAttempts++;
+				std::cerr << "[RECOVERY] Attempting automatic device recreation (attempt " << s_recoveryAttempts << "/3)...\n";
+				g_engineUI.AddLog("LogRecovery", "Attempting automatic D3D12 device recovery (attempt " + std::to_string(s_recoveryAttempts) + "/3)...", 1);
+				if (RecoverD3D12Device(hwnd))
+				{
+					s_recoveryAttempts = 0;
+					g_engineUI.AddLog("LogRecovery", "DirectX 12 graphics device successfully recovered! Resumed from exact condition.", 0);
+				}
+				else
+				{
+					Sleep(100);
+				}
+			}
+			else
+			{
+				Sleep(50);
+			}
+		}
+		else
+		{
+			try {
+				// Synchronize: wait for the frame that previously used this backbuffer / upload buffers to finish on GPU
+				if (g_fence && g_fenceValues[g_frameIndex] > 0 && g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
+				{
+					SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "Frame start buffer sync");
+				}
+
+				bool need3DSceneRender = (g_engineUI.isGameOnlyWindow ||
+				                          g_scene.isPlayMode ||
+				                          g_engineUI.isPlayModeActive ||
+				                          g_engineUI.realtimeViewport ||
+				                          g_engineUI.viewportRedrawCountdown > 0);
+
+				if (need3DSceneRender)
+				{
+					updateSceneGeometry();
+					updateConstantBuffer();
+
+					// Pre-upload all scene batch textures before the frame command list begins recording
+					PreRenderUploadTextures();
+				}
+
+				// Render DirectX 12 Frame
+				renderFrame();
+
+				// Idle power saver: when viewport is not rendering and no UI interaction is taking place
+				if (!need3DSceneRender && !ImGui::IsAnyItemActive() && !s_isLeftMouseDown && !s_isRightMouseDown && !s_isMiddleMouseDown)
+				{
+					Sleep(8);
+				}
+			} catch (const std::exception& ex) {
+				std::cerr << "[RECOVERY] Frame exception: " << ex.what() << "\n";
+				g_engineUI.AddLog("LogRecovery", std::string("Frame exception caught, skipping frame: ") + ex.what(), 3);
+			} catch (...) {
+				std::cerr << "[RECOVERY] Unknown frame exception\n";
+				g_engineUI.AddLog("LogRecovery", "Unknown frame exception caught, skipping frame", 3);
+			}
+		}
+	}
+
+	// 5. Cleanup
+	if (isGameOnlyMode) {
+		g_scene.StopPlayMode();
+	}
+
+	cleanUpD3D12();
+
+	glfwDestroyWindow(g_window);
+	glfwTerminate();
+
+	return EXIT_SUCCESS;
+}

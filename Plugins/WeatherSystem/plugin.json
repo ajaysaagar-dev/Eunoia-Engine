@@ -1,0 +1,12 @@
+{
+  "name": "WeatherSystem",
+  "version": "1.0.0",
+  "description": "Dynamic Real-Time Weather, GPU Rain Simulation, Surface Wetness & Puddle Accumulation",
+  "author": "Eunoia Engine",
+  "category": "Rendering",
+  "isCore": true,
+  "dependencies": [
+    "rhi",
+    "Graphics"
+  ]
+}

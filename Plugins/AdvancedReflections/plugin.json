@@ -1,0 +1,7 @@
+{
+    "name": "AdvancedReflections",
+    "version": "1.0.0",
+    "description": "Advanced reflection systems from WickedEngine: Real-time planar reflections, static/dynamic cube map reflections, stochastic screen space reflections (SSSR) with roughness integration.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

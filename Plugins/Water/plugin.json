@@ -1,0 +1,9 @@
+{
+  "name": "WaterSystem",
+  "version": "1.0",
+  "description": "Provides realistic water bodies like oceans, lakes, and rivers",
+  "author": "Eunoia Engine",
+  "category": "World",
+  "isCore": false,
+  "loadPriority": 100
+}

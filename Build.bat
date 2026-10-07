@@ -1,60 +1,78 @@
 @echo off
-setlocal
+setlocal enabledelayedexpansion
+set "PROJECT_DIR=%~dp0"
+if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
-REM Terminate lingering processes that hold file locks on output binaries
-taskkill /f /im Eunoia-Editor.exe >nul 2>&1
-taskkill /f /im Editor_Windows.exe >nul 2>&1
-taskkill /f /im cl.exe >nul 2>&1
-taskkill /f /im link.exe >nul 2>&1
-taskkill /f /im mspdbsrv.exe >nul 2>&1
+:: ============================================================================
+:: Eunoia Engine .NET Build Driver
+:: Automatically compiles and launches the .NET EunoiaBuildTool
+:: ============================================================================
 
-set "MSBUILD="
-if exist "C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" set "MSBUILD=C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\Bin\amd64\MSBuild.exe"
-if exist "C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe" set "MSBUILD=C:\Program Files\Microsoft Visual Studio\18\Community\MSBuild\Current\Bin\amd64\MSBuild.exe"
+set "BUILD_TOOL_DIR=%PROJECT_DIR%\tools\EunoiaBuildTool"
+set "BUILD_TOOL_EXE=%BUILD_TOOL_DIR%\bin\EunoiaBuilder.exe"
+set "BUILD_TOOL_DLL=%BUILD_TOOL_DIR%\bin\Release\netcoreapp3.0\EunoiaBuilder.dll"
+set "BUILD_TOOL_SRC=%BUILD_TOOL_DIR%\Program.cs"
 
-if not defined MSBUILD (
-    for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe 2^>nul`) do (
-        set "MSBUILD=%%i"
+:: Ensure output directory for tool exists
+if not exist "%BUILD_TOOL_DIR%\bin" mkdir "%BUILD_TOOL_DIR%\bin"
+
+:: 1. Check if dotnet is available
+set "DOTNET_CMD="
+where dotnet >nul 2>&1
+if !ERRORLEVEL! equ 0 set "DOTNET_CMD=dotnet"
+
+:: 2. Check for .NET Framework CSC compiler
+set "CSC_CMD="
+if exist "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" (
+    set "CSC_CMD=C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+) else if exist "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" (
+    set "CSC_CMD=C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe"
+) else (
+    where csc >nul 2>&1
+    if !ERRORLEVEL! equ 0 set "CSC_CMD=csc"
+)
+
+:: Compile .NET build tool if binary is missing or source is newer
+set "NEED_COMPILE=0"
+if not exist "%BUILD_TOOL_EXE%" (
+    if not exist "%BUILD_TOOL_DLL%" set "NEED_COMPILE=1"
+)
+if exist "%BUILD_TOOL_EXE%" (
+    for /f %%A in ('powershell -NoProfile -Command "(Get-Item '%BUILD_TOOL_SRC%').LastWriteTime -gt (Get-Item '%BUILD_TOOL_EXE%').LastWriteTime"') do (
+        if "%%A"=="True" (
+            del /f /q "%BUILD_TOOL_EXE%" >nul 2>&1
+            set "NEED_COMPILE=1"
+        )
     )
 )
 
-if not defined MSBUILD (
-    echo [ERROR] MSBuild.exe not found!
-    exit /b 1
+if "!NEED_COMPILE!"=="1" (
+    if defined CSC_CMD (
+        "%CSC_CMD%" /nologo /o /t:exe /out:"%BUILD_TOOL_EXE%" "%BUILD_TOOL_SRC%" >nul 2>&1
+    ) else if defined DOTNET_CMD (
+        "%DOTNET_CMD%" build "%BUILD_TOOL_DIR%\EunoiaBuildTool.csproj" -c Release >nul 2>&1
+    )
 )
 
-set "SLN_FILE=%~dp0EunoiaEngine.sln"
-if not exist "%SLN_FILE%" set "SLN_FILE=%~dp0WickedEngine.sln"
-
-if /i "%~1"=="clean" goto do_clean
-if /i "%~1"=="run" goto do_fast_run
-goto do_fast
-
-:do_clean
-echo Cleaning Editor_Windows build artifacts...
-"%MSBUILD%" "%SLN_FILE%" /t:Editor_Windows:Clean /p:Configuration=Release /p:Platform=x64 /m /nr:false /v:m
-goto end
-
-:do_fast_run
-echo Building modified Editor files...
-"%MSBUILD%" "%SLN_FILE%" /t:Editor_Windows /p:Configuration=Release /p:Platform=x64 /m /p:BuildInParallel=true /nr:false /v:m
-if %ERRORLEVEL% neq 0 (
-    echo [FAILED] Build failed with error code %ERRORLEVEL%
-    exit /b %ERRORLEVEL%
+:: Run .NET Build Tool
+if exist "%BUILD_TOOL_EXE%" (
+    "%BUILD_TOOL_EXE%" %*
+    exit /b !ERRORLEVEL!
+) else if exist "%BUILD_TOOL_DLL%" (
+    "%DOTNET_CMD%" "%BUILD_TOOL_DLL%" %*
+    exit /b !ERRORLEVEL!
+) else if defined DOTNET_CMD (
+    "%DOTNET_CMD%" run --project "%BUILD_TOOL_DIR%\EunoiaBuildTool.csproj" -c Release -- %*
+    exit /b !ERRORLEVEL!
 )
-echo [SUCCESS] Build succeeded!
-call "%~dp0Run.bat"
-goto end
 
-:do_fast
-echo Building modified Editor files...
-"%MSBUILD%" "%SLN_FILE%" /t:Editor_Windows /p:Configuration=Release /p:Platform=x64 /m /p:BuildInParallel=true /nr:false /v:m
-if %ERRORLEVEL% neq 0 (
-    echo [FAILED] Build failed with error code %ERRORLEVEL%
-    exit /b %ERRORLEVEL%
-)
-echo [SUCCESS] Build succeeded!
-goto end
+:: Fallback if no .NET runtime is installed on system
+echo [WARNING] .NET not found. Falling back to native batch compilation...
+set "COMPILER=%PROJECT_DIR%\tools\w64devkit\bin\g++.exe"
+if not exist "%COMPILER%" set "COMPILER=g++"
 
-:end
-exit /b 0
+"%COMPILER%" -std=c++20 -O2 ^
+    "-I%PROJECT_DIR%\Engine\EngineCore\Include" ^
+    "-I%PROJECT_DIR%\Editor\Editor\Include" ^
+    -o "%PROJECT_DIR%\Build\Engine\Eunoia-Editor.exe"
+exit /b %ERRORLEVEL%

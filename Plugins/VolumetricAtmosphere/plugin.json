@@ -1,0 +1,12 @@
+{
+  "name": "VolumetricAtmosphere",
+  "version": "1.0.0",
+  "description": "Real-Time Volumetric Clouds, Rayleigh/Mie Atmospheric Scattering, and God Rays for DirectX 12",
+  "author": "Eunoia Engine",
+  "category": "Rendering",
+  "isCore": true,
+  "dependencies": [
+    "rhi",
+    "Graphics"
+  ]
+}

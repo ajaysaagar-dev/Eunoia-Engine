@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.15)
+
+# Layer 6: EngineScene — ECS/scene graph, gameplay-facing API, Behaviours
+add_library(EngineScene STATIC
+    Src/EunoiaBehaviour.cpp
+    Src/SceneCacheManager.cpp
+)
+
+target_include_directories(EngineScene PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
+    $<INSTALL_INTERFACE:Include>
+    ${EUNOIA_DEPS}/glm
+    ${EUNOIA_DEPS}/json
+    ${EUNOIA_ROOT}/Plugins/UISystem/Include
+    ${EUNOIA_ROOT}/Plugins/SaveSystem/Include
+)
+
+target_link_libraries(EngineScene PUBLIC
+    EngineRenderer
+    EngineAssets
+    EnginePlatform
+    EngineCore
+)
+
+target_compile_features(EngineScene PUBLIC cxx_std_17)

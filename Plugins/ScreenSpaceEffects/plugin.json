@@ -1,0 +1,7 @@
+{
+    "name": "ScreenSpaceEffects",
+    "version": "1.0.0",
+    "description": "Screen Space Ambient Occlusion (SSAO/HBAO/MSAO), Stochastic Screen Space Reflections (SSSR), and Screen Space Refractions from WickedEngine.",
+    "author": "Eunoia Engine",
+    "dependencies": []
+}

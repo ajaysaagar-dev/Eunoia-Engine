@@ -1,0 +1,12 @@
+{
+  "name": "RayTracing",
+  "version": "1.0.0",
+  "description": "Hardware DXR 1.1 and Hybrid Real-Time Ray Tracing System for DirectX 12",
+  "author": "Eunoia Engine",
+  "category": "Rendering",
+  "isCore": true,
+  "dependencies": [
+    "rhi",
+    "Graphics"
+  ]
+}
