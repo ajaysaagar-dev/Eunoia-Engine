@@ -4903,7 +4903,8 @@ void renderFrame()
 	g_commandQueue->ExecuteCommandLists(1, commandLists);
 	g_frameOpHistory[g_frameIndex] = g_recordedFrameOps;
 
-	HRESULT hrPresent = g_swapChain->Present(1, 0);
+	UINT syncInterval = g_engineUI.vsyncEnabled ? 1 : 0;
+	HRESULT hrPresent = g_swapChain->Present(syncInterval, 0);
 	if (hrPresent == DXGI_ERROR_DEVICE_REMOVED || hrPresent == DXGI_ERROR_DEVICE_RESET)
 	{
 		g_deviceLost = true;
@@ -4922,11 +4923,9 @@ void renderFrame()
 	// Advance to next backbuffer
 	g_frameIndex = g_swapChain->GetCurrentBackBufferIndex();
 
-	// Wait if the next backbuffer is still in-flight
-	if (g_fence->GetCompletedValue() < g_fenceValues[g_frameIndex])
-	{
-		SafeWaitForFence(g_fence, g_fenceValues[g_frameIndex], g_fenceEvent, 5000, "renderFrame frame fence");
-	}
+	// Pipelined GPU-CPU overlap: we do NOT block the CPU here!
+	// Next frame's CPU recording will overlap with the GPU's execution of this frame.
+	// We only synchronize at the start of the next frame before re-using that specific backbuffer.
 
 	// Update non-stalling readback statistics for Mesh Cluster Culling (dev.md Section 14)
 	if (Eunoia::MeshClusterCullingSystem::Get().IsInitialized())

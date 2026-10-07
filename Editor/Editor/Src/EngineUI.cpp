@@ -819,6 +819,8 @@ void EngineUI::LoadEditorConfig() {
                     currentTextureQuality = (TextureQuality)tq;
                     TextureManager::Get().SetTextureQualitySilent(currentTextureQuality);
                 }
+            } else if (key == "VSync" || key == "vsync") {
+                vsyncEnabled = (fVal > 0.5f);
             } else if (key == "ContentThumbnailSize" || key == "contentThumbnailSize" || key == "ThumbnailSize" || key == "thumbnailSize") {
                 contentThumbnailSize = std::clamp(fVal, 48.0f, 256.0f);
             } else if (key == "UIScale" || key == "uiScale" || key == "Scale") {
@@ -856,6 +858,7 @@ void EngineUI::SaveEditorConfig() {
     file << "\n[Graphics]\n";
     file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
     file << "TextureQuality=" << (int)currentTextureQuality << "\n";
+    file << "VSync=" << (vsyncEnabled ? 1 : 0) << "\n";
     file.close();
 }
 
@@ -3799,6 +3802,19 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     }
 
                     ImGui::EndMenu();
+                }
+
+                // ================================================================
+                // VSYNC & FRAME SYNC
+                // ================================================================
+                ImGui::Separator();
+                if (ImGui::MenuItem("VSync (Vertical Sync)", nullptr, vsyncEnabled)) {
+                    vsyncEnabled = !vsyncEnabled;
+                    SaveEditorConfig();
+                    AddLog("LogRenderer", vsyncEnabled ? "VSync Enabled (capped to monitor refresh rate)" : "VSync Disabled (unlocked high FPS)", 0);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Toggle VSync: When OFF, frame rate unlocks for maximum FPS performance.\nWhen ON, syncs with monitor refresh rate to eliminate screen tearing.");
                 }
 
                 ImGui::EndMenu();

@@ -1657,6 +1657,24 @@ struct RenderBatch {
             bool isVisible;
         };
 
+        // Extract 6 frustum planes (Gribb & Hartmann) if viewProj is available
+        glm::vec4 frustumPlanes[6];
+        bool hasFrustum = (pViewProj != nullptr);
+        if (hasFrustum) {
+            const glm::mat4& m = *pViewProj;
+            frustumPlanes[0] = glm::vec4(m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0]); // Left
+            frustumPlanes[1] = glm::vec4(m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0]); // Right
+            frustumPlanes[2] = glm::vec4(m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1]); // Bottom
+            frustumPlanes[3] = glm::vec4(m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1]); // Top
+            frustumPlanes[4] = glm::vec4(m[0][2],            m[1][2],            m[2][2],            m[3][2]);            // Near [0..1]
+            frustumPlanes[5] = glm::vec4(m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2]); // Far
+
+            for (int p = 0; p < 6; ++p) {
+                float len = glm::length(glm::vec3(frustumPlanes[p]));
+                if (len > 1e-6f) frustumPlanes[p] /= len;
+            }
+        }
+
         std::vector<CandidateEntry> opaqueEntries;
         std::vector<CandidateEntry> transparentEntries;
         opaqueEntries.reserve(objects.size());
@@ -1665,12 +1683,28 @@ struct RenderBatch {
             if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
             if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
 
-            bool isBatchVisible = true;
-
             glm::mat4 model = GetWorldMatrix(obj);
             glm::vec3 objPos = glm::vec3(model[3]);
             glm::vec3 diff = cameraPos - objPos;
             float distSq = glm::dot(diff, diff);
+
+            bool isBatchVisible = true;
+            if (hasFrustum) {
+                // Hierarchical bounding sphere test
+                glm::vec3 bCenter = obj.mesh.aabbValid ? (obj.mesh.aabbMin + obj.mesh.aabbMax) * 0.5f : glm::vec3(0.0f);
+                float localRadius = obj.mesh.aabbValid ? glm::length(obj.mesh.aabbMax - bCenter) : 1.0f;
+                glm::vec3 worldCenter = glm::vec3(model * glm::vec4(bCenter, 1.0f));
+                float maxScale = std::max({ glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2])) });
+                float worldRadius = localRadius * maxScale;
+
+                for (int p = 0; p < 6; ++p) {
+                    float dist = glm::dot(glm::vec3(frustumPlanes[p]), worldCenter) + frustumPlanes[p].w;
+                    if (dist < -worldRadius) {
+                        isBatchVisible = false;
+                        break;
+                    }
+                }
+            }
 
             bool isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
             if (isTrans) {

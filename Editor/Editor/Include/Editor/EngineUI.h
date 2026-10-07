@@ -217,6 +217,7 @@ public:
 
     AntiAliasingMethod currentAntiAliasing = AntiAliasingMethod::FXAA;
     TextureQuality currentTextureQuality = TextureQuality::None;
+    bool vsyncEnabled = false;
     void ApplyTextureQuality(TextureQuality quality);
     void RenderQualitySettings();
     static const std::vector<AntiAliasingInfo>& GetAntiAliasingMethods();
@@ -377,7 +378,7 @@ public:
     bool lockAspectScale = false;
 
     // On-Demand Viewport Rendering (Power-saver: only renders when giving inputs or changing properties)
-    bool realtimeViewport = false;
+    bool realtimeViewport = true;
     int viewportRedrawCountdown = 15;
     void RequestViewportRedraw(int frames = 10) {
         if (frames > viewportRedrawCountdown) {
