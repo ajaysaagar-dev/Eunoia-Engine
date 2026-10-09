@@ -1423,7 +1423,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             // Title Header
             ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "EUNOIA ENGINE");
             ImGui::SameLine();
-            ImGui::TextDisabled(" Project Browser");
+            ImGui::TextDisabled("— Project Browser");
             ImGui::Spacing();
             ImGui::TextWrapped("Select an existing project or create a new empty game project to get started.");
             ImGui::Spacing();

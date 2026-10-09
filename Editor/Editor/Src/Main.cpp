@@ -5996,52 +5996,15 @@ int main(int argc, char** argv)
 		selectedProjectPath = gameProjectPath.empty() ? std::filesystem::current_path() : gameProjectPath;
 		std::cerr << "[INFO] Launching in Dedicated Game Mode for: " << selectedProjectPath.string() << std::endl;
 	} else {
-		// If project wasn't explicitly given via CLI, resolve or offer browser
+		// If project wasn't explicitly given via CLI, launch the standalone Project Browser window
 		if (selectedProjectPath.empty()) {
-			if (forceStandaloneBrowser) {
-				selectedProjectPath = EngineUI::RunStandaloneProjectBrowser();
-			}
+			selectedProjectPath = EngineUI::RunStandaloneProjectBrowser();
 			
-			// If still empty (browser closed or not forced), check recent projects history
+			// If user closed the project browser or pressed Quit, exit cleanly
 			if (selectedProjectPath.empty()) {
-				std::error_code ec;
-				std::filesystem::path recentCfg;
-				char* appdata = getenv("LOCALAPPDATA");
-				if (appdata) {
-					recentCfg = std::filesystem::path(appdata) / "EunoiaEngine" / "RecentProjects.json";
-				} else {
-					recentCfg = "RecentProjects.json";
-				}
-				if (std::filesystem::exists(recentCfg, ec)) {
-					std::ifstream rf(recentCfg);
-					if (rf.is_open()) {
-						try {
-							nlohmann::json rj;
-							rf >> rj;
-							if (rj.is_array() && !rj.empty() && rj[0].contains("rootPath")) {
-								std::string rp = rj[0]["rootPath"].get<std::string>();
-								if (std::filesystem::exists(rp, ec)) {
-									selectedProjectPath = rp;
-								}
-							}
-						} catch (...) {}
-					}
-				}
-
-				// Fallback to Unknown-13 or Default project directory
-				if (selectedProjectPath.empty()) {
-					std::filesystem::path defaultProj = "C:\\Projects\\Eunoia-Engine\\Projects\\Unknown-13";
-					if (std::filesystem::exists(defaultProj, ec)) {
-						selectedProjectPath = defaultProj;
-					} else {
-						std::filesystem::path curProj = std::filesystem::current_path() / "Projects" / "Unknown-13";
-						if (std::filesystem::exists(curProj, ec)) {
-							selectedProjectPath = curProj;
-						} else {
-							selectedProjectPath = "C:\\Projects\\Eunoia-Engine\\Projects\\Unknown-13";
-						}
-					}
-				}
+				std::cerr << "[INFO] Project Browser closed without selection. Exiting.\n";
+				glfwTerminate();
+				return 0;
 			}
 		}
 		std::cerr << "[INFO] Project selected: " << selectedProjectPath.string() << std::endl;
