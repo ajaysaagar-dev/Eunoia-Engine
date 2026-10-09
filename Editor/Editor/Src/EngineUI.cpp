@@ -3177,19 +3177,10 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         // Vertically center content in title bar
         ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
 
-        // 1. Engine Logo & Name "EUEN" matching Eunoia Engine's UI.svg
-        if (engineIconGpuHandle) {
-            ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(20.0f * uiScale, 20.0f * uiScale));
-            ImGui::SameLine(0.0f, 8.0f * uiScale);
-        }
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-        ImGui::TextUnformatted("EUEN");
-        ImGui::PopStyleColor();
-
-        // 2. Play Mode Indicator (if active)
+        // Play Mode Indicator (if active)
         if (scene.isPlayMode) {
-            ImGui::SameLine(0.0f, 10.0f * uiScale);
             ImGui::TextColored(ImVec4(0.20f, 0.88f, 0.40f, 1.0f), "● PLAY MODE");
+            ImGui::SameLine(0.0f, 10.0f * uiScale);
         }
 
         float btnH = 25.0f * uiScale;
@@ -3198,13 +3189,10 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         float spacing = 6.0f * uiScale;
         float btnAreaW = minW + clsW + spacing + 20.0f * uiScale;
 
-        // 4. Workspace Tabs on Left Side of Title Bar (matching Eunoia Engine's UI.svg)
-        float currentX = ImGui::GetCursorPosX();
-        float tabStartX = currentX + 16.0f * uiScale;
+        // Workspace Tabs on Left Side of Title Bar (matching Eunoia Engine's UI.svg)
         float tabRightLimit = topBarW - btnAreaW - 8.0f * uiScale;
 
-        if (tabStartX < tabRightLimit) {
-            ImGui::SameLine(tabStartX);
+        if (ImGui::GetCursorPosX() < tabRightLimit) {
             ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
 
             auto& uiMgr = EunoiaUI::UIEditorManager::Get();
