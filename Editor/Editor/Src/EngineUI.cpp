@@ -5114,6 +5114,70 @@ void EngineUI::RenderOutliner(Scene& scene) {
     ImGui::End();
 }
 
+bool EngineUI::DrawVec3Row(const char* rowLabel, glm::vec3& values, float resetValue, float speed, bool isScale, bool* lockAspect) {
+    bool modified = false;
+    ImGui::PushID(rowLabel);
+
+    ImGui::Text("%s", rowLabel);
+
+    float availW = ImGui::GetContentRegionAvail().x;
+    float itemSpacing = ImGui::GetStyle().ItemSpacing.x;
+    // 3 columns: X, Y, Z
+    float colW = (availW - itemSpacing * 2.0f) / 3.0f;
+    float btnW = 20.0f * uiScale;
+    float dragW = std::max(20.0f, colW - btnW - 2.0f);
+
+    struct AxisInfo {
+        const char* label;
+        float* val;
+        glm::vec4 col;
+    };
+    AxisInfo axes[3] = {
+        { "X", &values.x, glm::vec4(0.85f, 0.22f, 0.22f, 1.0f) },
+        { "Y", &values.y, glm::vec4(0.25f, 0.75f, 0.25f, 1.0f) },
+        { "Z", &values.z, glm::vec4(0.22f, 0.50f, 0.90f, 1.0f) }
+    };
+
+    float prevX = values.x;
+
+    for (int i = 0; i < 3; ++i) {
+        if (i > 0) ImGui::SameLine(0.0f, itemSpacing);
+        ImGui::PushID(axes[i].label);
+
+        // Axis button pill
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(axes[i].col.r, axes[i].col.g, axes[i].col.b, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(axes[i].col.r * 1.15f, axes[i].col.g * 1.15f, axes[i].col.b * 1.15f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(axes[i].col.r * 0.9f, axes[i].col.g * 0.9f, axes[i].col.b * 0.9f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1, 1, 1, 1));
+        if (ImGui::Button(axes[i].label, ImVec2(btnW, 0))) {
+            *axes[i].val = resetValue;
+            modified = true;
+        }
+        ImGui::PopStyleColor(4);
+
+        ImGui::SameLine(0.0f, 2.0f);
+        ImGui::SetNextItemWidth(dragW);
+        char dragId[32];
+        snprintf(dragId, sizeof(dragId), "##val_%s", axes[i].label);
+        if (ImGui::DragFloat(dragId, axes[i].val, speed, 0.0f, 0.0f, "%.2f")) {
+            modified = true;
+            if (isScale && i == 0 && lockAspect && *lockAspect) {
+                float ratio = (prevX > 0.001f || prevX < -0.001f) ? (values.x / prevX) : 1.0f;
+                values.y *= ratio;
+                values.z *= ratio;
+            }
+        }
+
+        ImGui::PopID();
+    }
+
+    ImGui::PopID();
+    if (modified) {
+        RequestViewportRedraw(10);
+    }
+    return modified;
+}
+
 bool EngineUI::DrawTransformPill(const char* label, float& value, const glm::vec4& color, float resetValue, float speed) {
     bool modified = false;
     ImGui::PushID(label);
@@ -5273,41 +5337,22 @@ void EngineUI::RenderDetails(Scene& scene) {
 
         ImGui::Separator();
 
-        // 1. Transform Category (Unreal Style X=Red, Y=Green, Z=Blue pills)
+        // 1. Transform Category (Horizontal Compact: Location, Rotation, Scale)
         if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
             bool transformChanged = false;
+
             // Location
-            ImGui::PushID("Location");
-            ImGui::Text("Location");
-            transformChanged |= DrawTransformPill("X", obj->position.x, glm::vec4(0.85f, 0.22f, 0.22f, 1.0f), 0.0f);
-            transformChanged |= DrawTransformPill("Y", obj->position.y, glm::vec4(0.25f, 0.75f, 0.25f, 1.0f), 0.0f);
-            transformChanged |= DrawTransformPill("Z", obj->position.z, glm::vec4(0.22f, 0.50f, 0.90f, 1.0f), 0.0f);
-            ImGui::PopID();
+            transformChanged |= DrawVec3Row("Location", obj->position, 0.0f, 0.05f);
+            ImGui::Spacing();
 
             // Rotation
-            ImGui::PushID("Rotation");
+            transformChanged |= DrawVec3Row("Rotation", obj->rotation, 0.0f, 1.0f);
             ImGui::Spacing();
-            ImGui::Text("Rotation");
-            transformChanged |= DrawTransformPill("X", obj->rotation.x, glm::vec4(0.85f, 0.22f, 0.22f, 1.0f), 0.0f, 1.0f);
-            transformChanged |= DrawTransformPill("Y", obj->rotation.y, glm::vec4(0.25f, 0.75f, 0.25f, 1.0f), 0.0f, 1.0f);
-            transformChanged |= DrawTransformPill("Z", obj->rotation.z, glm::vec4(0.22f, 0.50f, 0.90f, 1.0f), 0.0f, 1.0f);
-            ImGui::PopID();
 
             // Scale
-            ImGui::PushID("Scale");
+            transformChanged |= DrawVec3Row("Scale", obj->scale, 1.0f, 0.02f, true, &lockAspectScale);
             ImGui::Spacing();
-            ImGui::Text("Scale");
-            float prevScaleX = obj->scale.x;
-            if (DrawTransformPill("X", obj->scale.x, glm::vec4(0.85f, 0.22f, 0.22f, 1.0f), 1.0f, 0.02f) && lockAspectScale) {
-                float ratio = (prevScaleX > 0.001f) ? (obj->scale.x / prevScaleX) : 1.0f;
-                obj->scale.y *= ratio;
-                obj->scale.z *= ratio;
-                transformChanged = true;
-            }
-            transformChanged |= DrawTransformPill("Y", obj->scale.y, glm::vec4(0.25f, 0.75f, 0.25f, 1.0f), 1.0f, 0.02f);
-            transformChanged |= DrawTransformPill("Z", obj->scale.z, glm::vec4(0.22f, 0.50f, 0.90f, 1.0f), 1.0f, 0.02f);
             ImGui::Checkbox("Lock Uniform Scale", &lockAspectScale);
-            ImGui::PopID();
 
             if (transformChanged && (obj->isLight || IsLightPrimitive(obj->type))) {
                 scene.SyncLightPositionsFromActors();
