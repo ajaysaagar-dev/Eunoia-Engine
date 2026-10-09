@@ -1494,16 +1494,17 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                         ImGui::PushID((int)i);
                         bool isSelected = (selectedIdx == (int)i);
 
+                        ImVec2 curPos = ImGui::GetCursorPos();
+                        ImVec2 itemSize(ImGui::GetContentRegionAvail().x, 48.0f);
+
                         if (isSelected) {
                             ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.45f, 0.85f, 0.45f));
                             ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.16f, 0.52f, 0.95f, 0.65f));
                         }
 
-                        if (ImGui::Selectable("##ProjSel", isSelected, ImGuiSelectableFlags_AllowDoubleClick, ImVec2(0, 48))) {
+                        if (ImGui::Selectable("##ProjSel", isSelected, ImGuiSelectableFlags_AllowDoubleClick, itemSize)) {
                             selectedIdx = (int)i;
                         }
-
-                        // Double-click to open
                         if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             selectedProject = p.rootPath;
                         }
@@ -1512,17 +1513,20 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                             ImGui::PopStyleColor(2);
                         }
 
-                        ImGui::SameLine(12.0f);
+                        // Render text inside selectable card area
+                        ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
                         ImGui::BeginGroup();
                         ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
                         ImGui::TextDisabled("Path: %s", p.rootPath.c_str());
                         ImGui::EndGroup();
 
                         if (!p.lastOpened.empty()) {
-                            ImGui::SameLine((float)BROWSER_W - 220.0f);
+                            ImGui::SetCursorPos(ImVec2((float)BROWSER_W - 220.0f, curPos.y + 14.0f));
                             ImGui::TextDisabled("%s", p.lastOpened.c_str());
                         }
 
+                        // Reset cursor to next line below the item
+                        ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y));
                         ImGui::Separator();
                         ImGui::PopID();
                     }
@@ -3208,14 +3212,14 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             // Level Editor Tab (Always open)
             bool isMainActive = uiMgr.IsMainEditorActive() && !vbMgr.HasActiveTab() && !showMaterialEditor;
             if (isMainActive) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f)); // #1F99F2 active tab
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 active tab
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
             }
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
@@ -3232,10 +3236,10 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             if (showMaterialEditor && !activeMaterial.name.empty()) {
                 if (ImGui::GetCursorPosX() < tabRightLimit - 120.0f * uiScale) {
                     ImGui::SameLine(0.0f, 6.0f * uiScale);
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f)); // Active tab
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
                     ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
                     ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
@@ -3281,14 +3285,14 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
                 bool isTabActive = (!vbMgr.HasActiveTab() && activeTab == tabIdx);
 
                 if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
                 }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
@@ -3337,14 +3341,14 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
                 bool isTabActive = (vbMgr.HasActiveTab() && activeVbTab == (int)i);
 
                 if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
                 }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
                 ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
                 ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
@@ -13987,13 +13991,16 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
                     ImGui::PushID((int)i);
                     bool isSelected = (selectedProjectIndex == (int)i);
 
+                    ImVec2 curPos = ImGui::GetCursorPos();
+                    ImVec2 itemSize(ImGui::GetContentRegionAvail().x, 48.0f);
+
                     if (isSelected) {
                         ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.45f, 0.85f, 0.45f));
                         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.16f, 0.52f, 0.95f, 0.65f));
                     }
 
                     ImGuiSelectableFlags sFlags = ImGuiSelectableFlags_AllowDoubleClick;
-                    if (ImGui::Selectable("##ProjectSelectable", isSelected, sFlags, ImVec2(0, 48))) {
+                    if (ImGui::Selectable("##ProjectSelectable", isSelected, sFlags, itemSize)) {
                         selectedProjectIndex = (int)i;
                     }
 
@@ -14007,17 +14014,18 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
                     }
 
                     // Render content inside card
-                    ImGui::SameLine(12.0f);
+                    ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
                     ImGui::BeginGroup();
                     ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
                     ImGui::TextDisabled("Root: %s  |  Content: %s/Content", p.rootPath.c_str(), p.rootPath.c_str());
                     ImGui::EndGroup();
 
                     if (!p.lastOpened.empty()) {
-                        ImGui::SameLine(winW - 220.0f);
+                        ImGui::SetCursorPos(ImVec2(winW - 220.0f, curPos.y + 14.0f));
                         ImGui::TextDisabled("%s", p.lastOpened.c_str());
                     }
 
+                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y));
                     ImGui::Separator();
                     ImGui::PopID();
                 }
