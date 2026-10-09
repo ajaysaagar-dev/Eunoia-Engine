@@ -2554,65 +2554,74 @@ void EngineUI::SetupTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // Friendly, comfortable UI sizing and clean modern styling
+    // Sizing and rounding matching Eunoia Engine's UI.svg (rx=5px everywhere)
     style.WindowRounding    = 0.0f;
-    style.ChildRounding     = 3.0f;
-    style.FrameRounding     = 4.0f;
-    style.PopupRounding     = 4.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.GrabRounding      = 4.0f;
-    style.TabRounding       = 4.0f;
+    style.ChildRounding     = 5.0f;
+    style.FrameRounding     = 5.0f;
+    style.PopupRounding     = 5.0f;
+    style.ScrollbarRounding = 5.0f;
+    style.GrabRounding      = 5.0f;
+    style.TabRounding       = 5.0f;
 
-    style.WindowBorderSize  = 1.0f;
+    style.WindowBorderSize  = 0.0f;
     style.FrameBorderSize   = 0.0f;
     style.PopupBorderSize   = 1.0f;
 
-    style.WindowPadding     = ImVec2(12.0f, 10.0f);
-    style.FramePadding      = ImVec2(8.0f, 6.0f);
-    style.ItemSpacing       = ImVec2(9.0f, 7.0f);
-    style.ItemInnerSpacing  = ImVec2(7.0f, 5.0f);
-    style.ScrollbarSize     = 16.0f;
+    style.WindowPadding     = ImVec2(10.0f, 8.0f);
+    style.FramePadding      = ImVec2(8.0f, 5.0f);
+    style.ItemSpacing       = ImVec2(8.0f, 6.0f);
+    style.ItemInnerSpacing  = ImVec2(6.0f, 5.0f);
+    style.ScrollbarSize     = 14.0f;
     style.GrabMinSize       = 14.0f;
 
-    // Color Palette matching Read-Only Old Eunoia Engine
-    colors[ImGuiCol_Text]                  = ImVec4(0.96f, 0.96f, 0.96f, 1.00f);
-    colors[ImGuiCol_TextDisabled]          = ImVec4(0.55f, 0.57f, 0.60f, 1.00f);
-    colors[ImGuiCol_WindowBg]              = ImVec4(0.169f, 0.169f, 0.169f, 0.98f);
-    colors[ImGuiCol_ChildBg]               = ImVec4(0.125f, 0.125f, 0.125f, 0.70f);
-    colors[ImGuiCol_PopupBg]               = ImVec4(0.155f, 0.155f, 0.155f, 0.98f);
-    colors[ImGuiCol_Border]                = ImVec4(0.08f, 0.08f, 0.08f, 0.85f);
+    // Color Palette exactly matching Eunoia Engine's UI.svg
+    const ImVec4 pureBlack     = ImVec4(0.000f, 0.000f, 0.000f, 1.00f); // Pure black #000000
+    const ImVec4 frameDark     = ImVec4(0.129f, 0.129f, 0.129f, 1.00f); // #212121
+    const ImVec4 frameHover    = ImVec4(0.180f, 0.180f, 0.180f, 1.00f); // #2E2E2E
+    const ImVec4 accentBlue    = ImVec4(0.122f, 0.600f, 0.949f, 1.00f); // #1F99F2 Eunoia Cyan/Blue
+    const ImVec4 textWhite     = ImVec4(1.000f, 1.000f, 1.000f, 1.00f); // Pure White #FFFFFF
+    const ImVec4 textMuted     = ImVec4(0.482f, 0.482f, 0.482f, 1.00f); // #7B7B7B
+    const ImVec4 subtleBorder  = ImVec4(0.090f, 0.090f, 0.090f, 0.85f); // #161616
+    const ImVec4 sepGray       = ImVec4(0.373f, 0.384f, 0.400f, 1.00f); // #5F6266
+
+    colors[ImGuiCol_Text]                  = textWhite;
+    colors[ImGuiCol_TextDisabled]          = textMuted;
+    colors[ImGuiCol_WindowBg]              = pureBlack;
+    colors[ImGuiCol_ChildBg]               = pureBlack;
+    colors[ImGuiCol_PopupBg]               = ImVec4(0.07f, 0.07f, 0.07f, 0.98f);
+    colors[ImGuiCol_Border]                = subtleBorder;
     colors[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg]               = ImVec4(0.120f, 0.120f, 0.120f, 0.90f);
-    colors[ImGuiCol_FrameBgHovered]        = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]         = ImVec4(0.240f, 0.240f, 0.240f, 1.00f);
-    colors[ImGuiCol_TitleBg]               = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
-    colors[ImGuiCol_TitleBgActive]         = ImVec4(0.160f, 0.160f, 0.160f, 1.00f);
-    colors[ImGuiCol_TitleBgCollapsed]      = ImVec4(0.130f, 0.130f, 0.130f, 0.80f);
-    colors[ImGuiCol_MenuBarBg]             = ImVec4(0.140f, 0.140f, 0.140f, 1.00f);
-    colors[ImGuiCol_ScrollbarBg]           = ImVec4(0.120f, 0.120f, 0.120f, 0.60f);
-    colors[ImGuiCol_ScrollbarGrab]         = ImVec4(0.280f, 0.280f, 0.280f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.350f, 0.350f, 0.350f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.420f, 0.420f, 0.420f, 1.00f);
-    colors[ImGuiCol_CheckMark]             = ImVec4(0.12f, 0.60f, 0.95f, 1.00f);
-    colors[ImGuiCol_SliderGrab]            = ImVec4(0.12f, 0.60f, 0.95f, 1.00f);
+    colors[ImGuiCol_FrameBg]               = frameDark;
+    colors[ImGuiCol_FrameBgHovered]        = frameHover;
+    colors[ImGuiCol_FrameBgActive]         = frameHover;
+    colors[ImGuiCol_TitleBg]               = pureBlack;
+    colors[ImGuiCol_TitleBgActive]         = pureBlack;
+    colors[ImGuiCol_TitleBgCollapsed]      = pureBlack;
+    colors[ImGuiCol_MenuBarBg]             = pureBlack;
+    colors[ImGuiCol_ScrollbarBg]           = pureBlack;
+    colors[ImGuiCol_ScrollbarGrab]         = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.42f, 0.42f, 0.42f, 1.00f);
+    colors[ImGuiCol_CheckMark]             = accentBlue;
+    colors[ImGuiCol_SliderGrab]            = accentBlue;
     colors[ImGuiCol_SliderGrabActive]      = ImVec4(0.20f, 0.70f, 1.00f, 1.00f);
-    colors[ImGuiCol_Button]                = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-    colors[ImGuiCol_ButtonHovered]         = ImVec4(0.260f, 0.260f, 0.260f, 1.00f);
-    colors[ImGuiCol_ButtonActive]          = ImVec4(0.12f, 0.60f, 0.95f, 1.00f);
-    colors[ImGuiCol_Header]                = ImVec4(0.220f, 0.220f, 0.220f, 0.85f);
-    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.12f, 0.60f, 0.95f, 0.65f);
-    colors[ImGuiCol_HeaderActive]          = ImVec4(0.12f, 0.60f, 0.95f, 0.95f);
-    colors[ImGuiCol_Separator]             = ImVec4(0.120f, 0.120f, 0.120f, 0.90f);
-    colors[ImGuiCol_SeparatorHovered]      = ImVec4(0.12f, 0.60f, 0.95f, 0.78f);
-    colors[ImGuiCol_SeparatorActive]       = ImVec4(0.12f, 0.60f, 0.95f, 1.00f);
+    colors[ImGuiCol_Button]                = frameDark;
+    colors[ImGuiCol_ButtonHovered]         = frameHover;
+    colors[ImGuiCol_ButtonActive]          = accentBlue;
+    colors[ImGuiCol_Header]                = ImVec4(0.16f, 0.16f, 0.16f, 0.90f);
+    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.22f, 0.22f, 0.22f, 0.95f);
+    colors[ImGuiCol_HeaderActive]          = accentBlue;
+    colors[ImGuiCol_Separator]             = sepGray;
+    colors[ImGuiCol_SeparatorHovered]      = accentBlue;
+    colors[ImGuiCol_SeparatorActive]       = accentBlue;
     colors[ImGuiCol_ResizeGrip]            = ImVec4(0.12f, 0.60f, 0.95f, 0.20f);
     colors[ImGuiCol_ResizeGripHovered]     = ImVec4(0.12f, 0.60f, 0.95f, 0.67f);
     colors[ImGuiCol_ResizeGripActive]      = ImVec4(0.12f, 0.60f, 0.95f, 0.95f);
-    colors[ImGuiCol_Tab]                   = ImVec4(0.150f, 0.150f, 0.150f, 0.90f);
-    colors[ImGuiCol_TabHovered]            = ImVec4(0.240f, 0.240f, 0.240f, 1.00f);
-    colors[ImGuiCol_TabActive]             = ImVec4(0.12f, 0.60f, 0.95f, 0.90f);
-    colors[ImGuiCol_TabUnfocused]          = ImVec4(0.130f, 0.130f, 0.130f, 0.90f);
-    colors[ImGuiCol_TabUnfocusedActive]   = ImVec4(0.180f, 0.180f, 0.180f, 1.00f);
+    colors[ImGuiCol_Tab]                   = frameDark;
+    colors[ImGuiCol_TabHovered]            = frameHover;
+    colors[ImGuiCol_TabActive]             = accentBlue;
+    colors[ImGuiCol_TabUnfocused]          = frameDark;
+    colors[ImGuiCol_TabUnfocusedActive]   = frameHover;
 #ifdef ImGuiCol_DockingPreview
     colors[ImGuiCol_DockingPreview]        = ImVec4(0.12f, 0.60f, 0.95f, 0.70f);
 #endif
@@ -2623,17 +2632,17 @@ void EngineUI::SetupTheme() {
     colors[ImGuiCol_PlotLinesHovered]      = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
     colors[ImGuiCol_PlotHistogram]         = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
     colors[ImGuiCol_PlotHistogramHovered]  = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg]         = ImVec4(0.19f, 0.19f, 0.20f, 1.00f);
-    colors[ImGuiCol_TableBorderStrong]     = ImVec4(0.15f, 0.15f, 0.16f, 1.00f);
-    colors[ImGuiCol_TableBorderLight]      = ImVec4(0.11f, 0.11f, 0.12f, 1.00f);
-    colors[ImGuiCol_TableRowBg]            = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_TableRowBgAlt]         = ImVec4(1.00f, 1.00f, 1.00f, 0.06f);
+    colors[ImGuiCol_TableHeaderBg]         = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+    colors[ImGuiCol_TableBorderStrong]     = subtleBorder;
+    colors[ImGuiCol_TableBorderLight]      = subtleBorder;
+    colors[ImGuiCol_TableRowBg]            = pureBlack;
+    colors[ImGuiCol_TableRowBgAlt]         = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
     colors[ImGuiCol_TextSelectedBg]        = ImVec4(0.12f, 0.60f, 0.95f, 0.35f);
-    colors[ImGuiCol_DragDropTarget]        = ImVec4(0.12f, 0.60f, 0.95f, 0.90f);
-    colors[ImGuiCol_NavHighlight]          = ImVec4(0.12f, 0.60f, 0.95f, 1.00f);
-    colors[ImGuiCol_NavWindowingHighlight] = ImVec4(1.00f, 1.00f, 1.00f, 0.70f);
-    colors[ImGuiCol_NavWindowingDimBg]     = ImVec4(0.80f, 0.80f, 0.80f, 0.20f);
-    colors[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.08f, 0.12f, 0.18f, 0.85f);
+    colors[ImGuiCol_DragDropTarget]        = accentBlue;
+    colors[ImGuiCol_NavHighlight]          = accentBlue;
+    colors[ImGuiCol_NavWindowingHighlight] = textWhite;
+    colors[ImGuiCol_NavWindowingDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.50f);
+    colors[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.70f);
 
     if (uiScale != 1.0f) {
         style.ScaleAllSizes(uiScale);
@@ -2643,7 +2652,7 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::ApplyUIScale(float scale) {
     uiScale = std::clamp(scale, 0.25f, 2.50f);
-    topBarHeight = 68.0f * uiScale;
+    topBarHeight = 76.0f * uiScale;
     SetupTheme();
 }
 
@@ -3133,7 +3142,7 @@ void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShou
 
 void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float titleBarH = 30.0f * uiScale;
+    float titleBarH = 38.0f * uiScale;
     float topBarW = vp->Size.x;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y), ImGuiCond_Always);
@@ -3146,7 +3155,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.065f, 0.070f, 0.088f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.000f, 0.000f, 0.000f, 1.0f));
 
     if (ImGui::Begin("##CustomTitleBar", nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -3166,32 +3175,37 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 #endif
 
         // Vertically center content in title bar
-        ImGui::SetCursorPosY(std::max(2.0f, 5.0f * uiScale));
+        ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
 
-        // 1. Engine Logo
+        // 1. Engine Logo & Name "EUEN" matching Eunoia Engine's UI.svg
         if (engineIconGpuHandle) {
-            ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(16.0f * uiScale, 16.0f * uiScale));
-            ImGui::SameLine(0.0f, 6.0f);
+            ImGui::Image((ImTextureID)engineIconGpuHandle, ImVec2(20.0f * uiScale, 20.0f * uiScale));
+            ImGui::SameLine(0.0f, 8.0f * uiScale);
         }
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        ImGui::TextUnformatted("EUEN");
+        ImGui::PopStyleColor();
 
         // 2. Play Mode Indicator (if active)
         if (scene.isPlayMode) {
+            ImGui::SameLine(0.0f, 10.0f * uiScale);
             ImGui::TextColored(ImVec4(0.20f, 0.88f, 0.40f, 1.0f), "● PLAY MODE");
         }
 
-        float btnAreaW = 138.0f * uiScale;
-        float btnY = vp->Pos.y;
-        float btnH = titleBarH;
-        float btnW = btnAreaW / 3.0f;
+        float btnH = 25.0f * uiScale;
+        float minW = 70.0f * uiScale;
+        float clsW = 60.0f * uiScale;
+        float spacing = 6.0f * uiScale;
+        float btnAreaW = minW + clsW + spacing + 20.0f * uiScale;
 
-        // 4. Workspace Tabs on Left Side of Title Bar
+        // 4. Workspace Tabs on Left Side of Title Bar (matching Eunoia Engine's UI.svg)
         float currentX = ImGui::GetCursorPosX();
         float tabStartX = currentX + 16.0f * uiScale;
         float tabRightLimit = topBarW - btnAreaW - 8.0f * uiScale;
 
         if (tabStartX < tabRightLimit) {
             ImGui::SameLine(tabStartX);
-            ImGui::SetCursorPosY(std::max(2.0f, 4.0f * uiScale));
+            ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
 
             auto& uiMgr = EunoiaUI::UIEditorManager::Get();
             auto& vbMgr = VisualBehaviuors::BehaviourEditorManager::Get();
@@ -3201,27 +3215,20 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             // Level Editor Tab (Always open)
             bool isMainActive = uiMgr.IsMainEditorActive() && !vbMgr.HasActiveTab();
             if (isMainActive) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f)); // #1F99F2 active tab
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.11f, 0.14f, 0.7f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
             }
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.28f, 0.36f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
-            if (ImGui::Button("Level Editor", ImVec2(0.0f, 22.0f * uiScale))) {
+            if (ImGui::Button("Level Editor", ImVec2(0.0f, 25.0f * uiScale))) {
                 uiMgr.SwitchToMainEditor();
                 vbMgr.Deactivate();
-            }
-            if (isMainActive) {
-                ImVec2 minPos = ImGui::GetItemRectMin();
-                ImVec2 maxPos = ImGui::GetItemRectMax();
-                dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
-                                  ImVec2(maxPos.x, maxPos.y),
-                                  IM_COL32(0, 122, 204, 255), 1.5f);
             }
 
             ImGui::PopStyleVar(2);
@@ -3233,52 +3240,45 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             for (size_t i = 0; i < editors.size(); ++i) {
                 if (ImGui::GetCursorPosX() > tabRightLimit - 120.0f * uiScale) break;
 
-                ImGui::SameLine(0.0f, 4.0f * uiScale);
+                ImGui::SameLine(0.0f, 6.0f * uiScale);
                 int tabIdx = (int)i + 1;
                 bool isTabActive = (!vbMgr.HasActiveTab() && activeTab == tabIdx);
 
                 if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.11f, 0.14f, 0.7f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
                 }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.28f, 0.36f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
                 std::string label = editors[i]->name;
                 if (editors[i]->isDirty) label += "*";
                 label += "##TitleTab_" + std::to_string(i);
 
-                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 22.0f * uiScale))) {
+                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
                     vbMgr.Deactivate();
                     uiMgr.SwitchToEditor(tabIdx);
-                }
-                if (isTabActive) {
-                    ImVec2 minPos = ImGui::GetItemRectMin();
-                    ImVec2 maxPos = ImGui::GetItemRectMax();
-                    dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
-                                      ImVec2(maxPos.x, maxPos.y),
-                                      IM_COL32(0, 122, 204, 255), 1.5f);
                 }
 
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor(4);
 
                 // Close button ✕
-                ImGui::SameLine(0.0f, 1.0f * uiScale);
+                ImGui::SameLine(0.0f, 2.0f * uiScale);
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, isTabActive ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 2.0f * uiScale));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f)); // #7B7B7B
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
 
                 std::string closeLabel = "✕##TitleCloseTab_" + std::to_string(i);
-                if (ImGui::Button(closeLabel.c_str(), ImVec2(18.0f * uiScale, 22.0f * uiScale))) {
+                if (ImGui::Button(closeLabel.c_str(), ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
                     toClose = (int)i;
                 }
 
@@ -3296,20 +3296,20 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             for (size_t i = 0; i < vbEditors.size(); ++i) {
                 if (ImGui::GetCursorPosX() > tabRightLimit - 120.0f * uiScale) break;
 
-                ImGui::SameLine(0.0f, 4.0f * uiScale);
+                ImGui::SameLine(0.0f, 6.0f * uiScale);
                 bool isTabActive = (vbMgr.HasActiveTab() && activeVbTab == (int)i);
 
                 if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.22f, 0.28f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.98f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
                 } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.10f, 0.11f, 0.14f, 0.7f));
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.60f, 0.65f, 0.70f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.85f, 0.85f, 1.0f));
                 }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.28f, 0.36f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.18f, 0.24f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
 
                 std::string label = vbEditors[i]->graph.name.empty() ?
                     std::filesystem::path(vbEditors[i]->filePath).stem().string() :
@@ -3317,32 +3317,25 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
                 if (vbEditors[i]->isDirty) label += "*";
                 label += "##TitleTabVB_" + std::to_string(i);
 
-                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 22.0f * uiScale))) {
+                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
                     uiMgr.SwitchToMainEditor();
                     vbMgr.SwitchToEditor((int)i);
-                }
-                if (isTabActive) {
-                    ImVec2 minPos = ImGui::GetItemRectMin();
-                    ImVec2 maxPos = ImGui::GetItemRectMax();
-                    dl->AddRectFilled(ImVec2(minPos.x, maxPos.y - 2.0f * uiScale),
-                                      ImVec2(maxPos.x, maxPos.y),
-                                      IM_COL32(0, 122, 204, 255), 1.5f);
                 }
 
                 ImGui::PopStyleVar(2);
                 ImGui::PopStyleColor(4);
 
                 // Close button ✕
-                ImGui::SameLine(0.0f, 1.0f * uiScale);
+                ImGui::SameLine(0.0f, 2.0f * uiScale);
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, isTabActive ? ImVec4(0.85f, 0.85f, 0.85f, 1.0f) : ImVec4(0.50f, 0.50f, 0.50f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 2.0f * uiScale));
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
 
                 std::string closeLabel = "✕##TitleCloseTabVB_" + std::to_string(i);
-                if (ImGui::Button(closeLabel.c_str(), ImVec2(18.0f * uiScale, 22.0f * uiScale))) {
+                if (ImGui::Button(closeLabel.c_str(), ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
                     toCloseVb = (int)i;
                 }
 
@@ -3355,82 +3348,39 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             }
         }
 
-        // 5. Custom Window Frame Control Buttons (Minimize, Maximize/Restore, Close)
+        // 5. Custom Window Frame Control Buttons (Minimize, Close) matching Eunoia Engine's UI.svg
+        float btnY = vp->Pos.y + (titleBarH - btnH) * 0.5f;
+        ImVec2 clsMin(vp->Pos.x + topBarW - clsW - 12.0f * uiScale, btnY);
+        ImVec2 clsMax(clsMin.x + clsW, btnY + btnH);
+
+        ImVec2 minMin(clsMin.x - spacing - minW, btnY);
+        ImVec2 minMax(minMin.x + minW, btnY + btnH);
+
         bool isTitleBarHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
         bool anyItemActive = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered();
 
-        // Button bounding boxes
-        ImVec2 minMin(vp->Pos.x + topBarW - btnAreaW, btnY);
-        ImVec2 minMax(minMin.x + btnW, btnY + btnH);
         bool minHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= minMin.x && mousePos.x < minMax.x &&
                            mousePos.y >= minMin.y && mousePos.y < minMax.y);
-
-        ImVec2 maxMin(minMin.x + btnW, btnY);
-        ImVec2 maxMax(maxMin.x + btnW, btnY + btnH);
-        bool maxHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= maxMin.x && mousePos.x < maxMax.x &&
-                           mousePos.y >= maxMin.y && mousePos.y < maxMax.y);
-
-        ImVec2 clsMin(maxMin.x + btnW, btnY);
-        ImVec2 clsMax(vp->Pos.x + topBarW, btnY + btnH);
         bool clsHovered = isTitleBarHovered && !anyItemActive && (mousePos.x >= clsMin.x && mousePos.x <= clsMax.x &&
                            mousePos.y >= clsMin.y && mousePos.y <= clsMax.y);
 
-        bool anyBtnHovered = minHovered || maxHovered || clsHovered;
+        bool anyBtnHovered = minHovered || clsHovered;
 
-        // --- Minimize Button ---
-        if (minHovered) {
-            dl->AddRectFilled(minMin, minMax, mouseDown ? IM_COL32(40, 44, 55, 255) : IM_COL32(55, 60, 75, 200));
-        }
-        float minCx = (minMin.x + minMax.x) * 0.5f;
-        float minCy = (minMin.y + minMax.y) * 0.5f;
-        dl->AddLine(ImVec2(minCx - 5.0f * uiScale, minCy), ImVec2(minCx + 5.0f * uiScale, minCy), IM_COL32(210, 215, 225, 255), 1.5f * uiScale);
+        // --- Minimize Button: rect x=2413 y=6 w=70 h=25 rx=5 fill=#161616 ---
+        ImU32 minCol = minHovered ? (mouseDown ? IM_COL32(35, 35, 35, 255) : IM_COL32(28, 28, 28, 255)) : IM_COL32(22, 22, 22, 255);
+        dl->AddRectFilled(minMin, minMax, minCol, 5.0f * uiScale);
+        ImVec2 minTextSize = ImGui::CalcTextSize("Minimize");
+        dl->AddText(ImVec2(minMin.x + (minW - minTextSize.x) * 0.5f, minMin.y + (btnH - minTextSize.y) * 0.5f), IM_COL32(255, 255, 255, 255), "Minimize");
 
         if (minHovered && mouseClicked) {
-            if (m_window) {
-                glfwIconifyWindow(m_window);
-            }
+            if (m_window) glfwIconifyWindow(m_window);
         }
 
-        // --- Maximize / Restore Button ---
-        if (maxHovered) {
-            dl->AddRectFilled(maxMin, maxMax, mouseDown ? IM_COL32(40, 44, 55, 255) : IM_COL32(55, 60, 75, 200));
-        }
-        float maxCx = (maxMin.x + maxMax.x) * 0.5f;
-        float maxCy = (maxMin.y + maxMax.y) * 0.5f;
-        if (isMaximized) {
-            // Overlapping boxes (Restore icon)
-            dl->AddRect(ImVec2(maxCx - 3.0f * uiScale, maxCy - 6.0f * uiScale), ImVec2(maxCx + 5.0f * uiScale, maxCy + 2.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f * uiScale);
-            ImU32 fillCol = maxHovered ? (mouseDown ? IM_COL32(40, 44, 55, 255) : IM_COL32(55, 60, 75, 200)) : IM_COL32(17, 18, 23, 255);
-            dl->AddRectFilled(ImVec2(maxCx - 5.0f * uiScale, maxCy - 3.0f * uiScale), ImVec2(maxCx + 3.0f * uiScale, maxCy + 5.0f * uiScale), fillCol);
-            dl->AddRect(ImVec2(maxCx - 5.0f * uiScale, maxCy - 3.0f * uiScale), ImVec2(maxCx + 3.0f * uiScale, maxCy + 5.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.2f * uiScale);
-        } else {
-            // Single square box (Maximize icon)
-            dl->AddRect(ImVec2(maxCx - 5.0f * uiScale, maxCy - 5.0f * uiScale), ImVec2(maxCx + 5.0f * uiScale, maxCy + 5.0f * uiScale), IM_COL32(210, 215, 225, 255), 0.0f, 0, 1.5f * uiScale);
-        }
-
-        if (maxHovered && mouseClicked) {
-#ifdef _WIN32
-            if (hwnd) {
-                if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
-                else ShowWindow(hwnd, SW_MAXIMIZE);
-            }
-#else
-            if (m_window) {
-                if (isMaximized) glfwRestoreWindow(m_window);
-                else glfwMaximizeWindow(m_window);
-            }
-#endif
-        }
-
-        // --- Close Button ---
-        if (clsHovered) {
-            dl->AddRectFilled(clsMin, clsMax, mouseDown ? IM_COL32(190, 15, 25, 255) : IM_COL32(232, 17, 35, 255));
-        }
-        float clsCx = (clsMin.x + clsMax.x) * 0.5f;
-        float clsCy = (clsMin.y + clsMax.y) * 0.5f;
-        ImU32 crossColor = clsHovered ? IM_COL32(255, 255, 255, 255) : IM_COL32(210, 215, 225, 255);
-        dl->AddLine(ImVec2(clsCx - 5.0f * uiScale, clsCy - 5.0f * uiScale), ImVec2(clsCx + 5.0f * uiScale, clsCy + 5.0f * uiScale), crossColor, 1.5f * uiScale);
-        dl->AddLine(ImVec2(clsCx + 5.0f * uiScale, clsCy - 5.0f * uiScale), ImVec2(clsCx - 5.0f * uiScale, clsCy + 5.0f * uiScale), crossColor, 1.5f * uiScale);
+        // --- Close Button: rect x=2489 y=6 w=60 h=25 rx=5 fill=#161616 ---
+        ImU32 clsCol = clsHovered ? (mouseDown ? IM_COL32(190, 15, 25, 255) : IM_COL32(232, 17, 35, 255)) : IM_COL32(22, 22, 22, 255);
+        dl->AddRectFilled(clsMin, clsMax, clsCol, 5.0f * uiScale);
+        ImVec2 clsTextSize = ImGui::CalcTextSize("Close");
+        dl->AddText(ImVec2(clsMin.x + (clsW - clsTextSize.x) * 0.5f, clsMin.y + (btnH - clsTextSize.y) * 0.5f), IM_COL32(255, 255, 255, 255), "Close");
 
         if (clsHovered && mouseClicked) {
             outShouldExit = true;
@@ -3458,7 +3408,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         // Subtle bottom border line under title bar
         dl->AddLine(ImVec2(vp->Pos.x, vp->Pos.y + titleBarH),
                     ImVec2(vp->Pos.x + topBarW, vp->Pos.y + titleBarH),
-                    IM_COL32(35, 38, 48, 255), 1.0f);
+                    IM_COL32(22, 22, 22, 255), 1.0f);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -3468,8 +3418,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float topBarW = vp->Size.x;
-    float titleBarH = 30.0f * uiScale;
-    float menuBarH = 34.0f * uiScale;
+    float titleBarH = 38.0f * uiScale;
+    float menuBarH = 38.0f * uiScale;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + titleBarH), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(topBarW, menuBarH), ImGuiCond_Always);
@@ -4051,130 +4001,126 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::EndMenu();
             }
 
-            // Viewport Controls in MenuBar (Next to Actor, Help)
-            const ImVec4 accentBlue = ImVec4(0.12f, 0.60f, 0.95f, 1.0f);
+            // Viewport Controls in MenuBar Row 2 (Matching SVG Blueprint)
+            // Button height = 24.0f * uiScale, rounding = 5.0f, styling per SVG colors
+            const ImVec4 accentBlue = ImVec4(0.122f, 0.600f, 0.949f, 1.0f); // #1F99F2
+            const ImVec4 inactiveGray = ImVec4(0.129f, 0.129f, 0.129f, 1.0f); // #212121
+            const ImVec4 slateBlue = ImVec4(0.208f, 0.404f, 0.549f, 1.0f); // #35678C
+            const ImVec4 greenPlay = ImVec4(0.122f, 0.580f, 0.278f, 1.0f); // #1F9447
+            const ImVec4 redStop = ImVec4(0.780f, 0.180f, 0.180f, 1.0f);
+
+            float btnHeight = 24.0f * uiScale;
+
             ImGui::SameLine(0.0f, 14.0f);
             ImGui::TextDisabled("|");
             ImGui::SameLine(0.0f, 10.0f);
 
-            // FPS Stats
-            ImGui::TextColored(accentBlue, "FPS: %.1f", (currentFps > 0.0f ? currentFps : ImGui::GetIO().Framerate));
-            ImGui::SameLine(0.0f, 10.0f);
-            ImGui::TextDisabled("|");
-            ImGui::SameLine(0.0f, 10.0f);
-
-            // View Mode: Lit / Wire / Unlit
+            // Group 1: [Lit] [Unlit]
             bool isLit = (viewMode == 0);
-            bool isWire = (viewMode == 1);
             bool isUnlit = (viewMode == 2);
 
-            if (isLit) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Lit")) { viewMode = 0; RequestViewportRedraw(10); }
-            if (isLit) ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Button, isLit ? accentBlue : inactiveGray);
+            if (ImGui::Button("Lit", ImVec2(40.0f * uiScale, btnHeight))) { viewMode = 0; RequestViewportRedraw(10); }
+            ImGui::PopStyleColor();
 
-            ImGui::SameLine(0.0f, 4.0f);
-            if (isWire) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Wire")) { viewMode = 1; RequestViewportRedraw(10); }
-            if (isWire) ImGui::PopStyleColor();
-
-            ImGui::SameLine(0.0f, 4.0f);
-            if (isUnlit) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Unlit")) { viewMode = 2; RequestViewportRedraw(10); }
-            if (isUnlit) ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, isUnlit ? accentBlue : inactiveGray);
+            if (ImGui::Button("Unlit", ImVec2(50.0f * uiScale, btnHeight))) { viewMode = 2; RequestViewportRedraw(10); }
+            ImGui::PopStyleColor();
 
             ImGui::SameLine(0.0f, 10.0f);
             ImGui::TextDisabled("|");
             ImGui::SameLine(0.0f, 10.0f);
 
-            // Gizmo Quick Controls: Pos / Rot / Sca
+            // Group 2: [Loc] [Rot] [Scale]
             bool isTrans = (currentGizmoOperation == ImGuizmo::TRANSLATE);
             bool isRot = (currentGizmoOperation == ImGuizmo::ROTATE);
             bool isScale = (currentGizmoOperation == ImGuizmo::SCALE);
 
-            if (isTrans) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Pos [W]")) { currentGizmoOperation = ImGuizmo::TRANSLATE; RequestViewportRedraw(10); }
-            if (isTrans) ImGui::PopStyleColor();
+            ImGui::PushStyleColor(ImGuiCol_Button, isTrans ? accentBlue : inactiveGray);
+            if (ImGui::Button("Loc", ImVec2(40.0f * uiScale, btnHeight))) { currentGizmoOperation = ImGuizmo::TRANSLATE; RequestViewportRedraw(10); }
+            ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate Mode (W)");
 
-            ImGui::SameLine(0.0f, 4.0f);
-            if (isRot) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Rot [E]")) { currentGizmoOperation = ImGuizmo::ROTATE; RequestViewportRedraw(10); }
-            if (isRot) ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, isRot ? accentBlue : inactiveGray);
+            if (ImGui::Button("Rot", ImVec2(40.0f * uiScale, btnHeight))) { currentGizmoOperation = ImGuizmo::ROTATE; RequestViewportRedraw(10); }
+            ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate Mode (E)");
 
-            ImGui::SameLine(0.0f, 4.0f);
-            if (isScale) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton("Sca [R]")) { currentGizmoOperation = ImGuizmo::SCALE; RequestViewportRedraw(10); }
-            if (isScale) ImGui::PopStyleColor();
+            ImGui::SameLine(0.0f, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, isScale ? accentBlue : inactiveGray);
+            if (ImGui::Button("Scale", ImVec2(48.0f * uiScale, btnHeight))) { currentGizmoOperation = ImGuizmo::SCALE; RequestViewportRedraw(10); }
+            ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale Mode (R)");
-
-            ImGui::SameLine(0.0f, 4.0f);
-            const char* modeLabel = (currentGizmoMode == ImGuizmo::WORLD) ? "World [Q]" : "Local [Q]";
-            if (ImGui::SmallButton(modeLabel)) {
-                currentGizmoMode = (currentGizmoMode == ImGuizmo::WORLD) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-                RequestViewportRedraw(10);
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle World/Local (Q)");
-
-            ImGui::SameLine(0.0f, 4.0f);
-            if (useSnap) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-            if (ImGui::SmallButton(useSnap ? "Snap [ON]" : "Snap [OFF]")) {
-                useSnap = !useSnap;
-                RequestViewportRedraw(10);
-            }
-            if (useSnap) ImGui::PopStyleColor();
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Snapping");
 
             ImGui::SameLine(0.0f, 10.0f);
             ImGui::TextDisabled("|");
             ImGui::SameLine(0.0f, 10.0f);
 
-            // On-Demand / Realtime Viewport Rendering Toggle (Performance Mode)
+            // Group 3: [World] [Pivot] [Snap]
+            bool isWorld = (currentGizmoMode == ImGuizmo::WORLD);
+            ImGui::PushStyleColor(ImGuiCol_Button, slateBlue);
+            if (ImGui::Button(isWorld ? "World" : "Local", ImVec2(50.0f * uiScale, btnHeight))) {
+                currentGizmoMode = isWorld ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+                RequestViewportRedraw(10);
+            }
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle World/Local coordinate space (Q)");
+
+            ImGui::SameLine(0.0f, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, inactiveGray);
+            if (ImGui::Button("Pivot", ImVec2(46.0f * uiScale, btnHeight))) {
+                // Toggle pivot point mode
+                RequestViewportRedraw(10);
+            }
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Actor Pivot Mode");
+
+            ImGui::SameLine(0.0f, 5.0f);
+            ImGui::PushStyleColor(ImGuiCol_Button, useSnap ? accentBlue : inactiveGray);
+            if (ImGui::Button("Snap", ImVec2(46.0f * uiScale, btnHeight))) {
+                useSnap = !useSnap;
+                RequestViewportRedraw(10);
+            }
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Grid Snapping (%s)", useSnap ? "ON" : "OFF");
+
+            ImGui::SameLine(0.0f, 10.0f);
+            ImGui::TextDisabled("|");
+            ImGui::SameLine(0.0f, 10.0f);
+
+            // Group 4: [On-Demand / Realtime] [Play / Stop]
             if (realtimeViewport) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.62f, 0.28f, 1.0f));
-                if (ImGui::SmallButton("▶ Realtime")) {
+                ImGui::PushStyleColor(ImGuiCol_Button, greenPlay);
+                if (ImGui::Button("Realtime", ImVec2(72.0f * uiScale, btnHeight))) {
                     realtimeViewport = false;
                     RequestViewportRedraw(10);
                 }
                 ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Continuous Rendering (High GPU/CPU usage). Click to switch to On-Demand (Power Saver).");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Continuous Rendering. Click to switch to On-Demand.");
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.45f, 0.75f, 1.0f));
-                if (ImGui::SmallButton("● On-Demand")) {
+                ImGui::PushStyleColor(ImGuiCol_Button, slateBlue);
+                if (ImGui::Button("On-Demand", ImVec2(80.0f * uiScale, btnHeight))) {
                     realtimeViewport = true;
                 }
                 ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On-Demand Mode Active: Viewport renders only when giving inputs (camera flying) or editing properties. Click to switch to continuous Realtime.");
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("On-Demand Rendering Active. Click to switch to continuous Realtime.");
             }
 
-            // Perfectly Centered Play / Stop Simulation Button
-            float playBtnWidth = 84.0f * uiScale;
-            float playBtnHeight = 22.0f * uiScale;
-            float centerOffset = (vp->Size.x - playBtnWidth) * 0.5f;
-            float currentLeftX = ImGui::GetCursorPosX();
-
-            if (centerOffset > currentLeftX + 10.0f) {
-                ImGui::SameLine(centerOffset);
-            } else {
-                ImGui::SameLine(0.0f, 16.0f);
-            }
-
+            ImGui::SameLine(0.0f, 6.0f);
             if (!scene.isPlayMode) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.58f, 0.28f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.68f, 0.34f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.09f, 0.46f, 0.22f, 1.0f));
-                if (ImGui::Button(" ▶ Play ", ImVec2(playBtnWidth, playBtnHeight))) {
+                ImGui::PushStyleColor(ImGuiCol_Button, greenPlay);
+                if (ImGui::Button("Play", ImVec2(50.0f * uiScale, btnHeight))) {
                     EnterPlayMode(scene, currentCamera);
                 }
-                ImGui::PopStyleColor(3);
+                ImGui::PopStyleColor();
             } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.78f, 0.18f, 0.18f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.88f, 0.24f, 0.24f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.65f, 0.14f, 0.14f, 1.0f));
-                if (ImGui::Button(" ⏹ Stop ", ImVec2(playBtnWidth, playBtnHeight))) {
+                ImGui::PushStyleColor(ImGuiCol_Button, redStop);
+                if (ImGui::Button("Stop", ImVec2(50.0f * uiScale, btnHeight))) {
                     ExitPlayMode(scene, currentCamera);
                 }
-                ImGui::PopStyleColor(3);
+                ImGui::PopStyleColor();
             }
 
             // Right side engine info
@@ -4359,11 +4305,16 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
         RenderCameraPreviewOverlay(scene, camera);
     }
 
-    // 1px border framing the center 3D viewport exactly according to UI_Ref.svg blueprint
+    // Rounded border framing the center 3D viewport (rx = 11.0f) + FPS display per SVG blueprint
     ImDrawList* borderDrawList = ImGui::GetForegroundDrawList();
     ImVec2 vpMin(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y);
     ImVec2 vpMax(vp->Pos.x + vpRect.x + vpRect.width, vp->Pos.y + vpRect.y + vpRect.height);
-    borderDrawList->AddRect(vpMin, vpMax, IM_COL32(40, 40, 40, 255), 0.0f, 0, 1.0f);
+    borderDrawList->AddRect(vpMin, vpMax, IM_COL32(50, 52, 58, 220), 11.0f * uiScale, 0, 1.5f);
+
+    // FPS counter in top-right of viewport (matching SVG: x ~ 1860, y ~ 95)
+    char fpsBuf[32];
+    snprintf(fpsBuf, sizeof(fpsBuf), "FPS %.0f", (currentFps > 0.0f ? currentFps : ImGui::GetIO().Framerate));
+    borderDrawList->AddText(ImVec2(vpMax.x - 78.0f * uiScale, vpMin.y + 12.0f * uiScale), IM_COL32(230, 230, 230, 220), fpsBuf);
 }
 
 void EngineUI::RenderScreenPrintOverlay(float startX, float startY) {
@@ -4846,9 +4797,18 @@ void EngineUI::RenderOutliner(Scene& scene) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Outliner", &showOutliner, flags)) {
         // Top Add Button & Search bar (matching Old Eunoia Engine)
-        if (ImGui::Button("+ Add", ImVec2(60, 0))) {
+        // Outliner Header (Matching SVG Blueprint)
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.95f, 0.95f, 0.95f, 1.0f), "Outliner");
+        ImGui::SameLine(0.0f, 10.0f);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.157f, 0.157f, 0.157f, 1.0f)); // #282828
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.25f, 0.25f, 1.0f));
+        if (ImGui::Button("+", ImVec2(24.0f * uiScale, 22.0f * uiScale))) {
             ImGui::OpenPopup("AddActorTopPopup");
         }
+        ImGui::PopStyleColor(2);
+
         if (ImGui::BeginPopup("AddActorTopPopup")) {
             if (ImGui::MenuItem("Cube"))      { scene.AddObject(PrimitiveType::Cube, glm::vec3(0, 0.5f, 0), glm::vec3(0.55f)); AddLog("LogActor", "Spawned Cube", 2); }
             if (ImGui::MenuItem("Plane"))     { scene.AddObject(PrimitiveType::Plane, glm::vec3(0), glm::vec3(0.55f)); AddLog("LogActor", "Spawned Plane", 2); }
@@ -4865,7 +4825,7 @@ void EngineUI::RenderOutliner(Scene& scene) {
             if (ImGui::MenuItem("Empty Actor"))       { scene.AddEmptyActor(glm::vec3(0)); AddLog("LogActor", "Spawned Empty Actor", 2); }
             ImGui::EndPopup();
         }
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, 8.0f);
         ImGui::PushItemWidth(-1.0f);
         ImGui::InputTextWithHint("##Filter", "Search Actors...", outlinerFilter, sizeof(outlinerFilter));
         ImGui::PopItemWidth();
@@ -8421,27 +8381,30 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Content Browser", &showBottomDrawer, flags)) {
-        // Tab Header buttons (matching Old Eunoia Engine)
+        // Tab Header buttons (Matching SVG Blueprint)
         if (bottomDrawerTab > 1) bottomDrawerTab = 0;
         bool isContentTab = (bottomDrawerTab == 0);
         bool isLogTab     = (bottomDrawerTab == 1);
 
-        const ImVec4 accentBlue = ImVec4(0.12f, 0.60f, 0.95f, 1.0f);
+        const ImVec4 accentBlue = ImVec4(0.122f, 0.600f, 0.949f, 1.0f); // #1F99F2
+        const ImVec4 inactiveTab = ImVec4(0.129f, 0.129f, 0.129f, 1.0f); // #212121
 
-        if (isContentTab) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-        if (ImGui::Button("Content Browser")) bottomDrawerTab = 0;
-        if (isContentTab) ImGui::PopStyleColor();
+        float tabBtnHeight = 24.0f * uiScale;
 
-        ImGui::SameLine();
-        if (isLogTab) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-        if (ImGui::Button("Output Log")) bottomDrawerTab = 1;
-        if (isLogTab) ImGui::PopStyleColor();
+        ImGui::PushStyleColor(ImGuiCol_Button, isContentTab ? accentBlue : inactiveTab);
+        if (ImGui::Button("Content Browser", ImVec2(120.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 0;
+        ImGui::PopStyleColor();
 
-        ImGui::SameLine();
+        ImGui::SameLine(0.0f, 5.0f);
+        ImGui::PushStyleColor(ImGuiCol_Button, isLogTab ? accentBlue : inactiveTab);
+        if (ImGui::Button("Output Logs", ImVec2(95.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine(0.0f, 8.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("|");
-        ImGui::SameLine();
-        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]")) {
+        ImGui::SameLine(0.0f, 8.0f);
+        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]", ImVec2(90.0f * uiScale, tabBtnHeight))) {
             bottomDrawerOpen = !bottomDrawerOpen;
         }
         ImGui::Separator();

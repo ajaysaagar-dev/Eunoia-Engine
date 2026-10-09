@@ -306,8 +306,8 @@ public:
     // UI layout dimensions (scaled for friendly visibility and comfort)
     float uiMargin = 0.0f;
     float uiGap = 0.0f;
-    float topBarHeight = 64.0f;
-    float leftSidebarWidth = 280.0f;
+    float topBarHeight = 76.0f;
+    float leftSidebarWidth = 310.0f;
     float rightSidebarWidth = 320.0f;
     float bottomDockHeight = 240.0f;
     float contentBrowserFolderTreeWidth = 220.0f;
