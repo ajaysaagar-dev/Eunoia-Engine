@@ -5948,7 +5948,7 @@ int main(int argc, char** argv)
 			}
 		} else if (arg == "--browse" || arg == "--browser" || arg == "-b") {
 			forceStandaloneBrowser = true;
-		} else if (arg == "--scene" || arg == "-scene" || arg == "/scene") {
+		} else if (arg == "--scene" || arg == "-scene" || arg == "/scene" || arg == "--level" || arg == "-level" || arg == "/level") {
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
 				gameScenePath = argv[++i];
 			}

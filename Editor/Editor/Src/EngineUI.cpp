@@ -764,7 +764,7 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
     currentAntiAliasing = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
     Eunoia::GraphicsSystem::Get().RegisterAntiAliasingChangedCallback("EngineUI", [this](Eunoia::AntiAliasingMethod /*oldM*/, Eunoia::AntiAliasingMethod newM) {
         this->currentAntiAliasing = newM;
-        this->AddLog("LogGraphics", "Anti-Aliasing applied to scene: " + std::string(Eunoia::GraphicsSystem::Get().GetAntiAliasingName(newM)), 0);
+        this->AddLog("LogGraphics", "Anti-Aliasing applied to level: " + std::string(Eunoia::GraphicsSystem::Get().GetAntiAliasingName(newM)), 0);
     });
 }
 
@@ -1369,7 +1369,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                 if (!alreadyIn) {
                     bool isProj = false;
                     for (const auto& sub : std::filesystem::directory_iterator(pRoot, ec)) {
-                        if (sub.path().extension() == ".eproject" || sub.path().filename() == "Content") {
+                        if (sub.path().extension() == ".euproject" || sub.path().extension() == ".eproject" || sub.path().filename() == "Content") {
                             isProj = true;
                             break;
                         }
@@ -1586,7 +1586,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                 ImGui::BulletText("Content Root: %s", (targetDir / "Content").string().c_str());
                 ImGui::BulletText("Cooked Assets: %s", (targetDir / "Cooked").string().c_str());
                 ImGui::BulletText("Build Output: %s", (targetDir / "Build").string().c_str());
-                ImGui::BulletText("Template: Empty Project (Default Scene & Material)");
+                ImGui::BulletText("Template: Eunoia Project Template (Default Level & Configs)");
                 ImGui::EndChild();
                 ImGui::Spacing();
 
@@ -1656,42 +1656,77 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
     // If user chose to create a new project, create the directory structure and return the path
     if (shouldCreateNew && !createProjName.empty() && !createParentDir.empty()) {
         std::filesystem::path root = std::filesystem::path(createParentDir) / createProjName;
+        std::filesystem::path configsDir = root / "Configs";
         std::filesystem::path contentDir = root / "Content";
-        std::filesystem::path scenesDir = contentDir / "Scenes";
-        std::filesystem::path cookedDir = root / "Cooked";
-        std::filesystem::path buildDir = root / "Build";
+        std::filesystem::path levelsDir  = contentDir / "Levels";
+        std::filesystem::path scenesDir  = contentDir / "Scenes";
+        std::filesystem::path cookedDir  = root / "Cooked";
+        std::filesystem::path depsDir    = root / "Dependencies";
+        std::filesystem::path intermDir  = root / "Intermediates";
+        std::filesystem::path buildDir   = root / "Build";
 
+        std::filesystem::create_directories(configsDir, ec);
         std::filesystem::create_directories(contentDir, ec);
+        std::filesystem::create_directories(levelsDir, ec);
         std::filesystem::create_directories(scenesDir, ec);
         std::filesystem::create_directories(cookedDir, ec);
+        std::filesystem::create_directories(depsDir, ec);
+        std::filesystem::create_directories(intermDir, ec);
         std::filesystem::create_directories(buildDir, ec);
 
-        // Project descriptor file
-        std::filesystem::path projFile = root / (createProjName + ".eproject");
-        if (!std::filesystem::exists(projFile, ec)) {
-            std::ofstream pf(projFile);
+        // Copy template folders from Templates/Eunoia Project Template if available
+        std::filesystem::path templateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Eunoia Project Template";
+        if (!std::filesystem::exists(templateDir, ec)) {
+            templateDir = std::filesystem::current_path() / "Templates" / "Eunoia Project Template";
+        }
+        if (std::filesystem::exists(templateDir, ec)) {
+            for (const auto& item : std::filesystem::directory_iterator(templateDir, ec)) {
+                if (item.is_directory(ec)) {
+                    std::filesystem::create_directories(root / item.path().filename(), ec);
+                }
+            }
+        }
+
+        // Project descriptor file <createProjName>.euproject (and backward-compatible .eproject)
+        std::filesystem::path projFileEu = root / (createProjName + ".euproject");
+        std::filesystem::path projFileE  = root / (createProjName + ".eproject");
+        nlohmann::json j;
+        j["name"] = createProjName;
+        j["version"] = "1.0.0";
+        j["engineVersion"] = "0.1.0";
+        j["contentDirectory"] = "Content";
+        j["defaultLevel"] = "Content/Levels/Main.elevel";
+        j["activeLevel"] = "Content/Levels/Main.elevel";
+        j["defaultScene"] = "Content/Levels/Main.elevel"; // backward-compat
+
+        if (!std::filesystem::exists(projFileEu, ec)) {
+            std::ofstream pf(projFileEu);
             if (pf.is_open()) {
-                nlohmann::json j;
-                j["name"] = createProjName;
-                j["version"] = "1.0.0";
-                j["engineVersion"] = "0.1.0";
-                j["contentDirectory"] = "Content";
-                j["defaultScene"] = "Content/Scenes/Main.escene";
+                pf << j.dump(4);
+                pf.close();
+            }
+        }
+        if (!std::filesystem::exists(projFileE, ec)) {
+            std::ofstream pf(projFileE);
+            if (pf.is_open()) {
                 pf << j.dump(4);
                 pf.close();
             }
         }
 
-        // Starter scene in Content/Scenes/Main.escene
+        // Starter level in Content/Levels/Main.elevel (and backward-compatible Main.escene)
+        std::filesystem::path starterLevelPath = levelsDir / "Main.elevel";
         std::filesystem::path starterScenePath = scenesDir / "Main.escene";
-        if (!std::filesystem::exists(starterScenePath, ec)) {
-            Scene starterScene;
-            starterScene.Clear();
-            SceneSerializer::SaveScene(starterScene, starterScenePath.string());
+        if (!std::filesystem::exists(starterLevelPath, ec)) {
+            Level starterLevel;
+            starterLevel.Clear();
+            LevelSerializer::SaveLevel(starterLevel, starterLevelPath.string());
+            LevelSerializer::SaveLevel(starterLevel, starterScenePath.string());
         }
 
-        // 4. Initial Configs.Editor.econfigs in project root
+        // Initial Configs.Editor.econfigs in project root and Configs/
         std::filesystem::path cfgPath = root / "Configs.Editor.econfigs";
+        std::filesystem::path cfgPathSub = configsDir / "Configs.Editor.econfigs";
         if (!std::filesystem::exists(cfgPath, ec)) {
             std::ofstream cf(cfgPath);
             if (cf.is_open()) {
@@ -1703,6 +1738,9 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                 cf << "ContentThumbnailSize=96.0\n";
                 cf.close();
             }
+        }
+        if (!std::filesystem::exists(cfgPathSub, ec)) {
+            std::filesystem::copy_file(cfgPath, cfgPathSub, std::filesystem::copy_options::overwrite_existing, ec);
         }
 
         // Update recent projects config
@@ -1920,7 +1958,7 @@ std::string EngineUI::ShowOpenProjectFileDialog() {
     ofn.hwndOwner = NULL;
     ofn.lpstrFile = szFile;
     ofn.nMaxFile = sizeof(szFile);
-    ofn.lpstrFilter = "Eunoia Project (*.eproject)\0*.eproject\0All Files (*.*)\0*.*\0";
+    ofn.lpstrFilter = "Eunoia Project (*.euproject;*.eproject)\0*.euproject;*.eproject\0All Files (*.*)\0*.*\0";
     ofn.nFilterIndex = 1;
     std::string initDir = (g_pEngineUI && !g_pEngineUI->activeProjectRoot.empty()) ? g_pEngineUI->activeProjectRoot.string() : "C:\\Projects\\Eunoia-Engine\\Projects";
     ofn.lpstrInitialDir = initDir.c_str();
@@ -1993,7 +2031,7 @@ void EngineUI::LoadRecentProjects() {
                 if (!alreadyIn) {
                     bool isProj = false;
                     for (const auto& sub : std::filesystem::directory_iterator(pRoot, ec)) {
-                        if (sub.path().extension() == ".eproject" || sub.path().filename() == "Content" || sub.path().filename() == "Scenes" || sub.path().filename() == "Materials") {
+                        if (sub.path().extension() == ".euproject" || sub.path().extension() == ".eproject" || sub.path().filename() == "Content" || sub.path().filename() == "Levels" || sub.path().filename() == "Scenes" || sub.path().filename() == "Materials") {
                             isProj = true;
                             break;
                         }
@@ -2041,38 +2079,73 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     std::filesystem::path root = std::filesystem::path(parentDir) / projName;
     std::error_code ec;
 
-    // 1. Create project directories
-    // Content browser root is inside project folder called Content
+    // 1. Create project directories matching Eunoia Project Template
+    std::filesystem::path configsDir = root / "Configs";
     std::filesystem::path contentDir = root / "Content";
-    std::filesystem::path scenesDir = contentDir / "Scenes";
-    std::filesystem::path cookedDir = root / "Cooked";
-    std::filesystem::path buildDir = root / "Build";
+    std::filesystem::path levelsDir  = contentDir / "Levels";
+    std::filesystem::path scenesDir  = contentDir / "Scenes";
+    std::filesystem::path cookedDir  = root / "Cooked";
+    std::filesystem::path depsDir    = root / "Dependencies";
+    std::filesystem::path intermDir  = root / "Intermediates";
+    std::filesystem::path buildDir   = root / "Build";
 
+    std::filesystem::create_directories(configsDir, ec);
     std::filesystem::create_directories(contentDir, ec);
+    std::filesystem::create_directories(levelsDir, ec);
     std::filesystem::create_directories(scenesDir, ec);
     std::filesystem::create_directories(cookedDir, ec);
+    std::filesystem::create_directories(depsDir, ec);
+    std::filesystem::create_directories(intermDir, ec);
     std::filesystem::create_directories(buildDir, ec);
 
-    // 3. Starter scene in Content/Scenes (completely empty - no objects, no lights)
-    std::filesystem::path starterScenePath = scenesDir / "Main.escene";
-    if (!std::filesystem::exists(starterScenePath, ec)) {
-        Scene starterScene;
-        starterScene.Clear();
-        SceneSerializer::SaveScene(starterScene, starterScenePath.string());
+    // Copy template folders from Templates/Eunoia Project Template if available
+    std::filesystem::path templateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Eunoia Project Template";
+    if (!std::filesystem::exists(templateDir, ec)) {
+        templateDir = std::filesystem::current_path() / "Templates" / "Eunoia Project Template";
+    }
+    if (std::filesystem::exists(templateDir, ec)) {
+        for (const auto& item : std::filesystem::directory_iterator(templateDir, ec)) {
+            if (item.is_directory(ec)) {
+                std::filesystem::create_directories(root / item.path().filename(), ec);
+            }
+        }
     }
 
-    // 4. Project descriptor file <ProjectName>.eproject
-    std::filesystem::path projFile = root / (projName + ".eproject");
-    std::ofstream pf(projFile);
-    if (pf.is_open()) {
-        nlohmann::json j;
-        j["name"] = projName;
-        j["version"] = "1.0.0";
-        j["engineVersion"] = "0.1.0";
-        j["contentDirectory"] = "Content";
-        j["defaultScene"] = "Content/Scenes/Main.escene";
-        pf << j.dump(4);
-        pf.close();
+    // 2. Starter level in Content/Levels (completely empty - no objects, no lights)
+    std::filesystem::path starterLevelPath = levelsDir / "Main.elevel";
+    std::filesystem::path starterScenePath = scenesDir / "Main.escene";
+    if (!std::filesystem::exists(starterLevelPath, ec)) {
+        Level starterLevel;
+        starterLevel.Clear();
+        LevelSerializer::SaveLevel(starterLevel, starterLevelPath.string());
+        LevelSerializer::SaveLevel(starterLevel, starterScenePath.string());
+    }
+
+    // 3. Project descriptor files <ProjectName>.euproject & <ProjectName>.eproject
+    std::filesystem::path projFileEu = root / (projName + ".euproject");
+    std::filesystem::path projFileE  = root / (projName + ".eproject");
+    nlohmann::json j;
+    j["name"] = projName;
+    j["version"] = "1.0.0";
+    j["engineVersion"] = "0.1.0";
+    j["contentDirectory"] = "Content";
+    j["defaultLevel"] = "Content/Levels/Main.elevel";
+    j["activeLevel"] = "Content/Levels/Main.elevel";
+    j["defaultScene"] = "Content/Levels/Main.elevel"; // backward compatibility
+
+    {
+        std::ofstream pf(projFileEu);
+        if (pf.is_open()) {
+            pf << j.dump(4);
+            pf.close();
+        }
+    }
+    {
+        std::ofstream pf(projFileE);
+        if (pf.is_open()) {
+            pf << j.dump(4);
+            pf.close();
+        }
     }
 
     // 5. Setup Project Dependencies & VS Code configuration
@@ -2117,10 +2190,53 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     std::string targetScenePath = specificScenePath;
-    if (isGameMode) {
-        std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-        if (targetScenePath.empty() && std::filesystem::exists(mainScene, ec)) {
-            targetScenePath = mainScene.string();
+    if (isGameMode && targetScenePath.empty()) {
+        // 1. Check GameConfig.json in Data/ or project root
+        std::vector<std::filesystem::path> cfgPaths = {
+            activeProjectRoot / "Data" / "GameConfig.json",
+            activeProjectRoot / "GameConfig.json",
+            activeProjectRoot / (activeProjectName + ".euproject"),
+            activeProjectRoot / (activeProjectName + ".eproject")
+        };
+        for (const auto& cfgP : cfgPaths) {
+            if (std::filesystem::exists(cfgP, ec)) {
+                std::ifstream cf(cfgP);
+                if (cf.is_open()) {
+                    try {
+                        nlohmann::json pj;
+                        cf >> pj;
+                        std::string foundLvl;
+                        if (pj.contains("startupLevel")) foundLvl = pj["startupLevel"].get<std::string>();
+                        else if (pj.contains("activeLevel")) foundLvl = pj["activeLevel"].get<std::string>();
+                        else if (pj.contains("defaultLevel")) foundLvl = pj["defaultLevel"].get<std::string>();
+                        else if (pj.contains("defaultScene")) foundLvl = pj["defaultScene"].get<std::string>();
+
+                        if (!foundLvl.empty()) {
+                            std::filesystem::path resolvedLvl = activeProjectRoot / foundLvl;
+                            if (std::filesystem::exists(resolvedLvl, ec)) {
+                                targetScenePath = resolvedLvl.string();
+                                break;
+                            }
+                            resolvedLvl = contentRootPath / foundLvl;
+                            if (std::filesystem::exists(resolvedLvl, ec)) {
+                                targetScenePath = resolvedLvl.string();
+                                break;
+                            }
+                        }
+                    } catch (...) {}
+                }
+            }
+        }
+
+        // 2. Fallbacks
+        if (targetScenePath.empty()) {
+            std::filesystem::path mainLevel = contentRootPath / "Levels" / "Main.elevel";
+            std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
+            if (std::filesystem::exists(mainLevel, ec)) {
+                targetScenePath = mainLevel.string();
+            } else if (std::filesystem::exists(mainScene, ec)) {
+                targetScenePath = mainScene.string();
+            }
         }
     }
 
@@ -3867,9 +3983,9 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     }
 
                     if (cameraCount == 0) {
-                        ImGui::TextDisabled("  (No cameras in scene)");
+                        ImGui::TextDisabled("  (No cameras in level)");
                         ImGui::Separator();
-                        if (ImGui::MenuItem("+ Add Camera to Scene")) {
+                        if (ImGui::MenuItem("+ Add Camera to Level")) {
                             GameObject& newCam = scene.AddObject(PrimitiveType::Camera, {0.0f, 2.0f, -4.0f});
                             newCam.name = "Camera Actor";
                             newCam.rotation = {0.0f, 0.0f, 0.0f};
@@ -3917,14 +4033,67 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::Separator();
                 if (ImGui::MenuItem("Build Game Project (Stand-Alone)")) {
                     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
+                    std::string projName = projectBase.filename().string();
                     std::filesystem::path gameBuildDir = projectBase / "Build";
+                    std::filesystem::path binariesDir  = gameBuildDir / "Binaries";
+                    std::filesystem::path dataDir      = gameBuildDir / "Data";
+                    std::filesystem::path depsBuildDir = gameBuildDir / "Deps";
                     std::error_code ec;
-                    std::filesystem::create_directories(gameBuildDir, ec);
 
-                    // 1. Cook assets to <Project>/Cooked
-                    std::string cookLog;
-                    std::filesystem::path cookedDir = projectBase / "Cooked";
-                    AssetManager::Get().CookProject(cookedDir, cookLog);
+                    std::filesystem::create_directories(gameBuildDir, ec);
+                    std::filesystem::create_directories(binariesDir, ec);
+                    std::filesystem::create_directories(dataDir, ec);
+                    std::filesystem::create_directories(depsBuildDir, ec);
+
+                    // Copy template structure from Templates/Game Build Template
+                    std::filesystem::path gameTemplateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Game Build Template";
+                    if (!std::filesystem::exists(gameTemplateDir, ec)) {
+                        gameTemplateDir = std::filesystem::current_path() / "Templates" / "Game Build Template";
+                    }
+                    if (std::filesystem::exists(gameTemplateDir, ec)) {
+                        for (const auto& item : std::filesystem::directory_iterator(gameTemplateDir, ec)) {
+                            if (item.is_directory(ec)) {
+                                std::filesystem::create_directories(gameBuildDir / item.path().filename(), ec);
+                            } else if (item.is_regular_file(ec)) {
+                                std::string fname = item.path().filename().string();
+                                if (fname == "Version.euversion") {
+                                    std::ofstream vf(gameBuildDir / "Version.euversion");
+                                    if (vf.is_open()) {
+                                        nlohmann::json vj;
+                                        vj["engineVersion"] = "0.1.0";
+                                        vj["projectVersion"] = "1.0.0";
+                                        vj["gameName"] = projName;
+                                        vf << vj.dump(4);
+                                        vf.close();
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Determine and save ACTIVE level snapshot as standalone game startup level
+                    std::string activeRelLevel = "Content/Levels/Main.elevel";
+                    std::filesystem::path dataContentDir = dataDir / "Content";
+                    std::filesystem::path dataLevelsDir  = dataContentDir / "Levels";
+                    std::filesystem::create_directories(dataLevelsDir, ec);
+
+                    if (!currentLevelFilePath.empty() && std::filesystem::exists(currentLevelFilePath, ec)) {
+                        // Use existing level path relative to projectBase or contentRootPath
+                        auto relP = std::filesystem::relative(currentLevelFilePath, projectBase, ec);
+                        if (!ec) activeRelLevel = relP.string();
+                        std::replace(activeRelLevel.begin(), activeRelLevel.end(), '\\', '/');
+                    } else {
+                        // User working in an unsaved level: auto-save current state to Content/Levels/Main.elevel
+                        std::filesystem::path saveP = contentRootPath / "Levels" / "Main.elevel";
+                        std::filesystem::create_directories(saveP.parent_path(), ec);
+                        LevelSerializer::SaveLevel(scene, saveP.string());
+                        currentLevelFilePath = saveP.string();
+                        activeRelLevel = "Content/Levels/Main.elevel";
+                    }
+
+                    // Save active level snapshot directly into game build data
+                    LevelSerializer::SaveLevel(scene, (dataDir / activeRelLevel).string());
+                    LevelSerializer::SaveLevel(scene, (gameBuildDir / "Main.elevel").string());
 
                     // Helper to copy directory recursively
                     auto copyDirRecursive = [](const std::filesystem::path& src, const std::filesystem::path& dst) {
@@ -3943,66 +4112,92 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         }
                     };
 
-                    // 2. Package game assets and folders: Cooked and all Content subdirectories
+                    // 1. Cook assets to <Project>/Cooked and package into Data/Cooked
+                    std::string cookLog;
+                    std::filesystem::path cookedDir = projectBase / "Cooked";
+                    AssetManager::Get().CookProject(cookedDir, cookLog);
+                    copyDirRecursive(cookedDir, dataDir / "Cooked");
                     copyDirRecursive(cookedDir, gameBuildDir / "Cooked");
-                    for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
-                        if (entry.is_directory(ec)) {
-                            copyDirRecursive(entry.path(), gameBuildDir / entry.path().filename());
-                            copyDirRecursive(entry.path(), gameBuildDir / "Content" / entry.path().filename());
+
+                    // 2. Package Content directory into Data/Content
+                    copyDirRecursive(contentRootPath, dataContentDir);
+                    copyDirRecursive(contentRootPath, gameBuildDir / "Content");
+
+                    // 3. Write Data/GameConfig.json specifying active level as startup level
+                    {
+                        std::ofstream cf(dataDir / "GameConfig.json");
+                        if (cf.is_open()) {
+                            nlohmann::json gj;
+                            gj["gameName"] = projName;
+                            gj["startupLevel"] = activeRelLevel;
+                            gj["defaultLevel"] = activeRelLevel;
+                            gj["version"] = "1.0.0";
+                            cf << gj.dump(4);
+                            cf.close();
                         }
                     }
 
-                    // 3. Copy project root metadata and asset files (*.emat, *.assetmeta, *.json, etc.)
-                    for (const auto& entry : std::filesystem::directory_iterator(contentRootPath, ec)) {
-                        if (entry.is_regular_file(ec)) {
-                            std::string ext = entry.path().extension().string();
-                            if (ext == ".emat" || ext == ".assetmeta" || ext == ".json" || ext == ".escene" || ext == ".elevel" || ext == ".cpp") {
-                                std::filesystem::copy_file(entry.path(), gameBuildDir / entry.path().filename(), std::filesystem::copy_options::overwrite_existing, ec);
-                            }
-                        }
+                    // 4. Find and copy engine Shaders and Resources into Data and root
+                    std::filesystem::path engineRoot = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine";
+                    if (!std::filesystem::exists(engineRoot / "Shaders", ec)) {
+                        engineRoot = "C:\\Projects\\Eunoia-Engine";
                     }
-
-                    // 4. Find and copy engine Shaders and Resources
-                    std::filesystem::path engineRoot = "C:\\Projects\\Eunoia-Engine";
                     if (!std::filesystem::exists(engineRoot / "Shaders", ec)) {
                         engineRoot = std::filesystem::current_path();
                     }
                     if (std::filesystem::exists(engineRoot / "Shaders", ec)) {
+                        copyDirRecursive(engineRoot / "Shaders", dataDir / "Shaders");
                         copyDirRecursive(engineRoot / "Shaders", gameBuildDir / "Shaders");
                     }
                     if (std::filesystem::exists(engineRoot / "Resources", ec)) {
+                        copyDirRecursive(engineRoot / "Resources", dataDir / "Resources");
                         copyDirRecursive(engineRoot / "Resources", gameBuildDir / "Resources");
                     }
 
-                    // 5. Copy external runtime DLLs
-                    std::filesystem::path glfwSrc = engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "lib-mingw-w64" / "glfw3.dll";
-                    if (std::filesystem::exists(glfwSrc, ec)) {
-                        std::filesystem::copy_file(glfwSrc, gameBuildDir / "glfw3.dll", std::filesystem::copy_options::overwrite_existing, ec);
-                    }
-                    std::filesystem::path primSrc = engineRoot / "Plugins" / "primitives" / "primitives.dll";
-                    if (std::filesystem::exists(primSrc, ec)) {
-                        std::filesystem::copy_file(primSrc, gameBuildDir / "primitives.dll", std::filesystem::copy_options::overwrite_existing, ec);
-                    }
-
-                    // 6. Copy or verify game executable
-                    std::string projName = projectBase.filename().string();
-                    std::filesystem::path gameExe = gameBuildDir / (projName + ".exe");
-                    if (!std::filesystem::exists(gameExe, ec)) {
-                        if (std::filesystem::exists(gameBuildDir / "test.exe", ec)) {
-                            std::filesystem::copy_file(gameBuildDir / "test.exe", gameExe, std::filesystem::copy_options::overwrite_existing, ec);
-                        } else if (std::filesystem::exists(engineRoot / "Build" / "Runtime" / "test.exe", ec)) {
-                            std::filesystem::copy_file(engineRoot / "Build" / "Runtime" / "test.exe", gameExe, std::filesystem::copy_options::overwrite_existing, ec);
+                    // 5. Copy external runtime DLLs to Binaries/, Deps/, and root
+                    std::vector<std::filesystem::path> dllSrcs = {
+                        engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "lib-mingw-w64" / "glfw3.dll",
+                        engineRoot / "Plugins" / "primitives" / "primitives.dll"
+                    };
+                    for (const auto& dllSrc : dllSrcs) {
+                        if (std::filesystem::exists(dllSrc, ec)) {
+                            std::string fname = dllSrc.filename().string();
+                            std::filesystem::copy_file(dllSrc, gameBuildDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
+                            std::filesystem::copy_file(dllSrc, binariesDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
+                            std::filesystem::copy_file(dllSrc, depsBuildDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
                         }
                     }
 
-                    // 7. Create game launch script
+                    // 6. Copy or verify game executable
+                    char exeBuf[MAX_PATH] = {};
+                    GetModuleFileNameA(NULL, exeBuf, MAX_PATH);
+                    std::filesystem::path currentEditorExe(exeBuf);
+
+                    std::filesystem::path rootGameExe = gameBuildDir / (projName + ".exe");
+                    std::filesystem::path binGameExe  = binariesDir / (projName + ".exe");
+
+                    if (std::filesystem::exists(currentEditorExe, ec)) {
+                        std::filesystem::copy_file(currentEditorExe, rootGameExe, std::filesystem::copy_options::overwrite_existing, ec);
+                        std::filesystem::copy_file(currentEditorExe, binGameExe, std::filesystem::copy_options::overwrite_existing, ec);
+                    } else {
+                        std::filesystem::path rtExe = engineRoot / "Build" / "Runtime" / "Eunoia-Runtime.exe";
+                        if (std::filesystem::exists(rtExe, ec)) {
+                            std::filesystem::copy_file(rtExe, rootGameExe, std::filesystem::copy_options::overwrite_existing, ec);
+                            std::filesystem::copy_file(rtExe, binGameExe, std::filesystem::copy_options::overwrite_existing, ec);
+                        }
+                    }
+
+                    // 7. Create production launch script Run.bat
                     std::ofstream runScript(gameBuildDir / "Run.bat");
                     if (runScript.is_open()) {
-                        runScript << "@echo off\ncd /d \"%~dp0\"\necho Starting " << projName << "...\nstart \"\" \"" << projName << ".exe\"\n";
+                        runScript << "@echo off\n";
+                        runScript << "cd /d \"%~dp0\"\n";
+                        runScript << "echo Starting " << projName << "...\n";
+                        runScript << "start \"\" \"" << projName << ".exe\" --game \"%~dp0\" --level \"%~dp0Data\\" << activeRelLevel << "\"\n";
                         runScript.close();
                     }
 
-                    AddLog("LogBuild", "Game Project built into: " + gameBuildDir.string() + " (All game data and files packaged)", 2);
+                    AddLog("LogBuild", "Game Project built into: " + gameBuildDir.string() + " (Active Level: " + activeRelLevel + ")", 2);
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Cook Project Assets")) {
@@ -8518,7 +8713,7 @@ void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
     scene.skyboxLightingColor = skybox.skyboxLightingColor;
     scene.skyboxLightingSpecular = skybox.skyboxLightingSpecular;
     scene.skyboxLightingDiffuse = skybox.skyboxLightingDiffuse;
-    AddLog("LogWorld", "Applied Skybox '" + skybox.name + "' to World Scene", 2);
+    AddLog("LogWorld", "Applied Skybox '" + skybox.name + "' to World Level", 2);
 }
 
 void EngineUI::RenderSkyboxEditor(Scene& scene) {
@@ -12402,7 +12597,7 @@ void EngineUI::TriggerCompileScripts(Scene* scene) {
         SceneSerializer::SaveScene(*scene, (gameBuildDir / "Scenes" / "Main.escene").string());
         SceneSerializer::SaveScene(*scene, (gameBuildDir / "Main.escene").string());
         SceneSerializer::SaveScene(*scene, (projectBase / "Content" / "Scenes" / "Main.escene").string());
-        AddLog("LogScript", "Active scene exported to game build.", 0);
+        AddLog("LogScript", "Active level exported to game build.", 0);
     }
 
     std::filesystem::path engineRoot = FindEngineSourceRoot();
@@ -14107,7 +14302,7 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
             ImGui::BulletText("Content Root (Content Browser): %s", targetContentDir.string().c_str());
             ImGui::BulletText("Cooked Assets Directory: %s", targetCookedDir.string().c_str());
             ImGui::BulletText("Standalone Game Build Directory: %s", targetBuildDir.string().c_str());
-            ImGui::BulletText("Starter Template: Empty Project (Default Scene & Material included)");
+            ImGui::BulletText("Starter Template: Eunoia Project Template (Default Level & Configs)");
             ImGui::EndChild();
 
             ImGui::Spacing();
