@@ -451,7 +451,11 @@ bool AssetRegistry::Load(const std::filesystem::path& registryFilePath) {
                 if (cur.sourcePath.find(".ebehaviour") != std::string::npos) {
                     cur.type = AssetType::VisualBehaviour;
                 }
-                RegisterAsset(cur);
+                std::error_code ec;
+                std::filesystem::path diskPath = m_projectRoot.empty() ? std::filesystem::path(cur.sourcePath) : (m_projectRoot / cur.sourcePath);
+                if (std::filesystem::exists(diskPath, ec)) {
+                    RegisterAsset(cur);
+                }
             }
             inAsset = false;
         }
@@ -500,6 +504,7 @@ void AssetRegistry::WriteSidecar(const std::filesystem::path& diskFilePath, cons
 void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetRegistryProgressFn onProgress) {
     std::error_code ec;
     if (!std::filesystem::exists(projectRoot, ec)) return;
+    Clear();
     m_projectRoot = projectRoot;
 
     if (onProgress) onProgress(0.1f, "Scanning project directory tree...", projectRoot.string());
@@ -647,6 +652,22 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
                 hasChanges = true;
             }
         }
+    }
+
+    // Prune deleted assets whose physical disk files no longer exist
+    std::vector<AssetID> deletedIds;
+    {
+        std::lock_guard<std::mutex> lock(m_registryMutex);
+        for (const auto& pair : m_assetsByID) {
+            std::filesystem::path fullDisk = projectRoot / pair.second.sourcePath;
+            if (!std::filesystem::exists(fullDisk, ec)) {
+                deletedIds.push_back(pair.first);
+            }
+        }
+    }
+    for (const auto& id : deletedIds) {
+        UnregisterAsset(id);
+        hasChanges = true;
     }
 
     if (hasChanges) {
