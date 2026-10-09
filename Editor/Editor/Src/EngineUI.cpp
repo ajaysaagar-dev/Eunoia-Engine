@@ -1496,29 +1496,34 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
 
                         ImVec2 curPos = ImGui::GetCursorPos();
                         ImVec2 itemSize(ImGui::GetContentRegionAvail().x, 48.0f);
+                        ImVec2 screenPos = ImGui::GetCursorScreenPos();
+                        ImVec2 pMin = screenPos;
+                        ImVec2 pMax = ImVec2(screenPos.x + itemSize.x, screenPos.y + itemSize.y);
 
-                        if (isSelected) {
-                            ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.45f, 0.85f, 0.45f));
-                            ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.16f, 0.52f, 0.95f, 0.65f));
-                        }
-
-                        if (ImGui::Selectable("##ProjSel", isSelected, ImGuiSelectableFlags_AllowDoubleClick, itemSize)) {
+                        // Full-width invisible button to reliably capture clicks anywhere on the card
+                        ImGui::InvisibleButton("##ProjSelBtn", itemSize);
+                        bool isHovered = ImGui::IsItemHovered();
+                        if (ImGui::IsItemClicked()) {
                             selectedIdx = (int)i;
                         }
-                        if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                        if (isHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                             selectedProject = p.rootPath;
                         }
 
-                        if (isSelected) {
-                            ImGui::PopStyleColor(2);
-                        }
+                        // Background styling
+                        ImDrawList* dl = ImGui::GetWindowDrawList();
+                        ImU32 bgCol = isSelected ? IM_COL32(30, 95, 195, 180)
+                                                 : (isHovered ? IM_COL32(42, 52, 70, 160) : IM_COL32(24, 28, 38, 120));
+                        ImU32 borderCol = isSelected ? IM_COL32(50, 160, 255, 230)
+                                                     : (isHovered ? IM_COL32(70, 130, 220, 150) : IM_COL32(40, 45, 58, 100));
+                        dl->AddRectFilled(pMin, pMax, bgCol, 4.0f);
+                        dl->AddRect(pMin, pMax, borderCol, 4.0f, 0, isSelected ? 2.0f : 1.0f);
 
                         // Render text inside selectable card area
                         ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
-                        ImGui::BeginGroup();
                         ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
+                        ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 24.0f));
                         ImGui::TextDisabled("Path: %s", p.rootPath.c_str());
-                        ImGui::EndGroup();
 
                         if (!p.lastOpened.empty()) {
                             ImGui::SetCursorPos(ImVec2((float)BROWSER_W - 220.0f, curPos.y + 14.0f));
@@ -1526,8 +1531,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                         }
 
                         // Reset cursor to next line below the item
-                        ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y));
-                        ImGui::Separator();
+                        ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y + 2.0f));
                         ImGui::PopID();
                     }
                 }
@@ -2178,7 +2182,8 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     currentVirtualDir = "/Game";
     selectedContentItem = "";
 
-    // Re-initialize subsystems with new content root (loads cached AssetRegistry.json in ~1ms)
+    // Clear stale AssetRegistry cache from any previous project and re-initialize subsystems
+    AssetRegistry::Get().Clear();
     TextureManager::Get().SetProjectRoot(contentRootPath);
     AssetManager::Get().Initialize(contentRootPath);
 
@@ -2190,8 +2195,8 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     std::string targetScenePath = specificScenePath;
-    if (isGameMode && targetScenePath.empty()) {
-        // 1. Check GameConfig.json in Data/ or project root
+    if (targetScenePath.empty()) {
+        // 1. Check GameConfig.json in Data/ or project descriptor files in project root
         std::vector<std::filesystem::path> cfgPaths = {
             activeProjectRoot / "Data" / "GameConfig.json",
             activeProjectRoot / "GameConfig.json",
@@ -2283,9 +2288,15 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         isInitialSceneLoaded = true;
         pendingInitialSceneLoad = false;
     } else {
-        // Editor mode: Always open non-saved empty level on startup
-        scene.Clear();
-        currentLevelFilePath = "";
+        // Editor mode: If target level exists in the project, load it so the project is immediately visible
+        bool found = false;
+        if (!targetScenePath.empty() && std::filesystem::exists(targetScenePath, ec)) {
+            found = OpenLevelFromPath(scene, targetScenePath, false, specificBinPath);
+        }
+        if (!found) {
+            scene.Clear();
+            currentLevelFilePath = "";
+        }
         levelUnsaved = false;
         pendingScenePath = "";
         pendingBinPath = "";
@@ -10454,6 +10465,49 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     allItems.push_back(std::move(item));
                 }
 
+                // Check physical directory for project files (.euproject, .eproject) or standalone files not in registry
+                if (searchStr.empty()) {
+                    std::string diskSub = currentVirtualDir;
+                    if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                    if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                    std::filesystem::path currentDiskPath = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+
+                    std::error_code dirEc;
+                    if (std::filesystem::exists(currentDiskPath, dirEc) && std::filesystem::is_directory(currentDiskPath, dirEc)) {
+                        for (const auto& entry : std::filesystem::directory_iterator(currentDiskPath, dirEc)) {
+                            if (!entry.is_directory(dirEc)) {
+                                std::string ext = entry.path().extension().string();
+                                std::string extLower = ext;
+                                std::transform(extLower.begin(), extLower.end(), extLower.begin(), ::tolower);
+
+                                if (extLower == ".euproject" || extLower == ".eproject") {
+                                    std::filesystem::path relPath = std::filesystem::relative(entry.path(), contentRootPath, dirEc);
+                                    std::string srcPath = dirEc ? entry.path().filename().string() : relPath.generic_string();
+                                    std::string vPath = currentVirtualDir + "/" + entry.path().stem().string();
+
+                                    std::string key = "PROJ:" + entry.path().string();
+                                    if (seenDisplayKeys.count(key) == 0 && seenDisplayKeys.count("SRC:" + srcPath) == 0) {
+                                        seenDisplayKeys.insert(key);
+                                        seenDisplayKeys.insert("SRC:" + srcPath);
+
+                                        CBItem projItem;
+                                        projItem.isFolder = false;
+                                        projItem.meta.id = AssetID::CreateRandom();
+                                        projItem.meta.type = AssetType::Project;
+                                        projItem.meta.objectName = entry.path().stem().string();
+                                        projItem.meta.sourcePath = srcPath;
+                                        projItem.meta.virtualPath = vPath;
+                                        projItem.itemKey = key;
+                                        projItem.primaryVal = vPath;
+                                        projItem.displayName = entry.path().filename().string();
+                                        allItems.push_back(std::move(projItem));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 if (allItems.empty()) {
                     ImGui::Spacing();
                     ImGui::Spacing();
@@ -10540,6 +10594,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     } else {
                                         OpenScriptInCodeEditor(fullScript.string());
                                     }
+                                } else if (item.meta.type == AssetType::Project) {
+                                    std::filesystem::path fullProjPath = contentRootPath / item.meta.sourcePath;
+                                    std::filesystem::path projRootDir = fullProjPath.parent_path();
+                                    LoadProject(projRootDir, scene, camera);
                                 } else {
                                     OpenReferenceViewer(item.meta.id);
                                 }
@@ -10778,6 +10836,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
+                                if (item.meta.type == AssetType::Project) {
+                                    if (ImGui::MenuItem("Open Project in Editor")) {
+                                        std::filesystem::path fullProjPath = contentRootPath / item.meta.sourcePath;
+                                        std::filesystem::path projRootDir = fullProjPath.parent_path();
+                                        LoadProject(projRootDir, scene, camera);
+                                    }
+                                    ImGui::Separator();
+                                }
 
                                 if (ImGui::MenuItem("Rename...", "F2")) {
                                     OpenRenameAssetModal(item.meta.id, item.meta.objectName, item.meta.virtualPath);
@@ -10896,6 +10962,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 case AssetType::Behaviour:
                                 case AssetType::Script:          iconTag = "BEH";   accentCol = IM_COL32(217, 102, 242, 255); break; // Purple
                                 case AssetType::Level:           iconTag = "LEVEL"; accentCol = IM_COL32(51, 217, 242, 255);  break; // Cyan
+                                case AssetType::Project:         iconTag = "PROJ";  accentCol = IM_COL32(255, 204, 0, 255);   break; // Gold
                                 default:                         iconTag = "FILE";  accentCol = IM_COL32(153, 153, 153, 255); break;
                             }
                         }
@@ -14188,40 +14255,41 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
 
                     ImVec2 curPos = ImGui::GetCursorPos();
                     ImVec2 itemSize(ImGui::GetContentRegionAvail().x, 48.0f);
+                    ImVec2 screenPos = ImGui::GetCursorScreenPos();
+                    ImVec2 pMin = screenPos;
+                    ImVec2 pMax = ImVec2(screenPos.x + itemSize.x, screenPos.y + itemSize.y);
 
-                    if (isSelected) {
-                        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.12f, 0.45f, 0.85f, 0.45f));
-                        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.16f, 0.52f, 0.95f, 0.65f));
-                    }
-
-                    ImGuiSelectableFlags sFlags = ImGuiSelectableFlags_AllowDoubleClick;
-                    if (ImGui::Selectable("##ProjectSelectable", isSelected, sFlags, itemSize)) {
+                    // Full-width invisible button to reliably capture clicks anywhere on the card
+                    ImGui::InvisibleButton("##InEditorProjSelBtn", itemSize);
+                    bool isHovered = ImGui::IsItemHovered();
+                    if (ImGui::IsItemClicked()) {
                         selectedProjectIndex = (int)i;
                     }
-
-                    // DOUBLE CLICK TO OPEN PROJECT ("fblcik to open it")
-                    if (ImGui::IsItemHovered() && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                    if (isHovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
                         LoadProject(p.rootPath, scene, camera);
                     }
 
-                    if (isSelected) {
-                        ImGui::PopStyleColor(2);
-                    }
+                    // Background styling
+                    ImDrawList* dl = ImGui::GetWindowDrawList();
+                    ImU32 bgCol = isSelected ? IM_COL32(30, 95, 195, 180)
+                                             : (isHovered ? IM_COL32(42, 52, 70, 160) : IM_COL32(24, 28, 38, 120));
+                    ImU32 borderCol = isSelected ? IM_COL32(50, 160, 255, 230)
+                                                 : (isHovered ? IM_COL32(70, 130, 220, 150) : IM_COL32(40, 45, 58, 100));
+                    dl->AddRectFilled(pMin, pMax, bgCol, 4.0f);
+                    dl->AddRect(pMin, pMax, borderCol, 4.0f, 0, isSelected ? 2.0f : 1.0f);
 
-                    // Render content inside card
+                    // Render text inside selectable card area
                     ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
-                    ImGui::BeginGroup();
                     ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
+                    ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 24.0f));
                     ImGui::TextDisabled("Root: %s  |  Content: %s/Content", p.rootPath.c_str(), p.rootPath.c_str());
-                    ImGui::EndGroup();
 
                     if (!p.lastOpened.empty()) {
                         ImGui::SetCursorPos(ImVec2(winW - 220.0f, curPos.y + 14.0f));
                         ImGui::TextDisabled("%s", p.lastOpened.c_str());
                     }
 
-                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y));
-                    ImGui::Separator();
+                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y + 2.0f));
                     ImGui::PopID();
                 }
             }
