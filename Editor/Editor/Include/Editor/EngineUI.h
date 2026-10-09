@@ -286,12 +286,14 @@ public:
     bool RenameContentAsset(const AssetID& id, const std::string& newName);
     bool RenameContentFolder(const std::string& srcVirtualDir, const std::string& newFolderName);
 
-    // Material Editor Window
+    // Material Editor Window & In-Editor Tab Workspace
     bool showMaterialEditor = false;
     MaterialAsset activeMaterial;
     bool materialDirty = false;
     bool liveMaterialViewportSync = true;
     float matEditorLightAngle = 45.0f;
+    int matEditorPreviewMesh = 0; // 0 = Sphere, 1 = Cube, 2 = Plane
+    int matEditorLightPreset = 0; // 0 = Directional Key Light, 1 = Studio 3-Point Lights, 2 = Warm Sunset, 3 = Cool Night / Moonlight
 
     // Gizmos configuration
     bool showGizmo = true;
@@ -492,6 +494,7 @@ public:
     static bool LoadMaterialFile(const std::string& path, MaterialAsset& outMat);
     static bool SaveMaterialFile(const std::string& path, const MaterialAsset& mat);
     void OpenMaterialEditor(const std::string& path);
+    void RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, const glm::vec2& wsSize);
     void ApplyMaterialToActorAndChildren(Scene& scene, GameObject* rootObj, const MaterialAsset& ma);
     std::vector<TextureAssetEntry> ScanProjectTextures();
     bool DrawTextureSlot(const char* label, std::string& textureSlotValue, AssetID& textureSlotAssetId, const std::vector<TextureAssetEntry>& availableTextures);

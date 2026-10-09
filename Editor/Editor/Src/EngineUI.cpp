@@ -2945,7 +2945,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && !VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab();
+    bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
+                        !VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab() &&
+                        !showMaterialEditor;
 
     // 1. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" top panel)
     RenderTopMenuBar(scene, camera, outShouldExit);
@@ -3002,15 +3004,17 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         }
         RenderViewportDropTarget(scene, camera);
     } else {
-        // Active UI or Visual Behaviour Editor Tab Full Workspace
-        float titleBarH = 32.0f * uiScale;
-        float menuBarH = 36.0f * uiScale;
+        // Active UI, Visual Behaviour, or Material Editor Tab Full Workspace
+        float titleBarH = 38.0f * uiScale;
+        float menuBarH = 38.0f * uiScale;
         float topBarH = titleBarH + menuBarH;
         ImGuiViewport* vpWorkspace = ImGui::GetMainViewport();
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
 
-        if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
+        if (showMaterialEditor) {
+            RenderMaterialWorkspace(scene, wsPos, wsSize);
+        } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
         } else if (VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab()) {
             VisualBehaviuors::BehaviourEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize);
@@ -3025,11 +3029,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
     if (showQualitySettings) {
         RenderQualitySettings();
-    }
-
-    // 6. Material Editor Window (Opened via double-click on material in Content Browser)
-    if (showMaterialEditor) {
-        RenderMaterialEditor(scene);
     }
 
     // Skybox Editor & World Skybox Settings Modal
@@ -3201,7 +3200,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             int activeVbTab = vbMgr.activeTabIndex;
 
             // Level Editor Tab (Always open)
-            bool isMainActive = uiMgr.IsMainEditorActive() && !vbMgr.HasActiveTab();
+            bool isMainActive = uiMgr.IsMainEditorActive() && !vbMgr.HasActiveTab() && !showMaterialEditor;
             if (isMainActive) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f)); // #1F99F2 active tab
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
@@ -3217,10 +3216,53 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
             if (ImGui::Button("Level Editor", ImVec2(0.0f, 25.0f * uiScale))) {
                 uiMgr.SwitchToMainEditor();
                 vbMgr.Deactivate();
+                showMaterialEditor = false;
             }
 
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(4);
+
+            // Material Editor Tab (if open)
+            if (showMaterialEditor && !activeMaterial.name.empty()) {
+                if (ImGui::GetCursorPosX() < tabRightLimit - 120.0f * uiScale) {
+                    ImGui::SameLine(0.0f, 6.0f * uiScale);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f)); // Active tab
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.180f, 0.180f, 0.180f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
+
+                    std::string matTabName = activeMaterial.name;
+                    if (materialDirty) matTabName += "*";
+                    matTabName += "##TitleTab_Material";
+
+                    if (ImGui::Button(matTabName.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
+                        uiMgr.SwitchToMainEditor();
+                        vbMgr.Deactivate();
+                        showMaterialEditor = true;
+                    }
+
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor(4);
+
+                    // Close button ✕
+                    ImGui::SameLine(0.0f, 2.0f * uiScale);
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
+
+                    if (ImGui::Button("✕##TitleCloseTab_Material", ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
+                        showMaterialEditor = false;
+                    }
+
+                    ImGui::PopStyleVar(2);
+                    ImGui::PopStyleColor(4);
+                }
+            }
 
             // UI Editor Tabs
             const auto& editors = uiMgr.GetEditors();
@@ -3250,6 +3292,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 
                 if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
                     vbMgr.Deactivate();
+                    showMaterialEditor = false;
                     uiMgr.SwitchToEditor(tabIdx);
                 }
 
@@ -3307,6 +3350,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 
                 if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
                     uiMgr.SwitchToMainEditor();
+                    showMaterialEditor = false;
                     vbMgr.SwitchToEditor((int)i);
                 }
 
@@ -7353,6 +7397,25 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "MATERIAL PREVIEW");
         ImGui::Spacing();
 
+        // Mesh selector tabs/buttons: Sphere, Cube, Plane
+        const char* meshNames[] = { "Sphere", "Cube", "Plane" };
+        for (int m = 0; m < 3; ++m) {
+            bool isCur = (matEditorPreviewMesh == m);
+            if (isCur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+            if (ImGui::Button(meshNames[m], ImVec2(55.0f, 22.0f))) {
+                matEditorPreviewMesh = m;
+            }
+            if (isCur) ImGui::PopStyleColor();
+            if (m < 2) ImGui::SameLine(0.0f, 4.0f);
+        }
+
+        // Predefined Light Presets
+        const char* lightPresets[] = { "Key Light", "Studio 3-Point", "Warm Sunset", "Cool Moonlight" };
+        ImGui::SetNextItemWidth(previewPaneW - 20.0f);
+        ImGui::Combo("##LightPresetCombo", &matEditorLightPreset, lightPresets, IM_ARRAYSIZE(lightPresets));
+
+        ImGui::Spacing();
+
         ImVec2 canvasPos = ImGui::GetCursorScreenPos();
         ImVec2 canvasSize(previewPaneW - 20.0f, previewPaneW - 20.0f);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -7369,100 +7432,191 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(18, 20, 25, 255), 6.0f);
         drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 48, 56, 255), 6.0f);
 
-        // 3D-shaded Sphere geometry
+        // Center and dimensions
         ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
         float radius = (canvasSize.x * 0.5f) - 16.0f;
 
-        // Checkerboard backdrop for transparent / masked materials
-        if (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty() || activeMaterial.opacity < 1.0f) {
-            float checkSize = 14.0f;
-            for (float cy = center.y - radius; cy < center.y + radius; cy += checkSize) {
-                for (float cx = center.x - radius; cx < center.x + radius; cx += checkSize) {
-                    float dx = (cx + checkSize * 0.5f) - center.x;
-                    float dy = (cy + checkSize * 0.5f) - center.y;
-                    if (dx * dx + dy * dy <= radius * radius) {
-                        int ix = (int)((cx - (center.x - radius)) / checkSize);
-                        int iy = (int)((cy - (center.y - radius)) / checkSize);
-                        ImU32 checkCol = ((ix + iy) % 2 == 0) ? IM_COL32(42, 46, 56, 255) : IM_COL32(22, 24, 30, 255);
-                        drawList->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + checkSize, cy + checkSize), checkCol);
-                    }
-                }
-            }
-        }
-
+        // Base color and textures
         glm::vec3 col = activeMaterial.baseColor;
         CachedTexture* previewAlbedo = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
         if (previewAlbedo && previewAlbedo->valid) {
             col = previewAlbedo->averageColor;
         }
 
+        // Predefined lights setup
+        glm::vec3 lightCol = glm::vec3(1.0f);
+        glm::vec3 fillCol = glm::vec3(0.3f, 0.35f, 0.45f);
         float lightRad = glm::radians(matEditorLightAngle);
         glm::vec3 L = glm::normalize(glm::vec3(sinf(lightRad) * 0.7f, -cosf(lightRad) * 0.5f - 0.2f, 0.75f));
+
+        if (matEditorLightPreset == 1) { // Studio 3-Point
+            lightCol = glm::vec3(1.0f, 0.98f, 0.94f);
+            fillCol = glm::vec3(0.40f, 0.48f, 0.60f);
+        } else if (matEditorLightPreset == 2) { // Warm Sunset
+            lightCol = glm::vec3(1.0f, 0.65f, 0.35f);
+            fillCol = glm::vec3(0.55f, 0.25f, 0.25f);
+        } else if (matEditorLightPreset == 3) { // Cool Moonlight
+            lightCol = glm::vec3(0.55f, 0.75f, 1.0f);
+            fillCol = glm::vec3(0.20f, 0.25f, 0.40f);
+        }
+
         glm::vec3 V = glm::vec3(0.0f, 0.0f, 1.0f);
         glm::vec3 H = glm::normalize(L + V);
 
         float sphereAlpha = (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty()) 
                             ? glm::clamp(activeMaterial.opacity, 0.08f, 1.0f) : 1.0f;
         int alphaByte = (int)(sphereAlpha * 255.0f);
-
-        // Render multi-pass PBR sphere shading
-        // Pass 1: Dark ambient backdrop
         float aoDarken = activeMaterial.aoTexture.empty() ? 1.0f : 0.75f;
-        drawList->AddCircleFilled(center, radius,
-            IM_COL32((int)glm::clamp(col.r * 45 * aoDarken, 0.0f, 255.0f),
-                     (int)glm::clamp(col.g * 45 * aoDarken, 0.0f, 255.0f),
-                     (int)glm::clamp(col.b * 45 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+        float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
+        glm::vec3 specColor = glm::mix(lightCol, col, activeMaterial.metallic);
 
-        if (activeMaterial.shadingModel == 1) {
-            // Unlit Shading
-            drawList->AddCircleFilled(center, radius,
-                IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
-        } else {
-            // Pass 2: Diffuse gradient towards light
-            ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
-            drawList->AddCircleFilled(diffCenter, radius * 0.88f,
-                IM_COL32((int)glm::clamp(col.r * 180 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.g * 180 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-            // Pass 3: Core lit disk
-            ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
-            drawList->AddCircleFilled(coreCenter, radius * 0.68f,
-                IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
-
-            // Pass 4: Specular highlight (Roughness & Metallic scaled)
-            float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
-            float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
-            int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-            glm::vec3 specColor = glm::mix(glm::vec3(1.0f), col, activeMaterial.metallic);
-
-            ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
-            drawList->AddCircleFilled(specCenter, specRadius,
-                IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
-
-            // Subtler inner reflection hotspot
-            if (specRough < 0.5f) {
-                drawList->AddCircleFilled(specCenter, specRadius * 0.35f,
-                    IM_COL32(255, 255, 255, (int)(specAlpha * 0.9f)), 24);
+        if (matEditorPreviewMesh == 0) {
+            // ── SPHERE PREVIEW ──
+            // Checkerboard backdrop for transparency
+            if (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty() || activeMaterial.opacity < 1.0f) {
+                float checkSize = 14.0f;
+                for (float cy = center.y - radius; cy < center.y + radius; cy += checkSize) {
+                    for (float cx = center.x - radius; cx < center.x + radius; cx += checkSize) {
+                        float dx = (cx + checkSize * 0.5f) - center.x;
+                        float dy = (cy + checkSize * 0.5f) - center.y;
+                        if (dx * dx + dy * dy <= radius * radius) {
+                            int ix = (int)((cx - (center.x - radius)) / checkSize);
+                            int iy = (int)((cy - (center.y - radius)) / checkSize);
+                            ImU32 checkCol = ((ix + iy) % 2 == 0) ? IM_COL32(42, 46, 56, 255) : IM_COL32(22, 24, 30, 255);
+                            drawList->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + checkSize, cy + checkSize), checkCol);
+                        }
+                    }
+                }
             }
-        }
 
-        // Pass 5: Emissive glow ring
-        if (activeMaterial.emissiveIntensity > 0.01f) {
-            glm::vec3 emCol = activeMaterial.emissiveColor;
-            float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
-            drawList->AddCircle(center, radius + 3.5f,
-                IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
-        }
+            // Pass 1: Ambient / Fill
+            drawList->AddCircleFilled(center, radius,
+                IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
+                         (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
+                         (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
 
-        // Sphere outline
-        drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
+            if (activeMaterial.shadingModel == 1) {
+                // Unlit
+                drawList->AddCircleFilled(center, radius,
+                    IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
+            } else {
+                // Pass 2: Diffuse
+                ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
+                drawList->AddCircleFilled(diffCenter, radius * 0.88f,
+                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+
+                // Pass 3: Core lit disk
+                ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
+                drawList->AddCircleFilled(coreCenter, radius * 0.68f,
+                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
+
+                // Pass 4: Specular
+                float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
+                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
+                drawList->AddCircleFilled(specCenter, specRadius,
+                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+
+                if (specRough < 0.5f) {
+                    drawList->AddCircleFilled(specCenter, specRadius * 0.35f,
+                        IM_COL32(255, 255, 255, (int)(specAlpha * 0.9f)), 24);
+                }
+            }
+
+            // Emissive glow
+            if (activeMaterial.emissiveIntensity > 0.01f) {
+                glm::vec3 emCol = activeMaterial.emissiveColor;
+                float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
+                drawList->AddCircle(center, radius + 3.5f,
+                    IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
+            }
+            drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
+
+        } else if (matEditorPreviewMesh == 1) {
+            // ── CUBE PREVIEW (Isometric 3D box) ──
+            float sz = radius * 0.78f;
+            // Top Face
+            ImVec2 top[4] = {
+                ImVec2(center.x, center.y - sz * 0.85f),
+                ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
+                ImVec2(center.x, center.y + sz * 0.15f),
+                ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
+            };
+            // Left Face
+            ImVec2 leftF[4] = {
+                top[3],
+                top[2],
+                ImVec2(center.x, center.y + sz * 0.95f),
+                ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
+            };
+            // Right Face
+            ImVec2 rightF[4] = {
+                top[2],
+                top[1],
+                ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
+                ImVec2(center.x, center.y + sz * 0.95f)
+            };
+
+            // Calculate lighting per cube face normal
+            float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
+            float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+            float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+
+            glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
+            glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
+            glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
+
+            drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
+                IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
+            drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
+                IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
+            drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
+                IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
+
+            // Wire outlines
+            ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
+            drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
+            drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
+            drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
+
+        } else {
+            // ── PLANE PREVIEW (Tilted 3D quad) ──
+            float pw = radius * 0.95f;
+            float ph = radius * 0.65f;
+            ImVec2 p[4] = {
+                ImVec2(center.x - pw * 0.7f, center.y - ph),
+                ImVec2(center.x + pw * 0.7f, center.y - ph),
+                ImVec2(center.x + pw, center.y + ph),
+                ImVec2(center.x - pw, center.y + ph)
+            };
+
+            float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
+            glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
+
+            drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
+                IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
+                         (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
+                         (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
+
+            // Specular hotspot on plane
+            if (activeMaterial.shadingModel != 1) {
+                float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
+                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
+                drawList->AddCircleFilled(specCenter, specRadius,
+                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+            }
+
+            drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
+        }
 
         // Texture indicator badge overlaid
         if (!activeMaterial.baseColorTexture.empty()) {
@@ -7476,8 +7630,8 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "◯ 3D Sphere");
-        ImGui::TextDisabled("Light: %.0f° (Drag sphere to orbit)", matEditorLightAngle);
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Preview: %s", meshNames[matEditorPreviewMesh]);
+        ImGui::TextDisabled("Light: %.0f° (Drag to orbit)", matEditorLightAngle);
         ImGui::TextDisabled("Shader: %s", activeMaterial.shadingModel == 0 ? "PBR Cook-Torrance" : (activeMaterial.shadingModel == 1 ? "Unlit" : "Subsurface"));
 
         ImGui::EndChild();
@@ -7750,6 +7904,409 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         ImGui::EndChild();
     }
     ImGui::End();
+}
+
+void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, const glm::vec2& wsSize) {
+    ImGui::SetNextWindowPos(ImVec2(wsPos.x, wsPos.y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(wsSize.x, wsSize.y), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
+                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
+
+    if (ImGui::Begin("MaterialWorkspaceView", nullptr, flags)) {
+        // Toolbar
+        if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
+            if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
+                materialDirty = false;
+                int updatedCount = 0;
+                for (auto& obj : scene.objects) {
+                    if (obj.materialName == activeMaterial.name || 
+                        obj.materialName == activeMaterial.filePath ||
+                        std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
+                        obj.color = activeMaterial.baseColor;
+                        obj.metallic = activeMaterial.metallic;
+                        obj.roughness = activeMaterial.roughness;
+                        obj.normalStrength = activeMaterial.normalStrength;
+                        obj.specular = activeMaterial.specular;
+                        obj.emissiveColor = activeMaterial.emissiveColor;
+                        obj.emissiveIntensity = activeMaterial.emissiveIntensity;
+                        obj.shadingModel = activeMaterial.shadingModel;
+                        obj.blendMode = activeMaterial.blendMode;
+                        obj.twoSided = activeMaterial.twoSided;
+                        obj.castShadows = activeMaterial.castShadows;
+                        obj.receiveShadows = activeMaterial.receiveShadows;
+                        obj.baseColorTexture = activeMaterial.baseColorTexture;
+                        obj.normalTexture = activeMaterial.normalTexture;
+                        obj.roughnessTexture = activeMaterial.roughnessTexture;
+                        obj.metallicTexture = activeMaterial.metallicTexture;
+                        obj.aoTexture = activeMaterial.aoTexture;
+                        obj.emissionTexture = activeMaterial.emissionTexture;
+                        obj.uvScale = activeMaterial.uvScale;
+                        obj.normalMapYFlip = activeMaterial.normalMapYFlip;
+                        obj.metallicChannel = activeMaterial.metallicChannel;
+                        obj.roughnessChannel = activeMaterial.roughnessChannel;
+                        obj.aoChannel = activeMaterial.aoChannel;
+                        obj.materialDebugMode = activeMaterial.materialDebugMode;
+                        updatedCount++;
+                    }
+                }
+                AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in " + std::to_string(updatedCount) + " actors in viewport)", 2);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Apply to Selected Actor")) {
+            GameObject* sel = scene.GetSelected();
+            if (sel) {
+                ApplyMaterialToActorAndChildren(scene, sel, activeMaterial);
+            } else {
+                AddLog("LogMaterial", "No Actor currently selected to apply material.", 1);
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Revert")) {
+            LoadMaterialFile(activeMaterial.filePath, activeMaterial);
+            materialDirty = false;
+        }
+
+        ImGui::SameLine();
+        ImGui::Checkbox("Live Viewport Sync", &liveMaterialViewportSync);
+
+        ImGui::SameLine();
+        ImGui::TextDisabled("| %s", activeMaterial.name.c_str());
+
+        ImGui::SameLine(ImGui::GetWindowWidth() - 90.0f * uiScale);
+        if (ImGui::Button("Close Tab", ImVec2(80.0f * uiScale, 22.0f * uiScale))) {
+            showMaterialEditor = false;
+        }
+
+        ImGui::Separator();
+
+        // Scan available textures
+        std::vector<TextureAssetEntry> availableTextures = ScanProjectTextures();
+
+        // Left Pane: MATERIAL PREVIEW (Left Top live preview in mesh)
+        float previewPaneW = std::max(340.0f * uiScale, wsSize.x * 0.32f);
+        ImGui::BeginChild("MatWorkspacePreviewPane", ImVec2(previewPaneW, 0), true);
+
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "LIVE MATERIAL PREVIEW");
+        ImGui::Spacing();
+
+        // Mesh selector tabs: Sphere, Cube, Plane
+        const char* meshNames[] = { "Sphere", "Cube", "Plane" };
+        for (int m = 0; m < 3; ++m) {
+            bool isCur = (matEditorPreviewMesh == m);
+            if (isCur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
+            if (ImGui::Button(meshNames[m], ImVec2(70.0f * uiScale, 24.0f * uiScale))) {
+                matEditorPreviewMesh = m;
+            }
+            if (isCur) ImGui::PopStyleColor();
+            if (m < 2) ImGui::SameLine(0.0f, 6.0f);
+        }
+
+        ImGui::Spacing();
+
+        // Predefined Light Presets
+        const char* lightPresets[] = { "Key Light", "Studio 3-Point", "Warm Sunset", "Cool Moonlight" };
+        ImGui::TextDisabled("Environment Lighting:");
+        ImGui::SetNextItemWidth(previewPaneW - 20.0f);
+        ImGui::Combo("##WorkspaceLightPresetCombo", &matEditorLightPreset, lightPresets, IM_ARRAYSIZE(lightPresets));
+
+        ImGui::Spacing();
+
+        ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+        float canvasDim = std::min(previewPaneW - 24.0f, 320.0f * uiScale);
+        ImVec2 canvasSize(canvasDim, canvasDim);
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        // Canvas button for interactive light rotation
+        ImGui::InvisibleButton("##WorkspacePreviewCanvasBtn", canvasSize);
+        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+            matEditorLightAngle += dragDelta.x * 0.5f;
+            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+        }
+
+        // Background
+        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(18, 20, 25, 255), 6.0f);
+        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 48, 56, 255), 6.0f);
+
+        ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
+        float radius = (canvasSize.x * 0.5f) - 18.0f;
+
+        glm::vec3 col = activeMaterial.baseColor;
+        CachedTexture* previewAlbedo = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
+        if (previewAlbedo && previewAlbedo->valid) {
+            col = previewAlbedo->averageColor;
+        }
+
+        glm::vec3 lightCol = glm::vec3(1.0f);
+        glm::vec3 fillCol = glm::vec3(0.3f, 0.35f, 0.45f);
+        float lightRad = glm::radians(matEditorLightAngle);
+        glm::vec3 L = glm::normalize(glm::vec3(sinf(lightRad) * 0.7f, -cosf(lightRad) * 0.5f - 0.2f, 0.75f));
+
+        if (matEditorLightPreset == 1) { // Studio 3-Point
+            lightCol = glm::vec3(1.0f, 0.98f, 0.94f);
+            fillCol = glm::vec3(0.40f, 0.48f, 0.60f);
+        } else if (matEditorLightPreset == 2) { // Warm Sunset
+            lightCol = glm::vec3(1.0f, 0.65f, 0.35f);
+            fillCol = glm::vec3(0.55f, 0.25f, 0.25f);
+        } else if (matEditorLightPreset == 3) { // Cool Moonlight
+            lightCol = glm::vec3(0.55f, 0.75f, 1.0f);
+            fillCol = glm::vec3(0.20f, 0.25f, 0.40f);
+        }
+
+        glm::vec3 V = glm::vec3(0.0f, 0.0f, 1.0f);
+        glm::vec3 H = glm::normalize(L + V);
+
+        float sphereAlpha = (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty()) 
+                            ? glm::clamp(activeMaterial.opacity, 0.08f, 1.0f) : 1.0f;
+        int alphaByte = (int)(sphereAlpha * 255.0f);
+        float aoDarken = activeMaterial.aoTexture.empty() ? 1.0f : 0.75f;
+        float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
+        glm::vec3 specColor = glm::mix(lightCol, col, activeMaterial.metallic);
+
+        if (matEditorPreviewMesh == 0) {
+            // Sphere
+            drawList->AddCircleFilled(center, radius,
+                IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
+                         (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
+                         (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+
+            if (activeMaterial.shadingModel == 1) {
+                drawList->AddCircleFilled(center, radius,
+                    IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
+            } else {
+                ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
+                drawList->AddCircleFilled(diffCenter, radius * 0.88f,
+                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+
+                ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
+                drawList->AddCircleFilled(coreCenter, radius * 0.68f,
+                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
+
+                float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
+                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
+                drawList->AddCircleFilled(specCenter, specRadius,
+                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+            }
+
+            if (activeMaterial.emissiveIntensity > 0.01f) {
+                glm::vec3 emCol = activeMaterial.emissiveColor;
+                float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
+                drawList->AddCircle(center, radius + 3.5f,
+                    IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
+            }
+            drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
+
+        } else if (matEditorPreviewMesh == 1) {
+            // Cube
+            float sz = radius * 0.78f;
+            ImVec2 top[4] = {
+                ImVec2(center.x, center.y - sz * 0.85f),
+                ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
+                ImVec2(center.x, center.y + sz * 0.15f),
+                ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
+            };
+            ImVec2 leftF[4] = {
+                top[3], top[2],
+                ImVec2(center.x, center.y + sz * 0.95f),
+                ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
+            };
+            ImVec2 rightF[4] = {
+                top[2], top[1],
+                ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
+                ImVec2(center.x, center.y + sz * 0.95f)
+            };
+
+            float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
+            float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+            float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+
+            glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
+            glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
+            glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
+
+            drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
+                IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
+            drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
+                IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
+            drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
+                IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
+
+            ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
+            drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
+            drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
+            drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
+
+        } else {
+            // Plane
+            float pw = radius * 0.95f;
+            float ph = radius * 0.65f;
+            ImVec2 p[4] = {
+                ImVec2(center.x - pw * 0.7f, center.y - ph),
+                ImVec2(center.x + pw * 0.7f, center.y - ph),
+                ImVec2(center.x + pw, center.y + ph),
+                ImVec2(center.x - pw, center.y + ph)
+            };
+
+            float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
+            glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
+
+            drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
+                IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
+                         (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
+                         (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
+
+            if (activeMaterial.shadingModel != 1) {
+                float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
+                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
+                drawList->AddCircleFilled(specCenter, specRadius,
+                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+            }
+
+            drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
+        }
+
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Preview: %s", meshNames[matEditorPreviewMesh]);
+        ImGui::TextDisabled("Light: %.0f° (Drag to orbit)", matEditorLightAngle);
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Right Pane: SURFACE, VALUES, SETTINGS
+        ImGui::BeginChild("MatWorkspacePropertiesPane", ImVec2(0, 0), true);
+
+        char nameEdit[64];
+        strncpy(nameEdit, activeMaterial.name.c_str(), sizeof(nameEdit));
+        nameEdit[sizeof(nameEdit) - 1] = '\0';
+        ImGui::Text("Material:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10.0f);
+        if (ImGui::InputText("##MatNameWorkspaceHeader", nameEdit, sizeof(nameEdit))) {
+            activeMaterial.name = nameEdit;
+            materialDirty = true;
+        }
+
+        if (activeMaterial.assetId.IsValid()) {
+            ImGui::TextDisabled("AssetID: %s", activeMaterial.assetId.ToString().c_str());
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Copy##CopyMatAssetIdWS")) {
+                ImGui::SetClipboardText(activeMaterial.assetId.ToString().c_str());
+                AddLog("LogMaterial", "Copied AssetID to clipboard: " + activeMaterial.assetId.ToString(), 0);
+            }
+        }
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // SECTION 1: SURFACE
+        if (ImGui::CollapsingHeader("SURFACE", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (DrawTextureSlot("Base Color", activeMaterial.baseColorTexture, activeMaterial.baseColorAssetId, availableTextures)) {
+                materialDirty = true;
+                CachedTexture* tex = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
+                if (tex && tex->valid) activeMaterial.baseColor = tex->averageColor;
+            }
+            if (DrawTextureSlot("Normal", activeMaterial.normalTexture, activeMaterial.normalAssetId, availableTextures)) materialDirty = true;
+            if (DrawTextureSlot("Roughness", activeMaterial.roughnessTexture, activeMaterial.roughnessAssetId, availableTextures)) materialDirty = true;
+            if (DrawTextureSlot("Metallic", activeMaterial.metallicTexture, activeMaterial.metallicAssetId, availableTextures)) materialDirty = true;
+            if (DrawTextureSlot("Ambient Occlusion", activeMaterial.aoTexture, activeMaterial.aoAssetId, availableTextures)) materialDirty = true;
+            if (DrawTextureSlot("Emission", activeMaterial.emissionTexture, activeMaterial.emissionAssetId, availableTextures)) materialDirty = true;
+            if (DrawTextureSlot("Opacity / Mask", activeMaterial.opacityTexture, activeMaterial.opacityAssetId, availableTextures)) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // SECTION 2: VALUES
+        if (ImGui::CollapsingHeader("VALUES", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::ColorEdit3("Base Color Tint", &activeMaterial.baseColor.x)) materialDirty = true;
+            if (ImGui::SliderFloat("Roughness", &activeMaterial.roughness, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Metallic", &activeMaterial.metallic, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Normal Strength", &activeMaterial.normalStrength, 0.0f, 3.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Specular", &activeMaterial.specular, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::ColorEdit3("Emissive Color", &activeMaterial.emissiveColor.x)) materialDirty = true;
+            if (ImGui::DragFloat("Emissive Intensity", &activeMaterial.emissiveIntensity, 0.1f, 0.0f, 100.0f, "%.1f")) materialDirty = true;
+            if (activeMaterial.blendMode != 0) {
+                if (ImGui::SliderFloat("Opacity", &activeMaterial.opacity, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+                if (activeMaterial.blendMode == 1) {
+                    if (ImGui::SliderFloat("Mask Clip Value", &activeMaterial.opacityMaskClipValue, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+                }
+            }
+            if (ImGui::DragFloat2("UV Scale", &activeMaterial.uvScale.x, 0.05f, 0.01f, 100.0f, "%.2f")) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // SECTION 3: MATERIAL SETTINGS
+        if (ImGui::CollapsingHeader("MATERIAL SETTINGS", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            const char* shadingModels[] = { "Default Lit (PBR Cook-Torrance)", "Unlit", "Subsurface Profile" };
+            if (ImGui::Combo("Shading Model", &activeMaterial.shadingModel, shadingModels, IM_ARRAYSIZE(shadingModels))) materialDirty = true;
+            const char* blendModes[] = { "Opaque", "Masked", "Translucent" };
+            if (ImGui::Combo("Blend Mode", &activeMaterial.blendMode, blendModes, IM_ARRAYSIZE(blendModes))) materialDirty = true;
+            if (ImGui::Checkbox("Two Sided", &activeMaterial.twoSided)) materialDirty = true;
+            if (ImGui::Checkbox("Cast Shadows", &activeMaterial.castShadows)) materialDirty = true;
+            if (ImGui::Checkbox("Receive Shadows", &activeMaterial.receiveShadows)) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // Real-time viewport sync if enabled
+        if (liveMaterialViewportSync && materialDirty) {
+            for (auto& obj : scene.objects) {
+                if (obj.materialName == activeMaterial.name || 
+                    obj.materialName == activeMaterial.filePath ||
+                    std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
+                    obj.color = activeMaterial.baseColor;
+                    obj.metallic = activeMaterial.metallic;
+                    obj.roughness = activeMaterial.roughness;
+                    obj.normalStrength = activeMaterial.normalStrength;
+                    obj.specular = activeMaterial.specular;
+                    obj.emissiveColor = activeMaterial.emissiveColor;
+                    obj.emissiveIntensity = activeMaterial.emissiveIntensity;
+                    obj.shadingModel = activeMaterial.shadingModel;
+                    obj.blendMode = activeMaterial.blendMode;
+                    obj.twoSided = activeMaterial.twoSided;
+                    obj.castShadows = activeMaterial.castShadows;
+                    obj.receiveShadows = activeMaterial.receiveShadows;
+                    obj.opacity = activeMaterial.opacity;
+                    obj.opacityMaskClipValue = activeMaterial.opacityMaskClipValue;
+                    obj.baseColorTexture = activeMaterial.baseColorTexture;
+                    obj.normalTexture = activeMaterial.normalTexture;
+                    obj.roughnessTexture = activeMaterial.roughnessTexture;
+                    obj.metallicTexture = activeMaterial.metallicTexture;
+                    obj.aoTexture = activeMaterial.aoTexture;
+                    obj.emissionTexture = activeMaterial.emissionTexture;
+                    obj.opacityTexture = activeMaterial.opacityTexture;
+                    obj.uvScale = activeMaterial.uvScale;
+                    obj.normalMapYFlip = activeMaterial.normalMapYFlip;
+                    obj.metallicChannel = activeMaterial.metallicChannel;
+                    obj.roughnessChannel = activeMaterial.roughnessChannel;
+                    obj.aoChannel = activeMaterial.aoChannel;
+                    obj.materialDebugMode = activeMaterial.materialDebugMode;
+                }
+            }
+        }
+
+        ImGui::EndChild();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
 }
 
 bool EngineUI::LoadWaterFile(const std::string& path, WaterAsset& out) {
