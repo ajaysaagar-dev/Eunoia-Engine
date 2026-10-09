@@ -25,7 +25,8 @@ enum class AssetType {
     UI = UserInterface,
     UserInterface3D,
     UI3D = UserInterface3D,
-    Data
+    Data,
+    Project
 };
 
 inline const char* AssetTypeToString(AssetType type) {
@@ -49,6 +50,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::UserInterface:   return "User Interface";
         case AssetType::UserInterface3D: return "User Interface 3D";
         case AssetType::Data:            return "Data";
+        case AssetType::Project:         return "Project";
         default:                         return "Unknown";
     }
 }
@@ -75,6 +77,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "userinterface3d" || s == "user_interface_3d" || s == "user interface 3d" || s == "ui3d" || s == "eui3d") return AssetType::UserInterface3D;
     if (s == "userinterface" || s == "user_interface" || s == "user interface" || s == "ui" || s == "eui") return AssetType::UserInterface;
     if (s == "data")         return AssetType::Data;
+    if (s == "project" || s == "euproject" || s == "eproject") return AssetType::Project;
     return AssetType::Unknown;
 }
 
@@ -129,6 +132,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     if (e == "behaviour" || e == "cpp" || e == "h") {
         return AssetType::Behaviour;
     }
+    if (e == "euproject" || e == "eproject") {
+        return AssetType::Project;
+    }
     return AssetType::Unknown;
 }
 
@@ -153,6 +159,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::UserInterface:   return "🖥";
         case AssetType::UserInterface3D: return "🔮";
         case AssetType::Data:            return "📊";
+        case AssetType::Project:         return "📁";
         default:                         return "📄";
     }
 }
