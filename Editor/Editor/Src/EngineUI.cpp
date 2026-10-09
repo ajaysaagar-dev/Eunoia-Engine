@@ -1753,6 +1753,8 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             char timeBuf[64];
             strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", localtime(&now));
 
+            std::filesystem::path recentCfg = GetRecentProjectsConfigPath();
+
             // Read existing, prepend new entry, save
             nlohmann::json arr = nlohmann::json::array();
             nlohmann::json newEntry;
@@ -1762,8 +1764,8 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             arr.push_back(newEntry);
 
             // Copy over existing entries (skip duplicates)
-            if (std::filesystem::exists(cfgPath, ec)) {
-                std::ifstream existingFile(cfgPath);
+            if (std::filesystem::exists(recentCfg, ec)) {
+                std::ifstream existingFile(recentCfg);
                 if (existingFile.is_open()) {
                     try {
                         nlohmann::json existing;
@@ -1779,8 +1781,8 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                 }
             }
 
-            std::filesystem::create_directories(cfgPath.parent_path(), ec);
-            std::ofstream cfgOut(cfgPath);
+            std::filesystem::create_directories(recentCfg.parent_path(), ec);
+            std::ofstream cfgOut(recentCfg);
             if (cfgOut.is_open()) {
                 cfgOut << arr.dump(4);
                 cfgOut.close();
@@ -2181,6 +2183,16 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     currentContentPath = contentRootPath;
     currentVirtualDir = "/Game";
     selectedContentItem = "";
+
+    // Ensure any running background sync thread finishes before wiping and swapping projects
+    while (s_bgSync.isRunning.load()) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    if (m_window) {
+        std::string winTitle = "Eunoia Engine — [" + activeProjectName + "]";
+        glfwSetWindowTitle(m_window, winTitle.c_str());
+    }
 
     // Clear stale AssetRegistry cache from any previous project and re-initialize subsystems
     AssetRegistry::Get().Clear();
@@ -4371,10 +4383,16 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::PopStyleColor();
             }
 
-            // Right side engine info
-            float rightWidth = 220.0f;
+            // Right side engine info with active project name
+            std::string projHeader = activeProjectName.empty() ? "" : ("[" + activeProjectName + "]  ");
+            std::string fullHeader = projHeader + "DirectX 12 | EunoiaEngine";
+            float rightWidth = ImGui::CalcTextSize(fullHeader.c_str()).x + 30.0f;
             if (ImGui::GetContentRegionAvail().x > rightWidth) {
                 ImGui::SameLine(ImGui::GetWindowWidth() - rightWidth);
+                if (!activeProjectName.empty()) {
+                    ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.45f, 1.00f), "[%s]", activeProjectName.c_str());
+                    ImGui::SameLine(0.0f, 6.0f);
+                }
                 ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.00f), "DirectX 12 | EunoiaEngine");
             }
 
@@ -10596,7 +10614,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                 } else if (item.meta.type == AssetType::Project) {
                                     std::filesystem::path fullProjPath = contentRootPath / item.meta.sourcePath;
+                                    std::error_code ec;
+                                    if (!std::filesystem::exists(fullProjPath, ec)) {
+                                        fullProjPath = activeProjectRoot / item.meta.sourcePath;
+                                    }
                                     std::filesystem::path projRootDir = fullProjPath.parent_path();
+                                    if (projRootDir.filename() == "Content") {
+                                        projRootDir = projRootDir.parent_path();
+                                    }
                                     LoadProject(projRootDir, scene, camera);
                                 } else {
                                     OpenReferenceViewer(item.meta.id);
@@ -10839,7 +10864,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 if (item.meta.type == AssetType::Project) {
                                     if (ImGui::MenuItem("Open Project in Editor")) {
                                         std::filesystem::path fullProjPath = contentRootPath / item.meta.sourcePath;
+                                        std::error_code ec;
+                                        if (!std::filesystem::exists(fullProjPath, ec)) {
+                                            fullProjPath = activeProjectRoot / item.meta.sourcePath;
+                                        }
                                         std::filesystem::path projRootDir = fullProjPath.parent_path();
+                                        if (projRootDir.filename() == "Content") {
+                                            projRootDir = projRootDir.parent_path();
+                                        }
                                         LoadProject(projRootDir, scene, camera);
                                     }
                                     ImGui::Separator();
