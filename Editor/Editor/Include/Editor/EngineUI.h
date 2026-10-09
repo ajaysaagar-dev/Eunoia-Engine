@@ -373,6 +373,23 @@ public:
         return rect;
     }
 
+    struct MatPreviewPipRect {
+        bool active = false;
+        float x = 0.0f;
+        float y = 0.0f;
+        float width = 0.0f;
+        float height = 0.0f;
+        int meshType = 0; // 0 = Sphere, 1 = Cube, 2 = Plane
+        int lightPreset = 0;
+        float lightAngle = 45.0f;
+    };
+
+    MatPreviewPipRect matPreviewPipRect;
+
+    MatPreviewPipRect GetMatPreviewPipRect() const {
+        return matPreviewPipRect;
+    }
+
     // Viewport display mode
     int viewMode = 0; // 0=Lit, 1=Wireframe, 2=Unlit
     float cameraSpeed = 4.0f;

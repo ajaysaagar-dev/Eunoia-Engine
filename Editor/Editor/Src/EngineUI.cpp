@@ -2945,6 +2945,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
+    matPreviewPipRect.active = false;
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
                         !VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab() &&
                         !showMaterialEditor;
@@ -3013,7 +3014,12 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
 
         if (showMaterialEditor) {
-            RenderMaterialWorkspace(scene, wsPos, wsSize);
+            float cbH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f;
+            glm::vec2 matWsSize(wsSize.x, wsSize.y - cbH);
+            RenderMaterialWorkspace(scene, wsPos, matWsSize);
+            if (showBottomDrawer) {
+                RenderContentBrowser(scene);
+            }
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
         } else if (VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab()) {
@@ -8022,6 +8028,16 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         ImVec2 canvasSize(canvasDim, canvasDim);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
+        // Update Material Preview D3D12 hardware viewport rect
+        matPreviewPipRect.active = true;
+        matPreviewPipRect.x = canvasPos.x;
+        matPreviewPipRect.y = canvasPos.y;
+        matPreviewPipRect.width = canvasSize.x;
+        matPreviewPipRect.height = canvasSize.y;
+        matPreviewPipRect.meshType = matEditorPreviewMesh;
+        matPreviewPipRect.lightPreset = matEditorLightPreset;
+        matPreviewPipRect.lightAngle = matEditorLightAngle;
+
         // Canvas button for interactive light rotation
         ImGui::InvisibleButton("##WorkspacePreviewCanvasBtn", canvasSize);
         if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
@@ -8030,9 +8046,10 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
             ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
         }
 
-        // Background
-        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(18, 20, 25, 255), 6.0f);
-        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 48, 56, 255), 6.0f);
+        // Elegant border around the DirectX 12 3D PBR preview viewport
+        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(31, 153, 242, 200), 4.0f, 0, 1.5f);
+        drawList->AddRect(ImVec2(canvasPos.x - 1, canvasPos.y - 1), ImVec2(canvasPos.x + canvasSize.x + 1, canvasPos.y + canvasSize.y + 1), IM_COL32(10, 12, 16, 255), 5.0f, 0, 1.0f);
+        drawList->AddText(ImVec2(canvasPos.x + 8.0f, canvasPos.y + 8.0f), IM_COL32(200, 220, 240, 180), "DX12 PBR 3D");
 
         ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
         float radius = (canvasSize.x * 0.5f) - 18.0f;
@@ -8069,116 +8086,118 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
         glm::vec3 specColor = glm::mix(lightCol, col, activeMaterial.metallic);
 
-        if (matEditorPreviewMesh == 0) {
-            // Sphere
-            drawList->AddCircleFilled(center, radius,
-                IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-            if (activeMaterial.shadingModel == 1) {
+        if (!matPreviewPipRect.active) {
+            if (matEditorPreviewMesh == 0) {
+                // Sphere
                 drawList->AddCircleFilled(center, radius,
-                    IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
+                    IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
+                             (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+
+                if (activeMaterial.shadingModel == 1) {
+                    drawList->AddCircleFilled(center, radius,
+                        IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
+                } else {
+                    ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
+                    drawList->AddCircleFilled(diffCenter, radius * 0.88f,
+                        IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+
+                    ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
+                    drawList->AddCircleFilled(coreCenter, radius * 0.68f,
+                        IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
+
+                    float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
+                    int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                    ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
+                    drawList->AddCircleFilled(specCenter, specRadius,
+                        IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+                }
+
+                if (activeMaterial.emissiveIntensity > 0.01f) {
+                    glm::vec3 emCol = activeMaterial.emissiveColor;
+                    float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
+                    drawList->AddCircle(center, radius + 3.5f,
+                        IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
+                                 (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
+                }
+                drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
+
+            } else if (matEditorPreviewMesh == 1) {
+                // Cube
+                float sz = radius * 0.78f;
+                ImVec2 top[4] = {
+                    ImVec2(center.x, center.y - sz * 0.85f),
+                    ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
+                    ImVec2(center.x, center.y + sz * 0.15f),
+                    ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
+                };
+                ImVec2 leftF[4] = {
+                    top[3], top[2],
+                    ImVec2(center.x, center.y + sz * 0.95f),
+                    ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
+                };
+                ImVec2 rightF[4] = {
+                    top[2], top[1],
+                    ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
+                    ImVec2(center.x, center.y + sz * 0.95f)
+                };
+
+                float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
+                float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+                float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
+
+                glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
+                glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
+                glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
+
+                drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
+                    IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
+                drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
+                    IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
+                drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
+                    IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
+
+                ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
+                drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
+                drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
+                drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
+
             } else {
-                ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
-                drawList->AddCircleFilled(diffCenter, radius * 0.88f,
-                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
+                // Plane
+                float pw = radius * 0.95f;
+                float ph = radius * 0.65f;
+                ImVec2 p[4] = {
+                    ImVec2(center.x - pw * 0.7f, center.y - ph),
+                    ImVec2(center.x + pw * 0.7f, center.y - ph),
+                    ImVec2(center.x + pw, center.y + ph),
+                    ImVec2(center.x - pw, center.y + ph)
+                };
 
-                ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
-                drawList->AddCircleFilled(coreCenter, radius * 0.68f,
-                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
+                float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
+                glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
 
-                float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
-                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
-                drawList->AddCircleFilled(specCenter, specRadius,
-                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+                drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
+                    IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
+                             (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
+
+                if (activeMaterial.shadingModel != 1) {
+                    float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
+                    int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
+                    ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
+                    drawList->AddCircleFilled(specCenter, specRadius,
+                        IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+                }
+
+                drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
             }
-
-            if (activeMaterial.emissiveIntensity > 0.01f) {
-                glm::vec3 emCol = activeMaterial.emissiveColor;
-                float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
-                drawList->AddCircle(center, radius + 3.5f,
-                    IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
-            }
-            drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
-
-        } else if (matEditorPreviewMesh == 1) {
-            // Cube
-            float sz = radius * 0.78f;
-            ImVec2 top[4] = {
-                ImVec2(center.x, center.y - sz * 0.85f),
-                ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
-                ImVec2(center.x, center.y + sz * 0.15f),
-                ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
-            };
-            ImVec2 leftF[4] = {
-                top[3], top[2],
-                ImVec2(center.x, center.y + sz * 0.95f),
-                ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
-            };
-            ImVec2 rightF[4] = {
-                top[2], top[1],
-                ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
-                ImVec2(center.x, center.y + sz * 0.95f)
-            };
-
-            float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
-            float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-            float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-
-            glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
-            glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
-            glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
-
-            drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
-                IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
-            drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
-                IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
-            drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
-                IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
-
-            ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
-            drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
-            drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
-            drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
-
-        } else {
-            // Plane
-            float pw = radius * 0.95f;
-            float ph = radius * 0.65f;
-            ImVec2 p[4] = {
-                ImVec2(center.x - pw * 0.7f, center.y - ph),
-                ImVec2(center.x + pw * 0.7f, center.y - ph),
-                ImVec2(center.x + pw, center.y + ph),
-                ImVec2(center.x - pw, center.y + ph)
-            };
-
-            float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
-            glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
-
-            drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
-                IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
-
-            if (activeMaterial.shadingModel != 1) {
-                float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
-                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
-                drawList->AddCircleFilled(specCenter, specRadius,
-                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
-            }
-
-            drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
         }
 
         ImGui::Spacing();

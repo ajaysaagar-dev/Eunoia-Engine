@@ -257,6 +257,20 @@ static void* g_pVertexMapped = nullptr;
 static void* g_pIndexMapped = nullptr;
 static void* g_pConstantMapped = nullptr;
 
+// Material Editor Live 3D PBR Preview Buffers
+const size_t MAX_MAT_PREVIEW_VERTICES = 10000;
+const size_t MAX_MAT_PREVIEW_INDICES  = 40000;
+static ID3D12Resource* g_matPreviewVertexBuffer = nullptr;
+static ID3D12Resource* g_matPreviewIndexBuffer = nullptr;
+static ID3D12Resource* g_matPreviewConstantBuffer = nullptr;
+static D3D12_VERTEX_BUFFER_VIEW g_matPreviewVertexBufferView = {};
+static D3D12_INDEX_BUFFER_VIEW  g_matPreviewIndexBufferView = {};
+static void* g_pMatPreviewVertexMapped = nullptr;
+static void* g_pMatPreviewIndexMapped = nullptr;
+static void* g_pMatPreviewConstantMapped = nullptr;
+static int g_currentMatPreviewMeshType = -1;
+static uint32_t g_currentMatPreviewIndexCount = 0;
+
 static uint32_t g_currentVertexCount = 0;
 static uint32_t g_currentIndexCount = 0;
 
@@ -3535,6 +3549,48 @@ int createDynamicBuffers()
 
 	g_constantBuffer->Map(0, &readRange, &g_pConstantMapped);
 
+	// 4. Material Editor Live 3D Preview Buffers
+	UINT64 matVBufferSize = MAX_MAT_PREVIEW_VERTICES * sizeof(Vertex);
+	D3D12_RESOURCE_DESC matVDesc = CreateBufferResourceDesc(matVBufferSize);
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &matVDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_matPreviewVertexBuffer)
+	);
+	if (g_matPreviewVertexBuffer) {
+		g_matPreviewVertexBuffer->SetName(L"g_matPreviewVertexBuffer");
+		g_matPreviewVertexBuffer->Map(0, &readRange, &g_pMatPreviewVertexMapped);
+		g_matPreviewVertexBufferView.BufferLocation = g_matPreviewVertexBuffer->GetGPUVirtualAddress();
+		g_matPreviewVertexBufferView.StrideInBytes = sizeof(Vertex);
+		g_matPreviewVertexBufferView.SizeInBytes = (UINT)matVBufferSize;
+	}
+
+	UINT64 matIBufferSize = MAX_MAT_PREVIEW_INDICES * sizeof(uint32_t);
+	D3D12_RESOURCE_DESC matIDesc = CreateBufferResourceDesc(matIBufferSize);
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &matIDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_matPreviewIndexBuffer)
+	);
+	if (g_matPreviewIndexBuffer) {
+		g_matPreviewIndexBuffer->SetName(L"g_matPreviewIndexBuffer");
+		g_matPreviewIndexBuffer->Map(0, &readRange, &g_pMatPreviewIndexMapped);
+		g_matPreviewIndexBufferView.BufferLocation = g_matPreviewIndexBuffer->GetGPUVirtualAddress();
+		g_matPreviewIndexBufferView.Format = DXGI_FORMAT_R32_UINT;
+		g_matPreviewIndexBufferView.SizeInBytes = (UINT)matIBufferSize;
+	}
+
+	D3D12_RESOURCE_DESC matCbDesc = CreateBufferResourceDesc(cbSize);
+	g_d3dDevice->CreateCommittedResource(
+		&uploadHeap, D3D12_HEAP_FLAG_NONE, &matCbDesc,
+		D3D12_RESOURCE_STATE_GENERIC_READ, nullptr, IID_PPV_ARGS(&g_matPreviewConstantBuffer)
+	);
+	if (g_matPreviewConstantBuffer) {
+		g_matPreviewConstantBuffer->SetName(L"g_matPreviewConstantBuffer");
+		g_matPreviewConstantBuffer->Map(0, &readRange, &g_pMatPreviewConstantMapped);
+	}
+
+	g_currentMatPreviewMeshType = -1;
+	g_currentMatPreviewIndexCount = 0;
+
 	return EXIT_SUCCESS;
 }
 
@@ -4770,6 +4826,194 @@ void renderFrame()
 	}
 
 	// ----------------------------------------------------
+	// PASS 2.55: Material Editor Live 3D PBR Hardware Preview Pass
+	// Renders preview sphere, cube, or plane using DirectX 12 PBR with studio/predefined lighting
+	// ----------------------------------------------------
+	EngineUI::MatPreviewPipRect matRect = g_engineUI.GetMatPreviewPipRect();
+	if (!g_deviceLost && matRect.active && g_matPreviewVertexBuffer && g_matPreviewIndexBuffer && g_matPreviewConstantBuffer)
+	{
+		float mx = std::max(0.0f, std::min((float)g_currentWidth - 1.0f, matRect.x));
+		float my = std::max(0.0f, std::min((float)g_currentHeight - 1.0f, matRect.y));
+		float mw = std::max(1.0f, std::min((float)g_currentWidth - mx, matRect.width));
+		float mh = std::max(1.0f, std::min((float)g_currentHeight - my, matRect.height));
+
+		D3D12_VIEWPORT matViewport = { mx, my, mw, mh, 0.0f, 1.0f };
+		D3D12_RECT matScissor = { (LONG)mx, (LONG)my, (LONG)(mx + mw), (LONG)(my + mh) };
+
+		RecordGpuBreadcrumbOp("[MatPreview Pass] Live 3D PBR Material Mesh");
+		g_commandList->RSSetViewports(1, &matViewport);
+		g_commandList->RSSetScissorRects(1, &matScissor);
+
+		// Clear Depth & Stencil exclusively within preview rectangle for clean 3D depth test
+		g_commandList->ClearDepthStencilView(dsvHandle, D3D12_CLEAR_FLAG_DEPTH, 1.0f, 0, 1, &matScissor);
+		const float matPreviewBg[4] = { 0.07f, 0.08f, 0.10f, 1.0f };
+		g_commandList->ClearRenderTargetView(activeSceneRtv, matPreviewBg, 1, &matScissor);
+
+		// Check if preview geometry needs to be rebuilt/uploaded
+		if (g_currentMatPreviewMeshType != matRect.meshType || g_currentMatPreviewIndexCount == 0)
+		{
+			PrimitiveMesh pMesh;
+			if (matRect.meshType == 1) {
+				pMesh = GeometryBuilder::CreateBox(1.15f, 1.15f, 1.15f, 4, 4, 4);
+			} else if (matRect.meshType == 2) {
+				pMesh = GeometryBuilder::CreatePlane(1.6f, 1.6f, 8, 8);
+			} else {
+				pMesh = GeometryBuilder::CreateSphere(0.68f, 32, 32);
+			}
+
+			size_t vCount = std::min(pMesh.vertices.size(), MAX_MAT_PREVIEW_VERTICES);
+			size_t iCount = std::min(pMesh.indices.size(), MAX_MAT_PREVIEW_INDICES);
+
+			if (g_pMatPreviewVertexMapped && vCount > 0)
+			{
+				std::vector<Vertex> vtxList(vCount);
+				for (size_t vi = 0; vi < vCount; ++vi)
+				{
+					vtxList[vi].position = pMesh.vertices[vi].pos;
+					vtxList[vi].normal   = pMesh.vertices[vi].normal;
+					vtxList[vi].uv       = pMesh.vertices[vi].uv;
+					vtxList[vi].color    = glm::vec3(1.0f);
+					vtxList[vi].tangent  = pMesh.vertices[vi].tangent;
+				}
+				memcpy(g_pMatPreviewVertexMapped, vtxList.data(), vCount * sizeof(Vertex));
+			}
+
+			if (g_pMatPreviewIndexMapped && iCount > 0)
+			{
+				memcpy(g_pMatPreviewIndexMapped, pMesh.indices.data(), iCount * sizeof(uint32_t));
+			}
+
+			g_currentMatPreviewMeshType = matRect.meshType;
+			g_currentMatPreviewIndexCount = (uint32_t)iCount;
+		}
+
+		// Configure Preview Camera MVP & Studio Lighting
+		glm::vec3 camPos(0.0f, 0.0f, 2.2f);
+		glm::vec3 camTarget(0.0f, 0.0f, 0.0f);
+		glm::vec3 camUp(0.0f, 1.0f, 0.0f);
+		if (matRect.meshType == 2) {
+			camPos = glm::vec3(0.0f, 1.5f, 1.8f);
+		}
+		glm::mat4 matView = glm::lookAt(camPos, camTarget, camUp);
+		float matAspect = (mh > 0.0f) ? (mw / mh) : 1.0f;
+		glm::mat4 matProj = glm::perspective(glm::radians(45.0f), matAspect, 0.1f, 50.0f);
+		glm::mat4 matModel = glm::mat4(1.0f);
+
+		// Calculate light direction from interactive angle
+		float rad = glm::radians(matRect.lightAngle);
+		glm::vec3 previewLightDir = glm::normalize(glm::vec3(sinf(rad) * 0.7f, -cosf(rad) * 0.5f - 0.3f, 0.75f));
+		glm::vec3 previewLightCol = glm::vec3(1.0f);
+		glm::vec3 previewAmbientCol = glm::vec3(0.08f, 0.09f, 0.12f);
+		float previewAmbientIntensity = 0.45f;
+
+		if (matRect.lightPreset == 1) { // Studio 3-Point
+			previewLightCol = glm::vec3(1.0f, 0.98f, 0.94f) * 1.2f;
+			previewAmbientCol = glm::vec3(0.12f, 0.14f, 0.18f);
+			previewAmbientIntensity = 0.6f;
+		} else if (matRect.lightPreset == 2) { // Warm Sunset
+			previewLightCol = glm::vec3(1.0f, 0.65f, 0.35f) * 1.3f;
+			previewAmbientCol = glm::vec3(0.18f, 0.08f, 0.08f);
+			previewAmbientIntensity = 0.5f;
+		} else if (matRect.lightPreset == 3) { // Cool Moonlight
+			previewLightCol = glm::vec3(0.55f, 0.75f, 1.0f) * 1.1f;
+			previewAmbientCol = glm::vec3(0.05f, 0.08f, 0.14f);
+			previewAmbientIntensity = 0.4f;
+		}
+
+		SceneConstantBuffer matCb = {};
+		matCb.mvp = matProj * matView * matModel;
+		matCb.cameraPos = camPos;
+		matCb.ambientIntensity = previewAmbientIntensity;
+		matCb.ambientColor = glm::vec4(previewAmbientCol, 1.0f);
+		matCb.lightDir = previewLightDir;
+		matCb.lightColor = previewLightCol;
+		matCb.shadowStrength = 0.0f;
+		matCb.enableShadows = 0.0f;
+		matCb.enablePostProcessing = 0.0f;
+		matCb.numPointLights = 0.0f;
+
+		// Studio secondary fill light (Point light 0)
+		if (matRect.lightPreset == 1) {
+			matCb.numPointLights = 1.0f;
+			matCb.pointLightPosRange[0] = glm::vec4(-1.5f, 1.0f, 1.0f, 10.0f);
+			matCb.pointLightColorIntensity[0] = glm::vec4(0.4f, 0.5f, 0.7f, 1.0f);
+			matCb.pointLightDirType[0] = glm::vec4(0.0f, 0.0f, 0.0f, 0.0f); // Point light
+		}
+
+		if (g_pMatPreviewConstantMapped)
+		{
+			memcpy(g_pMatPreviewConstantMapped, &matCb, sizeof(matCb));
+		}
+
+		g_commandList->SetGraphicsRootSignature(g_rootSignature);
+		g_commandList->SetPipelineState(g_pipelineState);
+		g_commandList->SetGraphicsRootConstantBufferView(0, g_matPreviewConstantBuffer->GetGPUVirtualAddress());
+		g_commandList->SetGraphicsRootDescriptorTable(3, g_shadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(4, g_pointShadowSrvGpuHandle);
+		g_commandList->SetGraphicsRootDescriptorTable(5, g_spotShadowSrvGpuHandle);
+		if (g_lightmapSrvInHeap)
+			g_commandList->SetGraphicsRootDescriptorTable(6, g_lightmapSrvGpuHandle);
+
+		g_commandList->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+		g_commandList->IASetVertexBuffers(0, 1, &g_matPreviewVertexBufferView);
+		g_commandList->IASetIndexBuffer(&g_matPreviewIndexBufferView);
+
+		// Upload active material shader constants from EngineUI activeMaterial
+		const auto& curMat = g_engineUI.activeMaterial;
+		MaterialShaderConstants matConsts = {};
+		matConsts.baseColor[0] = curMat.baseColor.r;
+		matConsts.baseColor[1] = curMat.baseColor.g;
+		matConsts.baseColor[2] = curMat.baseColor.b;
+		matConsts.metallic     = curMat.metallic;
+		matConsts.roughness    = curMat.roughness;
+		matConsts.normalStrength = curMat.normalStrength;
+		matConsts.specular     = curMat.specular;
+		matConsts.emissiveIntensity = curMat.emissiveIntensity;
+		matConsts.emissiveColor[0] = curMat.emissiveColor.r;
+		matConsts.emissiveColor[1] = curMat.emissiveColor.g;
+		matConsts.emissiveColor[2] = curMat.emissiveColor.b;
+		matConsts.isUnlit      = (curMat.shadingModel == 1) ? 1.0f : 0.0f;
+		matConsts.hasAlbedoTex = (!curMat.baseColorTexture.empty() && curMat.baseColorTexture != "none") ? 1.0f : 0.0f;
+		matConsts.hasNormalTex = (!curMat.normalTexture.empty() && curMat.normalTexture != "none") ? 1.0f : 0.0f;
+		matConsts.hasRoughTex  = (!curMat.roughnessTexture.empty() && curMat.roughnessTexture != "none") ? 1.0f : 0.0f;
+		matConsts.hasAoTex     = (!curMat.aoTexture.empty() && curMat.aoTexture != "none") ? 1.0f : 0.0f;
+		matConsts.receiveShadows = 0.0f;
+		matConsts.uvScale[0]   = curMat.uvScale.x != 0.0f ? curMat.uvScale.x : 1.0f;
+		matConsts.uvScale[1]   = curMat.uvScale.y != 0.0f ? curMat.uvScale.y : 1.0f;
+		matConsts.blendMode    = (float)curMat.blendMode;
+		matConsts.opacity      = curMat.opacity;
+		matConsts.opacityMaskClipValue = curMat.opacityMaskClipValue > 0.0f ? curMat.opacityMaskClipValue : 0.333f;
+		matConsts.hasOpacityTex = (!curMat.opacityTexture.empty() && curMat.opacityTexture != "none") ? 1.0f : 0.0f;
+		matConsts.normalMapYFlip = curMat.normalMapYFlip ? 1.0f : 0.0f;
+		matConsts.roughnessChannel = (float)curMat.roughnessChannel;
+		matConsts.metallicChannel = (float)curMat.metallicChannel;
+		matConsts.aoChannel = (float)curMat.aoChannel;
+		matConsts.materialDebugMode = (float)curMat.materialDebugMode;
+
+		g_commandList->SetGraphicsRoot32BitConstants(1, 32, &matConsts, 0);
+
+		D3D12_GPU_DESCRIPTOR_HANDLE matTable = GetOrCreateMaterialTable(
+			curMat.baseColorTexture,
+			curMat.normalTexture,
+			curMat.roughnessTexture,
+			curMat.metallicTexture,
+			curMat.aoTexture,
+			curMat.opacityTexture,
+			curMat.emissionTexture
+		);
+
+		if (matTable.ptr != 0 && g_currentMatPreviewIndexCount > 0)
+		{
+			g_commandList->SetGraphicsRootDescriptorTable(2, matTable);
+			g_commandList->DrawIndexedInstanced(g_currentMatPreviewIndexCount, 1, 0, 0, 0);
+		}
+
+		// Restore main viewport and scissor
+		g_commandList->RSSetViewports(1, &viewport);
+		g_commandList->RSSetScissorRects(1, &scissor);
+	}
+
+	// ----------------------------------------------------
 	// PASS 2.6: Real-Time Anti-Aliasing Resolve Pass (dev.md)
 	// Resolves g_sceneRenderTarget to backbuffer with active AA method
 	// ----------------------------------------------------
@@ -4956,10 +5200,16 @@ void cleanUpD3D12()
 	if (g_indexBuffer) { g_indexBuffer->Unmap(0, nullptr); g_indexBuffer->Release(); g_indexBuffer = nullptr; }
 	if (g_constantBuffer) { g_constantBuffer->Unmap(0, nullptr); g_constantBuffer->Release(); g_constantBuffer = nullptr; }
 	if (g_shadowConstantBuffer) { g_shadowConstantBuffer->Unmap(0, nullptr); g_shadowConstantBuffer->Release(); g_shadowConstantBuffer = nullptr; }
+	if (g_matPreviewVertexBuffer) { g_matPreviewVertexBuffer->Unmap(0, nullptr); g_matPreviewVertexBuffer->Release(); g_matPreviewVertexBuffer = nullptr; }
+	if (g_matPreviewIndexBuffer) { g_matPreviewIndexBuffer->Unmap(0, nullptr); g_matPreviewIndexBuffer->Release(); g_matPreviewIndexBuffer = nullptr; }
+	if (g_matPreviewConstantBuffer) { g_matPreviewConstantBuffer->Unmap(0, nullptr); g_matPreviewConstantBuffer->Release(); g_matPreviewConstantBuffer = nullptr; }
 	g_pVertexMapped = nullptr;
 	g_pIndexMapped = nullptr;
 	g_pConstantMapped = nullptr;
 	g_pShadowConstantMapped = nullptr;
+	g_pMatPreviewVertexMapped = nullptr;
+	g_pMatPreviewIndexMapped = nullptr;
+	g_pMatPreviewConstantMapped = nullptr;
 
 	for (auto* tex : g_allocatedTextures) {
 		if (tex) tex->Release();
@@ -5405,10 +5655,16 @@ bool RecoverD3D12Device(HWND hwnd)
 	if (g_indexBuffer) { g_indexBuffer->Unmap(0, nullptr); g_indexBuffer->Release(); g_indexBuffer = nullptr; }
 	if (g_constantBuffer) { g_constantBuffer->Unmap(0, nullptr); g_constantBuffer->Release(); g_constantBuffer = nullptr; }
 	if (g_shadowConstantBuffer) { g_shadowConstantBuffer->Unmap(0, nullptr); g_shadowConstantBuffer->Release(); g_shadowConstantBuffer = nullptr; }
+	if (g_matPreviewVertexBuffer) { g_matPreviewVertexBuffer->Unmap(0, nullptr); g_matPreviewVertexBuffer->Release(); g_matPreviewVertexBuffer = nullptr; }
+	if (g_matPreviewIndexBuffer) { g_matPreviewIndexBuffer->Unmap(0, nullptr); g_matPreviewIndexBuffer->Release(); g_matPreviewIndexBuffer = nullptr; }
+	if (g_matPreviewConstantBuffer) { g_matPreviewConstantBuffer->Unmap(0, nullptr); g_matPreviewConstantBuffer->Release(); g_matPreviewConstantBuffer = nullptr; }
 	g_pVertexMapped = nullptr;
 	g_pIndexMapped = nullptr;
 	g_pConstantMapped = nullptr;
 	g_pShadowConstantMapped = nullptr;
+	g_pMatPreviewVertexMapped = nullptr;
+	g_pMatPreviewIndexMapped = nullptr;
+	g_pMatPreviewConstantMapped = nullptr;
 
 	for (auto* tex : g_allocatedTextures) {
 		if (tex) tex->Release();
@@ -6432,6 +6688,7 @@ int main(int argc, char** argv)
 				                          g_scene.isPlayMode ||
 				                          g_engineUI.isPlayModeActive ||
 				                          g_engineUI.realtimeViewport ||
+				                          g_engineUI.showMaterialEditor ||
 				                          g_engineUI.viewportRedrawCountdown > 0);
 
 				if (need3DSceneRender)
