@@ -8429,18 +8429,19 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
         const ImVec4 accentBlue = ImVec4(0.12f, 0.60f, 0.95f, 1.0f);
 
         if (isContentTab) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-        if (ImGui::Button("Content Browser", ImVec2(130, 24))) bottomDrawerTab = 0;
+        if (ImGui::Button("Content Browser")) bottomDrawerTab = 0;
         if (isContentTab) ImGui::PopStyleColor();
 
         ImGui::SameLine();
         if (isLogTab) ImGui::PushStyleColor(ImGuiCol_Button, accentBlue);
-        if (ImGui::Button("Output Log", ImVec2(100, 24))) bottomDrawerTab = 1;
+        if (ImGui::Button("Output Log")) bottomDrawerTab = 1;
         if (isLogTab) ImGui::PopStyleColor();
 
         ImGui::SameLine();
+        ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("|");
         ImGui::SameLine();
-        if (ImGui::SmallButton(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]")) {
+        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]")) {
             bottomDrawerOpen = !bottomDrawerOpen;
         }
         ImGui::Separator();
@@ -8454,7 +8455,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 // 1. Top Navigation & Action Toolbar (matching Old Eunoia Engine)
                 bool isAtRoot = (currentVirtualDir == "/Game");
                 if (isAtRoot) ImGui::BeginDisabled();
-                if (ImGui::Button("< Up", ImVec2(50, 24))) {
+                if (ImGui::Button("< Up")) {
                     currentVirtualDir = AssetPath::GetDirectory(currentVirtualDir);
                     selectedContentItem = "";
                     selectedContentItems.clear();
@@ -8492,7 +8493,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 ImGui::SameLine();
-                if (ImGui::Button("Content", ImVec2(75, 24))) {
+                if (ImGui::Button("Content")) {
                     currentVirtualDir = "/Game";
                     selectedContentItem = "";
                     selectedContentItems.clear();
@@ -8521,11 +8522,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextDisabled("|");
                 ImGui::SameLine();
 
                 // + Add / Create Menu (matching Old Eunoia Engine)
-                if (ImGui::Button("+ Add / Create", ImVec2(110, 24))) {
+                if (ImGui::Button("+ Add / Create")) {
                     ImGui::OpenPopup("CBAddCreatePopup");
                 }
                 if (ImGui::BeginPopup("CBAddCreatePopup")) {
@@ -8577,6 +8579,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 ImGui::SameLine();
+                ImGui::AlignTextToFramePadding();
                 ImGui::TextDisabled("|");
                 ImGui::SameLine();
 
@@ -8591,13 +8594,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     accumVirtual += "/" + seg;
                     if (segIdx > 0) {
                         ImGui::SameLine();
+                        ImGui::AlignTextToFramePadding();
                         ImGui::TextDisabled(">");
                         ImGui::SameLine();
                     }
                     ImGui::PushID(segIdx++);
                     bool isCurSeg = (accumVirtual == currentVirtualDir);
                     if (isCurSeg) ImGui::PushStyleColor(ImGuiCol_Text, accentBlue);
-                    if (ImGui::SmallButton(seg.c_str())) {
+                    if (ImGui::Button(seg.c_str())) {
                         currentVirtualDir = accumVirtual;
                         selectedContentItem = "";
                         selectedContentItems.clear();
@@ -8631,9 +8635,13 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 // Controls on right: Search, Zoom Slider (matching Old Eunoia Engine)
-                float rightOffset = 320.0f;
-                if (ImGui::GetContentRegionAvail().x > rightOffset) {
-                    ImGui::SameLine(ImGui::GetWindowWidth() - rightOffset);
+                float rightControlsWidth = 140.0f + 80.0f + ImGui::GetStyle().ItemSpacing.x;
+                if (contentBrowserSearch[0] != '\0') {
+                    rightControlsWidth += ImGui::CalcTextSize("X").x + ImGui::GetStyle().FramePadding.x * 2.0f + ImGui::GetStyle().ItemSpacing.x;
+                }
+                float availW = ImGui::GetContentRegionAvail().x;
+                if (availW > rightControlsWidth + 10.0f) {
+                    ImGui::SameLine(ImGui::GetWindowWidth() - rightControlsWidth - ImGui::GetStyle().WindowPadding.x);
                 } else {
                     ImGui::SameLine();
                 }
@@ -8642,7 +8650,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 ImGui::InputTextWithHint("##CBSearch", "Search...", contentBrowserSearch, sizeof(contentBrowserSearch));
                 if (contentBrowserSearch[0] != '\0') {
                     ImGui::SameLine();
-                    if (ImGui::SmallButton("X##ClearCBSearch")) {
+                    if (ImGui::Button("X##ClearCBSearch")) {
                         contentBrowserSearch[0] = '\0';
                     }
                 }
