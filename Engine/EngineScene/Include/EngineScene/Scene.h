@@ -108,6 +108,18 @@ public:
     float postSharpenAmount = 0.0f;   // 0.0 = Disabled/Off, 0.0..1.0 sharpen filter intensity
     float postDenoiserAmount = 0.0f;  // 0.0 = Disabled/Off, 0.0..1.0 edge-preserving bilateral denoiser intensity
 
+    // Screen Space Ambient Occlusion (SSAO / HBAO / MSAO / RTAO - WickedEngine Reference)
+    bool enableAO = true;
+    int aoType = 1;                   // 0=Disabled, 1=SSAO, 2=HBAO, 3=MSAO, 4=RTAO
+    float aoPower = 1.0f;             // Intensity exponent (WickedEngine default 1.0, range 0.25 - 8.0)
+    float aoRange = 1.0f;             // Sample distance / Ray length (WickedEngine default 1.0, range 0.1 - 20.0 m)
+    int aoSampleCount = 16;           // Sample count (WickedEngine default 16, range 1 - 32)
+    float aoBias = 0.025f;            // Angle/depth bias to eliminate self-occlusion artifacts
+    bool aoBlur = true;               // Edge-preserving bilateral depth filter
+    float aoBlurRadius = 2.0f;        // Bilateral filter radius
+    bool aoTemporal = true;           // Temporal accumulation filter
+    float aoTemporalBlend = 0.85f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
@@ -1389,6 +1401,16 @@ public:
         postColorTint = 0.0f;
         postSharpenAmount = 0.0f;
         postDenoiserAmount = 0.0f;
+        enableAO = true;
+        aoType = 1;
+        aoPower = 1.0f;
+        aoRange = 1.0f;
+        aoSampleCount = 16;
+        aoBias = 0.025f;
+        aoBlur = true;
+        aoBlurRadius = 2.0f;
+        aoTemporal = true;
+        aoTemporalBlend = 0.85f;
         outlinerNodeOpenState.clear();
         contentBrowserFolderOpenState.clear();
     }

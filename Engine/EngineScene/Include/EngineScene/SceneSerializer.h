@@ -145,6 +145,18 @@ public:
         file << "      \"colorTint\": " << scene.postColorTint << ",\n";
         file << "      \"sharpenAmount\": " << scene.postSharpenAmount << ",\n";
         file << "      \"denoiserAmount\": " << scene.postDenoiserAmount << "\n";
+        file << "    },\n";
+        file << "    \"ambientOcclusion\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enableAO) << ",\n";
+        file << "      \"type\": " << scene.aoType << ",\n";
+        file << "      \"power\": " << scene.aoPower << ",\n";
+        file << "      \"range\": " << scene.aoRange << ",\n";
+        file << "      \"sampleCount\": " << scene.aoSampleCount << ",\n";
+        file << "      \"bias\": " << scene.aoBias << ",\n";
+        file << "      \"blur\": " << BoolStr(scene.aoBlur) << ",\n";
+        file << "      \"blurRadius\": " << scene.aoBlurRadius << ",\n";
+        file << "      \"temporal\": " << BoolStr(scene.aoTemporal) << ",\n";
+        file << "      \"temporalBlend\": " << scene.aoTemporalBlend << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -1093,6 +1105,25 @@ public:
             p = pBlock.find("\"denoiserAmount\""); if (p != std::string::npos) scene.postDenoiserAmount = ParseFloatAt(pBlock, p, 0.0f);
         } else {
             scene.enablePostProcessing = false;
+        }
+
+        size_t aoPos = envBlock.find("\"ambientOcclusion\"");
+        if (aoPos != std::string::npos) {
+            size_t aStart = envBlock.find('{', aoPos);
+            size_t aEnd = FindMatchingBrace(envBlock, aStart);
+            std::string aBlock = envBlock.substr(aStart, aEnd - aStart + 1);
+
+            size_t p;
+            p = aBlock.find("\"enabled\""); if (p != std::string::npos) scene.enableAO = ParseBoolAt(aBlock, p, true);
+            p = aBlock.find("\"type\""); if (p != std::string::npos) scene.aoType = (int)ParseFloatAt(aBlock, p, 1.0f);
+            p = aBlock.find("\"power\""); if (p != std::string::npos) scene.aoPower = ParseFloatAt(aBlock, p, 1.0f);
+            p = aBlock.find("\"range\""); if (p != std::string::npos) scene.aoRange = ParseFloatAt(aBlock, p, 1.0f);
+            p = aBlock.find("\"sampleCount\""); if (p != std::string::npos) scene.aoSampleCount = (int)ParseFloatAt(aBlock, p, 16.0f);
+            p = aBlock.find("\"bias\""); if (p != std::string::npos) scene.aoBias = ParseFloatAt(aBlock, p, 0.025f);
+            p = aBlock.find("\"blur\""); if (p != std::string::npos) scene.aoBlur = ParseBoolAt(aBlock, p, true);
+            p = aBlock.find("\"blurRadius\""); if (p != std::string::npos) scene.aoBlurRadius = ParseFloatAt(aBlock, p, 2.0f);
+            p = aBlock.find("\"temporal\""); if (p != std::string::npos) scene.aoTemporal = ParseBoolAt(aBlock, p, true);
+            p = aBlock.find("\"temporalBlend\""); if (p != std::string::npos) scene.aoTemporalBlend = ParseFloatAt(aBlock, p, 0.85f);
         }
     }
 
