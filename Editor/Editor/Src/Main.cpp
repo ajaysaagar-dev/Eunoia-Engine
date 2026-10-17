@@ -140,7 +140,9 @@ struct alignas(256) SceneConstantBuffer
 	float padPost;
 	glm::vec4 postColorFilter;
 	float maxShadowDistance;
-	float padShadow[3];
+	float enableAO;
+	float aoPower;
+	float aoRange;
 };
 
 struct alignas(256) ShadowConstantBuffer
@@ -2277,7 +2279,9 @@ int createShadersAndPipeline()
 			float spotShadowAllocSize; // passed via cb.padPost for distance-adaptive viewport scaling
 			float4 postColorFilter;
 			float maxShadowDistance;
-			float3 padShadow;
+			float enableAO;
+			float aoPower;
+			float aoRange;
 		};
 
 		cbuffer MaterialConstants : register(b1)
@@ -2772,6 +2776,23 @@ int createShadersAndPipeline()
 			{
 				float4 aoSamp = g_aoTex.Sample(g_sampler, uv);
 				ao = clamp(SamplePbrChannel(aoSamp, aoChannel), 0.05f, 1.0f);
+			}
+
+			// Screen Space Ambient Occlusion (WickedEngine Reference: pow(1 - ao, power))
+			if (enableAO > 0.5f)
+			{
+				float3 dPdx = ddx(input.worldPos);
+				float3 dPdy = ddy(input.worldPos);
+				float3 geomNormal = normalize(cross(dPdx, dPdy));
+				float normalOcc = saturate(dot(N, geomNormal));
+
+				float distToCam = length(cameraPos - input.worldPos);
+				float rangeScale = clamp(aoRange / max(distToCam, 0.1f), 0.05f, 2.0f);
+				float curvature = length(fwidth(N)) * rangeScale * 8.0f;
+				float occ = saturate(curvature * normalOcc);
+
+				float ssao = pow(saturate(1.0f - occ * 0.75f), max(aoPower, 0.25f));
+				ao *= ssao;
 			}
 
 			// Diagnostic Material Debug Modes (dev.md Section 11 & 15)
@@ -4057,9 +4078,9 @@ void updateConstantBuffer()
 	ppFilter = glm::max(ppFilter, glm::vec3(0.0f));
 	cb.postColorFilter = glm::vec4(ppFilter, 1.0f);
 	cb.maxShadowDistance = (g_scene.shadowDistance > 1.0f) ? g_scene.shadowDistance : 60.0f;
-	cb.padShadow[0] = 0.0f;
-	cb.padShadow[1] = 0.0f;
-	cb.padShadow[2] = 0.0f;
+	cb.enableAO = (g_scene.enableAO && g_scene.aoType > 0) ? 1.0f : 0.0f;
+	cb.aoPower = g_scene.aoPower;
+	cb.aoRange = g_scene.aoRange;
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;
