@@ -878,6 +878,17 @@ void EngineUI::SaveEditorConfig() {
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
+static std::filesystem::path GetRecentProjectsConfigPath() {
+    char* appdata = getenv("LOCALAPPDATA");
+    if (appdata) {
+        std::filesystem::path p = std::filesystem::path(appdata) / "EunoiaEngine" / "RecentProjects.json";
+        std::error_code ec;
+        std::filesystem::create_directories(p.parent_path(), ec);
+        return p;
+    }
+    return "RecentProjects.json";
+}
+
 // Helper: Apply the same dark theme as the editor
 static void ApplyProjectBrowserTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
@@ -1974,17 +1985,6 @@ std::string EngineUI::ShowOpenProjectFileDialog() {
         return std::string(ofn.lpstrFile);
     }
     return "";
-}
-
-static std::filesystem::path GetRecentProjectsConfigPath() {
-    char* appdata = getenv("LOCALAPPDATA");
-    if (appdata) {
-        std::filesystem::path p = std::filesystem::path(appdata) / "EunoiaEngine" / "RecentProjects.json";
-        std::error_code ec;
-        std::filesystem::create_directories(p.parent_path(), ec);
-        return p;
-    }
-    return "RecentProjects.json";
 }
 
 void EngineUI::LoadRecentProjects() {
@@ -10936,7 +10936,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (projRootDir.filename() == "Content") {
                                         projRootDir = projRootDir.parent_path();
                                     }
-                                    LoadProject(projRootDir, scene, camera);
+                                    if (currentCamera) {
+                                        LoadProject(projRootDir, scene, *currentCamera);
+                                    }
                                 } else {
                                     OpenReferenceViewer(item.meta.id);
                                 }
@@ -11186,7 +11188,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         if (projRootDir.filename() == "Content") {
                                             projRootDir = projRootDir.parent_path();
                                         }
-                                        LoadProject(projRootDir, scene, camera);
+                                        if (currentCamera) {
+                                            LoadProject(projRootDir, scene, *currentCamera);
+                                        }
                                     }
                                     ImGui::Separator();
                                 }
