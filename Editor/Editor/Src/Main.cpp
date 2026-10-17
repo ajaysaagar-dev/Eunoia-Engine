@@ -2783,15 +2783,25 @@ int createShadersAndPipeline()
 			{
 				float3 dPdx = ddx(input.worldPos);
 				float3 dPdy = ddy(input.worldPos);
-				float3 geomNormal = normalize(cross(dPdx, dPdy));
-				float normalOcc = saturate(dot(N, geomNormal));
+				float3 d2Pdx2 = ddx(dPdx);
+				float3 d2Pdy2 = ddy(dPdy);
 
+				// Second-order screen-space surface concavity (crevice & crease detection)
+				float concavity = saturate((dot(d2Pdx2, N) + dot(d2Pdy2, N)) * 12.0f);
+
+				// Normal curvature & silhouette grazing angle falloff
+				float normalCurvature = length(fwidth(N)) * 3.5f;
+				float grazing = pow(saturate(1.0f - abs(dot(N, V))), 2.0f);
+
+				// Distance-adaptive search radius scaling (WickedEngine aoRange)
 				float distToCam = length(cameraPos - input.worldPos);
-				float rangeScale = clamp(aoRange / max(distToCam, 0.1f), 0.05f, 2.0f);
-				float curvature = length(fwidth(N)) * rangeScale * 8.0f;
-				float occ = saturate(curvature * normalOcc);
+				float rangeFactor = clamp(aoRange / max(distToCam * 0.15f, 0.2f), 0.15f, 3.5f);
 
-				float ssao = pow(saturate(1.0f - occ * 0.75f), max(aoPower, 0.25f));
+				// Combine crevice concavity, curvature, and contact occlusion
+				float occCombined = saturate((concavity * 0.65f + normalCurvature * 0.35f + grazing * 0.15f) * rangeFactor);
+
+				// WickedEngine exponential power shaping: pow(saturate(1.0 - occ), power)
+				float ssao = pow(saturate(1.0f - occCombined), max(aoPower, 0.25f));
 				ao *= ssao;
 			}
 
@@ -2873,11 +2883,15 @@ int createShadersAndPipeline()
 			float shadowFactor = CalculateShadow(input.worldPos, N, L);
 			float3 directLit = (diffBRDF + specBRDF) * NdotL * lightColor * shadowFactor;
 
+			// Contact ambient occlusion darkening on direct shadow edges & crevices (WickedEngine)
+			directLit *= lerp(saturate(pow(ao, 0.65f)), 1.0f, saturate(shadowFactor * NdotL + 0.20f));
+
 			// Ambient & Indirect Lighting with Falcor Multi-Scattering Specular Energy Preservation
 			float3 ambCol = ambientColor.rgb;
-			float3 ambientDiff = albedo * ambCol * ambientIntensity * (1.0f - metal) * ao;
+			float effectiveAmbIntensity = max(ambientIntensity, 0.20f);
+			float3 ambientDiff = albedo * ambCol * effectiveAmbIntensity * (1.0f - metal) * ao;
 			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
-			float3 ambientSpec = ambSpecEnergy * ambCol * ambientIntensity * ao;
+			float3 ambientSpec = ambSpecEnergy * ambCol * effectiveAmbIntensity * ao;
 
 			// Multiple Lights (Point, Spot, Area) - WickedEngine Forward+ Lighting & Falcor Disney Diffuse
 			float3 pointLightsContribution = float3(0, 0, 0);

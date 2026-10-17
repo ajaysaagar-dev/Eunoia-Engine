@@ -45,6 +45,7 @@ inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.pointLights.size() != b.pointLights.size()) return true;
     if (a.lightDirection != b.lightDirection || a.lightColor != b.lightColor || a.lightIntensity != b.lightIntensity) return true;
     if (a.ambientIntensity != b.ambientIntensity || a.enableShadows != b.enableShadows || a.shadowStrength != b.shadowStrength || a.shadowBias != b.shadowBias) return true;
+    if (a.enableAO != b.enableAO || a.aoType != b.aoType || a.aoPower != b.aoPower || a.aoRange != b.aoRange || a.aoSampleCount != b.aoSampleCount || a.aoBias != b.aoBias || a.aoBlur != b.aoBlur) return true;
     for (size_t i = 0; i < a.objects.size(); ++i) {
         const auto& o1 = a.objects[i];
         const auto& o2 = b.objects[i];
@@ -3901,6 +3902,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         }
                         Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode((Eunoia::PostProcess::SSAOMode)scene.aoType);
                         AddLog("LogRenderer", std::string("AO Algorithm switched to: ") + aoAlgorithms[scene.aoType], 0);
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Choose Ambient Occlusion type (Reference: WickedEngine GraphicsWindow.cpp):\n"
@@ -3917,6 +3919,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SetNextItemWidth(190.0f);
                     if (ImGui::SliderFloat("Power", &scene.aoPower, 0.25f, 8.0f, "%.2f")) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.power = scene.aoPower;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Set SSAO Power (WickedEngine aoPower: 0.25 - 8.0).\nHigher values produce darker, more pronounced occlusion in crevices and corners.");
@@ -3926,6 +3929,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SetNextItemWidth(190.0f);
                     if (ImGui::SliderFloat("Range (Radius)", &scene.aoRange, 0.1f, 20.0f, "%.2f m")) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.radius = scene.aoRange;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Set AO ray length / search radius in world space (WickedEngine aoRange).\nControls the spread distance of ambient contact shadows.");
@@ -3935,6 +3939,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SetNextItemWidth(190.0f);
                     if (ImGui::SliderInt("Sample Count", &scene.aoSampleCount, 1, 32)) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.sampleCount = scene.aoSampleCount;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Set AO ray sample count per pixel (WickedEngine aoSampleCount: 1 - 32).\nHigher values reduce noise at the cost of GPU performance.");
@@ -3944,6 +3949,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::SetNextItemWidth(190.0f);
                     if (ImGui::SliderFloat("Bias", &scene.aoBias, 0.001f, 0.1f, "%.4f")) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.bias = scene.aoBias;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Angular/depth self-occlusion bias to prevent acne/shadow artifacts on planar surfaces.");
@@ -3953,17 +3959,21 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::TextDisabled("Filtering & Temporal:");
                     if (ImGui::Checkbox("Bilateral Blur", &scene.aoBlur)) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.enableBlur = scene.aoBlur;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Edge-preserving cross-bilateral depth blur (WickedEngine msao_blurupsampleCS).");
                     }
                     if (scene.aoBlur) {
                         ImGui::SetNextItemWidth(190.0f);
-                        ImGui::SliderFloat("Blur Radius", &scene.aoBlurRadius, 0.5f, 5.0f, "%.1f");
+                        if (ImGui::SliderFloat("Blur Radius", &scene.aoBlurRadius, 0.5f, 5.0f, "%.1f")) {
+                            RequestViewportRedraw(15);
+                        }
                     }
 
                     if (ImGui::Checkbox("Temporal Accumulation", &scene.aoTemporal)) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.enableTemporalAO = scene.aoTemporal;
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::IsItemHovered()) {
                         ImGui::SetTooltip("Accumulates ambient occlusion samples across consecutive frames using history buffer.");
@@ -3974,22 +3984,27 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     if (ImGui::MenuItem("Disabled", nullptr, !scene.enableAO || scene.aoType == 0)) {
                         scene.enableAO = false; scene.aoType = 0;
                         Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode(Eunoia::PostProcess::SSAOMode::Disabled);
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::MenuItem("Low (8 Samples, Range 0.8m, Power 1.0)")) {
                         scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 8; scene.aoRange = 0.8f; scene.aoPower = 1.0f; scene.aoBlur = true;
                         Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(1);
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::MenuItem("Medium (16 Samples, Range 1.0m, Power 1.5)")) {
                         scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 16; scene.aoRange = 1.0f; scene.aoPower = 1.5f; scene.aoBlur = true;
                         Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(2);
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::MenuItem("High (24 Samples, Range 1.5m, Power 1.8)")) {
                         scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 24; scene.aoRange = 1.5f; scene.aoPower = 1.8f; scene.aoBlur = true;
                         Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(3);
+                        RequestViewportRedraw(15);
                     }
                     if (ImGui::MenuItem("Ultra (32 Samples, Range 2.0m, Power 2.0)")) {
                         scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 32; scene.aoRange = 2.0f; scene.aoPower = 2.0f; scene.aoBlur = true;
                         Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(4);
+                        RequestViewportRedraw(15);
                     }
 
                     ImGui::Separator();
@@ -9282,6 +9297,7 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
         if (ImGui::Checkbox("Enable Ambient Occlusion for Scene", &scene.enableAO)) {
             AddLog("LogRenderer", scene.enableAO ? "Ambient Occlusion Enabled" : "Ambient Occlusion Disabled", 0);
             Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode(scene.enableAO ? (Eunoia::PostProcess::SSAOMode)scene.aoType : Eunoia::PostProcess::SSAOMode::Disabled);
+            RequestViewportRedraw(15);
         }
         ImGui::PopStyleColor();
 
@@ -9312,6 +9328,7 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
                 if (scene.aoType > 0) scene.enableAO = true;
                 else scene.enableAO = false;
                 Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode((Eunoia::PostProcess::SSAOMode)scene.aoType);
+                RequestViewportRedraw(15);
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Choose Ambient Occlusion type (Reference: WickedEngine GraphicsWindow.cpp):\n"
@@ -9332,7 +9349,9 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
             ImGui::Spacing();
 
             // Power (WickedEngine aoPowerSlider: 0.25 - 8.0)
-            ImGui::SliderFloat("Power##AoPower", &scene.aoPower, 0.25f, 8.0f, "%.2f");
+            if (ImGui::SliderFloat("Power##AoPower", &scene.aoPower, 0.25f, 8.0f, "%.2f")) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Set SSAO Power (WickedEngine aoPower: 0.25 - 8.0).\nExponent applied to occlusion: higher values darken ambient crevices and contact corners.");
             }
@@ -9340,30 +9359,36 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
             // Quick Power preset buttons
             ImGui::TextDisabled("Quick Power:");
             ImGui::SameLine();
-            if (ImGui::SmallButton("0.5 (Soft)")) scene.aoPower = 0.5f;
+            if (ImGui::SmallButton("0.5 (Soft)")) { scene.aoPower = 0.5f; RequestViewportRedraw(15); }
             ImGui::SameLine();
-            if (ImGui::SmallButton("1.0 (Standard)")) scene.aoPower = 1.0f;
+            if (ImGui::SmallButton("1.0 (Standard)")) { scene.aoPower = 1.0f; RequestViewportRedraw(15); }
             ImGui::SameLine();
-            if (ImGui::SmallButton("1.5 (Balanced)")) scene.aoPower = 1.5f;
+            if (ImGui::SmallButton("1.5 (Balanced)")) { scene.aoPower = 1.5f; RequestViewportRedraw(15); }
             ImGui::SameLine();
-            if (ImGui::SmallButton("2.0 (High)")) scene.aoPower = 2.0f;
+            if (ImGui::SmallButton("2.0 (High)")) { scene.aoPower = 2.0f; RequestViewportRedraw(15); }
             ImGui::SameLine();
-            if (ImGui::SmallButton("3.5 (Deep)")) scene.aoPower = 3.5f;
+            if (ImGui::SmallButton("3.5 (Deep)")) { scene.aoPower = 3.5f; RequestViewportRedraw(15); }
 
             // Range (WickedEngine aoRangeSlider: 0.1 - 20.0 m)
-            ImGui::SliderFloat("Range (Radius)##AoRange", &scene.aoRange, 0.1f, 20.0f, "%.2f m");
+            if (ImGui::SliderFloat("Range (Radius)##AoRange", &scene.aoRange, 0.1f, 20.0f, "%.2f m")) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Set AO sample radius / ray length in world meters (WickedEngine aoRange).\nControls the physical distance across which ambient occlusion spreads.");
             }
 
             // Sample Count (WickedEngine aoSampleCountSlider: 1 - 32)
-            ImGui::SliderInt("Sample Count##AoSamples", &scene.aoSampleCount, 1, 32);
+            if (ImGui::SliderInt("Sample Count##AoSamples", &scene.aoSampleCount, 1, 32)) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Set AO ray sample count per pixel (WickedEngine aoSampleCount: 1 - 32).\nMore samples produce cleaner, smoother occlusion gradients.");
             }
 
             // Bias (Self-occlusion bias)
-            ImGui::SliderFloat("Angle / Depth Bias##AoBias", &scene.aoBias, 0.001f, 0.1f, "%.4f");
+            if (ImGui::SliderFloat("Angle / Depth Bias##AoBias", &scene.aoBias, 0.001f, 0.1f, "%.4f")) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Threshold bias to prevent false self-occlusion artifacts on flat or low-curvature surfaces.");
             }
@@ -9376,22 +9401,30 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
         if (ImGui::CollapsingHeader("DENOISING & FILTERING (WickedEngine Filter)", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
 
-            ImGui::Checkbox("Edge-Preserving Bilateral Blur##AoBlur", &scene.aoBlur);
+            if (ImGui::Checkbox("Edge-Preserving Bilateral Blur##AoBlur", &scene.aoBlur)) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Applies depth-aware cross-bilateral blur to eliminate ray sampling grain while preserving crisp silhouette geometry.");
             }
 
             if (scene.aoBlur) {
-                ImGui::SliderFloat("Blur Radius (Pixels)##AoBlurRad", &scene.aoBlurRadius, 0.5f, 5.0f, "%.1f px");
+                if (ImGui::SliderFloat("Blur Radius (Pixels)##AoBlurRad", &scene.aoBlurRadius, 0.5f, 5.0f, "%.1f px")) {
+                    RequestViewportRedraw(15);
+                }
             }
 
-            ImGui::Checkbox("Temporal Accumulation & Reprojection##AoTemporal", &scene.aoTemporal);
+            if (ImGui::Checkbox("Temporal Accumulation & Reprojection##AoTemporal", &scene.aoTemporal)) {
+                RequestViewportRedraw(15);
+            }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Blends AO history across frames using camera velocity vectors (WickedEngine temporal filter). Eliminates ray variance flicker.");
             }
 
             if (scene.aoTemporal) {
-                ImGui::SliderFloat("Temporal Blend Factor##AoBlend", &scene.aoTemporalBlend, 0.5f, 0.98f, "%.2f");
+                if (ImGui::SliderFloat("Temporal Blend Factor##AoBlend", &scene.aoTemporalBlend, 0.5f, 0.98f, "%.2f")) {
+                    RequestViewportRedraw(15);
+                }
             }
             ImGui::Spacing();
         }
@@ -9404,26 +9437,31 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
             if (ImGui::Button("Low (Fast - 8 Samples)", ImVec2(170, 26))) {
                 scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 8; scene.aoRange = 0.8f; scene.aoPower = 1.0f; scene.aoBlur = true;
                 Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(1);
+                RequestViewportRedraw(15);
             }
             ImGui::SameLine();
             if (ImGui::Button("Medium (Balanced - 16 Samples)", ImVec2(190, 26))) {
                 scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 16; scene.aoRange = 1.0f; scene.aoPower = 1.5f; scene.aoBlur = true;
                 Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(2);
+                RequestViewportRedraw(15);
             }
             ImGui::SameLine();
             if (ImGui::Button("High (Quality - 24 Samples)", ImVec2(180, 26))) {
                 scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 24; scene.aoRange = 1.5f; scene.aoPower = 1.8f; scene.aoBlur = true;
                 Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(3);
+                RequestViewportRedraw(15);
             }
 
             if (ImGui::Button("Ultra (Cinematic - 32 Samples)", ImVec2(200, 26))) {
                 scene.enableAO = true; scene.aoType = 1; scene.aoSampleCount = 32; scene.aoRange = 2.0f; scene.aoPower = 2.0f; scene.aoBlur = true;
                 Eunoia::PostProcess::PostProcessSystem::Get().ApplySSEQualityPreset(4);
+                RequestViewportRedraw(15);
             }
             ImGui::SameLine();
             if (ImGui::Button("Disable AO", ImVec2(120, 26))) {
                 scene.enableAO = false; scene.aoType = 0;
                 Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode(Eunoia::PostProcess::SSAOMode::Disabled);
+                RequestViewportRedraw(15);
             }
             ImGui::Spacing();
         }
@@ -9445,6 +9483,7 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
             scene.aoTemporalBlend = 0.85f;
             Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode(Eunoia::PostProcess::SSAOMode::SSAO);
             AddLog("LogRenderer", "Reset ambient occlusion settings to defaults.", 0);
+            RequestViewportRedraw(15);
         }
 
         ImGui::SameLine();
