@@ -1531,19 +1531,16 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                         dl->AddRectFilled(pMin, pMax, bgCol, 4.0f);
                         dl->AddRect(pMin, pMax, borderCol, 4.0f, 0, isSelected ? 2.0f : 1.0f);
 
-                        // Render text inside selectable card area
-                        ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
-                        ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
-                        ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 24.0f));
-                        ImGui::TextDisabled("Path: %s", p.rootPath.c_str());
+                        // Render text inside selectable card area using draw list (prevents SetCursorPos assertion)
+                        dl->AddText(ImVec2(pMin.x + 12.0f, pMin.y + 6.0f), IM_COL32(50, 204, 255, 255), p.name.c_str());
+                        std::string pathText = "Path: " + p.rootPath;
+                        dl->AddText(ImVec2(pMin.x + 12.0f, pMin.y + 24.0f), IM_COL32(150, 150, 160, 255), pathText.c_str());
 
                         if (!p.lastOpened.empty()) {
-                            ImGui::SetCursorPos(ImVec2((float)BROWSER_W - 220.0f, curPos.y + 14.0f));
-                            ImGui::TextDisabled("%s", p.lastOpened.c_str());
+                            ImVec2 lastOpenedSize = ImGui::CalcTextSize(p.lastOpened.c_str());
+                            dl->AddText(ImVec2(pMax.x - lastOpenedSize.x - 16.0f, pMin.y + 14.0f), IM_COL32(150, 150, 160, 255), p.lastOpened.c_str());
                         }
 
-                        // Reset cursor to next line below the item
-                        ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y + 2.0f));
                         ImGui::PopID();
                     }
                 }
@@ -14628,18 +14625,16 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
                     dl->AddRectFilled(pMin, pMax, bgCol, 4.0f);
                     dl->AddRect(pMin, pMax, borderCol, 4.0f, 0, isSelected ? 2.0f : 1.0f);
 
-                    // Render text inside selectable card area
-                    ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 6.0f));
-                    ImGui::TextColored(ImVec4(0.20f, 0.80f, 1.00f, 1.0f), "%s", p.name.c_str());
-                    ImGui::SetCursorPos(ImVec2(curPos.x + 12.0f, curPos.y + 24.0f));
-                    ImGui::TextDisabled("Root: %s  |  Content: %s/Content", p.rootPath.c_str(), p.rootPath.c_str());
+                    // Render text inside selectable card area using draw list (prevents SetCursorPos assertion)
+                    dl->AddText(ImVec2(pMin.x + 12.0f, pMin.y + 6.0f), IM_COL32(50, 204, 255, 255), p.name.c_str());
+                    std::string pathText = "Root: " + p.rootPath + "  |  Content: " + p.rootPath + "/Content";
+                    dl->AddText(ImVec2(pMin.x + 12.0f, pMin.y + 24.0f), IM_COL32(150, 150, 160, 255), pathText.c_str());
 
                     if (!p.lastOpened.empty()) {
-                        ImGui::SetCursorPos(ImVec2(winW - 220.0f, curPos.y + 14.0f));
-                        ImGui::TextDisabled("%s", p.lastOpened.c_str());
+                        ImVec2 lastOpenedSize = ImGui::CalcTextSize(p.lastOpened.c_str());
+                        dl->AddText(ImVec2(pMax.x - lastOpenedSize.x - 16.0f, pMin.y + 14.0f), IM_COL32(150, 150, 160, 255), p.lastOpened.c_str());
                     }
 
-                    ImGui::SetCursorPos(ImVec2(curPos.x, curPos.y + itemSize.y + 2.0f));
                     ImGui::PopID();
                 }
             }
