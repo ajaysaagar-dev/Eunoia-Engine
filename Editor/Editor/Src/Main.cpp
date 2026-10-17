@@ -2778,27 +2778,50 @@ int createShadersAndPipeline()
 				ao = clamp(SamplePbrChannel(aoSamp, aoChannel), 0.05f, 1.0f);
 			}
 
-			// Screen Space Ambient Occlusion (WickedEngine Reference: pow(1 - ao, power))
+			// Screen Space Ambient Occlusion (WickedEngine Reference: pow(saturate(1 - occ), power))
 			if (enableAO > 0.5f)
 			{
-				float3 dPdx = ddx(input.worldPos);
-				float3 dPdy = ddy(input.worldPos);
-				float3 d2Pdx2 = ddx(dPdx);
-				float3 d2Pdy2 = ddy(dPdy);
+				float occCombined = 0.0f;
 
-				// Second-order screen-space surface concavity (crevice & crease detection)
-				float concavity = saturate((dot(d2Pdx2, N) + dot(d2Pdy2, N)) * 12.0f);
+				// 1. Multi-tap Horizon & Contact Occlusion using scene depth map (g_shadowMap)
+				float4 scCoord = mul(lightSpaceMatrix, float4(input.worldPos, 1.0f));
+				float3 scProj = scCoord.xyz / max(scCoord.w, 0.0001f);
+				float2 scUV = float2(scProj.x * 0.5f + 0.5f, -scProj.y * 0.5f + 0.5f);
+				float currentZ = scProj.z;
 
-				// Normal curvature & silhouette grazing angle falloff
-				float normalCurvature = length(fwidth(N)) * 3.5f;
-				float grazing = pow(saturate(1.0f - abs(dot(N, V))), 2.0f);
+				float contactOcc = 0.0f;
+				if (scProj.z >= 0.0f && scProj.z <= 1.0f &&
+					scUV.x >= 0.005f && scUV.x <= 0.995f &&
+					scUV.y >= 0.005f && scUV.y <= 0.995f)
+				{
+					float aoRadius = clamp(aoRange * 0.0040f, 0.001f, 0.035f);
+					float maxDepthDelta = clamp(0.045f * aoRange, 0.005f, 0.25f);
+					float selfBias = 0.0006f;
 
-				// Distance-adaptive search radius scaling (WickedEngine aoRange)
-				float distToCam = length(cameraPos - input.worldPos);
-				float rangeFactor = clamp(aoRange / max(distToCam * 0.15f, 0.2f), 0.15f, 3.5f);
+					[unroll]
+					for (int tap = 0; tap < 16; ++tap)
+					{
+						float2 sampleUV = scUV + poissonDisk16[tap] * aoRadius;
+						float sampleZ = g_shadowMap.SampleLevel(g_sampler, sampleUV, 0).r;
+						float deltaZ = currentZ - sampleZ;
+						if (deltaZ > selfBias && deltaZ < maxDepthDelta)
+						{
+							float weight = 1.0f - (deltaZ / maxDepthDelta);
+							contactOcc += weight * weight;
+						}
+					}
+					contactOcc = saturate(contactOcc / 16.0f);
+				}
 
-				// Combine crevice concavity, curvature, and contact occlusion
-				float occCombined = saturate((concavity * 0.65f + normalCurvature * 0.35f + grazing * 0.15f) * rangeFactor);
+				// 2. Geometric Cavity & Hemispherical Ambient Sky Occlusion
+				float skyDome = saturate(N.y * 0.5f + 0.5f);
+				float normalCurvature = saturate(length(fwidth(N)) * 3.5f);
+				float grazingCavity = pow(saturate(1.0f - abs(dot(N, V))), 2.5f);
+				float geomOcc = saturate((1.0f - skyDome) * 0.35f + normalCurvature * 0.45f + grazingCavity * 0.20f);
+
+				// Combine contact occlusion and geometric cavity
+				occCombined = saturate(contactOcc * 1.5f + geomOcc * 0.5f);
+				occCombined = saturate(occCombined * clamp(aoRange, 0.25f, 3.0f));
 
 				// WickedEngine exponential power shaping: pow(saturate(1.0 - occ), power)
 				float ssao = pow(saturate(1.0f - occCombined), max(aoPower, 0.25f));
@@ -2883,8 +2906,9 @@ int createShadersAndPipeline()
 			float shadowFactor = CalculateShadow(input.worldPos, N, L);
 			float3 directLit = (diffBRDF + specBRDF) * NdotL * lightColor * shadowFactor;
 
-			// Contact ambient occlusion darkening on direct shadow edges & crevices (WickedEngine)
-			directLit *= lerp(saturate(pow(ao, 0.65f)), 1.0f, saturate(shadowFactor * NdotL + 0.20f));
+			// Cavity & contact ambient occlusion darkening on direct lighting (WickedEngine & UE5 reference)
+			float directAO = lerp(ao, 1.0f, saturate(NdotL * shadowFactor * 0.65f + 0.35f));
+			directLit *= directAO;
 
 			// Ambient & Indirect Lighting with Falcor Multi-Scattering Specular Energy Preservation
 			float3 ambCol = ambientColor.rgb;
@@ -2982,6 +3006,7 @@ int createShadersAndPipeline()
 					}
 				}
 			}
+			pointLightsContribution *= lerp(ao, 1.0f, 0.25f);
 
 			// Lightmap: input.color.xy = lightmap UVs, input.color.z = hasLightmap flag (1.0 = yes)
 			float hasLightmap = input.color.z;
@@ -2990,12 +3015,12 @@ int createShadersAndPipeline()
 			{
 				float3 bakedIllum = g_lightmapTex.Sample(g_sampler, input.color.xy).rgb;
 				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
-				bakedLit = pkD * albedo * bakedIllum;
+				bakedLit = pkD * albedo * bakedIllum * ao;
 			}
 			else if (length(input.color.rgb) > 0.0001f)
 			{
 				float3 pkD = (1.0f - 0.04f) * (1.0f - metal);
-				bakedLit = pkD * albedo * input.color.rgb;
+				bakedLit = pkD * albedo * input.color.rgb * ao;
 			}
 			float3 litColor = ambientDiff + ambientSpec + bakedLit + directLit + pointLightsContribution + emissive;
 

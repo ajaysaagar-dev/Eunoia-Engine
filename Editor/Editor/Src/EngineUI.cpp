@@ -3881,6 +3881,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     if (ImGui::Checkbox("Enable Ambient Occlusion", &scene.enableAO)) {
                         AddLog("LogRenderer", scene.enableAO ? "Ambient Occlusion Enabled" : "Ambient Occlusion Disabled", 0);
                         Eunoia::PostProcess::PostProcessSystem::Get().SetAOMode(scene.enableAO ? (Eunoia::PostProcess::SSAOMode)scene.aoType : Eunoia::PostProcess::SSAOMode::Disabled);
+                        RequestViewportRedraw(15);
                     }
                     ImGui::Separator();
 
