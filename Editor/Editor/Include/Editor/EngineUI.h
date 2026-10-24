@@ -317,6 +317,7 @@ public:
     float uiMargin = 0.0f;
     float uiGap = 0.0f;
     float topBarHeight = 36.0f;        // Sleek single-row header (dev.md h-9 = 36px)
+    float tabBarHeight = 28.0f;        // Top Workspace / Document Tab Switcher Bar
     float leftSidebarWidth = 250.0f;
     float rightSidebarWidth = 320.0f;  // dev.md w-80 = 320px
     float outlinerHeightRatio = 0.50f; // dev.md h-1/2 = 50%
@@ -324,6 +325,7 @@ public:
     float bottomDockHeight = 256.0f;   // dev.md h-64 = 256px
     float contentBrowserFolderTreeWidth = 256.0f; // dev.md w-64 = 256px
     float uiScale = 1.0f; // UI Scale factor (0.25f to 2.50f, 1.0f = 100%)
+    float GetTopBarsTotalHeight() const { return topBarHeight + (tabBarHeight * uiScale); }
 
     struct BottomProgressState {
         bool active = false;
@@ -344,6 +346,14 @@ public:
     TabSaveProgressState m_materialSaveState;
     TabSaveProgressState m_uiSaveState;
     std::atomic<bool> m_isAsyncLevelSaving{false};
+
+    struct MaterialDoc {
+        MaterialAsset material;
+        bool isDirty = false;
+        TabSaveProgressState saveState;
+    };
+    std::vector<MaterialDoc> openMaterialDocs;
+    int activeMaterialDocIdx = -1;
 
     struct ViewportRect {
         float x, y, width, height;
@@ -573,6 +583,8 @@ public:
     static bool LoadMaterialFile(const std::string& path, MaterialAsset& outMat);
     static bool SaveMaterialFile(const std::string& path, const MaterialAsset& mat);
     void OpenMaterialEditor(const std::string& path);
+    void CloseMaterialEditor(int docIdx);
+    void SwitchToMaterialEditor(int docIdx);
     void PropagateMaterialChangesToScene(Scene& scene, const MaterialAsset& mat);
     void RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, const glm::vec2& wsSize);
     void ApplyMaterialToActorAndChildren(Scene& scene, GameObject* rootObj, const MaterialAsset& ma);
