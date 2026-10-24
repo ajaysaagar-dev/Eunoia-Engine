@@ -242,9 +242,18 @@ public:
             if (!projBase.empty() && projBase.filename() == "Content") {
                 projBase = projBase.parent_path();
             }
-            cacheDir = projBase.empty()
-                ? (std::filesystem::current_path() / "Cooked" / "Cache" / "Textures")
-                : (projBase / "Cooked" / "Cache" / "Textures");
+
+            // The engine distribution directory (e.g. Build\Engine) is NOT a project folder!
+            // Never create a Cooked folder or write DDS caches to Build\Engine.
+            bool isEngineOrEmpty = projBase.empty() || 
+                                   std::filesystem::exists(projBase / "Eunoia-Editor.exe") || 
+                                   projBase.filename() == "Engine";
+            if (isEngineOrEmpty) {
+                return "";
+            }
+
+            // In an active project, textures are cached in Intermediates/Cache/Textures (never Cooked)
+            cacheDir = projBase / "Intermediates" / "Cache" / "Textures";
         }
         std::filesystem::create_directories(cacheDir, ec);
 
@@ -350,10 +359,7 @@ private:
                 std::filesystem::path parentDir = m_projectRoot.parent_path();
                 if (m_projectRoot.filename() == "Content") {
                     addRoot(parentDir);
-                    addRoot(parentDir / "Cooked" / "Content");
-                    addRoot(parentDir / "Cooked" / "Content" / "Textures");
-                    addRoot(parentDir / "Cooked" / "Content" / "Materials");
-                    addRoot(parentDir / "Cooked" / "Cache" / "Textures");
+                    addRoot(parentDir / "Intermediates" / "Cache" / "Textures");
                     addRoot(m_projectRoot / "Textures");
                     addRoot(m_projectRoot / "Materials");
                     addRoot(m_projectRoot / "Materials" / "textures");
@@ -364,10 +370,7 @@ private:
                     addRoot(parentDir / "Textures");
                     addRoot(parentDir / "Materials");
                 } else {
-                    addRoot(m_projectRoot / "Cooked" / "Content");
-                    addRoot(m_projectRoot / "Cooked" / "Content" / "Textures");
-                    addRoot(m_projectRoot / "Cooked" / "Content" / "Materials");
-                    addRoot(m_projectRoot / "Cooked" / "Cache" / "Textures");
+                    addRoot(m_projectRoot / "Intermediates" / "Cache" / "Textures");
                     addRoot(m_projectRoot / "Content");
                     addRoot(m_projectRoot / "Content" / "Textures");
                     addRoot(m_projectRoot / "Content" / "Materials");
@@ -384,8 +387,6 @@ private:
             std::filesystem::path cwd = std::filesystem::current_path();
             addRoot(cwd);
             addRoot(cwd / "Content");
-            addRoot(cwd / "Cooked" / "Content");
-            addRoot(cwd / "Cooked" / "Cache" / "Textures");
             addRoot(cwd / "Projects");
             addRoot(cwd / "Resources");
             addRoot(cwd / "Eunoia-Engine");
@@ -438,17 +439,16 @@ private:
                 }
             }
 
-            // Check stem match in Cooked/Cache/Textures and Cooked/Content
+            // Check stem match in Intermediates/Cache/Textures
             if (result.empty()) {
                 std::string stem = std::filesystem::path(cleanName).stem().string();
                 if (!stem.empty()) {
                     std::filesystem::path projBase = m_projectRoot;
                     if (!projBase.empty() && projBase.filename() == "Content") projBase = projBase.parent_path();
-                    std::vector<std::filesystem::path> cookedDirs = {
-                        projBase / "Cooked" / "Cache" / "Textures",
-                        projBase / "Cooked" / "Content"
+                    std::vector<std::filesystem::path> cacheDirs = {
+                        projBase / "Intermediates" / "Cache" / "Textures"
                     };
-                    for (const auto& cdir : cookedDirs) {
+                    for (const auto& cdir : cacheDirs) {
                         if (std::filesystem::exists(cdir, ec)) {
                             try {
                                 auto options = std::filesystem::directory_options::skip_permission_denied;

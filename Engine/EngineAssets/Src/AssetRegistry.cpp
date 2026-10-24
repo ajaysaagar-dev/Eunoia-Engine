@@ -535,11 +535,13 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
             AssetType type = DetectAssetTypeFromExtension(ext);
             if (type == AssetType::Unknown) continue;
 
-            // Exclude Cache, Cooked, and intermediate build directories from registry
+            // Exclude Cache, Cooked, Registry, and intermediate build directories from registry
             std::string pathStr = it->path().generic_string();
             if (pathStr.find("/Cache/") != std::string::npos ||
                 pathStr.find("/Cooked/") != std::string::npos ||
-                pathStr.find("/.cache/") != std::string::npos) {
+                pathStr.find("/.cache/") != std::string::npos ||
+                pathStr.find("/Registry/") != std::string::npos ||
+                pathStr.find("/Intermediates/") != std::string::npos) {
                 continue;
             }
 
@@ -604,8 +606,14 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
 
     if (onProgress) onProgress(0.90f, "Saving persistent AssetRegistry.json...", projectRoot.string());
 
-    // Save persistent registry
-    std::filesystem::path regPath = projectRoot / "Registry" / "AssetRegistry.json";
+    // Save persistent registry to project root Registry/ folder (NOT Content/)
+    std::filesystem::path projBase = projectRoot;
+    if (!projBase.empty() && projBase.filename() == "Content") {
+        projBase = projBase.parent_path();
+    }
+    std::filesystem::path regDir = projBase / "Registry";
+    std::filesystem::create_directories(regDir, ec);
+    std::filesystem::path regPath = regDir / "AssetRegistry.json";
     Save(regPath);
 
     if (onProgress) {
@@ -641,11 +649,13 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
             AssetType type = DetectAssetTypeFromExtension(ext);
             if (type == AssetType::Unknown) continue;
 
-            // Exclude Cache, Cooked, and intermediate build directories from registry
+            // Exclude Cache, Cooked, Registry, and intermediate build directories from registry
             std::string pathStr = it->path().generic_string();
             if (pathStr.find("/Cache/") != std::string::npos ||
                 pathStr.find("/Cooked/") != std::string::npos ||
-                pathStr.find("/.cache/") != std::string::npos) {
+                pathStr.find("/.cache/") != std::string::npos ||
+                pathStr.find("/Registry/") != std::string::npos ||
+                pathStr.find("/Intermediates/") != std::string::npos) {
                 continue;
             }
 

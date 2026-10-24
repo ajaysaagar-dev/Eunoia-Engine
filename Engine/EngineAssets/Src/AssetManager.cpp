@@ -9,17 +9,27 @@ AssetManager::AssetManager() {
 
 void AssetManager::Initialize(const std::filesystem::path& projectRoot) {
     m_projectRoot = projectRoot;
-    std::filesystem::path regPath = projectRoot / "Registry" / "AssetRegistry.json";
-    std::filesystem::path parentRegPath = projectRoot.parent_path() / "Registry" / "AssetRegistry.json";
+    std::filesystem::path projBase = projectRoot;
+    if (!projBase.empty() && projBase.filename() == "Content") {
+        projBase = projBase.parent_path();
+    }
+    std::filesystem::path regDir = projBase / "Registry";
+    std::filesystem::path regPath = regDir / "AssetRegistry.json";
+    std::filesystem::path legacyContentRegPath = projBase / "Content" / "Registry" / "AssetRegistry.json";
     std::error_code ec;
 
     if (std::filesystem::exists(regPath, ec)) {
-        AssetRegistry::Get().SetProjectRoot(projectRoot);
+        AssetRegistry::Get().SetProjectRoot(projBase);
         AssetRegistry::Get().Load(regPath);
-    } else if (std::filesystem::exists(parentRegPath, ec)) {
-        AssetRegistry::Get().SetProjectRoot(projectRoot);
-        AssetRegistry::Get().Load(parentRegPath);
+    } else if (std::filesystem::exists(legacyContentRegPath, ec)) {
+        // Migrate legacy Content/Registry to project root Registry/
+        AssetRegistry::Get().SetProjectRoot(projBase);
+        AssetRegistry::Get().Load(legacyContentRegPath);
+        std::filesystem::create_directories(regDir, ec);
+        AssetRegistry::Get().Save(regPath);
+        std::filesystem::remove_all(projBase / "Content" / "Registry", ec);
     } else {
+        AssetRegistry::Get().SetProjectRoot(projBase);
         AssetRegistry::Get().ScanAndSync(projectRoot);
     }
 }
