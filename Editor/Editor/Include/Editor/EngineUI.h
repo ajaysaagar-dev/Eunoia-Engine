@@ -480,6 +480,18 @@ public:
     bool IsProgressiveLoadingActive() const { return m_progressiveLoader.active; }
     SceneSerializer::ProgressiveSceneLoader m_progressiveLoader;
 
+    // Custom In-Engine Save Level Modal (anchored strictly to Content root)
+    bool showSaveLevelModal = false;
+    std::filesystem::path saveLevelCurrentFolder;
+    char saveLevelNameBuf[128] = "NewLevel";
+    char saveLevelNewFolderBuf[128] = "";
+    bool showSaveLevelNewFolderInput = false;
+    std::string saveLevelErrorMsg = "";
+    Scene* saveLevelTargetScene = nullptr;
+
+    void OpenSaveLevelModal(Scene& scene);
+    void RenderSaveLevelModal();
+
     struct SaveIndicatorState {
         bool active = false;
         bool isSaving = false;

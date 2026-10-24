@@ -1971,14 +1971,351 @@ bool EngineUI::SaveLevel(Scene& level) {
     return true;
 }
 
-bool EngineUI::SaveLevelAs(Scene& level) {
-    std::string path = ShowSaveFileDialog();
-    if (path.empty()) return false;
-    if (path.find(".elevel") == std::string::npos && path.find(".escene") == std::string::npos && path.find(".level") == std::string::npos) {
-        path += ".elevel";
+void EngineUI::OpenSaveLevelModal(Scene& scene) {
+    saveLevelTargetScene = &scene;
+    showSaveLevelModal = true;
+    showSaveLevelNewFolderInput = false;
+    saveLevelNewFolderBuf[0] = '\0';
+    saveLevelErrorMsg = "";
+
+    // Resolve contentRootPath
+    std::filesystem::path rootDir = contentRootPath;
+    std::error_code ec;
+    if (rootDir.empty() || !std::filesystem::exists(rootDir, ec)) {
+        if (!activeProjectRoot.empty()) {
+            rootDir = activeProjectRoot / "Content";
+        }
     }
-    currentLevelFilePath = path;
-    return SaveLevel(level);
+    if (rootDir.empty() || !std::filesystem::exists(rootDir, ec)) {
+        rootDir = std::filesystem::current_path() / "Content";
+    }
+    std::filesystem::create_directories(rootDir, ec);
+
+    // If a level is already loaded, default to its parent folder (if within Content) and its stem name
+    if (!currentLevelFilePath.empty()) {
+        std::filesystem::path currentP(currentLevelFilePath);
+        std::string stem = currentP.stem().string();
+        strncpy_s(saveLevelNameBuf, sizeof(saveLevelNameBuf), stem.c_str(), sizeof(saveLevelNameBuf) - 1);
+
+        std::filesystem::path parentP = currentP.parent_path();
+        std::string rel = std::filesystem::relative(parentP, rootDir, ec).generic_string();
+        if (!ec && rel.find("..") == std::string::npos && std::filesystem::exists(parentP, ec)) {
+            saveLevelCurrentFolder = parentP;
+        } else {
+            std::filesystem::path levelsDir = rootDir / "Levels";
+            if (std::filesystem::exists(levelsDir, ec)) {
+                saveLevelCurrentFolder = levelsDir;
+            } else {
+                saveLevelCurrentFolder = rootDir;
+            }
+        }
+    } else {
+        strncpy_s(saveLevelNameBuf, sizeof(saveLevelNameBuf), "NewLevel", sizeof(saveLevelNameBuf) - 1);
+        std::filesystem::path levelsDir = rootDir / "Levels";
+        if (std::filesystem::exists(levelsDir, ec)) {
+            saveLevelCurrentFolder = levelsDir;
+        } else {
+            saveLevelCurrentFolder = rootDir;
+        }
+    }
+}
+
+void EngineUI::RenderSaveLevelModal() {
+    if (!showSaveLevelModal) return;
+
+    ImGui::OpenPopup("Save Level As###SaveLevelModalWindow");
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(720.0f, 500.0f), ImGuiCond_Appearing);
+
+    std::error_code ec;
+    std::filesystem::path rootDir = contentRootPath;
+    if (rootDir.empty() || !std::filesystem::exists(rootDir, ec)) {
+        if (!activeProjectRoot.empty()) rootDir = activeProjectRoot / "Content";
+        else rootDir = std::filesystem::current_path() / "Content";
+        std::filesystem::create_directories(rootDir, ec);
+    }
+
+    // Safety clamp: saveLevelCurrentFolder must exist and be inside rootDir
+    if (saveLevelCurrentFolder.empty() || !std::filesystem::exists(saveLevelCurrentFolder, ec)) {
+        saveLevelCurrentFolder = rootDir;
+    } else {
+        std::string rel = std::filesystem::relative(saveLevelCurrentFolder, rootDir, ec).generic_string();
+        if (ec || rel.find("..") != std::string::npos) {
+            saveLevelCurrentFolder = rootDir;
+        }
+    }
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    if (ImGui::BeginPopupModal("Save Level As###SaveLevelModalWindow", &showSaveLevelModal, flags)) {
+        ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "[Eunoia Engine] Save Level File");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Root: Content/)");
+        ImGui::Separator();
+
+        // Top Navigation Bar
+        bool isAtRoot = (saveLevelCurrentFolder == rootDir);
+        if (isAtRoot) {
+            ImGui::BeginDisabled();
+        }
+        if (ImGui::Button(" ⬆ Up ")) {
+            std::filesystem::path parent = saveLevelCurrentFolder.parent_path();
+            std::string rel = std::filesystem::relative(parent, rootDir, ec).generic_string();
+            if (!ec && rel.find("..") == std::string::npos && std::filesystem::exists(parent, ec)) {
+                saveLevelCurrentFolder = parent;
+            } else {
+                saveLevelCurrentFolder = rootDir;
+            }
+        }
+        if (isAtRoot) {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::SameLine();
+        ImGui::Text("Path:");
+        ImGui::SameLine();
+
+        // Breadcrumbs: Content / Sub / Sub2
+        if (ImGui::SmallButton("Content")) {
+            saveLevelCurrentFolder = rootDir;
+        }
+
+        std::filesystem::path currentRel = std::filesystem::relative(saveLevelCurrentFolder, rootDir, ec);
+        if (!ec && !currentRel.empty() && currentRel.string() != ".") {
+            std::filesystem::path accum = rootDir;
+            for (auto it = currentRel.begin(); it != currentRel.end(); ++it) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("/");
+                ImGui::SameLine();
+                accum /= *it;
+                std::string partName = it->string();
+                ImGui::PushID(accum.string().c_str());
+                if (ImGui::SmallButton(partName.c_str())) {
+                    saveLevelCurrentFolder = accum;
+                }
+                ImGui::PopID();
+            }
+        }
+
+        // New folder toggle button on right side of top bar
+        float availWidth = ImGui::GetContentRegionAvail().x;
+        float btnWidth = 110.0f;
+        if (availWidth > btnWidth) {
+            ImGui::SameLine(ImGui::GetCursorPosX() + availWidth - btnWidth);
+        }
+        if (ImGui::Button("+ New Folder", ImVec2(btnWidth, 0))) {
+            showSaveLevelNewFolderInput = !showSaveLevelNewFolderInput;
+            if (showSaveLevelNewFolderInput) {
+                saveLevelNewFolderBuf[0] = '\0';
+                saveLevelErrorMsg = "";
+            }
+        }
+
+        // Inline New Folder Input
+        if (showSaveLevelNewFolderInput) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.16f, 0.17f, 0.20f, 1.0f));
+            if (ImGui::BeginChild("NewFolderInlineBar", ImVec2(0, 36), true, ImGuiWindowFlags_NoScrollbar)) {
+                ImGui::AlignTextToFramePadding();
+                ImGui::Text("Folder Name:");
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(200.0f);
+                bool enterFolder = ImGui::InputText("##NewFolderName", saveLevelNewFolderBuf, sizeof(saveLevelNewFolderBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+                ImGui::SameLine();
+                bool createClicked = ImGui::Button("Create");
+                ImGui::SameLine();
+                if (ImGui::Button("Cancel")) {
+                    showSaveLevelNewFolderInput = false;
+                    saveLevelNewFolderBuf[0] = '\0';
+                }
+
+                if (enterFolder || createClicked) {
+                    std::string folderName = saveLevelNewFolderBuf;
+                    // Trim whitespace
+                    while (!folderName.empty() && (folderName.front() == ' ' || folderName.front() == '\t')) folderName.erase(0, 1);
+                    while (!folderName.empty() && (folderName.back() == ' ' || folderName.back() == '\t')) folderName.pop_back();
+
+                    if (folderName.empty()) {
+                        saveLevelErrorMsg = "Folder name cannot be empty.";
+                    } else if (folderName.find_first_of("\\/:*?\"<>|") != std::string::npos) {
+                        saveLevelErrorMsg = "Folder name contains invalid characters (\\/:*?\"<>|).";
+                    } else {
+                        std::filesystem::path newDir = saveLevelCurrentFolder / folderName;
+                        if (std::filesystem::exists(newDir, ec)) {
+                            saveLevelErrorMsg = "Folder already exists.";
+                            saveLevelCurrentFolder = newDir;
+                            showSaveLevelNewFolderInput = false;
+                        } else {
+                            if (std::filesystem::create_directories(newDir, ec)) {
+                                saveLevelCurrentFolder = newDir;
+                                showSaveLevelNewFolderInput = false;
+                                saveLevelNewFolderBuf[0] = '\0';
+                                saveLevelErrorMsg = "";
+                                TriggerBackgroundRegistrySync(contentRootPath);
+                                AddLog("LogAsset", "Created folder: " + newDir.string(), 0);
+                            } else {
+                                saveLevelErrorMsg = "Failed to create directory.";
+                            }
+                        }
+                    }
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+        }
+
+        ImGui::Spacing();
+
+        // Explorer view of current folder
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.12f, 0.12f, 0.14f, 1.0f));
+        if (ImGui::BeginChild("SaveLevelFolderContentPane", ImVec2(0, -90.0f), true)) {
+            // Collect directories and level files
+            struct EntryItem {
+                bool isDir;
+                std::string name;
+                std::filesystem::path fullPath;
+            };
+            std::vector<EntryItem> dirs;
+            std::vector<EntryItem> files;
+
+            try {
+                for (const auto& entry : std::filesystem::directory_iterator(saveLevelCurrentFolder)) {
+                    if (entry.is_directory()) {
+                        dirs.push_back({ true, entry.path().filename().string(), entry.path() });
+                    } else if (entry.is_regular_file()) {
+                        std::string ext = entry.path().extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        if (ext == ".elevel" || ext == ".escene" || ext == ".level") {
+                            files.push_back({ false, entry.path().filename().string(), entry.path() });
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            std::sort(dirs.begin(), dirs.end(), [](const EntryItem& a, const EntryItem& b) {
+                return a.name < b.name;
+            });
+            std::sort(files.begin(), files.end(), [](const EntryItem& a, const EntryItem& b) {
+                return a.name < b.name;
+            });
+
+            if (dirs.empty() && files.empty()) {
+                ImGui::Spacing();
+                ImGui::TextDisabled("  (Empty Folder)");
+            }
+
+            // Render Directories
+            for (const auto& d : dirs) {
+                std::string label = "[Folder] " + d.name;
+                if (ImGui::Selectable(label.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    if (ImGui::IsMouseDoubleClicked(0)) {
+                        saveLevelCurrentFolder = d.fullPath;
+                        break;
+                    }
+                }
+            }
+
+            // Render Existing Levels
+            for (const auto& f : files) {
+                std::string label = "[Level]  " + f.name;
+                bool isSelected = (f.fullPath.stem().string() == saveLevelNameBuf);
+                if (ImGui::Selectable(label.c_str(), isSelected, ImGuiSelectableFlags_AllowDoubleClick)) {
+                    strncpy_s(saveLevelNameBuf, sizeof(saveLevelNameBuf), f.fullPath.stem().string().c_str(), sizeof(saveLevelNameBuf) - 1);
+                    saveLevelErrorMsg = "";
+                    if (ImGui::IsMouseDoubleClicked(0)) {
+                        // Double click on level file triggers save/overwrite immediately
+                        std::filesystem::path targetFile = saveLevelCurrentFolder / (std::string(saveLevelNameBuf) + ".elevel");
+                        currentLevelFilePath = targetFile.string();
+                        if (saveLevelTargetScene) {
+                            SaveLevel(*saveLevelTargetScene);
+                        }
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        showSaveLevelModal = false;
+                        ImGui::CloseCurrentPopup();
+                        break;
+                    }
+                }
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        // Bottom Bar
+        ImGui::Separator();
+
+        // Destination display
+        std::string relFolder = std::filesystem::relative(saveLevelCurrentFolder, rootDir, ec).generic_string();
+        if (relFolder == "." || relFolder.empty()) relFolder = "";
+        std::string targetRelPath = "Content/" + (relFolder.empty() ? "" : (relFolder + "/")) + saveLevelNameBuf + ".elevel";
+        ImGui::TextDisabled("Save To: %s", targetRelPath.c_str());
+
+        // Error message if any
+        if (!saveLevelErrorMsg.empty()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.35f, 0.35f, 1.0f), "%s", saveLevelErrorMsg.c_str());
+        }
+
+        // Input field and Save/Cancel buttons
+        ImGui::AlignTextToFramePadding();
+        ImGui::Text("Level Name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(320.0f);
+        bool enterPressed = ImGui::InputText("##SaveLevelNameInput", saveLevelNameBuf, sizeof(saveLevelNameBuf), ImGuiInputTextFlags_EnterReturnsTrue);
+        ImGui::SameLine();
+        ImGui::TextDisabled(".elevel");
+
+        float btnAreaWidth = 190.0f;
+        float rightAvail = ImGui::GetContentRegionAvail().x;
+        if (rightAvail > btnAreaWidth) {
+            ImGui::SameLine(ImGui::GetCursorPosX() + rightAvail - btnAreaWidth);
+        }
+
+        auto DoSave = [this, &rootDir, &ec]() {
+            std::string name = saveLevelNameBuf;
+            while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) name.erase(0, 1);
+            while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) name.pop_back();
+
+            if (name.empty()) {
+                saveLevelErrorMsg = "Please enter a valid level name.";
+                return;
+            }
+            if (name.find_first_of("\\/:*?\"<>|") != std::string::npos) {
+                saveLevelErrorMsg = "Level name contains invalid characters (\\/:*?\"<>|).";
+                return;
+            }
+
+            std::filesystem::path targetFile = saveLevelCurrentFolder / (name + ".elevel");
+            currentLevelFilePath = targetFile.string();
+
+            if (saveLevelTargetScene) {
+                SaveLevel(*saveLevelTargetScene);
+            }
+            TriggerBackgroundRegistrySync(contentRootPath);
+            showSaveLevelModal = false;
+            ImGui::CloseCurrentPopup();
+            AddLog("LogWorld", "Saving level as: " + targetFile.string(), 1);
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.50f, 0.85f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.60f, 0.95f, 1.0f));
+        if (ImGui::Button("Save Level", ImVec2(90, 0)) || enterPressed) {
+            DoSave();
+        }
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(80, 0))) {
+            showSaveLevelModal = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+bool EngineUI::SaveLevelAs(Scene& level) {
+    OpenSaveLevelModal(level);
+    return true;
 }
 
 bool EngineUI::OpenLevel(Scene& level) {
@@ -3373,6 +3710,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     if (showHelpModal) {
         RenderHelpModal();
+    }
+    if (showSaveLevelModal) {
+        RenderSaveLevelModal();
     }
     if (showClusterCullingStats) {
         RenderClusterCullingStats(scene);
