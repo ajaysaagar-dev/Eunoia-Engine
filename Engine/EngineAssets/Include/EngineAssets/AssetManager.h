@@ -36,6 +36,10 @@ public:
 
     CachedTexture* GetMissingTextureFallback();
 
+    // Virtual dummy to cooked path resolution
+    std::filesystem::path ResolvePhysicalOrCookedPath(const AssetID& id) const;
+    std::filesystem::path ResolvePhysicalOrCookedPath(const std::string& virtualOrDiskPath) const;
+
     // Asset Cooking & Packaging Pipeline (dev.md Section 24, 25)
     using AssetCookProgressFn = std::function<void(float progress, const std::string& currentItem, const std::string& subDetail)>;
     bool CookProject(const std::filesystem::path& outputDir, std::string& outLog, AssetCookProgressFn onProgress = nullptr);

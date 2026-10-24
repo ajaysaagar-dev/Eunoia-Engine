@@ -6,6 +6,7 @@
 #include <cmath>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
+#include <meshoptimizer.h>
 
 #ifndef M_PI
 #define M_PI 3.14159265358979323846f
@@ -35,6 +36,7 @@ struct MeshVertex {
 struct PrimitiveMesh {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<std::vector<uint32_t>> lodIndices; // Multi-level simplified LOD index streams (LOD1, LOD2, etc.)
     glm::vec3 aabbMin{1e9f, 1e9f, 1e9f};
     glm::vec3 aabbMax{-1e9f, -1e9f, -1e9f};
     bool aabbValid = false;
@@ -54,9 +56,119 @@ struct PrimitiveMesh {
         }
         aabbValid = true;
     }
+
+    uint32_t GetLODCount() const {
+        if (lodIndices.empty() && indices.size() >= 48) {
+            const_cast<PrimitiveMesh*>(this)->GenerateLODs();
+        }
+        return 1 + (uint32_t)lodIndices.size();
+    }
+
+    const std::vector<uint32_t>& GetIndicesForLOD(uint32_t lod) const {
+        if (lodIndices.empty() && indices.size() >= 48) {
+            const_cast<PrimitiveMesh*>(this)->GenerateLODs();
+        }
+        if (lod == 0 || lodIndices.empty()) return indices;
+        uint32_t idx = std::min(lod - 1, (uint32_t)lodIndices.size() - 1);
+        if (lodIndices[idx].empty()) return indices;
+        return lodIndices[idx];
+    }
+
+    // Wicked Engine Mesh LOD Generation using meshoptimizer (wiScene_Components.cpp / wiVoxelGrid.cpp)
+    // Generates up to 20 continuous simplified LOD levels (LOD 1 through LOD 20)
+    void GenerateLODs(uint32_t maxLODLevels = 20) {
+        lodIndices.clear();
+        if (indices.size() < 48 || vertices.size() < 16) {
+            return; // Mesh is already very low poly; simplifying further is unnecessary
+        }
+
+        lodIndices.reserve(maxLODLevels);
+
+        for (uint32_t l = 1; l <= maxLODLevels; ++l) {
+            const std::vector<uint32_t>& source = lodIndices.empty() ? indices : lodIndices.back();
+            if (source.size() <= 12) {
+                break; // Reached minimal geometric representation
+            }
+
+            // Continuous power-curve reduction from LOD 1 down to LOD 20
+            float ratio = std::pow(1.0f - (float)l / (float)(maxLODLevels + 1), 1.35f);
+            size_t targetIndexCount = (size_t(indices.size() * ratio) / 3) * 3;
+            if (targetIndexCount >= source.size()) {
+                targetIndexCount = (source.size() > 6) ? (source.size() - 3) : 3;
+            }
+            if (targetIndexCount < 12) {
+                targetIndexCount = 12;
+            }
+            if (targetIndexCount >= source.size()) {
+                break;
+            }
+
+            // Target error progressively scales across LODs
+            float targetError = 0.01f + 0.24f * ((float)l / (float)maxLODLevels);
+
+            std::vector<uint32_t> simplified(source.size());
+            size_t res = meshopt_simplify(
+                simplified.data(),
+                source.data(),
+                source.size(),
+                (const float*)&vertices[0].pos.x,
+                vertices.size(),
+                sizeof(MeshVertex),
+                targetIndexCount,
+                targetError
+            );
+
+            // Fallback to sloppy simplification if strict topological simplify did not achieve sufficient reduction
+            if (res == 0 || res >= source.size() || res > targetIndexCount * 1.35f) {
+                res = meshopt_simplifySloppy(
+                    simplified.data(),
+                    source.data(),
+                    source.size(),
+                    (const float*)&vertices[0].pos.x,
+                    vertices.size(),
+                    sizeof(MeshVertex),
+                    targetIndexCount,
+                    targetError * 2.0f
+                );
+            }
+
+            if (res > 0 && res < source.size()) {
+                simplified.resize(res);
+                meshopt_optimizeVertexCache(simplified.data(), simplified.data(), res, vertices.size());
+                meshopt_optimizeOverdraw(simplified.data(), simplified.data(), res, (const float*)&vertices[0].pos.x, vertices.size(), sizeof(MeshVertex), 1.05f);
+                lodIndices.push_back(std::move(simplified));
+            } else {
+                break;
+            }
+        }
+    }
+
+    void GenerateLODs(float lod1Ratio, float lod2Ratio) {
+        GenerateLODs(20);
+    }
 };
 
 class GeometryBuilder {
+public:
+    // Wicked Engine Meshoptimizer integration: Vertex cache, overdraw minimization, and cache-line fetch optimization
+    static void OptimizeMesh(std::vector<MeshVertex>& vertices, std::vector<uint32_t>& indices) {
+        if (indices.empty() || vertices.empty()) return;
+        size_t indexCount = indices.size();
+        size_t vertexCount = vertices.size();
+
+        meshopt_optimizeVertexCache(indices.data(), indices.data(), indexCount, vertexCount);
+        meshopt_optimizeOverdraw(indices.data(), indices.data(), indexCount, (const float*)&vertices[0].pos.x, vertexCount, sizeof(MeshVertex), 1.05f);
+        std::vector<MeshVertex> remap(vertexCount);
+        size_t uniqueVertices = meshopt_optimizeVertexFetch(remap.data(), indices.data(), indexCount, vertices.data(), vertexCount, sizeof(MeshVertex));
+        remap.resize(uniqueVertices);
+        vertices = std::move(remap);
+    }
+
+    static void OptimizeMesh(PrimitiveMesh& mesh) {
+        OptimizeMesh(mesh.vertices, mesh.indices);
+        mesh.CalculateAABB();
+        mesh.GenerateLODs();
+    }
 public:
     // MikkTSpace-compatible standard tangent generation with Gram-Schmidt orthogonalization and bitangent handedness
     static void CalculateTangents(std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices) {
@@ -192,6 +304,7 @@ public:
             }
         }
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -242,6 +355,7 @@ public:
             }
         }
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -278,6 +392,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -318,6 +433,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -391,6 +507,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -462,6 +579,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -538,6 +656,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -608,6 +727,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -662,6 +782,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -686,6 +807,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -706,6 +828,7 @@ public:
 
         mesh.indices = { 0, 1, 2, 0, 2, 3 };
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -721,6 +844,7 @@ public:
 
         mesh.indices = { 0, 1, 2 };
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -779,6 +903,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 
@@ -824,6 +949,7 @@ public:
         }
 
         CalculateTangents(mesh.vertices, mesh.indices);
+        OptimizeMesh(mesh);
         return mesh;
     }
 

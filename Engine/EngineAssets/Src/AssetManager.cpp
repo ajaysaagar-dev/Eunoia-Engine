@@ -156,108 +156,143 @@ void AssetManager::Clear() {
     m_states.clear();
 }
 
-bool AssetManager::CookProject(const std::filesystem::path& outputDir, std::string& outLog, AssetCookProgressFn onProgress) {
+std::filesystem::path AssetManager::ResolvePhysicalOrCookedPath(const AssetID& id) const {
+    const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
+    if (!meta) return "";
+    return ResolvePhysicalOrCookedPath(meta->sourcePath);
+}
+
+std::filesystem::path AssetManager::ResolvePhysicalOrCookedPath(const std::string& virtualOrDiskPath) const {
+    if (virtualOrDiskPath.empty() || virtualOrDiskPath == "none" || virtualOrDiskPath == "None") return "";
     std::filesystem::path projRoot = (m_projectRoot.filename() == "Content") ? m_projectRoot.parent_path() : m_projectRoot;
-    std::filesystem::path targetDir;
-    if (outputDir.empty()) {
-        targetDir = projRoot / "Cooked";
-    } else if (outputDir.is_relative()) {
-        targetDir = projRoot / outputDir;
-    } else {
-        targetDir = outputDir;
-    }
-
-    std::stringstream log;
-    log << "=== COOKING PROJECT ASSETS ===\n";
-    log << "Project Root: " << projRoot.string() << "\n";
-    log << "Target Cooked Directory: " << targetDir.string() << "\n";
-
-    if (onProgress) onProgress(0.05f, "Initializing target output directory...", targetDir.string());
-
+    std::filesystem::path contentDir = projRoot / "Content";
+    std::filesystem::path cookedDir = projRoot / "Cooked" / "Content";
+    std::filesystem::path cookedBase = projRoot / "Cooked";
     std::error_code ec;
-    std::filesystem::path contentDir = targetDir / "Content";
-    std::filesystem::create_directories(contentDir, ec);
-    if (ec) {
-        log << "[ERROR] Failed to create cooked Content directory: " << ec.message() << "\n";
-        outLog = log.str();
-        if (onProgress) onProgress(1.0f, "Error creating output directory: " + ec.message(), "");
-        return false;
+
+    auto isValid = [&](const std::filesystem::path& p) -> bool {
+        return std::filesystem::exists(p, ec) && !std::filesystem::is_directory(p, ec) && std::filesystem::file_size(p, ec) > 0;
+    };
+
+    auto checkDdsOrAlt = [&](const std::filesystem::path& p) -> std::filesystem::path {
+        if (isValid(p)) return p;
+        std::filesystem::path pDds = p;
+        pDds.replace_extension(".dds");
+        if (isValid(pDds)) return pDds;
+        return {};
+    };
+
+    // 1. Direct absolute/relative check
+    std::filesystem::path cand = virtualOrDiskPath;
+    if (cand.is_relative()) {
+        std::filesystem::path candFromContent = checkDdsOrAlt(contentDir / cand);
+        if (!candFromContent.empty()) return candFromContent;
+
+        std::filesystem::path candFromRoot = checkDdsOrAlt(projRoot / cand);
+        if (!candFromRoot.empty()) return candFromRoot;
+    } else {
+        std::filesystem::path candValid = checkDdsOrAlt(cand);
+        if (!candValid.empty()) return candValid;
     }
 
-    const auto& allAssets = AssetRegistry::Get().GetAllAssets();
-    size_t cookedCount = 0;
-    size_t skippedCount = 0;
-    size_t totalAssets = allAssets.size();
-    size_t currentIndex = 0;
+    // If cand is an absolute path, compute path relative to content or project root
+    std::filesystem::path relFromContent;
+    if (cand.is_absolute()) {
+        std::string candStr = cand.string();
+        std::replace(candStr.begin(), candStr.end(), '\\', '/');
+        std::string contentStr = contentDir.string();
+        std::replace(contentStr.begin(), contentStr.end(), '\\', '/');
+        std::string projStr = projRoot.string();
+        std::replace(projStr.begin(), projStr.end(), '\\', '/');
 
-    std::filesystem::path cookedRegistryPath = targetDir / "CookedAssetRegistry.json";
-    std::ofstream regFile(cookedRegistryPath);
-    if (!regFile.is_open()) {
-        log << "[ERROR] Failed to create CookedAssetRegistry.json\n";
-        outLog = log.str();
-        if (onProgress) onProgress(1.0f, "Error creating CookedAssetRegistry.json", "");
-        return false;
+        if (candStr.rfind(contentStr, 0) == 0) {
+            relFromContent = std::filesystem::relative(cand, contentDir, ec);
+        } else if (candStr.rfind(projStr, 0) == 0) {
+            std::filesystem::path relProj = std::filesystem::relative(cand, projRoot, ec);
+            std::string relPStr = relProj.string();
+            if (relPStr.rfind("Content", 0) == 0) {
+                relFromContent = std::filesystem::relative(cand, contentDir, ec);
+            } else {
+                std::filesystem::path cookedCand = checkDdsOrAlt(cookedBase / relProj);
+                if (!cookedCand.empty()) return cookedCand;
+            }
+        }
+    } else {
+        std::string s = cand.string();
+        std::replace(s.begin(), s.end(), '\\', '/');
+        if (s.rfind("/Game/", 0) == 0) s = s.substr(6);
+        else if (s.rfind("Content/", 0) == 0) s = s.substr(8);
+        while (!s.empty() && (s.front() == '/' || s.front() == '\\')) s.erase(s.begin());
+        relFromContent = s;
     }
 
-    regFile << "{\n  \"cookedAssets\": [\n";
-    size_t written = 0;
-
-    for (const auto& pair : allAssets) {
-        const auto& meta = pair.second;
-        currentIndex++;
-        float progress = 0.05f + 0.85f * ((float)currentIndex / (float)(totalAssets > 0 ? totalAssets : 1));
-
-        if (onProgress) {
-            std::string detail = "Cooking (" + std::to_string(currentIndex) + "/" + std::to_string(totalAssets) + "): " + meta.objectName;
-            onProgress(progress, detail, meta.virtualPath);
-        }
-
-        std::filesystem::path src = m_projectRoot / meta.sourcePath;
-        if (!std::filesystem::exists(src, ec)) {
-            log << "[WARNING] Missing source for asset: " << meta.virtualPath << "\n";
-            skippedCount++;
-            continue;
-        }
-
-        std::string ext = src.extension().string();
-        std::string cookedFilename = meta.id.ToString() + ext;
-        std::filesystem::path dst = contentDir / cookedFilename;
-
-        std::filesystem::copy_file(src, dst, std::filesystem::copy_options::overwrite_existing, ec);
-        if (ec) {
-            log << "[ERROR] Failed to copy " << src.string() << " to " << dst.string() << "\n";
-            skippedCount++;
-            continue;
-        }
-
-        regFile << "    {\n";
-        regFile << "      \"assetId\": \"" << meta.id.ToString() << "\",\n";
-        regFile << "      \"type\": \"" << AssetTypeToString(meta.type) << "\",\n";
-        regFile << "      \"virtualPath\": \"" << meta.virtualPath << "\",\n";
-        regFile << "      \"cookedPath\": \"Content/" << cookedFilename << "\",\n";
-        regFile << "      \"dependencies\": [";
-        for (size_t i = 0; i < meta.dependencies.size(); ++i) {
-            regFile << "\"" << meta.dependencies[i].ToString() << "\"" << (i + 1 < meta.dependencies.size() ? ", " : "");
-        }
-        regFile << "]\n";
-        regFile << "    }" << (++written < allAssets.size() ? "," : "") << "\n";
-
-        cookedCount++;
-        log << "[COOKED] " << meta.virtualPath << " -> Content/" << cookedFilename << "\n";
+    if (!relFromContent.empty()) {
+        std::filesystem::path directCooked = checkDdsOrAlt(cookedDir / relFromContent);
+        if (!directCooked.empty()) return directCooked;
     }
 
-    if (onProgress) onProgress(0.95f, "Writing CookedAssetRegistry.json...", cookedRegistryPath.string());
-
-    regFile << "  ]\n}\n";
-    regFile.close();
-
-    log << "\nCooking Finished Successfully!\n";
-    log << "Total Assets Cooked: " << cookedCount << " | Skipped: " << skippedCount << "\n";
-    log << "Cooked Registry: " << cookedRegistryPath.string() << "\n";
-    outLog = log.str();
-
-    if (onProgress) {
-        onProgress(1.0f, "Cooking completed successfully! " + std::to_string(cookedCount) + " assets cooked", targetDir.string());
+    // 2. Check metadata registry for cookedPath, id, or sourcePath
+    const AssetMetadata* meta = AssetRegistry::Get().FindByPath(virtualOrDiskPath);
+    if (!meta) meta = AssetRegistry::Get().FindByNameOrPath(virtualOrDiskPath);
+    if (!meta) {
+        AssetID aid = AssetID::FromString(virtualOrDiskPath);
+        if (aid.IsValid()) meta = AssetRegistry::Get().FindById(aid);
     }
+    if (meta) {
+        if (!meta->cookedPath.empty()) {
+            std::filesystem::path candCooked = checkDdsOrAlt(cookedBase / meta->cookedPath);
+            if (!candCooked.empty()) return candCooked;
+            std::filesystem::path candCooked2 = checkDdsOrAlt(projRoot / meta->cookedPath);
+            if (!candCooked2.empty()) return candCooked2;
+        }
+
+        // Try id.dds and id.ext in Cooked/Content
+        std::filesystem::path idDds = cookedDir / (meta->id.ToString() + ".dds");
+        if (isValid(idDds)) return idDds;
+        std::string ext = std::filesystem::path(meta->sourcePath).extension().string();
+        std::filesystem::path idFile = cookedDir / (meta->id.ToString() + ext);
+        if (isValid(idFile)) return idFile;
+
+        // Try sourcePath under Cooked/Content
+        if (!meta->sourcePath.empty()) {
+            std::filesystem::path srcCooked = checkDdsOrAlt(cookedDir / meta->sourcePath);
+            if (!srcCooked.empty()) return srcCooked;
+        }
+    }
+
+    // 3. Search Cooked/Content and Cooked/Cache/Textures by stem and filename
+    std::string stem = std::filesystem::path(virtualOrDiskPath).stem().string();
+    std::string filename = std::filesystem::path(virtualOrDiskPath).filename().string();
+    if (!stem.empty()) {
+        std::vector<std::filesystem::path> searchDirs = {
+            cookedDir,
+            cookedBase / "Cache" / "Textures"
+        };
+        for (const auto& dir : searchDirs) {
+            if (std::filesystem::exists(dir, ec)) {
+                try {
+                    auto options = std::filesystem::directory_options::skip_permission_denied;
+                    for (auto it = std::filesystem::recursive_directory_iterator(dir, options, ec);
+                         !ec && it != std::filesystem::recursive_directory_iterator();
+                         it.increment(ec)) {
+                        if (!it->is_directory(ec) && std::filesystem::file_size(it->path(), ec) > 0) {
+                            std::string fname = it->path().filename().string();
+                            std::string fstem = it->path().stem().string();
+                            if (fname == filename || fstem == stem || fstem.rfind(stem + "_", 0) == 0) {
+                                return it->path();
+                            }
+                        }
+                    }
+                } catch (...) {}
+            }
+        }
+    }
+
+    return virtualOrDiskPath;
+}
+
+bool AssetManager::CookProject(const std::filesystem::path& outputDir, std::string& outLog, AssetCookProgressFn onProgress) {
+    outLog = "Cooking content feature has been removed. All assets remain directly in Content/.\n";
+    if (onProgress) onProgress(1.0f, "Assets remain directly in Content/", "");
     return true;
 }

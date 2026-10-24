@@ -229,7 +229,7 @@ std::vector<std::string> AssetRegistry::GetSubdirectories(const std::string& vir
             if (!sub.empty() && sub[0] == '/') sub.erase(0, 1);
             auto slashPos = sub.find('/');
             std::string immediateChild = (slashPos != std::string::npos) ? sub.substr(0, slashPos) : sub;
-            if (!immediateChild.empty()) {
+            if (!immediateChild.empty() && immediateChild != "Cache" && immediateChild != "Cooked" && immediateChild != ".cache") {
                 subdirs.insert(AssetPath::Combine(targetDir, immediateChild));
             }
         }
@@ -246,7 +246,8 @@ std::vector<std::string> AssetRegistry::GetSubdirectories(const std::string& vir
             for (const auto& entry : std::filesystem::directory_iterator(physicalDir, ec)) {
                 if (entry.is_directory(ec)) {
                     std::string name = entry.path().filename().string();
-                    if (name != "Registry" && name != ".git" && name != "Intermediate" && name != "Saved") {
+                    if (name != "Registry" && name != ".git" && name != "Intermediate" && name != "Saved" &&
+                        name != "Cache" && name != "Cooked" && name != ".cache") {
                         subdirs.insert(AssetPath::Combine(targetDir, name));
                     }
                 }
@@ -453,7 +454,10 @@ bool AssetRegistry::Load(const std::filesystem::path& registryFilePath) {
                 }
                 std::error_code ec;
                 std::filesystem::path diskPath = m_projectRoot.empty() ? std::filesystem::path(cur.sourcePath) : (m_projectRoot / cur.sourcePath);
-                if (std::filesystem::exists(diskPath, ec)) {
+                std::filesystem::path projBase = (m_projectRoot.filename() == "Content") ? m_projectRoot.parent_path() : m_projectRoot;
+                bool existsOnDisk = std::filesystem::exists(diskPath, ec);
+                bool existsInCooked = !cur.cookedPath.empty() && std::filesystem::exists(projBase / "Cooked" / cur.cookedPath, ec);
+                if (existsOnDisk || existsInCooked || !cur.virtualPath.empty()) {
                     RegisterAsset(cur);
                 }
             }
@@ -530,6 +534,14 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
             std::string ext = it->path().extension().string();
             AssetType type = DetectAssetTypeFromExtension(ext);
             if (type == AssetType::Unknown) continue;
+
+            // Exclude Cache, Cooked, and intermediate build directories from registry
+            std::string pathStr = it->path().generic_string();
+            if (pathStr.find("/Cache/") != std::string::npos ||
+                pathStr.find("/Cooked/") != std::string::npos ||
+                pathStr.find("/.cache/") != std::string::npos) {
+                continue;
+            }
 
             AssetMetadata meta;
             meta.type = type;
@@ -628,6 +640,14 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
             std::string ext = it->path().extension().string();
             AssetType type = DetectAssetTypeFromExtension(ext);
             if (type == AssetType::Unknown) continue;
+
+            // Exclude Cache, Cooked, and intermediate build directories from registry
+            std::string pathStr = it->path().generic_string();
+            if (pathStr.find("/Cache/") != std::string::npos ||
+                pathStr.find("/Cooked/") != std::string::npos ||
+                pathStr.find("/.cache/") != std::string::npos) {
+                continue;
+            }
 
             uint64_t fileSize = (uint64_t)std::filesystem::file_size(it->path(), ec);
             auto ftime = std::filesystem::last_write_time(it->path(), ec);

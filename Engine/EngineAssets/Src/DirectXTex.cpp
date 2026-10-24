@@ -1197,6 +1197,28 @@ bool Compress(const Image& srcImage, DXGI_FORMAT format, ScratchImage& image) {
 }
 
 // ============================================================================
+bool Compress(const Image* srcImages, size_t nimages, const TexMetadata& metadata, DXGI_FORMAT format, ScratchImage& image) {
+    if (!srcImages || nimages == 0 || !IsCompressed(format)) return false;
+
+    TexMetadata cMeta = metadata;
+    cMeta.format = format;
+    if (!image.Initialize(cMeta)) return false;
+
+    for (size_t i = 0; i < nimages; ++i) {
+        ScratchImage singleComp;
+        if (!Compress(srcImages[i], format, singleComp)) {
+            return false;
+        }
+        const Image* compImg = singleComp.GetImage(0, 0, 0);
+        const Image* dstImg = image.GetImage(i, 0, 0);
+        if (compImg && dstImg && compImg->pixels && dstImg->pixels) {
+            size_t copyBytes = std::min(compImg->slicePitch, dstImg->slicePitch);
+            memcpy(dstImg->pixels, compImg->pixels, copyBytes);
+        }
+    }
+    return true;
+}
+
 // Normal Map & Channel Processing Utilities
 // ============================================================================
 

@@ -12,6 +12,7 @@
 #include <chrono>
 #include <iostream>
 #include <EngineAssets/AssetRegistry.h>
+#include <EngineAssets/AssetManager.h>
 #include <EngineAssets/TextureManager.h>
 #include <EngineAssets/MeshImporter.h>
 
@@ -46,79 +47,115 @@ public:
 
         std::error_code ec;
 
-        // 1. Direct absolute or relative filesystem path check
-        if (std::filesystem::exists(clean, ec)) {
+        // 1. Check with AssetManager first (handles virtual dummy references and cooked paths)
+        std::filesystem::path cookedCand = AssetManager::Get().ResolvePhysicalOrCookedPath(clean);
+        if (!cookedCand.empty() && std::filesystem::exists(cookedCand, ec) && std::filesystem::file_size(cookedCand, ec) > 0) {
+            auto can = std::filesystem::weakly_canonical(cookedCand, ec).string();
+            return can.empty() ? cookedCand.string() : can;
+        }
+
+        // 2. Direct absolute or relative filesystem path check
+        if (std::filesystem::exists(clean, ec) && std::filesystem::file_size(clean, ec) > 0) {
             auto can = std::filesystem::weakly_canonical(clean, ec).string();
             return can.empty() ? clean : can;
         }
 
-        // 2. Check virtual path in AssetRegistry (e.g. /Game/...)
+        // 3. Check virtual path in AssetRegistry (e.g. /Game/...)
         if (clean.rfind("/Game/", 0) == 0 || clean.rfind("Game/", 0) == 0) {
             std::string vPath = clean;
             if (vPath.front() != '/') vPath = "/" + vPath;
             const AssetMetadata* meta = AssetRegistry::Get().FindByVirtualPath(vPath);
-            if (meta && !meta->sourcePath.empty()) {
-                if (std::filesystem::exists(meta->sourcePath, ec)) {
-                    return meta->sourcePath;
+            if (meta) {
+                if (!meta->cookedPath.empty()) {
+                    std::filesystem::path cp = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->cookedPath);
+                    if (std::filesystem::exists(cp, ec) && std::filesystem::file_size(cp, ec) > 0) return cp.string();
                 }
-                const auto& root = AssetRegistry::Get().GetProjectRoot();
-                if (!root.empty()) {
-                    auto p = root / meta->sourcePath;
-                    if (std::filesystem::exists(p, ec)) return p.string();
-                }
-            }
-        }
-
-        // 3. AssetID GUID check (length >= 32 with hyphens)
-        if (clean.length() >= 32 && clean.find('-') != std::string::npos) {
-            AssetID id = AssetID::FromString(clean);
-            if (id.IsValid()) {
-                const AssetMetadata* meta = AssetRegistry::Get().FindById(id);
-                if (meta && !meta->sourcePath.empty()) {
-                    if (std::filesystem::exists(meta->sourcePath, ec)) return meta->sourcePath;
+                if (!meta->sourcePath.empty()) {
+                    if (std::filesystem::exists(meta->sourcePath, ec) && std::filesystem::file_size(meta->sourcePath, ec) > 0) {
+                        return meta->sourcePath;
+                    }
                     const auto& root = AssetRegistry::Get().GetProjectRoot();
                     if (!root.empty()) {
                         auto p = root / meta->sourcePath;
-                        if (std::filesystem::exists(p, ec)) return p.string();
+                        if (std::filesystem::exists(p, ec) && std::filesystem::file_size(p, ec) > 0) return p.string();
                     }
                 }
             }
         }
 
-        // 4. Try ProjectRoot relative paths
+        // 4. AssetID GUID check (length >= 32 with hyphens)
+        if (clean.length() >= 32 && clean.find('-') != std::string::npos) {
+            AssetID id = AssetID::FromString(clean);
+            if (id.IsValid()) {
+                const AssetMetadata* meta = AssetRegistry::Get().FindById(id);
+                if (meta) {
+                    if (!meta->cookedPath.empty()) {
+                        std::filesystem::path cp = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->cookedPath);
+                        if (std::filesystem::exists(cp, ec) && std::filesystem::file_size(cp, ec) > 0) return cp.string();
+                    }
+                    if (!meta->sourcePath.empty()) {
+                        if (std::filesystem::exists(meta->sourcePath, ec) && std::filesystem::file_size(meta->sourcePath, ec) > 0) return meta->sourcePath;
+                        const auto& root = AssetRegistry::Get().GetProjectRoot();
+                        if (!root.empty()) {
+                            auto p = root / meta->sourcePath;
+                            if (std::filesystem::exists(p, ec) && std::filesystem::file_size(p, ec) > 0) return p.string();
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. Try ProjectRoot relative paths
         const auto& projRoot = AssetRegistry::Get().GetProjectRoot();
         if (!projRoot.empty()) {
             auto cand1 = projRoot / clean;
-            if (std::filesystem::exists(cand1, ec)) {
+            if (std::filesystem::exists(cand1, ec) && std::filesystem::file_size(cand1, ec) > 0) {
                 return std::filesystem::weakly_canonical(cand1, ec).string();
             }
 
             auto cand2 = projRoot / "Content" / clean;
-            if (std::filesystem::exists(cand2, ec)) {
+            if (std::filesystem::exists(cand2, ec) && std::filesystem::file_size(cand2, ec) > 0) {
                 return std::filesystem::weakly_canonical(cand2, ec).string();
+            }
+
+            auto candCooked = projRoot / "Cooked" / "Content" / clean;
+            if (std::filesystem::exists(candCooked, ec) && std::filesystem::file_size(candCooked, ec) > 0) {
+                return std::filesystem::weakly_canonical(candCooked, ec).string();
             }
         }
 
-        // 5. Delegate to TextureManager's search path resolver
+        // 6. Delegate to TextureManager's search path resolver
         std::string tmResolved = TextureManager::Get().ResolvePath(clean);
-        if (!tmResolved.empty() && std::filesystem::exists(tmResolved, ec)) {
+        if (!tmResolved.empty() && std::filesystem::exists(tmResolved, ec) && std::filesystem::file_size(tmResolved, ec) > 0) {
             return tmResolved;
         }
 
-        // 6. AssetRegistry FindByNameOrPath fuzzy lookup
+        // 7. AssetRegistry FindByNameOrPath fuzzy lookup
         const AssetMetadata* metaQuery = AssetRegistry::Get().FindByNameOrPath(clean);
-        if (metaQuery && !metaQuery->sourcePath.empty()) {
-            if (std::filesystem::exists(metaQuery->sourcePath, ec)) return metaQuery->sourcePath;
-            if (!projRoot.empty()) {
-                auto p = projRoot / metaQuery->sourcePath;
-                if (std::filesystem::exists(p, ec)) return p.string();
+        if (metaQuery) {
+            if (!metaQuery->cookedPath.empty()) {
+                std::filesystem::path cp = AssetManager::Get().ResolvePhysicalOrCookedPath(metaQuery->cookedPath);
+                if (std::filesystem::exists(cp, ec) && std::filesystem::file_size(cp, ec) > 0) return cp.string();
+            }
+            if (!metaQuery->sourcePath.empty()) {
+                if (std::filesystem::exists(metaQuery->sourcePath, ec) && std::filesystem::file_size(metaQuery->sourcePath, ec) > 0) return metaQuery->sourcePath;
+                if (!projRoot.empty()) {
+                    auto p = projRoot / metaQuery->sourcePath;
+                    if (std::filesystem::exists(p, ec) && std::filesystem::file_size(p, ec) > 0) return p.string();
+                }
             }
         }
 
-        // 7. If clean has filename only, try searching common Content subdirectories
+        // 8. If clean has filename only, try searching common Content and Cooked subdirectories
         if (!projRoot.empty()) {
             std::string filename = std::filesystem::path(clean).filename().string();
             const std::vector<std::filesystem::path> subdirs = {
+                projRoot / "Cooked" / "Content",
+                projRoot / "Cooked" / "Content" / "Models",
+                projRoot / "Cooked" / "Content" / "Meshes",
+                projRoot / "Cooked" / "Content" / "Textures",
+                projRoot / "Cooked" / "Content" / "Materials",
+                projRoot / "Cooked" / "Cache" / "Textures",
                 projRoot / "Content",
                 projRoot / "Content" / "Models",
                 projRoot / "Content" / "Meshes",
@@ -128,7 +165,7 @@ public:
             };
             for (const auto& d : subdirs) {
                 auto candidate = d / filename;
-                if (std::filesystem::exists(candidate, ec)) {
+                if (std::filesystem::exists(candidate, ec) && std::filesystem::file_size(candidate, ec) > 0) {
                     return candidate.string();
                 }
             }

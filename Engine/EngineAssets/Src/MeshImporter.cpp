@@ -5,6 +5,7 @@
 #include <sstream>
 #include <unordered_map>
 #include <mutex>
+#include <glm/gtc/type_ptr.hpp>
 
 static std::unordered_map<std::string, ImportedModel> s_modelCache;
 static std::mutex s_modelCacheMutex;
@@ -42,6 +43,202 @@ PrimitiveMesh ImportedModel::GetMergedMesh() const {
     return merged;
 }
 
+static std::string UrlDecode(const std::string& str) {
+    std::string res;
+    res.reserve(str.size());
+    for (size_t i = 0; i < str.size(); ++i) {
+        if (str[i] == '%' && i + 2 < str.size()) {
+            int value = 0;
+            std::istringstream is(str.substr(i + 1, 2));
+            if (is >> std::hex >> value) {
+                res += static_cast<char>(value);
+                i += 2;
+                continue;
+            }
+        } else if (str[i] == '+') {
+            res += ' ';
+        } else {
+            res += str[i];
+        }
+    }
+    return res;
+}
+
+static const std::vector<std::string> s_imageExtensions = {
+    ".png", ".jpg", ".jpeg", ".tga", ".dds", ".bmp", ".webp", ".tif", ".tiff"
+};
+
+std::string MeshImporter::ResolveModelTexturePath(const std::string& rawPath, const std::filesystem::path& modelDir, const std::string& modelStem) {
+    if (rawPath.empty()) return "";
+
+    std::string cleaned = rawPath;
+    while (!cleaned.empty() && (cleaned.front() == '"' || cleaned.front() == '\'' || cleaned.front() == ' ' || cleaned.front() == '\t')) {
+        cleaned.erase(cleaned.begin());
+    }
+    while (!cleaned.empty() && (cleaned.back() == '"' || cleaned.back() == '\'' || cleaned.back() == ' ' || cleaned.back() == '\t' || cleaned.back() == '\r' || cleaned.back() == '\n')) {
+        cleaned.pop_back();
+    }
+    if (cleaned.empty()) return "";
+
+    cleaned = UrlDecode(cleaned);
+    std::replace(cleaned.begin(), cleaned.end(), '\\', '/');
+
+    auto toNormalized = [](const std::filesystem::path& p) {
+        std::error_code ec;
+        auto canon = std::filesystem::canonical(p, ec);
+        return ec ? std::filesystem::absolute(p).lexically_normal().string() : canon.string();
+    };
+
+    auto toLowerStr = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+        return s;
+    };
+
+    std::error_code ec;
+
+    // 1. Direct absolute path check
+    std::filesystem::path pClean(cleaned);
+    if (pClean.is_absolute() && std::filesystem::exists(pClean, ec) && std::filesystem::is_regular_file(pClean, ec)) {
+        return toNormalized(pClean);
+    }
+
+    // 2. Direct relative to modelDir check
+    std::filesystem::path candidate = modelDir / pClean;
+    if (std::filesystem::exists(candidate, ec) && std::filesystem::is_regular_file(candidate, ec)) {
+        return toNormalized(candidate);
+    }
+
+    std::string filename = pClean.filename().string();
+    if (filename.empty()) return "";
+    std::string stem = pClean.stem().string();
+
+    std::string filenameLower = toLowerStr(filename);
+    std::string stemLower = toLowerStr(stem);
+
+    // 3. Search common folder conventions relative to modelDir
+    std::vector<std::filesystem::path> searchDirs = {
+        modelDir,
+        modelDir / "Textures",
+        modelDir / "textures",
+        modelDir / "Materials",
+        modelDir / "materials",
+        modelDir / "Materials" / "Textures",
+        modelDir / "materials" / "textures",
+        modelDir / "ImportedTextures",
+        modelDir / "textures" / "ImportedTextures"
+    };
+
+    if (!modelStem.empty()) {
+        searchDirs.push_back(modelDir / (modelStem + ".fbm"));
+        searchDirs.push_back(modelDir / (modelStem + "_textures"));
+        searchDirs.push_back(modelDir / (modelStem + "-textures"));
+        searchDirs.push_back(modelDir / (modelStem + "_Textures"));
+        searchDirs.push_back(modelDir / (modelStem + "_Files"));
+        searchDirs.push_back(modelDir / (modelStem + "_files"));
+    }
+
+    // Pass A: Exact or case-insensitive match for filename in candidate directories
+    for (const auto& sdir : searchDirs) {
+        if (!std::filesystem::exists(sdir, ec) || !std::filesystem::is_directory(sdir, ec)) continue;
+
+        std::filesystem::path directFile = sdir / filename;
+        if (std::filesystem::exists(directFile, ec) && std::filesystem::is_regular_file(directFile, ec)) {
+            return toNormalized(directFile);
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(sdir, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file(ec)) continue;
+            if (toLowerStr(entry.path().filename().string()) == filenameLower) {
+                return toNormalized(entry.path());
+            }
+        }
+    }
+
+    // Pass B: Extension fallback across candidate directories
+    for (const auto& sdir : searchDirs) {
+        if (!std::filesystem::exists(sdir, ec) || !std::filesystem::is_directory(sdir, ec)) continue;
+
+        for (const auto& entry : std::filesystem::directory_iterator(sdir, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file(ec)) continue;
+            if (toLowerStr(entry.path().stem().string()) == stemLower) {
+                std::string entryExt = toLowerStr(entry.path().extension().string());
+                for (const auto& imgExt : s_imageExtensions) {
+                    if (entryExt == imgExt) {
+                        return toNormalized(entry.path());
+                    }
+                }
+            }
+        }
+    }
+
+    // Pass C: Recursive directory search inside modelDir (max depth ~3)
+    if (std::filesystem::exists(modelDir, ec) && std::filesystem::is_directory(modelDir, ec)) {
+        auto opts = std::filesystem::directory_options::skip_permission_denied;
+        for (auto it = std::filesystem::recursive_directory_iterator(modelDir, opts, ec);
+             !ec && it != std::filesystem::recursive_directory_iterator();
+             it.increment(ec)) {
+            if (!it->is_regular_file(ec)) continue;
+            if (it.depth() > 3) {
+                it.pop();
+                continue;
+            }
+            std::string entryFnameLower = toLowerStr(it->path().filename().string());
+            if (entryFnameLower == filenameLower) {
+                return toNormalized(it->path());
+            }
+            if (toLowerStr(it->path().stem().string()) == stemLower) {
+                std::string entryExt = toLowerStr(it->path().extension().string());
+                for (const auto& imgExt : s_imageExtensions) {
+                    if (entryExt == imgExt) {
+                        return toNormalized(it->path());
+                    }
+                }
+            }
+        }
+    }
+
+    return "";
+}
+
+void MeshImporter::UpdateCachedModelMaterials(const std::string& filePath, const std::vector<ImportedMaterial>& materials) {
+    std::lock_guard<std::mutex> lock(s_modelCacheMutex);
+    std::error_code ec;
+
+    auto updateModel = [&](ImportedModel& model) {
+        for (size_t i = 0; i < model.meshes.size(); ++i) {
+            auto& mesh = model.meshes[i];
+            bool matched = false;
+            for (const auto& mat : materials) {
+                if (!mat.name.empty() && (mat.name == mesh.material.name || mat.name == mesh.name)) {
+                    mesh.material = mat;
+                    matched = true;
+                    break;
+                }
+            }
+            if (!matched && i < materials.size()) {
+                mesh.material = materials[i];
+            } else if (!matched && !materials.empty()) {
+                mesh.material = materials[0];
+            }
+        }
+    };
+
+    auto it = s_modelCache.find(filePath);
+    if (it != s_modelCache.end()) {
+        updateModel(it->second);
+        return;
+    }
+
+    for (auto& pair : s_modelCache) {
+        if (pair.first == filePath || std::filesystem::equivalent(pair.first, filePath, ec)) {
+            updateModel(pair.second);
+            return;
+        }
+    }
+}
+
 ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
     ImportedModel model;
     tinyobj::ObjReaderConfig reader_config;
@@ -75,11 +272,11 @@ ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
     auto& attrib = reader.GetAttrib();
     auto& shapes = reader.GetShapes();
     auto& materials = reader.GetMaterials();
-    std::filesystem::path objDir = std::filesystem::path(filePath).parent_path();
+    std::filesystem::path objPath(filePath);
+    std::filesystem::path objDir = objPath.parent_path();
+    std::string objStem = objPath.stem().string();
     auto resolveObjTex = [&](const std::string& texname) -> std::string {
-        if (texname.empty()) return "";
-        std::filesystem::path resolved = objDir / texname;
-        return std::filesystem::exists(resolved) ? resolved.string() : texname;
+        return MeshImporter::ResolveModelTexturePath(texname, objDir, objStem);
     };
 
     for (const auto& shape : shapes) {
@@ -225,20 +422,22 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
         return model;
     }
 
-    std::filesystem::path gltfDir = std::filesystem::path(filePath).parent_path();
-    std::filesystem::path gltfCacheDir = gltfDir / "ImportedTextures";
+    std::filesystem::path gltfPath(filePath);
+    std::filesystem::path gltfDir = gltfPath.parent_path();
+    std::string gltfStem = gltfPath.stem().string();
+    std::filesystem::path gltfCacheDir = gltfDir / "Textures";
     auto resolveGltfImage = [&](cgltf_texture* tex, const std::string& matName, const std::string& slotName) -> std::string {
         if (!tex || !tex->image) return "";
         cgltf_image* img = tex->image;
         if (img->uri) {
             std::string uri = img->uri;
             if (uri.rfind("data:", 0) != 0) {
-                std::filesystem::path resolved = gltfDir / uri;
-                if (std::filesystem::exists(resolved)) return resolved.string();
+                std::string resolved = MeshImporter::ResolveModelTexturePath(uri, gltfDir, gltfStem);
+                if (!resolved.empty()) return resolved;
             }
         }
         if (img->buffer_view) {
-            // GLB-embedded or data-URI image: extract raw bytes and cache to disk.
+            // GLB-embedded or data-URI image: extract raw bytes to Textures folder
             std::error_code ec;
             std::filesystem::create_directories(gltfCacheDir, ec);
             const uint8_t* dataBytes = (const uint8_t*)cgltf_buffer_view_data(img->buffer_view);
@@ -246,23 +445,69 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
             if (dataBytes && size > 0) {
                 std::string ext = ".png";
                 if (img->mime_type && std::string(img->mime_type).find("jpeg") != std::string::npos) ext = ".jpg";
-                std::filesystem::path outPath = gltfCacheDir / (matName + "_" + slotName + ext);
-                FILE* f = fopen(outPath.string().c_str(), "wb");
-                if (f) { fwrite(dataBytes, 1, size, f); fclose(f); return outPath.string(); }
+                std::string baseName = (img->name && strlen(img->name) > 0) ? img->name : (matName + "_" + slotName);
+                std::filesystem::path outPath = gltfCacheDir / (baseName + ext);
+                if (!std::filesystem::exists(outPath, ec)) {
+                    FILE* f = fopen(outPath.string().c_str(), "wb");
+                    if (f) { fwrite(dataBytes, 1, size, f); fclose(f); }
+                }
+                return outPath.string();
             }
         }
         return "";
     };
 
-    for (cgltf_size i = 0; i < data->meshes_count; ++i) {
-        std::string baseMeshName = data->meshes[i].name ? data->meshes[i].name : ("Mesh_" + std::to_string(i));
+    // Collect all nodes that reference a mesh so we preserve hierarchy transforms and instancing
+    struct GltfNodeMeshEntry {
+        cgltf_node* node;
+        cgltf_mesh* mesh;
+    };
+    std::vector<GltfNodeMeshEntry> entries;
 
-        for (cgltf_size j = 0; j < data->meshes[i].primitives_count; ++j) {
-            cgltf_primitive* primitive = &data->meshes[i].primitives[j];
+    for (cgltf_size i = 0; i < data->nodes_count; ++i) {
+        cgltf_node* node = &data->nodes[i];
+        if (node && node->mesh) {
+            entries.push_back({ node, node->mesh });
+        }
+    }
+
+    // Fallback: If no node references any mesh, use data->meshes directly
+    if (entries.empty()) {
+        for (cgltf_size i = 0; i < data->meshes_count; ++i) {
+            entries.push_back({ nullptr, &data->meshes[i] });
+        }
+    }
+
+    for (size_t entryIdx = 0; entryIdx < entries.size(); ++entryIdx) {
+        cgltf_node* node = entries[entryIdx].node;
+        cgltf_mesh* gltfMesh = entries[entryIdx].mesh;
+        if (!gltfMesh) continue;
+
+        std::string baseMeshName;
+        if (node && node->name && strlen(node->name) > 0) {
+            baseMeshName = node->name;
+        } else if (gltfMesh->name && strlen(gltfMesh->name) > 0) {
+            baseMeshName = gltfMesh->name;
+        } else {
+            baseMeshName = "Mesh_" + std::to_string(entryIdx);
+        }
+
+        glm::mat4 nodeWorld(1.0f);
+        glm::mat3 normMatrix(1.0f);
+        bool hasTransform = (node != nullptr);
+        if (hasTransform) {
+            float m[16];
+            cgltf_node_transform_world(node, m);
+            nodeWorld = glm::make_mat4(m);
+            normMatrix = glm::transpose(glm::inverse(glm::mat3(nodeWorld)));
+        }
+
+        for (cgltf_size j = 0; j < gltfMesh->primitives_count; ++j) {
+            cgltf_primitive* primitive = &gltfMesh->primitives[j];
             if (primitive->type != cgltf_primitive_type_triangles) continue;
 
             ImportedMesh mesh;
-            mesh.name = (data->meshes[i].primitives_count > 1)
+            mesh.name = (gltfMesh->primitives_count > 1)
                 ? (baseMeshName + "_" + std::to_string(j))
                 : baseMeshName;
 
@@ -329,8 +574,15 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                 vertex.uv = {0.0f, 0.0f};
                 vertex.tangent = {1.0f, 0.0f, 0.0f, 1.0f};
                 cgltf_accessor_read_float(posAccessor, k, &vertex.pos.x, 3);
+                if (hasTransform) {
+                    glm::vec4 tp = nodeWorld * glm::vec4(vertex.pos, 1.0f);
+                    vertex.pos = glm::vec3(tp);
+                }
                 if (normAccessor) {
                     cgltf_accessor_read_float(normAccessor, k, &vertex.normal.x, 3);
+                    if (hasTransform) {
+                        vertex.normal = normMatrix * vertex.normal;
+                    }
                     float nLen = glm::length(vertex.normal);
                     if (nLen > 0.001f) vertex.normal /= nLen;
                 }
@@ -339,6 +591,11 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                 }
                 if (tanAccessor) {
                     cgltf_accessor_read_float(tanAccessor, k, &vertex.tangent.x, 4);
+                    if (hasTransform) {
+                        glm::vec3 t3 = glm::mat3(nodeWorld) * glm::vec3(vertex.tangent);
+                        if (glm::length(t3) > 0.001f) t3 = glm::normalize(t3);
+                        vertex.tangent = glm::vec4(t3, vertex.tangent.w);
+                    }
                 }
                 mesh.vertices.push_back(vertex);
             }
@@ -394,56 +651,62 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
 #include "ufbx.h"
 
 static std::string ResolveFbxTexturePath(ufbx_texture* tex, const std::filesystem::path& fbxDir,
-                                          const std::filesystem::path& cacheDir, const std::string& matName,
-                                          const std::string& slotName) {
+                                          const std::filesystem::path& texturesDir, const std::string& matName,
+                                          const std::string& slotName, const std::string& modelStem = "") {
     if (!tex) return "";
 
     if (tex->content.size > 0) {
         std::error_code ec;
-        std::filesystem::create_directories(cacheDir, ec);
+        std::filesystem::create_directories(texturesDir, ec);
         std::string ext = ".png";
+        std::string baseName = matName + "_" + slotName;
         if (tex->filename.length > 0) {
-            std::string origExt = std::filesystem::path(std::string(tex->filename.data, tex->filename.length)).extension().string();
+            std::filesystem::path origPath(std::string(tex->filename.data, tex->filename.length));
+            std::string origExt = origPath.extension().string();
             if (!origExt.empty()) ext = origExt;
+            std::string origStem = origPath.stem().string();
+            if (!origStem.empty()) baseName = origStem;
         }
-        std::filesystem::path outPath = cacheDir / (matName + "_" + slotName + ext);
-        FILE* f = fopen(outPath.string().c_str(), "wb");
-        if (f) {
-            fwrite(tex->content.data, 1, tex->content.size, f);
-            fclose(f);
-            return outPath.string();
+        std::filesystem::path outPath = texturesDir / (baseName + ext);
+        if (!std::filesystem::exists(outPath, ec)) {
+            FILE* f = fopen(outPath.string().c_str(), "wb");
+            if (f) {
+                fwrite(tex->content.data, 1, tex->content.size, f);
+                fclose(f);
+            }
         }
-        return "";
+        return outPath.string();
     }
 
     if (tex->filename.length > 0) {
-        std::string abs(tex->filename.data, tex->filename.length);
-        if (std::filesystem::exists(abs)) return abs;
+        std::string raw(tex->filename.data, tex->filename.length);
+        std::string found = MeshImporter::ResolveModelTexturePath(raw, fbxDir, modelStem);
+        if (!found.empty() && std::filesystem::exists(found)) return found;
     }
     if (tex->relative_filename.length > 0) {
-        std::filesystem::path rel(std::string(tex->relative_filename.data, tex->relative_filename.length));
-        std::filesystem::path resolved = fbxDir / rel;
-        if (std::filesystem::exists(resolved)) return resolved.string();
-        return resolved.string();
+        std::string raw(tex->relative_filename.data, tex->relative_filename.length);
+        std::string found = MeshImporter::ResolveModelTexturePath(raw, fbxDir, modelStem);
+        if (!found.empty() && std::filesystem::exists(found)) return found;
     }
     return "";
 }
 
 static void PopulateFbxMaterial(ImportedMaterial& m, ufbx_material* mat,
-                                const std::filesystem::path& fbxDir, const std::filesystem::path& cacheDir) {
+                                const std::filesystem::path& fbxDir, const std::filesystem::path& texturesDir,
+                                const std::string& modelStem = "") {
     if (!mat) return;
     m.hasMaterial = true;
     m.name = mat->name.length > 0 ? std::string(mat->name.data, mat->name.length) : "Material";
     m.normalMapYFlip = true; // Blender/OpenGL standard normal map convention
 
     // 1. PBR Material Properties (Maya Stingray, Blender Principled, 3ds Max Physical)
-    m.baseColorTexture = ResolveFbxTexturePath(mat->pbr.base_color.texture, fbxDir, cacheDir, m.name, "BaseColor");
-    m.normalTexture    = ResolveFbxTexturePath(mat->pbr.normal_map.texture, fbxDir, cacheDir, m.name, "Normal");
-    m.roughnessTexture = ResolveFbxTexturePath(mat->pbr.roughness.texture, fbxDir, cacheDir, m.name, "Roughness");
-    m.metallicTexture  = ResolveFbxTexturePath(mat->pbr.metalness.texture, fbxDir, cacheDir, m.name, "Metallic");
-    m.aoTexture        = ResolveFbxTexturePath(mat->pbr.ambient_occlusion.texture, fbxDir, cacheDir, m.name, "AO");
-    m.emissionTexture  = ResolveFbxTexturePath(mat->pbr.emission_color.texture, fbxDir, cacheDir, m.name, "Emissive");
-    m.opacityTexture   = ResolveFbxTexturePath(mat->pbr.opacity.texture, fbxDir, cacheDir, m.name, "Opacity");
+    m.baseColorTexture = ResolveFbxTexturePath(mat->pbr.base_color.texture, fbxDir, texturesDir, m.name, "BaseColor", modelStem);
+    m.normalTexture    = ResolveFbxTexturePath(mat->pbr.normal_map.texture, fbxDir, texturesDir, m.name, "Normal", modelStem);
+    m.roughnessTexture = ResolveFbxTexturePath(mat->pbr.roughness.texture, fbxDir, texturesDir, m.name, "Roughness", modelStem);
+    m.metallicTexture  = ResolveFbxTexturePath(mat->pbr.metalness.texture, fbxDir, texturesDir, m.name, "Metallic", modelStem);
+    m.aoTexture        = ResolveFbxTexturePath(mat->pbr.ambient_occlusion.texture, fbxDir, texturesDir, m.name, "AO", modelStem);
+    m.emissionTexture  = ResolveFbxTexturePath(mat->pbr.emission_color.texture, fbxDir, texturesDir, m.name, "Emissive", modelStem);
+    m.opacityTexture   = ResolveFbxTexturePath(mat->pbr.opacity.texture, fbxDir, texturesDir, m.name, "Opacity", modelStem);
 
     if (mat->pbr.base_color.has_value) {
         ufbx_vec3 bc = mat->pbr.base_color.value_vec3;
@@ -472,20 +735,20 @@ static void PopulateFbxMaterial(ImportedMaterial& m, ufbx_material* mat,
 
     // 2. FBX Classic Lambert / Phong fallbacks
     if (m.baseColorTexture.empty() && mat->fbx.diffuse_color.texture) {
-        m.baseColorTexture = ResolveFbxTexturePath(mat->fbx.diffuse_color.texture, fbxDir, cacheDir, m.name, "Diffuse");
+        m.baseColorTexture = ResolveFbxTexturePath(mat->fbx.diffuse_color.texture, fbxDir, texturesDir, m.name, "Diffuse", modelStem);
     }
     if (m.normalTexture.empty()) {
         if (mat->fbx.normal_map.texture) {
-            m.normalTexture = ResolveFbxTexturePath(mat->fbx.normal_map.texture, fbxDir, cacheDir, m.name, "Normal");
+            m.normalTexture = ResolveFbxTexturePath(mat->fbx.normal_map.texture, fbxDir, texturesDir, m.name, "Normal", modelStem);
         } else if (mat->fbx.bump.texture) {
-            m.normalTexture = ResolveFbxTexturePath(mat->fbx.bump.texture, fbxDir, cacheDir, m.name, "Bump");
+            m.normalTexture = ResolveFbxTexturePath(mat->fbx.bump.texture, fbxDir, texturesDir, m.name, "Bump", modelStem);
         }
     }
     if (m.emissionTexture.empty() && mat->fbx.emission_color.texture) {
-        m.emissionTexture = ResolveFbxTexturePath(mat->fbx.emission_color.texture, fbxDir, cacheDir, m.name, "Emission");
+        m.emissionTexture = ResolveFbxTexturePath(mat->fbx.emission_color.texture, fbxDir, texturesDir, m.name, "Emission", modelStem);
     }
     if (m.opacityTexture.empty() && mat->fbx.transparency_color.texture) {
-        m.opacityTexture = ResolveFbxTexturePath(mat->fbx.transparency_color.texture, fbxDir, cacheDir, m.name, "Transparency");
+        m.opacityTexture = ResolveFbxTexturePath(mat->fbx.transparency_color.texture, fbxDir, texturesDir, m.name, "Transparency", modelStem);
     }
 
     if (!m.opacityTexture.empty() || m.opacity < 0.999f) {
@@ -510,20 +773,55 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
     }
 
     std::vector<uint32_t> tri_indices;
-    std::filesystem::path fbxDir = std::filesystem::path(filePath).parent_path();
-    std::filesystem::path cacheDir = fbxDir / "ImportedTextures";
+    std::filesystem::path fbxPath(filePath);
+    std::filesystem::path fbxDir = fbxPath.parent_path();
+    std::string modelStem = fbxPath.stem().string();
+    std::filesystem::path texturesDir = fbxDir / "Textures";
 
-    for (size_t i = 0; i < scene->meshes.count; ++i) {
-        ufbx_mesh* mesh = scene->meshes.data[i];
+    // Collect all nodes that contain a mesh so we preserve hierarchy transforms and instancing
+    struct NodeMeshEntry {
+        ufbx_node* node;
+        ufbx_mesh* mesh;
+    };
+    std::vector<NodeMeshEntry> entries;
+
+    for (size_t i = 0; i < scene->nodes.count; ++i) {
+        ufbx_node* node = scene->nodes.data[i];
+        if (node && node->mesh && node->mesh->num_faces > 0) {
+            entries.push_back({ node, node->mesh });
+        }
+    }
+
+    // Fallback: If no node references any mesh, use scene->meshes directly
+    if (entries.empty()) {
+        for (size_t i = 0; i < scene->meshes.count; ++i) {
+            ufbx_mesh* mesh = scene->meshes.data[i];
+            if (mesh && mesh->num_faces > 0) {
+                entries.push_back({ nullptr, mesh });
+            }
+        }
+    }
+
+    for (size_t entryIdx = 0; entryIdx < entries.size(); ++entryIdx) {
+        ufbx_node* node = entries[entryIdx].node;
+        ufbx_mesh* mesh = entries[entryIdx].mesh;
         if (!mesh || mesh->num_faces == 0) continue;
 
         std::string baseMeshName;
-        if (mesh->name.data && mesh->name.length > 0) {
+        if (node && node->name.data && node->name.length > 0) {
+            baseMeshName = std::string(node->name.data, node->name.length);
+        } else if (mesh->name.data && mesh->name.length > 0) {
             baseMeshName = std::string(mesh->name.data, mesh->name.length);
-        } else if (mesh->instances.count > 0 && mesh->instances.data[0]->name.data) {
-            baseMeshName = std::string(mesh->instances.data[0]->name.data, mesh->instances.data[0]->name.length);
         } else {
-            baseMeshName = "FBX_Mesh_" + std::to_string(i);
+            baseMeshName = "FBX_Mesh_" + std::to_string(entryIdx);
+        }
+
+        ufbx_matrix geomToWorld;
+        ufbx_matrix normMatrix;
+        bool hasTransform = (node != nullptr);
+        if (hasTransform) {
+            geomToWorld = node->geometry_to_world;
+            normMatrix = ufbx_matrix_for_normals(&node->geometry_to_world);
         }
 
         size_t max_tris = mesh->max_face_triangles * 3;
@@ -564,11 +862,19 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
                     uint32_t idx = tri_indices[t];
                     MeshVertex v;
                     ufbx_vec3 p = ufbx_get_vertex_vec3(&mesh->vertex_position, idx);
+                    if (hasTransform) {
+                        p = ufbx_transform_position(&geomToWorld, p);
+                    }
                     v.pos = { (float)p.x, (float)p.y, (float)p.z };
 
                     if (mesh->vertex_normal.exists) {
                         ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
-                        v.normal = { (float)n.x, (float)n.y, (float)n.z };
+                        if (hasTransform) {
+                            n = ufbx_transform_direction(&normMatrix, n);
+                        }
+                        glm::vec3 gn((float)n.x, (float)n.y, (float)n.z);
+                        if (glm::length(gn) > 1e-4f) gn = glm::normalize(gn);
+                        v.normal = gn;
                     } else {
                         v.normal = { 0.0f, 1.0f, 0.0f };
                     }
@@ -582,16 +888,24 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
 
                     if (mesh->vertex_tangent.exists) {
                         ufbx_vec3 tg = ufbx_get_vertex_vec3(&mesh->vertex_tangent, idx);
+                        if (hasTransform) {
+                            tg = ufbx_transform_direction(&geomToWorld, tg);
+                        }
                         ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
                         float h = 1.0f;
                         if (mesh->vertex_bitangent.exists) {
                             ufbx_vec3 b = ufbx_get_vertex_vec3(&mesh->vertex_bitangent, idx);
-                            glm::vec3 gn((float)n.x, (float)n.y, (float)n.z);
+                            if (hasTransform) {
+                                b = ufbx_transform_direction(&geomToWorld, b);
+                            }
+                            glm::vec3 gn = v.normal;
                             glm::vec3 gt((float)tg.x, (float)tg.y, (float)tg.z);
                             glm::vec3 gb((float)b.x, (float)b.y, (float)b.z);
                             h = (glm::dot(glm::cross(gn, gt), gb) < 0.0f) ? -1.0f : 1.0f;
                         }
-                        v.tangent = { (float)tg.x, (float)tg.y, (float)tg.z, h };
+                        glm::vec3 gt((float)tg.x, (float)tg.y, (float)tg.z);
+                        if (glm::length(gt) > 1e-4f) gt = glm::normalize(gt);
+                        v.tangent = { gt.x, gt.y, gt.z, h };
                     }
 
                     im.vertices.push_back(v);
@@ -616,9 +930,9 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
             }
 
             if (mesh->materials.count > mIdx && mesh->materials.data[mIdx]) {
-                PopulateFbxMaterial(im.material, mesh->materials.data[mIdx], fbxDir, cacheDir);
+                PopulateFbxMaterial(im.material, mesh->materials.data[mIdx], fbxDir, texturesDir, modelStem);
             } else if (mesh->materials.count > 0 && mesh->materials.data[0]) {
-                PopulateFbxMaterial(im.material, mesh->materials.data[0], fbxDir, cacheDir);
+                PopulateFbxMaterial(im.material, mesh->materials.data[0], fbxDir, texturesDir, modelStem);
             }
 
             LogShaderResourceValidation(im.material, true, mesh->vertex_normal.exists, mesh->vertex_uv.exists);
@@ -670,9 +984,9 @@ ImportedModel MeshImporter::Load(const std::string& filePath) {
     try {
         std::string effectivePath = filePath;
         std::error_code ec;
-        if (!std::filesystem::exists(effectivePath, ec)) {
+        if (!std::filesystem::exists(effectivePath, ec) || std::filesystem::file_size(effectivePath, ec) == 0) {
             std::string resolved = Addressables::ResolveAddress(filePath);
-            if (!resolved.empty() && std::filesystem::exists(resolved, ec)) {
+            if (!resolved.empty() && std::filesystem::exists(resolved, ec) && std::filesystem::file_size(resolved, ec) > 0) {
                 effectivePath = resolved;
             }
         }
@@ -712,6 +1026,17 @@ ImportedModel MeshImporter::Load(const std::string& filePath) {
 
         // Cache successfully loaded models
         if (model.valid) {
+            for (auto& mesh : model.meshes) {
+                if (mesh.valid && !mesh.vertices.empty() && !mesh.indices.empty()) {
+                    GeometryBuilder::OptimizeMesh(mesh.vertices, mesh.indices);
+                    // Generate LODs for imported meshes
+                    PrimitiveMesh pm;
+                    pm.vertices = mesh.vertices;
+                    pm.indices = mesh.indices;
+                    pm.GenerateLODs();
+                    mesh.lodIndices = std::move(pm.lodIndices);
+                }
+            }
             std::lock_guard<std::mutex> lock(s_modelCacheMutex);
             s_modelCache[filePath] = model;
             if (effectivePath != filePath) {

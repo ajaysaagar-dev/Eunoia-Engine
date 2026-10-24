@@ -34,6 +34,7 @@ struct ImportedMaterial {
 struct ImportedMesh {
     std::vector<MeshVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<std::vector<uint32_t>> lodIndices; // Multi-level simplified LOD index streams
     std::string name;
     bool valid = false;
     ImportedMaterial material;
@@ -57,4 +58,6 @@ public:
     static bool IsSupportedFormat(const std::string& ext);
     static void ClearCache();
     static void InvalidateCache(const std::string& filePath);
+    static std::string ResolveModelTexturePath(const std::string& rawPath, const std::filesystem::path& modelDir, const std::string& modelStem = "");
+    static void UpdateCachedModelMaterials(const std::string& filePath, const std::vector<ImportedMaterial>& materials);
 };

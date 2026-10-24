@@ -171,6 +171,7 @@ namespace DirectX {
 
     bool Decompress(const Image& cImage, DXGI_FORMAT format, ScratchImage& image);
     bool Compress(const Image& srcImage, DXGI_FORMAT format, ScratchImage& image);
+    bool Compress(const Image* srcImages, size_t nimages, const TexMetadata& metadata, DXGI_FORMAT format, ScratchImage& image);
 
     // ------------------------------------------------------------------------
     // Normal Map Generation & Texture Processing

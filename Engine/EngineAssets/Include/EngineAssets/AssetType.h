@@ -90,7 +90,7 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
         return AssetType::Unknown;
     }
 
-    if (e == "png" || e == "jpg" || e == "jpeg" || e == "bmp" || e == "tga" || e == "dds" || e == "hdr") {
+    if (e == "png" || e == "jpg" || e == "jpeg" || e == "bmp" || e == "tga" || e == "dds" || e == "hdr" || e == "exr") {
         return AssetType::Texture;
     }
     if (e == "emat" || e == "mat") {
