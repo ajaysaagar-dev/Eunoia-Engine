@@ -30,7 +30,7 @@ void AssetManager::Initialize(const std::filesystem::path& projectRoot) {
         std::filesystem::remove_all(projBase / "Content" / "Registry", ec);
     } else {
         AssetRegistry::Get().SetProjectRoot(projBase);
-        AssetRegistry::Get().ScanAndSync(projectRoot);
+        AssetRegistry::Get().ScanAndSync(projBase / "Content");
     }
 }
 

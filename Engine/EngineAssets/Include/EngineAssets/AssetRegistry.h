@@ -60,8 +60,33 @@ public:
     size_t GetAssetCount() const { return m_assetsByID.size(); }
     const std::unordered_map<AssetID, AssetMetadata>& GetAllAssets() const { return m_assetsByID; }
 
-    void SetProjectRoot(const std::filesystem::path& root) { m_projectRoot = root; }
+    void SetProjectRoot(const std::filesystem::path& root) {
+        if (root.empty()) {
+            m_projectRoot.clear();
+            m_contentRoot.clear();
+        } else if (root.filename() == "Content") {
+            m_projectRoot = root.parent_path();
+            m_contentRoot = root;
+        } else {
+            m_projectRoot = root;
+            m_contentRoot = root / "Content";
+        }
+    }
     const std::filesystem::path& GetProjectRoot() const { return m_projectRoot; }
+
+    void SetContentRoot(const std::filesystem::path& contentRoot) {
+        if (contentRoot.empty()) {
+            m_contentRoot.clear();
+            m_projectRoot.clear();
+        } else if (contentRoot.filename() == "Content") {
+            m_contentRoot = contentRoot;
+            m_projectRoot = contentRoot.parent_path();
+        } else {
+            m_projectRoot = contentRoot;
+            m_contentRoot = contentRoot / "Content";
+        }
+    }
+    const std::filesystem::path& GetContentRoot() const { return m_contentRoot; }
 
     void Clear();
 
@@ -75,6 +100,7 @@ private:
     std::unordered_map<AssetID, std::vector<AssetID>> m_dependencyGraph;
     std::unordered_map<AssetID, std::vector<AssetID>> m_referenceGraph;
     std::filesystem::path m_projectRoot;
+    std::filesystem::path m_contentRoot;
 
     void RebuildIndexes();
     void ReadOrGenerateSidecar(const std::filesystem::path& diskFilePath, AssetMetadata& meta);

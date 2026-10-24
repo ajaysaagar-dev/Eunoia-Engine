@@ -235,19 +235,23 @@ std::vector<std::string> AssetRegistry::GetSubdirectories(const std::string& vir
         }
     }
 
-    // 2. Also from physical disk directories under project root
-    if (!m_projectRoot.empty()) {
+    // 2. Also from physical disk directories strictly under Content root
+    const std::filesystem::path& contentRoot = m_contentRoot.empty() ?
+        ((m_projectRoot.filename() == "Content") ? m_projectRoot : (m_projectRoot / "Content")) : m_contentRoot;
+
+    if (!contentRoot.empty()) {
         std::error_code ec;
         std::string diskSub = targetDir;
         if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
         if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-        std::filesystem::path physicalDir = diskSub.empty() ? m_projectRoot : (m_projectRoot / diskSub);
+        std::filesystem::path physicalDir = diskSub.empty() ? contentRoot : (contentRoot / diskSub);
         if (std::filesystem::exists(physicalDir, ec) && std::filesystem::is_directory(physicalDir, ec)) {
             for (const auto& entry : std::filesystem::directory_iterator(physicalDir, ec)) {
                 if (entry.is_directory(ec)) {
                     std::string name = entry.path().filename().string();
-                    if (name != "Registry" && name != ".git" && name != "Intermediate" && name != "Saved" &&
-                        name != "Cache" && name != "Cooked" && name != ".cache") {
+                    if (name != "Registry" && name != ".git" && name != "Intermediate" && name != "Intermediates" &&
+                        name != "Saved" && name != "Cache" && name != "Cooked" && name != ".cache" && name != "Build" &&
+                        name != ".vscode") {
                         subdirs.insert(AssetPath::Combine(targetDir, name));
                     }
                 }
@@ -453,8 +457,10 @@ bool AssetRegistry::Load(const std::filesystem::path& registryFilePath) {
                     cur.type = AssetType::VisualBehaviour;
                 }
                 std::error_code ec;
-                std::filesystem::path diskPath = m_projectRoot.empty() ? std::filesystem::path(cur.sourcePath) : (m_projectRoot / cur.sourcePath);
-                std::filesystem::path projBase = (m_projectRoot.filename() == "Content") ? m_projectRoot.parent_path() : m_projectRoot;
+                const std::filesystem::path& contentRoot = m_contentRoot.empty() ?
+                    ((m_projectRoot.filename() == "Content") ? m_projectRoot : (m_projectRoot / "Content")) : m_contentRoot;
+                std::filesystem::path diskPath = contentRoot.empty() ? std::filesystem::path(cur.sourcePath) : (contentRoot / cur.sourcePath);
+                std::filesystem::path projBase = m_projectRoot.empty() ? contentRoot.parent_path() : m_projectRoot;
                 bool existsOnDisk = std::filesystem::exists(diskPath, ec);
                 bool existsInCooked = !cur.cookedPath.empty() && std::filesystem::exists(projBase / "Cooked" / cur.cookedPath, ec);
                 if (existsOnDisk || existsInCooked || !cur.virtualPath.empty()) {
@@ -509,13 +515,18 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
     std::error_code ec;
     if (!std::filesystem::exists(projectRoot, ec)) return;
     Clear();
-    m_projectRoot = projectRoot;
+    SetProjectRoot(projectRoot);
 
-    if (onProgress) onProgress(0.1f, "Scanning project directory tree...", projectRoot.string());
+    const std::filesystem::path& contentRoot = m_contentRoot;
+    if (!std::filesystem::exists(contentRoot, ec)) {
+        std::filesystem::create_directories(contentRoot, ec);
+    }
+
+    if (onProgress) onProgress(0.1f, "Scanning content directory tree...", contentRoot.string());
 
     size_t scannedCount = 0;
     auto options = std::filesystem::directory_options::skip_permission_denied;
-    for (auto it = std::filesystem::recursive_directory_iterator(projectRoot, options, ec);
+    for (auto it = std::filesystem::recursive_directory_iterator(contentRoot, options, ec);
          !ec && it != std::filesystem::recursive_directory_iterator();
          it.increment(ec)) {
         if (!it->is_directory(ec)) {
@@ -541,7 +552,8 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
                 pathStr.find("/Cooked/") != std::string::npos ||
                 pathStr.find("/.cache/") != std::string::npos ||
                 pathStr.find("/Registry/") != std::string::npos ||
-                pathStr.find("/Intermediates/") != std::string::npos) {
+                pathStr.find("/Intermediates/") != std::string::npos ||
+                pathStr.find("/Build/") != std::string::npos) {
                 continue;
             }
 
@@ -549,9 +561,9 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
             meta.type = type;
             meta.objectName = it->path().stem().string();
 
-            std::filesystem::path rel = std::filesystem::relative(it->path(), projectRoot, ec);
+            std::filesystem::path rel = std::filesystem::relative(it->path(), contentRoot, ec);
             meta.sourcePath = ec ? filename : rel.generic_string();
-            meta.virtualPath = AssetPath::FromDiskPath(projectRoot, it->path());
+            meta.virtualPath = AssetPath::FromDiskPath(contentRoot, it->path());
 
             try {
                 meta.sourceSize = (uint64_t)std::filesystem::file_size(it->path(), ec);
@@ -579,7 +591,7 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
     // Now resolve dependencies for materials
     for (auto& pair : m_assetsByID) {
         if (pair.second.type == AssetType::Material) {
-            std::filesystem::path fullMatPath = projectRoot / pair.second.sourcePath;
+            std::filesystem::path fullMatPath = contentRoot / pair.second.sourcePath;
             if (std::filesystem::exists(fullMatPath, ec)) {
                 std::ifstream mf(fullMatPath);
                 std::string line;
@@ -604,13 +616,10 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
         }
     }
 
-    if (onProgress) onProgress(0.90f, "Saving persistent AssetRegistry.json...", projectRoot.string());
+    if (onProgress) onProgress(0.90f, "Saving persistent AssetRegistry.json...", m_projectRoot.string());
 
     // Save persistent registry to project root Registry/ folder (NOT Content/)
-    std::filesystem::path projBase = projectRoot;
-    if (!projBase.empty() && projBase.filename() == "Content") {
-        projBase = projBase.parent_path();
-    }
+    std::filesystem::path projBase = m_projectRoot;
     std::filesystem::path regDir = projBase / "Registry";
     std::filesystem::create_directories(regDir, ec);
     std::filesystem::path regPath = regDir / "AssetRegistry.json";
@@ -624,12 +633,17 @@ void AssetRegistry::ScanAndSync(const std::filesystem::path& projectRoot, AssetR
 void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
     std::error_code ec;
     if (!std::filesystem::exists(projectRoot, ec)) return;
-    m_projectRoot = projectRoot;
+    SetProjectRoot(projectRoot);
+
+    const std::filesystem::path& contentRoot = m_contentRoot;
+    if (!std::filesystem::exists(contentRoot, ec)) {
+        std::filesystem::create_directories(contentRoot, ec);
+    }
 
     bool hasChanges = false;
     auto options = std::filesystem::directory_options::skip_permission_denied;
 
-    for (auto it = std::filesystem::recursive_directory_iterator(projectRoot, options, ec);
+    for (auto it = std::filesystem::recursive_directory_iterator(contentRoot, options, ec);
          !ec && it != std::filesystem::recursive_directory_iterator();
          it.increment(ec)) {
         if (!it->is_directory(ec)) {
@@ -655,7 +669,8 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
                 pathStr.find("/Cooked/") != std::string::npos ||
                 pathStr.find("/.cache/") != std::string::npos ||
                 pathStr.find("/Registry/") != std::string::npos ||
-                pathStr.find("/Intermediates/") != std::string::npos) {
+                pathStr.find("/Intermediates/") != std::string::npos ||
+                pathStr.find("/Build/") != std::string::npos) {
                 continue;
             }
 
@@ -663,7 +678,7 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
             auto ftime = std::filesystem::last_write_time(it->path(), ec);
             uint64_t fileTimestamp = (uint64_t)ftime.time_since_epoch().count();
 
-            std::string virtualPath = AssetPath::FromDiskPath(projectRoot, it->path());
+            std::string virtualPath = AssetPath::FromDiskPath(contentRoot, it->path());
             AssetMetadata* existing = FindByPath(virtualPath);
 
             if (!existing || existing->sourceSize != fileSize || existing->sourceTimestamp != fileTimestamp) {
@@ -671,7 +686,7 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
                 meta.type = type;
                 meta.objectName = it->path().stem().string();
 
-                std::filesystem::path rel = std::filesystem::relative(it->path(), projectRoot, ec);
+                std::filesystem::path rel = std::filesystem::relative(it->path(), contentRoot, ec);
                 meta.sourcePath = ec ? filename : rel.generic_string();
                 meta.virtualPath = virtualPath;
                 meta.sourceSize = fileSize;
@@ -689,7 +704,7 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
     {
         std::lock_guard<std::mutex> lock(m_registryMutex);
         for (const auto& pair : m_assetsByID) {
-            std::filesystem::path fullDisk = projectRoot / pair.second.sourcePath;
+            std::filesystem::path fullDisk = contentRoot / pair.second.sourcePath;
             if (!std::filesystem::exists(fullDisk, ec)) {
                 deletedIds.push_back(pair.first);
             }
@@ -701,7 +716,8 @@ void AssetRegistry::IncrementalSync(const std::filesystem::path& projectRoot) {
     }
 
     if (hasChanges) {
-        std::filesystem::path regPath = projectRoot / "Registry" / "AssetRegistry.json";
+        std::filesystem::path projBase = m_projectRoot;
+        std::filesystem::path regPath = projBase / "Registry" / "AssetRegistry.json";
         Save(regPath);
     }
 }

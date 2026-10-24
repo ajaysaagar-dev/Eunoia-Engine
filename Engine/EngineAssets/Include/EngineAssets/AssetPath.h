@@ -40,10 +40,20 @@ inline std::string Normalize(const std::string& path) {
     return clean;
 }
 
-inline std::string FromDiskPath(const std::filesystem::path& projectRoot, const std::filesystem::path& diskPath) {
+inline std::string FromDiskPath(const std::filesystem::path& root, const std::filesystem::path& diskPath) {
     std::error_code ec;
-    std::filesystem::path rel = std::filesystem::relative(diskPath, projectRoot, ec);
+    std::filesystem::path contentRoot = (root.filename() == "Content") ? root : (root / "Content");
+    std::filesystem::path rel = std::filesystem::relative(diskPath, contentRoot, ec);
+    if (ec) {
+        rel = std::filesystem::relative(diskPath, root, ec);
+    }
     std::string relStr = ec ? diskPath.filename().string() : rel.generic_string();
+
+    // If relStr starts with Content/, strip it so root is always strictly Content
+    if (relStr.rfind("Content/", 0) == 0) {
+        relStr = relStr.substr(8);
+        rel = std::filesystem::path(relStr);
+    }
 
     // Strip extension for object name
     std::string stem = diskPath.stem().string();
