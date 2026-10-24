@@ -1,0 +1,9 @@
+{
+  "name": "Texture-Streaming",
+  "version": "1.0",
+  "description": "Wicked Engine inspired viewport visibility-driven texture streaming and dynamic LOD clamping for DX12",
+  "author": "Eunoia Engine",
+  "category": "Rendering",
+  "isCore": true,
+  "loadPriority": 90
+}

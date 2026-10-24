@@ -113,9 +113,10 @@ struct EdgeOutlineSettings {
 // ============================================================
 enum class SSAOMode : uint8_t {
     Disabled = 0,
-    SSAO,   // Basic screen-space ambient occlusion
-    HBAO,   // Horizon-Based AO (higher quality, angular estimation)
-    MSAO,   // Multi-Scale AO (multiple radius samples)
+    SSAO,   // Basic screen-space ambient occlusion (Wicked Engine AO_SSAO)
+    HBAO,   // Horizon-Based AO (Wicked Engine AO_HBAO)
+    MSAO,   // Multi-Scale AO (Wicked Engine AO_MSAO)
+    RTAO,   // Ray-Traced AO (Wicked Engine AO_RTAO)
 };
 
 struct SSSRSettings {

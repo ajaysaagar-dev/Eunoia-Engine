@@ -138,7 +138,7 @@ public:
         } else if (delta < 0.0f) {
             moveSpeed /= 1.25f;
         }
-        moveSpeed = std::clamp(moveSpeed, 0.5f, 60.0f);
+        moveSpeed = std::clamp(moveSpeed, 0.1f, 120.0f);
     }
 
     void SetPreset(const char* preset) {
