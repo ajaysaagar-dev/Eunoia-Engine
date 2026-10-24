@@ -3656,6 +3656,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 1. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" top panel)
     RenderTopMenuBar(scene, camera, outShouldExit);
 
+    // 1b. Top Document Tab Switches (Level Editor, Material Editor, UI Editor)
+    RenderWorkspaceTabBar(scene);
+
     if (isMainEditor) {
         // 2. Outliner (Matches UI_Ref.svg "Outliner" left sidebar)
         if (showOutliner) {
@@ -3709,7 +3712,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         RenderViewportDropTarget(scene, camera);
     } else {
         // Active UI, Visual Behaviour, or Material Editor Tab Full Workspace
-        float topBarH = topBarHeight;
+        float topBarH = GetTopBarsTotalHeight();
         ImGuiViewport* vpWorkspace = ImGui::GetMainViewport();
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
@@ -4845,7 +4848,181 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
     ImGui::PopStyleVar(3);
 }
 void EngineUI::RenderWorkspaceTabBar(Scene& scene) {
-    // Workspace tabs are rendered inline inside the custom title bar (Matches ref.png)
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    float barW = vp->Size.x;
+    float barH = tabBarHeight * uiScale;
+    float barY = vp->Pos.y + topBarHeight;
+
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, barY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(barW, barH), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                            ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * uiScale, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.00f, 0.00f, 0.00f, 1.0f)); // #000000
+
+    if (ImGui::Begin("###WorkspaceTabBarWin", nullptr, flags)) {
+        auto& uiMgr = EunoiaUI::UIEditorManager::Get();
+        float tabBtnH = 22.0f * uiScale;
+        float tabY = (barH - tabBtnH) * 0.5f;
+        ImGui::SetCursorPosY(tabY);
+
+        // 1. Level Editor Tab (Always open, permanent root switch)
+        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive());
+        std::string levelTabName = "Level Editor";
+        if (levelUnsaved) levelTabName += "*";
+        levelTabName += "##Tab_Level";
+
+        if (RenderTabWithSaveProgress(levelTabName.c_str(), isLevelActive, m_levelSaveState, tabBtnH)) {
+            materialWorkspaceActive = false;
+            uiMgr.SwitchToMainEditor();
+            if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
+                PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
+            }
+        }
+
+        // 2. Material Editor Tabs (Multiple open material editors)
+        int matToClose = -1;
+        for (size_t i = 0; i < openMaterialDocs.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isMatActive = (materialWorkspaceActive && activeMaterialDocIdx == (int)i);
+            std::string matLabel = "[M] " + openMaterialDocs[i].material.name;
+            if (openMaterialDocs[i].isDirty) matLabel += "*";
+            matLabel += "##MatTab_" + std::to_string(i);
+
+            if (RenderTabWithSaveProgress(matLabel.c_str(), isMatActive, openMaterialDocs[i].saveState, tabBtnH)) {
+                SwitchToMaterialEditor((int)i);
+            }
+
+            // Close button âœ•
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "âœ•##CloseMatTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                matToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", openMaterialDocs[i].material.name.c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (matToClose >= 0) {
+            CloseMaterialEditor(matToClose);
+        }
+
+        // 3. UI Editor Tabs (Multiple open UI editors)
+        const auto& uiEditors = uiMgr.GetEditors();
+        int uiToClose = -1;
+        for (size_t i = 0; i < uiEditors.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            int tabIdx = (int)i + 1;
+            bool isUiActive = (!materialWorkspaceActive && uiMgr.activeTabIndex == tabIdx);
+            std::string uiLabel = "[UI] " + uiEditors[i]->name;
+            if (uiEditors[i]->isDirty) uiLabel += "*";
+            uiLabel += "##UiTab_" + std::to_string(i);
+
+            if (RenderTabWithSaveProgress(uiLabel.c_str(), isUiActive, m_uiSaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToEditor(tabIdx);
+            }
+
+            // Close button âœ•
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "âœ•##CloseUiTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                uiToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", uiEditors[i]->name.c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (uiToClose >= 0) {
+            uiMgr.Close((size_t)uiToClose);
+        }
+
+        // 4. "+" Quick Add New Document Switch
+        ImGui::SameLine(0.0f, 6.0f * uiScale);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.071f, 0.071f, 0.078f, 1.0f)); // #121214
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+        if (ImGui::Button("+##AddNewTabDocBtn", ImVec2(22.0f * uiScale, tabBtnH))) {
+            ImGui::OpenPopup("QuickAddTabDocPopup");
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open or create Material or UI Editor");
+        ImGui::PopStyleColor(3);
+
+        if (ImGui::BeginPopup("QuickAddTabDocPopup")) {
+            if (ImGui::MenuItem("New Material (.emat)...")) {
+                showNewMaterialPopup = true;
+                snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
+            }
+            if (ImGui::MenuItem("New User Interface (.eui)...")) {
+                showNewUIPopup = true;
+                snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewScreen");
+            }
+            ImGui::Separator();
+            // List project materials to quickly open
+            if (ImGui::BeginMenu("Open Existing Material...")) {
+                std::error_code mec;
+                if (std::filesystem::exists(contentRootPath, mec)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, mec)) {
+                        if (entry.path().extension() == ".emat") {
+                            std::string stemName = entry.path().stem().string();
+                            if (ImGui::MenuItem(stemName.c_str())) {
+                                OpenMaterialEditor(entry.path().string());
+                            }
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            // List project UIs to quickly open
+            if (ImGui::BeginMenu("Open Existing User Interface...")) {
+                std::error_code uec;
+                if (std::filesystem::exists(contentRootPath, uec)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, uec)) {
+                        if (entry.path().extension() == ".eui") {
+                            std::string stemName = entry.path().stem().string();
+                            if (ImGui::MenuItem(stemName.c_str())) {
+                                OpenUIEditor(entry.path().string());
+                            }
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
+            ImGui::EndPopup();
+        }
+
+        // Bottom border line #1f1f23
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddLine(ImVec2(vp->Pos.x, barY + barH),
+                    ImVec2(vp->Pos.x + barW, barY + barH),
+                    IM_COL32(31, 31, 35, 255), 1.0f);
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(3);
 }
 
 void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs) {
@@ -5185,11 +5362,6 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
         borderDrawList->AddText(ImVec2(centerX - textSize.x * 0.5f, centerY - textSize.y * 0.5f),
                                 IM_COL32(255, 255, 255, aText), speedBuf);
     }
-
-    // FPS counter in top-right of viewport (matching SVG: x ~ 1860, y ~ 95)
-    char fpsBuf[32];
-    snprintf(fpsBuf, sizeof(fpsBuf), "FPS %.0f", (currentFps > 0.0f ? currentFps : ImGui::GetIO().Framerate));
-    borderDrawList->AddText(ImVec2(vpMax.x - 78.0f * uiScale, vpMin.y + 12.0f * uiScale), IM_COL32(230, 230, 230, 220), fpsBuf);
 }
 
 void EngineUI::RenderScreenPrintOverlay(float startX, float startY) {
@@ -5691,15 +5863,15 @@ void EngineUI::RenderOutliner(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
     float bottomBarH = bottomBarHeight * uiScale;
-    float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float sidebarsY = vp->Pos.y + GetTopBarsTotalHeight();
+    float sidebarsH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH;
     float outlinerH = showDetails ? std::round(sidebarsH * outlinerHeightRatio) : sidebarsH;
 
     // Docked flush as Top-Right Sidebar above Details panel (matching Frame.svg blueprint)
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, sidebarsY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, outlinerH), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Outliner", &showOutliner, flags)) {
         // Outliner Header (dev.md Outliner Header)
         ImGui::AlignTextToFramePadding();
@@ -6218,8 +6390,8 @@ void EngineUI::RenderDetails(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
     float bottomBarH = bottomBarHeight * uiScale;
-    float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float sidebarsY = vp->Pos.y + GetTopBarsTotalHeight();
+    float sidebarsH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH;
     float outlinerH = showOutliner ? std::round(sidebarsH * outlinerHeightRatio) : 0.0f;
     float detailsY = sidebarsY + outlinerH;
     float detailsH = sidebarsH - outlinerH;
@@ -6228,7 +6400,7 @@ void EngineUI::RenderDetails(Scene& scene) {
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, detailsY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, detailsH), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Details", &showDetails, flags)) {
         // Details Header (dev.md Details Header)
         ImGui::AlignTextToFramePadding();
@@ -8870,14 +9042,58 @@ void EngineUI::PropagateMaterialChangesToScene(Scene& scene, const MaterialAsset
 }
 
 void EngineUI::OpenMaterialEditor(const std::string& path) {
-    if (LoadMaterialFile(path, activeMaterial)) {
-        showMaterialEditor = true;
-        materialWorkspaceActive = true;
-        materialDirty = false;
-        AddLog("LogMaterial", "Opened Material Editor: " + activeMaterial.name, 0);
+    // Check if material is already open in tabs
+    for (size_t i = 0; i < openMaterialDocs.size(); ++i) {
+        if (openMaterialDocs[i].material.filePath == path) {
+            SwitchToMaterialEditor((int)i);
+            AddLog("LogMaterial", "Switched to Material Editor: " + openMaterialDocs[i].material.name, 0);
+            return;
+        }
+    }
+
+    MaterialAsset newMat;
+    if (LoadMaterialFile(path, newMat)) {
+        MaterialDoc doc;
+        doc.material = newMat;
+        doc.isDirty = false;
+        openMaterialDocs.push_back(doc);
+        SwitchToMaterialEditor((int)openMaterialDocs.size() - 1);
+        AddLog("LogMaterial", "Opened Material Editor: " + newMat.name, 0);
     } else {
         AddLog("LogMaterial", "Failed to load material from: " + path, 3);
     }
+}
+
+void EngineUI::SwitchToMaterialEditor(int docIdx) {
+    if (docIdx < 0 || docIdx >= (int)openMaterialDocs.size()) return;
+    activeMaterialDocIdx = docIdx;
+    activeMaterial = openMaterialDocs[docIdx].material;
+    materialDirty = openMaterialDocs[docIdx].isDirty;
+    showMaterialEditor = true;
+    materialWorkspaceActive = true;
+    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    RequestViewportRedraw(10);
+}
+
+void EngineUI::CloseMaterialEditor(int docIdx) {
+    if (docIdx < 0 || docIdx >= (int)openMaterialDocs.size()) return;
+    std::string closedName = openMaterialDocs[docIdx].material.name;
+    openMaterialDocs.erase(openMaterialDocs.begin() + docIdx);
+
+    if (openMaterialDocs.empty()) {
+        activeMaterialDocIdx = -1;
+        showMaterialEditor = false;
+        materialWorkspaceActive = false;
+        activeMaterial = MaterialAsset{};
+        materialDirty = false;
+    } else {
+        if (activeMaterialDocIdx >= (int)openMaterialDocs.size()) {
+            activeMaterialDocIdx = (int)openMaterialDocs.size() - 1;
+        }
+        SwitchToMaterialEditor(activeMaterialDocIdx);
+    }
+    AddLog("LogMaterial", "Closed Material Editor tab: " + closedName, 0);
+    RequestViewportRedraw(10);
 }
 
 void EngineUI::RenderMaterialEditor(Scene& scene) {
@@ -8888,6 +9104,13 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
                 materialDirty = false;
+                if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
+                    openMaterialDocs[activeMaterialDocIdx].isDirty = false;
+                    openMaterialDocs[activeMaterialDocIdx].material = activeMaterial;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.isSaving = true;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.progress = 1.0f;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.fadeTimer = 1.5f;
+                }
                 PropagateMaterialChangesToScene(scene, activeMaterial);
                 AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in viewport and terrain layers)", 2);
             }
@@ -9293,6 +9516,13 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
                 materialDirty = false;
+                if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
+                    openMaterialDocs[activeMaterialDocIdx].isDirty = false;
+                    openMaterialDocs[activeMaterialDocIdx].material = activeMaterial;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.isSaving = true;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.progress = 1.0f;
+                    openMaterialDocs[activeMaterialDocIdx].saveState.fadeTimer = 1.5f;
+                }
                 PropagateMaterialChangesToScene(scene, activeMaterial);
                 AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in viewport and terrain layers)", 2);
             }
@@ -9661,6 +9891,12 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         // Real-time viewport sync if enabled
         if (liveMaterialViewportSync && materialDirty) {
             PropagateMaterialChangesToScene(scene, activeMaterial);
+        }
+
+        // Keep active material doc in sync with activeMaterial
+        if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
+            openMaterialDocs[activeMaterialDocIdx].material = activeMaterial;
+            openMaterialDocs[activeMaterialDocIdx].isDirty = materialDirty;
         }
     }
     ImGui::End();
@@ -10618,7 +10854,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, bottomY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(bottomW, curBottomH), ImGuiCond_Always);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Content Browser", &showBottomDrawer, flags)) {
         // Tab Header buttons (Matching SVG Blueprint)
         if (bottomDrawerTab > 1) bottomDrawerTab = 0;
@@ -12484,8 +12720,8 @@ void EngineUI::RenderLayoutSplitters() {
     if (!vp || vp->Size.x <= 10.0f || vp->Size.y <= 10.0f) return;
 
     float bottomBarH = bottomBarHeight * uiScale;
-    float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float sidebarsY = vp->Pos.y + GetTopBarsTotalHeight();
+    float sidebarsH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH;
     float curBottomH = (showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f);
     float bottomY = vp->Pos.y + vp->Size.y - bottomBarH - curBottomH;
     float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
@@ -12576,7 +12812,7 @@ void EngineUI::RenderLayoutSplitters() {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
                 float delta = ImGui::GetIO().MouseDelta.y;
                 if (delta != 0.0f) {
-                    float maxH = vp->Size.y - topBarHeight - bottomBarH - 120.0f;
+                    float maxH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH - 120.0f;
                     bottomDockHeight = std::clamp(bottomDockHeight - delta, 100.0f, std::max(150.0f, maxH));
                 }
                 drawList->AddLine(ImVec2(startX, splitY), ImVec2(endX, splitY), IM_COL32(0, 122, 204, 255), 3.0f);
