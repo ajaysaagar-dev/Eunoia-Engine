@@ -1697,6 +1697,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         std::filesystem::path levelsDir  = contentDir / "Levels";
         std::filesystem::path depsDir    = root / "Dependencies";
         std::filesystem::path intermDir  = root / "Intermediates";
+        std::filesystem::path regDir     = root / "Registry";
         std::filesystem::path buildDir   = root / "Build";
 
         std::filesystem::create_directories(configsDir, ec);
@@ -1704,6 +1705,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         std::filesystem::create_directories(levelsDir, ec);
         std::filesystem::create_directories(depsDir, ec);
         std::filesystem::create_directories(intermDir, ec);
+        std::filesystem::create_directories(regDir, ec);
         std::filesystem::create_directories(buildDir, ec);
 
         // Project descriptor file <createProjName>.euproject (and backward-compatible .eproject)
@@ -2537,6 +2539,7 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     std::filesystem::path levelsDir  = contentDir / "Levels";
     std::filesystem::path depsDir    = root / "Dependencies";
     std::filesystem::path intermDir  = root / "Intermediates";
+    std::filesystem::path regDir     = root / "Registry";
     std::filesystem::path buildDir   = root / "Build";
 
     std::filesystem::create_directories(configsDir, ec);
@@ -2544,6 +2547,7 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     std::filesystem::create_directories(levelsDir, ec);
     std::filesystem::create_directories(depsDir, ec);
     std::filesystem::create_directories(intermDir, ec);
+    std::filesystem::create_directories(regDir, ec);
     std::filesystem::create_directories(buildDir, ec);
 
     // 2. Starter level in Content/Levels/Level.eulevel (completely clean & empty, AO and Post Processing disabled)
@@ -2598,8 +2602,38 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         return false;
     }
 
-    activeProjectRoot = std::filesystem::absolute(projRoot);
+    std::filesystem::path actualRoot = std::filesystem::absolute(projRoot);
+    std::string explicitProjectFile = "";
+    if (std::filesystem::is_regular_file(actualRoot, ec)) {
+        std::string ext = actualRoot.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".euproject" || ext == ".eproject") {
+            explicitProjectFile = actualRoot.string();
+            actualRoot = actualRoot.parent_path();
+        }
+    }
+
+    activeProjectRoot = actualRoot;
     activeProjectName = activeProjectRoot.filename().string();
+
+    // Check project descriptor file for explicit project name
+    std::filesystem::path projFile = !explicitProjectFile.empty() ? std::filesystem::path(explicitProjectFile) : (activeProjectRoot / (activeProjectName + ".euproject"));
+    if (!std::filesystem::exists(projFile, ec)) {
+        projFile = activeProjectRoot / (activeProjectName + ".eproject");
+    }
+    if (std::filesystem::exists(projFile, ec)) {
+        std::ifstream pf(projFile);
+        if (pf.is_open()) {
+            try {
+                nlohmann::json pj;
+                pf >> pj;
+                if (pj.contains("name") && !pj["name"].get<std::string>().empty()) {
+                    activeProjectName = pj["name"].get<std::string>();
+                }
+            } catch (...) {}
+        }
+    }
+
     if (!isGameMode) {
         LoadEditorConfig();
         SetupProjectDependencies(activeProjectRoot);
@@ -2626,8 +2660,8 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
 
     // Clear stale AssetRegistry cache from any previous project and re-initialize subsystems
     AssetRegistry::Get().Clear();
-    TextureManager::Get().SetProjectRoot(contentRootPath);
-    AssetManager::Get().Initialize(contentRootPath);
+    TextureManager::Get().SetProjectRoot(activeProjectRoot);
+    AssetManager::Get().Initialize(activeProjectRoot);
 
     // Single unified recursive directory walk for models, behaviour scripts, and scene discovery
     if (!isGameMode) {
@@ -15570,14 +15604,14 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
             // 3. Computed Project Path & Content Structure Preview
             std::filesystem::path targetProjectDir = std::filesystem::path(newProjectPathBuf) / newProjectNameBuf;
             std::filesystem::path targetContentDir = targetProjectDir / "Content";
-            std::filesystem::path targetCookedDir  = targetProjectDir / "Cooked";
+            std::filesystem::path targetRegistryDir = targetProjectDir / "Registry";
             std::filesystem::path targetBuildDir   = targetProjectDir / "Build";
 
             ImGui::BeginChild("NewProjPreview", ImVec2(0, 160), true);
             ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.25f, 1.0f), "Project Structure Summary:");
             ImGui::BulletText("Project Directory: %s", targetProjectDir.string().c_str());
             ImGui::BulletText("Content Root (Content Browser): %s", targetContentDir.string().c_str());
-            ImGui::BulletText("Cooked Assets Directory: %s", targetCookedDir.string().c_str());
+            ImGui::BulletText("Asset Registry Directory: %s", targetRegistryDir.string().c_str());
             ImGui::BulletText("Standalone Game Build Directory: %s", targetBuildDir.string().c_str());
             ImGui::BulletText("Starter Template: Eunoia Project Template (Default Level & Configs)");
             ImGui::EndChild();
@@ -15729,7 +15763,6 @@ void EngineUI::StartGameBuildAsync(Scene& scene) {
             std::filesystem::path buildContent   = gameBuildDir / "Content";
             std::filesystem::path buildShaders   = gameBuildDir / "Shaders";
             std::filesystem::path buildResources = gameBuildDir / "Resources";
-            std::filesystem::path buildCooked    = gameBuildDir / "Cooked";
 
             std::filesystem::create_directories(gameBuildDir, sec);
             std::filesystem::create_directories(binariesDir, sec);
@@ -15738,12 +15771,10 @@ void EngineUI::StartGameBuildAsync(Scene& scene) {
             std::filesystem::create_directories(buildContent, sec);
             std::filesystem::create_directories(buildShaders, sec);
             std::filesystem::create_directories(buildResources, sec);
-            std::filesystem::create_directories(buildCooked, sec);
 
             std::filesystem::create_directories(dataDir / "Content", sec);
             std::filesystem::create_directories(dataDir / "Shaders", sec);
             std::filesystem::create_directories(dataDir / "Resources", sec);
-            std::filesystem::create_directories(dataDir / "Cooked", sec);
 
             // Copy template structure if available
             std::filesystem::path gameTemplateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Game Build Template";

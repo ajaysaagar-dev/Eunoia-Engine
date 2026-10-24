@@ -8122,11 +8122,23 @@ int main(int argc, char** argv)
 		if (arg == "--game" || arg == "-game" || arg == "/game" || arg == "--play" || arg == "-play") {
 			isGameOnlyMode = true;
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
-				gameProjectPath = argv[++i];
+				std::filesystem::path p(argv[++i]);
+				std::error_code ec;
+				if (std::filesystem::is_regular_file(p, ec) && (p.extension() == ".euproject" || p.extension() == ".eproject")) {
+					gameProjectPath = p.parent_path().string();
+				} else {
+					gameProjectPath = p.string();
+				}
 			}
 		} else if (arg == "--project" || arg == "-project" || arg == "-p" || arg == "/project") {
 			if (i + 1 < argc && argv[i + 1][0] != '-') {
-				selectedProjectPath = argv[++i];
+				std::filesystem::path p(argv[++i]);
+				std::error_code ec;
+				if (std::filesystem::is_regular_file(p, ec) && (p.extension() == ".euproject" || p.extension() == ".eproject")) {
+					selectedProjectPath = p.parent_path();
+				} else {
+					selectedProjectPath = p;
+				}
 			}
 		} else if (arg == "--browse" || arg == "--browser" || arg == "-b") {
 			forceStandaloneBrowser = true;
@@ -8161,8 +8173,14 @@ int main(int argc, char** argv)
 			hasCmdCam = true;
 		} else if (!arg.empty() && arg[0] != '-' && selectedProjectPath.empty()) {
 			std::error_code ec;
-			if (std::filesystem::exists(arg, ec)) {
-				selectedProjectPath = arg;
+			std::filesystem::path p(arg);
+			if (std::filesystem::exists(p, ec)) {
+				if (std::filesystem::is_regular_file(p, ec) && (p.extension() == ".euproject" || p.extension() == ".eproject")) {
+					// Directly opening a .euproject or .eproject project file!
+					selectedProjectPath = p.parent_path();
+				} else {
+					selectedProjectPath = p;
+				}
 			}
 		}
 	}
