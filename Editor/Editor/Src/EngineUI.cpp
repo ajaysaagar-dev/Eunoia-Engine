@@ -31,14 +31,12 @@
 #include <shlobj.h>
 #include <nlohmann/json.hpp>
 #include <Water/WaterSystem.h>
-#include <LightsBaking/LightBakeManager.h>
-#include <VisualBehaviuors/BehaviourEditorWindow.h>
-#include <VisualBehaviuors/VisualBehaviourInstance.h>
 #include <UISystem/UIEditorWindow.h>
 #include <UISystem/UISystem.h>
 #include <Collisions/CollisionTypes.h>
 #include <Collisions/CollisionSystem.h>
 #include <PostProcess/PostProcessSystem.h>
+#include <TextureStreaming/TextureStreamingSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -54,6 +52,17 @@ inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
         if (o1.light.intensity != o2.light.intensity || o1.light.color != o2.light.color || o1.light.range != o2.light.range || o1.light.castShadows != o2.light.castShadows) return true;
         if (o1.materialName != o2.materialName || o1.name != o2.name) return true;
         if (o1.behaviours.size() != o2.behaviours.size()) return true;
+        if (o1.isTerrain != o2.isTerrain) return true;
+        if (o1.isTerrain && o2.isTerrain) {
+            if (o1.terrain.width != o2.terrain.width ||
+                o1.terrain.length != o2.terrain.length ||
+                o1.terrain.resolution != o2.terrain.resolution ||
+                o1.terrain.heightmap != o2.terrain.heightmap ||
+                o1.terrain.quadMaterialIndices != o2.terrain.quadMaterialIndices ||
+                o1.terrain.materialLayers.size() != o2.terrain.materialLayers.size()) {
+                return true;
+            }
+        }
     }
     for (size_t i = 0; i < a.pointLights.size(); ++i) {
         const auto& p1 = a.pointLights[i];
@@ -364,12 +373,6 @@ bool EngineUI::RenameContentAsset(const AssetID& id, const std::string& newName)
             water.virtualPath = newVirtual;
             water.filePath = dstDisk.string();
             SaveWaterFile(dstDisk.string(), water);
-        }
-    } else if (meta->type == AssetType::VisualBehaviour) {
-        VisualBehaviuors::BehaviourGraph g;
-        if (VisualBehaviuors::LoadGraph(g, dstDisk.string())) {
-            g.name = cleanNewName;
-            VisualBehaviuors::SaveGraph(g, dstDisk.string());
         }
     } else if (meta->type == AssetType::Behaviour || meta->type == AssetType::Script) {
         std::string scriptExt = dstDisk.extension().string();
@@ -715,13 +718,19 @@ EngineUI::EngineUI() {
     // Load recent projects list (needed by both standalone browser and in-editor browser)
     LoadRecentProjects();
 
-    // Project Browser is NOT shown on startup — the standalone window handles it before the editor opens
+    // Project Browser is NOT shown on startup â€” the standalone window handles it before the editor opens
     showProjectBrowser = false;
+}
+
+EngineUI::~EngineUI() {
+    if (gameBuildThread.joinable()) {
+        gameBuildThread.join();
+    }
 }
 
 void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath, const std::string& specificBinPath) {
     if (projectPath.empty()) {
-        // No project selected — show in-editor project browser as fallback if not game mode
+        // No project selected â€” show in-editor project browser as fallback if not game mode
         if (!isGameMode) {
             showProjectBrowser = true;
         }
@@ -799,12 +808,19 @@ void EngineUI::LoadEditorConfig() {
         Trim(key);
         Trim(val);
 
+        if (key == "LastOpenedLevel" || key == "lastOpenedLevel") {
+            lastOpenedLevelConfig = val;
+            continue;
+        }
+
         try {
             float fVal = std::stof(val);
             if (key == "LeftSidebarWidth" || key == "leftSidebarWidth") {
                 leftSidebarWidth = std::clamp(fVal, 180.0f, 800.0f);
             } else if (key == "RightSidebarWidth" || key == "rightSidebarWidth") {
                 rightSidebarWidth = std::clamp(fVal, 200.0f, 900.0f);
+            } else if (key == "OutlinerHeightRatio" || key == "outlinerHeightRatio") {
+                outlinerHeightRatio = std::clamp(fVal, 0.15f, 0.85f);
             } else if (key == "BottomDockHeight" || key == "bottomDockHeight" || key == "BottomContentHeight") {
                 bottomDockHeight = std::clamp(fVal, 100.0f, 800.0f);
             } else if (key == "ContentBrowserFolderTreeWidth" || key == "contentBrowserFolderTreeWidth" || key == "FolderTreeWidth" || key == "folderTreeWidth") {
@@ -853,6 +869,7 @@ void EngineUI::SaveEditorConfig() {
     file << "[EditorLayout]\n";
     file << "LeftSidebarWidth=" << leftSidebarWidth << "\n";
     file << "RightSidebarWidth=" << rightSidebarWidth << "\n";
+    file << "OutlinerHeightRatio=" << outlinerHeightRatio << "\n";
     file << "BottomDockHeight=" << bottomDockHeight << "\n";
     file << "ContentBrowserFolderTreeWidth=" << contentBrowserFolderTreeWidth << "\n";
     file << "UIScale=" << uiScale << "\n";
@@ -861,6 +878,12 @@ void EngineUI::SaveEditorConfig() {
     file << "AntiAliasing=" << (int)currentAntiAliasing << "\n";
     file << "TextureQuality=" << (int)currentTextureQuality << "\n";
     file << "VSync=" << (vsyncEnabled ? 1 : 0) << "\n";
+    file << "\n[Project]\n";
+    if (!currentLevelFilePath.empty()) {
+        file << "LastOpenedLevel=" << currentLevelFilePath << "\n";
+    } else if (!lastOpenedLevelConfig.empty()) {
+        file << "LastOpenedLevel=" << lastOpenedLevelConfig << "\n";
+    }
     file.close();
 }
 
@@ -894,38 +917,38 @@ static std::filesystem::path GetRecentProjectsConfigPath() {
 static void ApplyProjectBrowserTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     style.WindowRounding = 0.0f;
-    style.FrameRounding = 4.0f;
-    style.GrabRounding = 3.0f;
-    style.ScrollbarRounding = 4.0f;
-    style.TabRounding = 4.0f;
+    style.FrameRounding = 0.0f;
+    style.GrabRounding = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.TabRounding = 0.0f;
     style.WindowPadding = ImVec2(16.0f, 14.0f);
     style.FramePadding = ImVec2(8.0f, 5.0f);
     style.ItemSpacing = ImVec2(10.0f, 8.0f);
 
     ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg]       = ImVec4(0.10f, 0.10f, 0.13f, 1.00f);
-    colors[ImGuiCol_ChildBg]        = ImVec4(0.085f, 0.085f, 0.115f, 1.00f);
-    colors[ImGuiCol_Border]         = ImVec4(0.12f, 0.60f, 0.95f, 0.55f);
-    colors[ImGuiCol_FrameBg]        = ImVec4(0.14f, 0.14f, 0.18f, 1.00f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.18f, 0.18f, 0.24f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]  = ImVec4(0.22f, 0.22f, 0.30f, 1.00f);
-    colors[ImGuiCol_TitleBg]        = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
-    colors[ImGuiCol_TitleBgActive]  = ImVec4(0.06f, 0.35f, 0.70f, 1.00f);
-    colors[ImGuiCol_Button]         = ImVec4(0.16f, 0.16f, 0.20f, 1.00f);
-    colors[ImGuiCol_ButtonHovered]  = ImVec4(0.10f, 0.50f, 0.90f, 0.80f);
-    colors[ImGuiCol_ButtonActive]   = ImVec4(0.08f, 0.50f, 0.90f, 1.00f);
-    colors[ImGuiCol_Header]         = ImVec4(0.14f, 0.14f, 0.14f, 0.80f);
-    colors[ImGuiCol_HeaderHovered]  = ImVec4(0.20f, 0.20f, 0.20f, 0.90f);
-    colors[ImGuiCol_HeaderActive]   = ImVec4(0.08f, 0.50f, 0.90f, 1.00f);
-    colors[ImGuiCol_Separator]      = ImVec4(0.12f, 0.12f, 0.12f, 0.80f);
+    colors[ImGuiCol_WindowBg]       = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1E1E1E
+    colors[ImGuiCol_ChildBg]        = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1E1E1E
+    colors[ImGuiCol_Border]         = ImVec4(0.180f, 0.180f, 0.180f, 0.85f);
+    colors[ImGuiCol_FrameBg]        = ImVec4(0.155f, 0.155f, 0.155f, 1.00f);
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+    colors[ImGuiCol_FrameBgActive]  = ImVec4(0.240f, 0.240f, 0.240f, 1.00f);
+    colors[ImGuiCol_TitleBg]        = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
+    colors[ImGuiCol_TitleBgActive]  = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
+    colors[ImGuiCol_Button]         = ImVec4(0.160f, 0.160f, 0.160f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]  = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);
+    colors[ImGuiCol_ButtonActive]   = ImVec4(0.122f, 0.600f, 0.949f, 1.00f);
+    colors[ImGuiCol_Header]         = ImVec4(0.180f, 0.180f, 0.180f, 0.90f);
+    colors[ImGuiCol_HeaderHovered]  = ImVec4(0.230f, 0.230f, 0.230f, 0.95f);
+    colors[ImGuiCol_HeaderActive]   = ImVec4(0.122f, 0.600f, 0.949f, 1.00f);
+    colors[ImGuiCol_Separator]      = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);
     colors[ImGuiCol_Text]           = ImVec4(0.92f, 0.93f, 0.95f, 1.00f);
-    colors[ImGuiCol_TextDisabled]   = ImVec4(0.45f, 0.47f, 0.50f, 1.00f);
-    colors[ImGuiCol_ScrollbarBg]    = ImVec4(0.08f, 0.08f, 0.10f, 1.00f);
+    colors[ImGuiCol_TextDisabled]   = ImVec4(0.482f, 0.482f, 0.482f, 1.00f);
+    colors[ImGuiCol_ScrollbarBg]    = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
     colors[ImGuiCol_ScrollbarGrab]  = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
-    colors[ImGuiCol_Tab]            = ImVec4(0.135f, 0.135f, 0.135f, 0.85f);
-    colors[ImGuiCol_TabHovered]     = ImVec4(0.210f, 0.210f, 0.210f, 0.95f);
-    colors[ImGuiCol_TabActive]      = ImVec4(0.080f, 0.500f, 0.900f, 1.00f);
-    colors[ImGuiCol_PopupBg]        = ImVec4(0.09f, 0.09f, 0.12f, 0.98f);
+    colors[ImGuiCol_Tab]            = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
+    colors[ImGuiCol_TabHovered]     = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
+    colors[ImGuiCol_TabActive]      = ImVec4(0.122f, 0.600f, 0.949f, 1.00f);
+    colors[ImGuiCol_PopupBg]        = ImVec4(0.135f, 0.135f, 0.135f, 0.98f);
 }
 
 #include <GL/gl.h>
@@ -1011,7 +1034,7 @@ void SplashScreen::RenderFrame() {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.06f, 0.065f, 0.085f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.118f, 0.118f, 0.118f, 1.0f));
 
     if (ImGui::Begin("##SplashScreenWindow", nullptr, flags)) {
         ImDrawList* drawList = ImGui::GetWindowDrawList();
@@ -1165,7 +1188,7 @@ void SplashScreen::RenderFrame() {
     ImGui::Render();
 
     glViewport(0, 0, fbW, fbH);
-    glClearColor(0.06f, 0.065f, 0.085f, 1.00f);
+    glClearColor(0.118f, 0.118f, 0.118f, 1.00f);
     glClear(GL_COLOR_BUFFER_BIT);
     ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     glfwSwapBuffers(m_window);
@@ -1436,7 +1459,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             // Title Header
             ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "EUNOIA ENGINE");
             ImGui::SameLine();
-            ImGui::TextDisabled("— Project Browser");
+            ImGui::TextDisabled("â€” Project Browser");
             ImGui::Spacing();
             ImGui::TextWrapped("Select an existing project or create a new empty game project to get started.");
             ImGui::Spacing();
@@ -1598,7 +1621,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
                 ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.25f, 1.0f), "Project Structure:");
                 ImGui::BulletText("Project Directory: %s", targetDir.string().c_str());
                 ImGui::BulletText("Content Root: %s", (targetDir / "Content").string().c_str());
-                ImGui::BulletText("Cooked Assets: %s", (targetDir / "Cooked").string().c_str());
                 ImGui::BulletText("Build Output: %s", (targetDir / "Build").string().c_str());
                 ImGui::BulletText("Template: Eunoia Project Template (Default Level & Configs)");
                 ImGui::EndChild();
@@ -1660,7 +1682,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         auto glClearFn = (PFNGLCLEARPROC)glfwGetProcAddress("glClear");
 
         if (glViewportFn) glViewportFn(0, 0, fbW, fbH);
-        if (glClearColorFn) glClearColorFn(0.08f, 0.08f, 0.10f, 1.00f);
+        if (glClearColorFn) glClearColorFn(0.118f, 0.118f, 0.118f, 1.00f);
         if (glClearFn) glClearFn(0x00004000); // GL_COLOR_BUFFER_BIT
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
 
@@ -1673,8 +1695,6 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         std::filesystem::path configsDir = root / "Configs";
         std::filesystem::path contentDir = root / "Content";
         std::filesystem::path levelsDir  = contentDir / "Levels";
-        std::filesystem::path scenesDir  = contentDir / "Scenes";
-        std::filesystem::path cookedDir  = root / "Cooked";
         std::filesystem::path depsDir    = root / "Dependencies";
         std::filesystem::path intermDir  = root / "Intermediates";
         std::filesystem::path buildDir   = root / "Build";
@@ -1682,24 +1702,9 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         std::filesystem::create_directories(configsDir, ec);
         std::filesystem::create_directories(contentDir, ec);
         std::filesystem::create_directories(levelsDir, ec);
-        std::filesystem::create_directories(scenesDir, ec);
-        std::filesystem::create_directories(cookedDir, ec);
         std::filesystem::create_directories(depsDir, ec);
         std::filesystem::create_directories(intermDir, ec);
         std::filesystem::create_directories(buildDir, ec);
-
-        // Copy template folders from Templates/Eunoia Project Template if available
-        std::filesystem::path templateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Eunoia Project Template";
-        if (!std::filesystem::exists(templateDir, ec)) {
-            templateDir = std::filesystem::current_path() / "Templates" / "Eunoia Project Template";
-        }
-        if (std::filesystem::exists(templateDir, ec)) {
-            for (const auto& item : std::filesystem::directory_iterator(templateDir, ec)) {
-                if (item.is_directory(ec)) {
-                    std::filesystem::create_directories(root / item.path().filename(), ec);
-                }
-            }
-        }
 
         // Project descriptor file <createProjName>.euproject (and backward-compatible .eproject)
         std::filesystem::path projFileEu = root / (createProjName + ".euproject");
@@ -1709,9 +1714,9 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         j["version"] = "1.0.0";
         j["engineVersion"] = "0.1.0";
         j["contentDirectory"] = "Content";
-        j["defaultLevel"] = "Content/Levels/Main.elevel";
-        j["activeLevel"] = "Content/Levels/Main.elevel";
-        j["defaultScene"] = "Content/Levels/Main.elevel"; // backward-compat
+        j["defaultLevel"] = "Content/Levels/Level.eulevel";
+        j["activeLevel"] = "Content/Levels/Level.eulevel";
+        j["defaultScene"] = "Content/Levels/Level.eulevel"; // backward-compat
 
         if (!std::filesystem::exists(projFileEu, ec)) {
             std::ofstream pf(projFileEu);
@@ -1728,14 +1733,15 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             }
         }
 
-        // Starter level in Content/Levels/Main.elevel (and backward-compatible Main.escene)
-        std::filesystem::path starterLevelPath = levelsDir / "Main.elevel";
-        std::filesystem::path starterScenePath = scenesDir / "Main.escene";
+        // Starter level in Content/Levels/Level.eulevel (completely clean & empty, AO and Post Processing disabled)
+        std::filesystem::path starterLevelPath = levelsDir / "Level.eulevel";
         if (!std::filesystem::exists(starterLevelPath, ec)) {
             Level starterLevel;
             starterLevel.Clear();
+            starterLevel.enableAO = false;
+            starterLevel.aoType = 0;
+            starterLevel.enablePostProcessing = false;
             LevelSerializer::SaveLevel(starterLevel, starterLevelPath.string());
-            LevelSerializer::SaveLevel(starterLevel, starterScenePath.string());
         }
 
         // Initial Configs.Editor.econfigs in project root and Configs/
@@ -1812,7 +1818,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         return {};
     }
 
-    // Project selected — clean up the project browser window and return directly.
+    // Project selected â€” clean up the project browser window and return directly.
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext(browserCtx);
@@ -1829,11 +1835,6 @@ void EngineUI::OpenReferenceViewer(const AssetID& id) {
     } else if (!AssetRegistry::Get().GetAllAssets().empty()) {
         refViewerSelectedAsset = AssetRegistry::Get().GetAllAssets().begin()->first;
     }
-}
-
-void EngineUI::OpenCookModal() {
-    showCookModal = true;
-    cookLog = "Ready to cook assets. Click 'Start Cooking' to package project assets into the game project's Cooked folder.\n";
 }
 
 void EngineUI::AddLog(const std::string& category, const std::string& message, int level) {
@@ -1894,20 +1895,80 @@ bool EngineUI::SaveLevel(Scene& level) {
     m_saveIndicator.filename = filename;
     m_saveIndicator.displayTimer = 2.5f;
 
-    if (SceneSerializer::SaveScene(level, currentLevelFilePath)) {
-        levelUnsaved = false;
-        m_saveIndicator.isSaving = false;
-        m_saveIndicator.success = true;
-        m_saveIndicator.displayTimer = 2.5f;
-        AddLog("LogWorld", "Saved Level to: " + currentLevelFilePath, 2);
-        return true;
-    } else {
-        m_saveIndicator.isSaving = false;
-        m_saveIndicator.success = false;
-        m_saveIndicator.displayTimer = 3.0f;
-        AddLog("LogWorld", "Failed to save Level to: " + currentLevelFilePath, 3);
-        return false;
+    m_levelSaveState.isSaving = true;
+    m_levelSaveState.progress = 0.10f;
+    m_levelSaveState.tabName = "Level Editor";
+
+    // Snapshot scene to prevent runtime state/destruction or UI changes from corrupting level
+    std::shared_ptr<Scene> sceneSnapshot = std::make_shared<Scene>();
+    *sceneSnapshot = level;
+    if (level.isPlayMode) {
+        sceneSnapshot->objects = level.playModePreObjects;
+        sceneSnapshot->selectedId = level.playModePreSelectedId;
+        sceneSnapshot->isPlayMode = false;
     }
+
+    std::string savePath = currentLevelFilePath;
+    std::filesystem::path projRoot = activeProjectRoot;
+    std::string projName = activeProjectName;
+
+    std::thread([this, sceneSnapshot, savePath, projRoot, projName]() {
+        bool ok = SceneSerializer::SaveScene(*sceneSnapshot, savePath, [this](float p, const std::string& step, const std::string& detail) {
+            m_levelSaveState.progress = std::max(0.1f, p);
+        });
+
+        m_levelSaveState.isSaving = false;
+        m_levelSaveState.progress = 1.0f;
+        m_levelSaveState.fadeTimer = 1.5f;
+        levelUnsaved = !ok;
+
+        if (ok) {
+            m_saveIndicator.isSaving = false;
+            m_saveIndicator.success = true;
+            m_saveIndicator.displayTimer = 2.5f;
+            lastOpenedLevelConfig = savePath;
+            SaveEditorConfig();
+
+            // Persist activeLevel in project descriptor (.euproject / .eproject)
+            if (!projRoot.empty() && !projName.empty()) {
+                std::error_code ec;
+                std::vector<std::filesystem::path> projFiles = {
+                    projRoot / (projName + ".euproject"),
+                    projRoot / (projName + ".eproject")
+                };
+                for (const auto& pf : projFiles) {
+                    if (std::filesystem::exists(pf, ec)) {
+                        try {
+                            nlohmann::json pj;
+                            {
+                                std::ifstream fin(pf);
+                                if (fin.is_open()) fin >> pj;
+                            }
+                            std::filesystem::path p(savePath);
+                            std::string rel = savePath;
+                            if (savePath.rfind(projRoot.string(), 0) == 0) {
+                                rel = std::filesystem::relative(p, projRoot, ec).generic_string();
+                            }
+                            pj["activeLevel"] = rel;
+                            {
+                                std::ofstream fout(pf);
+                                if (fout.is_open()) fout << pj.dump(4);
+                            }
+                        } catch (...) {}
+                    }
+                }
+            }
+
+            AddLog("LogWorld", "Saved Level reliably in background to: " + savePath, 2);
+        } else {
+            m_saveIndicator.isSaving = false;
+            m_saveIndicator.success = false;
+            m_saveIndicator.displayTimer = 3.0f;
+            AddLog("LogWorld", "Failed to save Level to: " + savePath, 3);
+        }
+    }).detach();
+
+    return true;
 }
 
 bool EngineUI::SaveLevelAs(Scene& level) {
@@ -1929,15 +1990,64 @@ bool EngineUI::OpenLevel(Scene& level) {
 bool EngineUI::OpenLevelFromPath(Scene& level, const std::string& filePath, bool isGameMode, const std::string& binPath) {
     std::string filename = std::filesystem::path(filePath).filename().string();
     currentLevelFilePath = filePath;
+    lastOpenedLevelConfig = filePath;
     levelUnsaved = false;
+    SaveEditorConfig();
+
+    // Persist activeLevel in project descriptor (.euproject / .eproject)
+    if (!activeProjectRoot.empty() && !activeProjectName.empty()) {
+        std::error_code ec;
+        std::vector<std::filesystem::path> projFiles = {
+            activeProjectRoot / (activeProjectName + ".euproject"),
+            activeProjectRoot / (activeProjectName + ".eproject")
+        };
+        for (const auto& pf : projFiles) {
+            if (std::filesystem::exists(pf, ec)) {
+                try {
+                    nlohmann::json pj;
+                    {
+                        std::ifstream fin(pf);
+                        if (fin.is_open()) fin >> pj;
+                    }
+                    std::filesystem::path p(filePath);
+                    std::string rel = filePath;
+                    if (filePath.rfind(activeProjectRoot.string(), 0) == 0) {
+                        rel = std::filesystem::relative(p, activeProjectRoot, ec).generic_string();
+                    }
+                    pj["activeLevel"] = rel;
+                    {
+                        std::ofstream fout(pf);
+                        if (fout.is_open()) fout << pj.dump(4);
+                    }
+                } catch (...) {}
+            }
+        }
+    }
 
     // Reset applied tree sets so loaded tree states restore smoothly across hierarchy
     ResetTreeStateApplication();
 
+    // Resolve actual disk path: if filePath is a 0-byte dummy reference in Content/, load from Cooked/Content/
+    std::string actualLoadPath = filePath;
+    {
+        std::error_code ec;
+        if (!std::filesystem::exists(actualLoadPath, ec) || std::filesystem::file_size(actualLoadPath, ec) == 0) {
+            std::filesystem::path resolved = AssetManager::Get().ResolvePhysicalOrCookedPath(filePath);
+            if (std::filesystem::exists(resolved, ec) && std::filesystem::file_size(resolved, ec) > 0) {
+                actualLoadPath = resolved.string();
+            } else if (!activeProjectRoot.empty()) {
+                std::filesystem::path cookedCand = activeProjectRoot / "Cooked" / "Content" / std::filesystem::path(filePath).filename();
+                if (std::filesystem::exists(cookedCand, ec) && std::filesystem::file_size(cookedCand, ec) > 0) {
+                    actualLoadPath = cookedCand.string();
+                }
+            }
+        }
+    }
+
     // WickedEngine Loading System Technique:
     // Non-blocking asynchronous task execution with progress reporting & fast binary archive cache
-    m_progressiveLoader.Start(level, filePath, binPath);
-    AddLog("LogWorld", "Opened Level: " + filePath + " (loading asynchronously via WickedEngine task pipeline)", 2);
+    m_progressiveLoader.Start(level, actualLoadPath, binPath);
+    AddLog("LogWorld", "Opened Level: " + filePath + (actualLoadPath != filePath ? (" [Cooked Binary: " + actualLoadPath + "]") : "") + " (loading asynchronously via WickedEngine task pipeline)", 2);
     return true;
 }
 
@@ -2088,8 +2198,6 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     std::filesystem::path configsDir = root / "Configs";
     std::filesystem::path contentDir = root / "Content";
     std::filesystem::path levelsDir  = contentDir / "Levels";
-    std::filesystem::path scenesDir  = contentDir / "Scenes";
-    std::filesystem::path cookedDir  = root / "Cooked";
     std::filesystem::path depsDir    = root / "Dependencies";
     std::filesystem::path intermDir  = root / "Intermediates";
     std::filesystem::path buildDir   = root / "Build";
@@ -2097,33 +2205,19 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     std::filesystem::create_directories(configsDir, ec);
     std::filesystem::create_directories(contentDir, ec);
     std::filesystem::create_directories(levelsDir, ec);
-    std::filesystem::create_directories(scenesDir, ec);
-    std::filesystem::create_directories(cookedDir, ec);
     std::filesystem::create_directories(depsDir, ec);
     std::filesystem::create_directories(intermDir, ec);
     std::filesystem::create_directories(buildDir, ec);
 
-    // Copy template folders from Templates/Eunoia Project Template if available
-    std::filesystem::path templateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Eunoia Project Template";
-    if (!std::filesystem::exists(templateDir, ec)) {
-        templateDir = std::filesystem::current_path() / "Templates" / "Eunoia Project Template";
-    }
-    if (std::filesystem::exists(templateDir, ec)) {
-        for (const auto& item : std::filesystem::directory_iterator(templateDir, ec)) {
-            if (item.is_directory(ec)) {
-                std::filesystem::create_directories(root / item.path().filename(), ec);
-            }
-        }
-    }
-
-    // 2. Starter level in Content/Levels (completely empty - no objects, no lights)
-    std::filesystem::path starterLevelPath = levelsDir / "Main.elevel";
-    std::filesystem::path starterScenePath = scenesDir / "Main.escene";
+    // 2. Starter level in Content/Levels/Level.eulevel (completely clean & empty, AO and Post Processing disabled)
+    std::filesystem::path starterLevelPath = levelsDir / "Level.eulevel";
     if (!std::filesystem::exists(starterLevelPath, ec)) {
         Level starterLevel;
         starterLevel.Clear();
+        starterLevel.enableAO = false;
+        starterLevel.aoType = 0;
+        starterLevel.enablePostProcessing = false;
         LevelSerializer::SaveLevel(starterLevel, starterLevelPath.string());
-        LevelSerializer::SaveLevel(starterLevel, starterScenePath.string());
     }
 
     // 3. Project descriptor files <ProjectName>.euproject & <ProjectName>.eproject
@@ -2134,9 +2228,9 @@ bool EngineUI::CreateNewProject(const std::string& parentDir, const std::string&
     j["version"] = "1.0.0";
     j["engineVersion"] = "0.1.0";
     j["contentDirectory"] = "Content";
-    j["defaultLevel"] = "Content/Levels/Main.elevel";
-    j["activeLevel"] = "Content/Levels/Main.elevel";
-    j["defaultScene"] = "Content/Levels/Main.elevel"; // backward compatibility
+    j["defaultLevel"] = "Content/Levels/Level.eulevel";
+    j["activeLevel"] = "Content/Levels/Level.eulevel";
+    j["defaultScene"] = "Content/Levels/Level.eulevel"; // backward compatibility
 
     {
         std::ofstream pf(projFileEu);
@@ -2189,7 +2283,7 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     if (m_window) {
-        std::string winTitle = "Eunoia Engine — [" + activeProjectName + "]";
+        std::string winTitle = "Eunoia Engine â€” [" + activeProjectName + "]";
         glfwSetWindowTitle(m_window, winTitle.c_str());
     }
 
@@ -2207,6 +2301,24 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
 
     std::string targetScenePath = specificScenePath;
     if (targetScenePath.empty()) {
+        // Priority 1: Check last opened level in editor configuration (Always open the last opened level on startup)
+        if (!lastOpenedLevelConfig.empty()) {
+            std::filesystem::path p(lastOpenedLevelConfig);
+            if (std::filesystem::exists(p, ec) && !std::filesystem::is_directory(p, ec)) {
+                targetScenePath = std::filesystem::absolute(p).string();
+            } else {
+                std::filesystem::path relP1 = activeProjectRoot / lastOpenedLevelConfig;
+                if (std::filesystem::exists(relP1, ec) && !std::filesystem::is_directory(relP1, ec)) {
+                    targetScenePath = relP1.string();
+                } else {
+                    std::filesystem::path relP2 = contentRootPath / lastOpenedLevelConfig;
+                    if (std::filesystem::exists(relP2, ec) && !std::filesystem::is_directory(relP2, ec)) {
+                        targetScenePath = relP2.string();
+                    }
+                }
+            }
+        }
+
         // 1. Check GameConfig.json in Data/ or project descriptor files in project root
         std::vector<std::filesystem::path> cfgPaths = {
             activeProjectRoot / "Data" / "GameConfig.json",
@@ -2246,9 +2358,15 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
 
         // 2. Fallbacks
         if (targetScenePath.empty()) {
-            std::filesystem::path mainLevel = contentRootPath / "Levels" / "Main.elevel";
-            std::filesystem::path mainScene = contentRootPath / "Scenes" / "Main.escene";
-            if (std::filesystem::exists(mainLevel, ec)) {
+            std::filesystem::path defLevelEu = contentRootPath / "Levels" / "Level.eulevel";
+            std::filesystem::path defLevelE  = contentRootPath / "Levels" / "Level.elevel";
+            std::filesystem::path mainLevel  = contentRootPath / "Levels" / "Main.elevel";
+            std::filesystem::path mainScene  = contentRootPath / "Scenes" / "Main.escene";
+            if (std::filesystem::exists(defLevelEu, ec)) {
+                targetScenePath = defLevelEu.string();
+            } else if (std::filesystem::exists(defLevelE, ec)) {
+                targetScenePath = defLevelE.string();
+            } else if (std::filesystem::exists(mainLevel, ec)) {
                 targetScenePath = mainLevel.string();
             } else if (std::filesystem::exists(mainScene, ec)) {
                 targetScenePath = mainScene.string();
@@ -2494,14 +2612,63 @@ void EngineUI::ImportMeshWithSavePrompt(Scene& level) {
     // Copy file into project location
     if (std::filesystem::absolute(srcPath) != std::filesystem::absolute(destPath)) {
         std::filesystem::copy_file(srcPath, destPath, std::filesystem::copy_options::overwrite_existing, ec);
-        // Also copy companion .mtl if it exists
         std::string ext = srcPath.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        
+        // Also copy companion .mtl or .bin if they exist
         if (ext == ".obj") {
             std::filesystem::path srcMtl = srcPath.parent_path() / (srcPath.stem().string() + ".mtl");
             if (std::filesystem::exists(srcMtl, ec)) {
                 std::filesystem::path destMtl = destPath.parent_path() / (destPath.stem().string() + ".mtl");
                 std::filesystem::copy_file(srcMtl, destMtl, std::filesystem::copy_options::overwrite_existing, ec);
+            }
+        } else if (ext == ".gltf") {
+            std::filesystem::path srcBin = srcPath.parent_path() / (srcPath.stem().string() + ".bin");
+            if (std::filesystem::exists(srcBin, ec)) {
+                std::filesystem::path destBin = destPath.parent_path() / (destPath.stem().string() + ".bin");
+                std::filesystem::copy_file(srcBin, destBin, std::filesystem::copy_options::overwrite_existing, ec);
+            }
+        }
+
+        // Copy companion texture folders and files from source directory into project location
+        std::filesystem::path srcDir = srcPath.parent_path();
+        std::filesystem::path destDir = destPath.parent_path();
+        std::string srcStem = srcPath.stem().string();
+
+        std::vector<std::string> companionFolderNames = {
+            "Textures", "textures", "Materials", "materials",
+            srcStem + ".fbm", srcStem + "_textures", srcStem + "-textures", srcStem + "_Textures"
+        };
+
+        for (const auto& folderName : companionFolderNames) {
+            std::filesystem::path srcFolder = srcDir / folderName;
+            if (std::filesystem::exists(srcFolder, ec) && std::filesystem::is_directory(srcFolder, ec)) {
+                std::filesystem::path destFolder = destDir / folderName;
+                std::filesystem::create_directories(destFolder, ec);
+                for (const auto& entry : std::filesystem::directory_iterator(srcFolder, ec)) {
+                    if (entry.is_regular_file(ec)) {
+                        std::filesystem::copy_file(entry.path(), destFolder / entry.path().filename(),
+                            std::filesystem::copy_options::overwrite_existing, ec);
+                    }
+                }
+            }
+        }
+
+        // Copy any loose image textures residing beside the 3D model
+        std::vector<std::string> imgExts = { ".png", ".jpg", ".jpeg", ".tga", ".dds", ".bmp", ".webp", ".tif", ".tiff" };
+        std::filesystem::path destTexDir = destDir / "Textures";
+        for (const auto& entry : std::filesystem::directory_iterator(srcDir, ec)) {
+            if (ec) break;
+            if (!entry.is_regular_file(ec)) continue;
+            std::string fileExt = entry.path().extension().string();
+            std::transform(fileExt.begin(), fileExt.end(), fileExt.begin(), ::tolower);
+            for (const auto& ie : imgExts) {
+                if (fileExt == ie) {
+                    std::filesystem::create_directories(destTexDir, ec);
+                    std::filesystem::copy_file(entry.path(), destTexDir / entry.path().filename(),
+                        std::filesystem::copy_options::overwrite_existing, ec);
+                    break;
+                }
             }
         }
     }
@@ -2668,7 +2835,11 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                 const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
                 if (meta) {
                     if (meta->type == AssetType::Mesh) {
-                        std::filesystem::path fullMesh = contentRootPath / meta->sourcePath;
+                        std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
+                        std::error_code ec;
+                        if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
+                            fullMesh = contentRootPath / meta->sourcePath;
+                        }
                         ImVec2 mousePos = ImGui::GetMousePos();
                         glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
 
@@ -2678,7 +2849,11 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                                std::to_string(spawnPos.x).substr(0, 4) + ", " +
                                std::to_string(spawnPos.z).substr(0, 4) + ")", 2);
                     } else if (meta->type == AssetType::Level || meta->type == AssetType::Scene) {
-                        std::filesystem::path fullLevel = contentRootPath / meta->sourcePath;
+                        std::filesystem::path fullLevel = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
+                        std::error_code ec;
+                        if (fullLevel.empty() || !std::filesystem::exists(fullLevel, ec) || std::filesystem::file_size(fullLevel, ec) == 0) {
+                            fullLevel = contentRootPath / meta->sourcePath;
+                        }
                         OpenLevelFromPath(level, fullLevel.string());
                     }
                 }
@@ -2696,62 +2871,66 @@ void EngineUI::SetupTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
     ImVec4* colors = style.Colors;
 
-    // Sizing and rounding matching Eunoia Engine's UI.svg (rx=5px everywhere)
-    style.WindowRounding    = 0.0f;
-    style.ChildRounding     = 5.0f;
-    style.FrameRounding     = 5.0f;
-    style.PopupRounding     = 5.0f;
-    style.ScrollbarRounding = 5.0f;
-    style.GrabRounding      = 5.0f;
-    style.TabRounding       = 5.0f;
+    ImGui::StyleColorsDark(&style);
 
-    style.WindowBorderSize  = 0.0f;
+    // Zero rounding everywhere for pure lightweight flat-quad Dear ImGui rendering
+    style.WindowRounding    = 0.0f;
+    style.ChildRounding     = 0.0f;
+    style.FrameRounding     = 0.0f;
+    style.PopupRounding     = 0.0f;
+    style.ScrollbarRounding = 0.0f;
+    style.GrabRounding      = 0.0f;
+    style.TabRounding       = 0.0f;
+
+    style.WindowBorderSize  = 1.0f;
+    style.ChildBorderSize   = 0.0f;
     style.FrameBorderSize   = 0.0f;
     style.PopupBorderSize   = 1.0f;
+    style.TabBorderSize     = 0.0f;
 
-    style.WindowPadding     = ImVec2(10.0f, 8.0f);
-    style.FramePadding      = ImVec2(8.0f, 5.0f);
-    style.ItemSpacing       = ImVec2(8.0f, 6.0f);
-    style.ItemInnerSpacing  = ImVec2(6.0f, 5.0f);
-    style.ScrollbarSize     = 14.0f;
-    style.GrabMinSize       = 14.0f;
+    style.WindowPadding     = ImVec2(5.0f, 4.0f);
+    style.FramePadding      = ImVec2(4.0f, 2.5f);
+    style.ItemSpacing       = ImVec2(4.0f, 3.0f);
+    style.ItemInnerSpacing  = ImVec2(3.0f, 3.0f);
+    style.ScrollbarSize     = 10.0f;
+    style.GrabMinSize       = 8.0f;
 
-    // Color Palette exactly matching Eunoia Engine's UI.svg
-    const ImVec4 pureBlack     = ImVec4(0.000f, 0.000f, 0.000f, 1.00f); // Pure black #000000
-    const ImVec4 frameDark     = ImVec4(0.129f, 0.129f, 0.129f, 1.00f); // #212121
-    const ImVec4 frameHover    = ImVec4(0.180f, 0.180f, 0.180f, 1.00f); // #2E2E2E
+    // Main Theme Color: #1E1E1E (RGB 0.118f, 0.118f, 0.118f)
+    const ImVec4 themeMainBg   = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1E1E1E
+    const ImVec4 frameDark     = ImVec4(0.155f, 0.155f, 0.155f, 1.00f); // #272727
+    const ImVec4 frameHover    = ImVec4(0.200f, 0.200f, 0.200f, 1.00f); // #333333
     const ImVec4 accentBlue    = ImVec4(0.122f, 0.600f, 0.949f, 1.00f); // #1F99F2 Eunoia Cyan/Blue
     const ImVec4 textWhite     = ImVec4(1.000f, 1.000f, 1.000f, 1.00f); // Pure White #FFFFFF
-    const ImVec4 textMuted     = ImVec4(0.482f, 0.482f, 0.482f, 1.00f); // #7B7B7B
-    const ImVec4 subtleBorder  = ImVec4(0.090f, 0.090f, 0.090f, 0.85f); // #161616
-    const ImVec4 sepGray       = ImVec4(0.373f, 0.384f, 0.400f, 1.00f); // #5F6266
+    const ImVec4 textMuted     = ImVec4(0.550f, 0.550f, 0.550f, 1.00f); // #8C8C8C
+    const ImVec4 subtleBorder  = ImVec4(0.180f, 0.180f, 0.180f, 0.85f); // #2E2E2E
+    const ImVec4 sepGray       = ImVec4(0.250f, 0.250f, 0.250f, 1.00f); // #404040
 
     colors[ImGuiCol_Text]                  = textWhite;
     colors[ImGuiCol_TextDisabled]          = textMuted;
-    colors[ImGuiCol_WindowBg]              = pureBlack;
-    colors[ImGuiCol_ChildBg]               = pureBlack;
-    colors[ImGuiCol_PopupBg]               = ImVec4(0.07f, 0.07f, 0.07f, 0.98f);
+    colors[ImGuiCol_WindowBg]              = themeMainBg;
+    colors[ImGuiCol_ChildBg]               = themeMainBg;
+    colors[ImGuiCol_PopupBg]               = ImVec4(0.135f, 0.135f, 0.135f, 0.98f);
     colors[ImGuiCol_Border]                = subtleBorder;
     colors[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
     colors[ImGuiCol_FrameBg]               = frameDark;
     colors[ImGuiCol_FrameBgHovered]        = frameHover;
     colors[ImGuiCol_FrameBgActive]         = frameHover;
-    colors[ImGuiCol_TitleBg]               = pureBlack;
-    colors[ImGuiCol_TitleBgActive]         = pureBlack;
-    colors[ImGuiCol_TitleBgCollapsed]      = pureBlack;
-    colors[ImGuiCol_MenuBarBg]             = pureBlack;
-    colors[ImGuiCol_ScrollbarBg]           = pureBlack;
-    colors[ImGuiCol_ScrollbarGrab]         = ImVec4(0.22f, 0.22f, 0.22f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.32f, 0.32f, 0.32f, 1.00f);
-    colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.42f, 0.42f, 0.42f, 1.00f);
+    colors[ImGuiCol_TitleBg]               = themeMainBg;
+    colors[ImGuiCol_TitleBgActive]         = themeMainBg;
+    colors[ImGuiCol_TitleBgCollapsed]      = themeMainBg;
+    colors[ImGuiCol_MenuBarBg]             = themeMainBg;
+    colors[ImGuiCol_ScrollbarBg]           = themeMainBg;
+    colors[ImGuiCol_ScrollbarGrab]         = ImVec4(0.25f, 0.25f, 0.25f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.35f, 0.35f, 0.35f, 1.00f);
+    colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.45f, 0.45f, 0.45f, 1.00f);
     colors[ImGuiCol_CheckMark]             = accentBlue;
     colors[ImGuiCol_SliderGrab]            = accentBlue;
     colors[ImGuiCol_SliderGrabActive]      = ImVec4(0.20f, 0.70f, 1.00f, 1.00f);
     colors[ImGuiCol_Button]                = frameDark;
     colors[ImGuiCol_ButtonHovered]         = frameHover;
     colors[ImGuiCol_ButtonActive]          = accentBlue;
-    colors[ImGuiCol_Header]                = ImVec4(0.16f, 0.16f, 0.16f, 0.90f);
-    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.22f, 0.22f, 0.22f, 0.95f);
+    colors[ImGuiCol_Header]                = ImVec4(0.18f, 0.18f, 0.18f, 0.90f);
+    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.24f, 0.24f, 0.24f, 0.95f);
     colors[ImGuiCol_HeaderActive]          = accentBlue;
     colors[ImGuiCol_Separator]             = sepGray;
     colors[ImGuiCol_SeparatorHovered]      = accentBlue;
@@ -2774,11 +2953,11 @@ void EngineUI::SetupTheme() {
     colors[ImGuiCol_PlotLinesHovered]      = ImVec4(1.00f, 0.43f, 0.35f, 1.00f);
     colors[ImGuiCol_PlotHistogram]         = ImVec4(0.90f, 0.70f, 0.00f, 1.00f);
     colors[ImGuiCol_PlotHistogramHovered]  = ImVec4(1.00f, 0.60f, 0.00f, 1.00f);
-    colors[ImGuiCol_TableHeaderBg]         = ImVec4(0.12f, 0.12f, 0.12f, 1.00f);
+    colors[ImGuiCol_TableHeaderBg]         = ImVec4(0.14f, 0.14f, 0.14f, 1.00f);
     colors[ImGuiCol_TableBorderStrong]     = subtleBorder;
     colors[ImGuiCol_TableBorderLight]      = subtleBorder;
-    colors[ImGuiCol_TableRowBg]            = pureBlack;
-    colors[ImGuiCol_TableRowBgAlt]         = ImVec4(0.04f, 0.04f, 0.04f, 1.00f);
+    colors[ImGuiCol_TableRowBg]            = themeMainBg;
+    colors[ImGuiCol_TableRowBgAlt]         = ImVec4(0.135f, 0.135f, 0.135f, 1.00f);
     colors[ImGuiCol_TextSelectedBg]        = ImVec4(0.12f, 0.60f, 0.95f, 0.35f);
     colors[ImGuiCol_DragDropTarget]        = accentBlue;
     colors[ImGuiCol_NavHighlight]          = accentBlue;
@@ -2794,7 +2973,7 @@ void EngineUI::SetupTheme() {
 
 void EngineUI::ApplyUIScale(float scale) {
     uiScale = std::clamp(scale, 0.25f, 2.50f);
-    topBarHeight = 76.0f * uiScale;
+    topBarHeight = 56.0f * uiScale;
     SetupTheme();
 }
 
@@ -2804,6 +2983,16 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     if (isGameOnlyWindow) {
+        if (m_progressiveLoader.active) {
+            if (!m_progressiveLoader.completed) {
+                m_progressiveLoader.Step(scene, 128);
+                if (m_progressiveLoader.completed) {
+                    m_progressiveLoader.active = false;
+                    RequestViewportRedraw(15);
+                }
+            }
+        }
+
         bool isCtrlDown = ImGui::GetIO().KeyCtrl ||
                           InputSystem::Get().IsKeyDown(Key::LeftControl) ||
                           InputSystem::Get().IsKeyDown(Key::RightControl);
@@ -2877,7 +3066,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         if (!m_progressiveLoader.completed) {
             m_progressiveLoader.Step(scene, 6);
             if (m_progressiveLoader.completed) {
-                Eunoia::LightBakeManager::Get().LoadAllBakesForScene(scene, activeProjectRoot);
                 ResetTreeStateApplication();
                 AddLog("LogWorld", "Level loaded: " + m_progressiveLoader.filePath + " (" + std::to_string(scene.objects.size()) + " actors)", 2);
             }
@@ -2913,7 +3101,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     // Unreal Keyboard Shortcuts (when not typing and not currently in free fly mode)
-    // During Play Mode, suppress editor shortcuts so gameplay input is uninterrupted (dev.md §54)
+    // During Play Mode, suppress editor shortcuts so gameplay input is uninterrupted (dev.md Â§54)
     if (!ImGui::GetIO().WantTextInput && !camera.isFlying && !scene.isPlayMode) {
         // F7: Compile Behaviour Scripts
         if (ImGui::IsKeyPressed(ImGuiKey_F7) && !isCompilingScripts) {
@@ -3001,11 +3189,14 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
             scene.RemoveObject(scene.selectedId);
         }
-        if (ImGui::GetIO().KeyCtrl && (ImGui::IsKeyPressed(ImGuiKey_D) || ImGui::IsKeyPressed(ImGuiKey_W)) && scene.selectedId != -1) {
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && scene.selectedId != -1) {
             if (!ImGui::GetIO().WantTextInput) {
                 UndoManager::Get().RecordSnapshot(scene, "Duplicate Actor");
                 GameObject* copy = scene.DuplicateObject(scene.selectedId);
                 if (copy) {
+                    selectedActorIds.clear();
+                    selectedActorIds.insert(copy->id);
+                    scene.selectedId = copy->id;
                     std::string logMsg = "Duplicated Actor: " + copy->name;
                     if (!copy->childIds.empty()) {
                         logMsg += " (along with " + std::to_string(copy->childIds.size()) + " children)";
@@ -3027,6 +3218,10 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             scene.Clear();
             currentLevelFilePath = "";
             AddLog("LogWorld", "Cleared Level (New Level)", 0);
+        }
+        // Ctrl+B: Build Standalone Game Project (Runs in background without modal)
+        if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_B) && !isGameBuilding) {
+            StartGameBuildAsync(scene);
         }
         if (!s_justExitedPlayMode && ImGui::IsKeyPressed(ImGuiKey_Escape)) {
             scene.selectedId = -1;
@@ -3089,8 +3284,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     ImGuiViewport* vp = ImGui::GetMainViewport();
     matPreviewPipRect.active = false;
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
-                        !VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab() &&
-                        !showMaterialEditor;
+                        !(showMaterialEditor && materialWorkspaceActive);
 
     // 1. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" top panel)
     RenderTopMenuBar(scene, camera, outShouldExit);
@@ -3148,15 +3342,15 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         RenderViewportDropTarget(scene, camera);
     } else {
         // Active UI, Visual Behaviour, or Material Editor Tab Full Workspace
-        float titleBarH = 38.0f * uiScale;
-        float menuBarH = 38.0f * uiScale;
+        float titleBarH = 28.0f * uiScale;
+        float menuBarH = 28.0f * uiScale;
         float topBarH = titleBarH + menuBarH;
         ImGuiViewport* vpWorkspace = ImGui::GetMainViewport();
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
 
-        if (showMaterialEditor) {
-            float cbH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f;
+        if (showMaterialEditor && materialWorkspaceActive) {
+            float cbH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f;
             glm::vec2 matWsSize(wsSize.x, wsSize.y - cbH);
             RenderMaterialWorkspace(scene, wsPos, matWsSize);
             if (showBottomDrawer) {
@@ -3164,10 +3358,18 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
-        } else if (VisualBehaviuors::BehaviourEditorManager::Get().HasActiveTab()) {
-            VisualBehaviuors::BehaviourEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize);
         }
     }
+
+    // Full-Width Horizontal Bottom Progress Bar (matching Frame.svg blueprint)
+    RenderBottomProgressBar();
+
+    // Update timers for tab saves and bottom progress bar
+    float dt = ImGui::GetIO().DeltaTime;
+    if (m_bottomProgress.completionTimer > 0.0f) m_bottomProgress.completionTimer = std::max(0.0f, m_bottomProgress.completionTimer - dt);
+    if (m_levelSaveState.fadeTimer > 0.0f) m_levelSaveState.fadeTimer = std::max(0.0f, m_levelSaveState.fadeTimer - dt);
+    if (m_materialSaveState.fadeTimer > 0.0f) m_materialSaveState.fadeTimer = std::max(0.0f, m_materialSaveState.fadeTimer - dt);
+    if (m_uiSaveState.fadeTimer > 0.0f) m_uiSaveState.fadeTimer = std::max(0.0f, m_uiSaveState.fadeTimer - dt);
 
     if (showHelpModal) {
         RenderHelpModal();
@@ -3195,15 +3397,18 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (showAmbientOcclusionModal) {
         RenderAmbientOcclusionModal(scene);
     }
+    if (showVolumetricFogModal) {
+        RenderVolumetricFogModal(scene);
+    }
 
     // 7. Asset Reference Viewer (dev.md Section 33)
     if (showReferenceViewer) {
         RenderReferenceViewer(scene);
     }
 
-    // 8. Asset Cooking Pipeline Modal (dev.md Section 24, 25)
-    if (showCookModal) {
-        RenderCookModal();
+    // Standalone Game Build Pipeline Modal
+    if (showGameBuildModal) {
+        RenderGameBuildModal(scene);
     }
 
     // 9. In-Engine Code Editor (dev.md & User Request)
@@ -3213,9 +3418,6 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     // 10. Behaviour Script Change & Compilation Prompt (User Request: ask as compile or later)
     RenderScriptCompileModal(scene);
-
-    // 10b. Visual-Behaviuors Node-Graph Editor Windows (.ebehaviour assets)
-    VisualBehaviuors::BehaviourEditorManager::Get().RenderAll();
 
     // 10c. UI-System Visual Canvas Designer Windows (.eui assets)
     EunoiaUI::UIEditorManager::Get().RenderAll();
@@ -3285,6 +3487,105 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
 }
 
+bool EngineUI::RenderTabWithSaveProgress(const char* label, bool isActive, const TabSaveProgressState& saveState, float btnHeight) {
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+    if (isActive) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+    } else {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
+    }
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f * uiScale, 2.0f * uiScale));
+
+    bool clicked = ImGui::Button(label, ImVec2(0.0f, btnHeight));
+
+    ImVec2 itemMin = ImGui::GetItemRectMin();
+    ImVec2 itemMax = ImGui::GetItemRectMax();
+
+    if (saveState.isSaving) {
+        float progress = std::clamp(saveState.progress, 0.05f, 1.0f);
+        float fillW = (itemMax.x - itemMin.x) * progress;
+        drawList->AddRectFilled(itemMin, ImVec2(itemMin.x + fillW, itemMax.y), IM_COL32(31, 153, 242, 160));
+        drawList->AddLine(ImVec2(itemMin.x, itemMax.y - 2.0f), ImVec2(itemMin.x + fillW, itemMax.y - 2.0f), IM_COL32(64, 200, 255, 255), 2.0f);
+    } else if (saveState.fadeTimer > 0.0f) {
+        float alpha = std::clamp(saveState.fadeTimer / 1.5f, 0.0f, 1.0f);
+        drawList->AddRectFilled(itemMin, itemMax, IM_COL32(40, 180, 80, (uint8_t)(alpha * 120)));
+        drawList->AddLine(ImVec2(itemMin.x, itemMax.y - 2.0f), ImVec2(itemMax.x, itemMax.y - 2.0f), IM_COL32(80, 220, 100, (uint8_t)(alpha * 240)), 2.0f);
+    }
+
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(4);
+
+    return clicked;
+}
+
+void EngineUI::RenderBottomProgressBar() {
+    if (isImmersiveMode || isGameOnlyWindow || isPlayModeActive) return;
+
+    ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!vp || vp->Size.x <= 10.0f || vp->Size.y <= 10.0f) return;
+
+    float bottomBarH = bottomBarHeight * uiScale;
+    float posX = vp->Pos.x;
+    float posY = vp->Pos.y + vp->Size.y - bottomBarH;
+    float width = vp->Size.x;
+
+    ImGui::SetNextWindowPos(ImVec2(posX, posY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(width, bottomBarH), ImGuiCond_Always);
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoMove |
+                            ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoSavedSettings |
+                            ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.094f, 0.094f, 0.094f, 1.0f));
+
+    if (ImGui::Begin("###BottomProgressBarWin", nullptr, flags)) {
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+
+        bool isBuildingNow = false;
+        float buildP = 0.0f;
+        std::string stage;
+        {
+            std::lock_guard<std::mutex> lock(gameBuildMutex);
+            isBuildingNow = isGameBuilding;
+            buildP = gameBuildProgress;
+            stage = gameBuildStage;
+        }
+
+        float fontH = ImGui::GetFontSize();
+        float textY = posY + (bottomBarH - fontH) * 0.5f;
+        float textX = posX + 12.0f * uiScale;
+
+        if (isBuildingNow) {
+            float fillW = width * std::clamp(buildP, 0.02f, 1.0f);
+            drawList->AddRectFilled(ImVec2(posX, posY), ImVec2(posX + fillW, posY + bottomBarH), IM_COL32(38, 160, 90, 180));
+            drawList->AddLine(ImVec2(posX, posY), ImVec2(posX + width, posY), IM_COL32(40, 40, 40, 255), 1.0f);
+
+            char buf[512];
+            snprintf(buf, sizeof(buf), "Packaging Standalone Game [%d%%] : %s", (int)(buildP * 100.0f), stage.c_str());
+            drawList->AddText(ImVec2(textX, textY), IM_COL32(255, 255, 255, 255), buf);
+        } else if (m_bottomProgress.completionTimer > 0.0f) {
+            drawList->AddRectFilled(ImVec2(posX, posY), ImVec2(posX + width, posY + bottomBarH),
+                                    m_bottomProgress.success ? IM_COL32(35, 140, 65, 120) : IM_COL32(180, 40, 40, 120));
+            drawList->AddLine(ImVec2(posX, posY), ImVec2(posX + width, posY), IM_COL32(50, 50, 50, 255), 1.0f);
+            drawList->AddText(ImVec2(textX, textY), IM_COL32(230, 230, 230, 255), m_bottomProgress.title.c_str());
+        } else {
+            drawList->AddLine(ImVec2(posX, posY), ImVec2(posX + width, posY), IM_COL32(36, 36, 36, 255), 1.0f);
+            drawList->AddText(ImVec2(textX, textY), IM_COL32(150, 150, 150, 255), "Ready | Direct3D 12 High Performance Renderer | All Assets Synchronized");
+        }
+    }
+    ImGui::End();
+    ImGui::PopStyleColor();
+    ImGui::PopStyleVar(2);
+}
+
 void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
     RenderCustomTitleBar(scene, outShouldExit);
     RenderMainMenuBar(scene, camera, outShouldExit);
@@ -3292,7 +3593,7 @@ void EngineUI::RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShou
 
 void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float titleBarH = 38.0f * uiScale;
+    float titleBarH = 28.0f * uiScale;
     float topBarW = vp->Size.x;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y), ImGuiCond_Always);
@@ -3302,10 +3603,10 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoNav;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 0.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.000f, 0.000f, 0.000f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.118f, 0.118f, 0.118f, 1.0f));
 
     if (ImGui::Begin("##CustomTitleBar", nullptr, flags)) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -3325,77 +3626,52 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 #endif
 
         // Vertically center content in title bar
-        ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
+        ImGui::SetCursorPosY(std::max(2.0f, 4.0f * uiScale));
 
         // Play Mode Indicator (if active)
         if (scene.isPlayMode) {
-            ImGui::TextColored(ImVec4(0.20f, 0.88f, 0.40f, 1.0f), "● PLAY MODE");
+            ImGui::TextColored(ImVec4(0.20f, 0.88f, 0.40f, 1.0f), "â— PLAY MODE");
             ImGui::SameLine(0.0f, 10.0f * uiScale);
         }
 
-        float btnH = 25.0f * uiScale;
-        float minW = 70.0f * uiScale;
-        float clsW = 60.0f * uiScale;
-        float spacing = 6.0f * uiScale;
+        float btnH = 20.0f * uiScale;
+        float minW = 55.0f * uiScale;
+        float clsW = 50.0f * uiScale;
+        float spacing = 4.0f * uiScale;
         float btnAreaW = minW + clsW + spacing + 20.0f * uiScale;
 
         // Workspace Tabs on Left Side of Title Bar (matching Eunoia Engine's UI.svg)
         float tabRightLimit = topBarW - btnAreaW - 8.0f * uiScale;
 
         if (ImGui::GetCursorPosX() < tabRightLimit) {
-            ImGui::SetCursorPosY(std::max(2.0f, 6.0f * uiScale));
+            ImGui::SetCursorPosY(std::max(2.0f, 4.0f * uiScale));
 
             auto& uiMgr = EunoiaUI::UIEditorManager::Get();
-            auto& vbMgr = VisualBehaviuors::BehaviourEditorManager::Get();
             int activeTab = uiMgr.activeTabIndex;
-            int activeVbTab = vbMgr.activeTabIndex;
 
-            // Level Editor Tab (Always open)
-            bool isMainActive = uiMgr.IsMainEditorActive() && !vbMgr.HasActiveTab() && !showMaterialEditor;
-            if (isMainActive) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 active tab
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-            } else {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
-            }
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
-
-            if (ImGui::Button("Level Editor", ImVec2(0.0f, 25.0f * uiScale))) {
+            // Level Editor Tab (Always open, with save progress animation)
+            bool isMainActive = uiMgr.IsMainEditorActive() && !(showMaterialEditor && materialWorkspaceActive);
+            if (RenderTabWithSaveProgress("Level Editor", isMainActive, m_levelSaveState, 20.0f * uiScale)) {
                 uiMgr.SwitchToMainEditor();
-                vbMgr.Deactivate();
-                showMaterialEditor = false;
+                materialWorkspaceActive = false;
+                if (!activeMaterial.name.empty()) {
+                    PropagateMaterialChangesToScene(scene, activeMaterial);
+                }
             }
-
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(4);
 
             // Material Editor Tab (if open)
             if (showMaterialEditor && !activeMaterial.name.empty()) {
                 if (ImGui::GetCursorPosX() < tabRightLimit - 120.0f * uiScale) {
                     ImGui::SameLine(0.0f, 6.0f * uiScale);
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
-
+                    bool isMatTabActive = materialWorkspaceActive && uiMgr.IsMainEditorActive();
                     std::string matTabName = activeMaterial.name;
                     if (materialDirty) matTabName += "*";
                     matTabName += "##TitleTab_Material";
 
-                    if (ImGui::Button(matTabName.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
+                    if (RenderTabWithSaveProgress(matTabName.c_str(), isMatTabActive, m_materialSaveState, 20.0f * uiScale)) {
                         uiMgr.SwitchToMainEditor();
-                        vbMgr.Deactivate();
-                        showMaterialEditor = true;
+                        materialWorkspaceActive = true;
                     }
-
-                    ImGui::PopStyleVar(2);
-                    ImGui::PopStyleColor(4);
 
                     // Close button ✕
                     ImGui::SameLine(0.0f, 2.0f * uiScale);
@@ -3403,11 +3679,12 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f));
-                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
+                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * uiScale, 2.0f * uiScale));
 
-                    if (ImGui::Button("✕##TitleCloseTab_Material", ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
+                    if (ImGui::Button("✕##TitleCloseTab_Material", ImVec2(16.0f * uiScale, 20.0f * uiScale))) {
                         showMaterialEditor = false;
+                        materialWorkspaceActive = false;
                     }
 
                     ImGui::PopStyleVar(2);
@@ -3423,44 +3700,27 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 
                 ImGui::SameLine(0.0f, 6.0f * uiScale);
                 int tabIdx = (int)i + 1;
-                bool isTabActive = (!vbMgr.HasActiveTab() && activeTab == tabIdx);
-
-                if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
-                }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
-
+                bool isTabActive = (activeTab == tabIdx);
                 std::string label = editors[i]->name;
                 if (editors[i]->isDirty) label += "*";
                 label += "##TitleTab_" + std::to_string(i);
 
-                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
-                    vbMgr.Deactivate();
-                    showMaterialEditor = false;
+                if (RenderTabWithSaveProgress(label.c_str(), isTabActive, m_uiSaveState, 20.0f * uiScale)) {
+                    materialWorkspaceActive = false;
                     uiMgr.SwitchToEditor(tabIdx);
                 }
 
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor(4);
-
-                // Close button ✕
+                // Close button âœ•
                 ImGui::SameLine(0.0f, 2.0f * uiScale);
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f)); // #7B7B7B
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
+                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(3.0f * uiScale, 2.0f * uiScale));
 
-                std::string closeLabel = "✕##TitleCloseTab_" + std::to_string(i);
-                if (ImGui::Button(closeLabel.c_str(), ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
+                std::string closeLabel = "âœ•##TitleCloseTab_" + std::to_string(i);
+                if (ImGui::Button(closeLabel.c_str(), ImVec2(16.0f * uiScale, 20.0f * uiScale))) {
                     toClose = (int)i;
                 }
 
@@ -3470,64 +3730,6 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 
             if (toClose >= 0) {
                 uiMgr.Close((size_t)toClose);
-            }
-
-            // Visual Behaviour Tabs
-            const auto& vbEditors = vbMgr.GetEditors();
-            int toCloseVb = -1;
-            for (size_t i = 0; i < vbEditors.size(); ++i) {
-                if (ImGui::GetCursorPosX() > tabRightLimit - 120.0f * uiScale) break;
-
-                ImGui::SameLine(0.0f, 6.0f * uiScale);
-                bool isTabActive = (vbMgr.HasActiveTab() && activeVbTab == (int)i);
-
-                if (isTabActive) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.129f, 0.129f, 0.129f, 1.0f)); // #212121 Active tab
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
-                } else {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f)); // Transparent inactive tab
-                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.70f, 0.70f, 0.70f, 1.0f));
-                }
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.160f, 0.160f, 0.160f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.129f, 0.129f, 0.129f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f * uiScale, 4.0f * uiScale));
-
-                std::string label = vbEditors[i]->graph.name.empty() ?
-                    std::filesystem::path(vbEditors[i]->filePath).stem().string() :
-                    vbEditors[i]->graph.name;
-                if (vbEditors[i]->isDirty) label += "*";
-                label += "##TitleTabVB_" + std::to_string(i);
-
-                if (ImGui::Button(label.c_str(), ImVec2(0.0f, 25.0f * uiScale))) {
-                    uiMgr.SwitchToMainEditor();
-                    showMaterialEditor = false;
-                    vbMgr.SwitchToEditor((int)i);
-                }
-
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor(4);
-
-                // Close button ✕
-                ImGui::SameLine(0.0f, 2.0f * uiScale);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.20f, 0.20f, 0.8f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.85f, 0.15f, 0.15f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.482f, 0.482f, 0.482f, 1.0f));
-                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 5.0f * uiScale);
-                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * uiScale, 4.0f * uiScale));
-
-                std::string closeLabel = "✕##TitleCloseTabVB_" + std::to_string(i);
-                if (ImGui::Button(closeLabel.c_str(), ImVec2(20.0f * uiScale, 25.0f * uiScale))) {
-                    toCloseVb = (int)i;
-                }
-
-                ImGui::PopStyleVar(2);
-                ImGui::PopStyleColor(4);
-            }
-
-            if (toCloseVb >= 0) {
-                vbMgr.Close((size_t)toCloseVb);
             }
         }
 
@@ -3550,8 +3752,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         bool anyBtnHovered = minHovered || clsHovered;
 
         // --- Minimize Button: rect x=2413 y=6 w=70 h=25 rx=5 fill=#161616 ---
-        ImU32 minCol = minHovered ? (mouseDown ? IM_COL32(35, 35, 35, 255) : IM_COL32(28, 28, 28, 255)) : IM_COL32(22, 22, 22, 255);
-        dl->AddRectFilled(minMin, minMax, minCol, 5.0f * uiScale);
+        ImU32 minCol = minHovered ? (mouseDown ? IM_COL32(50, 50, 50, 255) : IM_COL32(42, 42, 42, 255)) : IM_COL32(30, 30, 30, 255);
+        dl->AddRectFilled(minMin, minMax, minCol, 0.0f);
         ImVec2 minTextSize = ImGui::CalcTextSize("Minimize");
         dl->AddText(ImVec2(minMin.x + (minW - minTextSize.x) * 0.5f, minMin.y + (btnH - minTextSize.y) * 0.5f), IM_COL32(255, 255, 255, 255), "Minimize");
 
@@ -3560,8 +3762,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         }
 
         // --- Close Button: rect x=2489 y=6 w=60 h=25 rx=5 fill=#161616 ---
-        ImU32 clsCol = clsHovered ? (mouseDown ? IM_COL32(190, 15, 25, 255) : IM_COL32(232, 17, 35, 255)) : IM_COL32(22, 22, 22, 255);
-        dl->AddRectFilled(clsMin, clsMax, clsCol, 5.0f * uiScale);
+        ImU32 clsCol = clsHovered ? (mouseDown ? IM_COL32(190, 15, 25, 255) : IM_COL32(232, 17, 35, 255)) : IM_COL32(30, 30, 30, 255);
+        dl->AddRectFilled(clsMin, clsMax, clsCol, 0.0f);
         ImVec2 clsTextSize = ImGui::CalcTextSize("Close");
         dl->AddText(ImVec2(clsMin.x + (clsW - clsTextSize.x) * 0.5f, clsMin.y + (btnH - clsTextSize.y) * 0.5f), IM_COL32(255, 255, 255, 255), "Close");
 
@@ -3591,7 +3793,7 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
         // Subtle bottom border line under title bar
         dl->AddLine(ImVec2(vp->Pos.x, vp->Pos.y + titleBarH),
                     ImVec2(vp->Pos.x + topBarW, vp->Pos.y + titleBarH),
-                    IM_COL32(22, 22, 22, 255), 1.0f);
+                    IM_COL32(40, 40, 40, 255), 1.0f);
     }
     ImGui::End();
     ImGui::PopStyleColor();
@@ -3601,8 +3803,8 @@ void EngineUI::RenderCustomTitleBar(Scene& scene, bool& outShouldExit) {
 void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float topBarW = vp->Size.x;
-    float titleBarH = 38.0f * uiScale;
-    float menuBarH = 38.0f * uiScale;
+    float titleBarH = 28.0f * uiScale;
+    float menuBarH = 28.0f * uiScale;
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y + titleBarH), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(topBarW, menuBarH), ImGuiCond_Always);
@@ -3611,7 +3813,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_MenuBar;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 2.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     if (ImGui::Begin("Menu Bar", nullptr, flags)) {
         if (ImGui::BeginMenuBar()) {
@@ -3681,6 +3883,9 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     UndoManager::Get().RecordSnapshot(scene, "Duplicate Actor");
                     GameObject* copy = scene.DuplicateObject(scene.selectedId);
                     if (copy) {
+                        selectedActorIds.clear();
+                        selectedActorIds.insert(copy->id);
+                        scene.selectedId = copy->id;
                         std::string logMsg = "Duplicated Actor: " + copy->name;
                         if (!copy->childIds.empty()) {
                             logMsg += " (along with " + std::to_string(copy->childIds.size()) + " children)";
@@ -3754,7 +3959,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             }
 
                             ImGui::Separator();
-                            if (ImGui::MenuItem("↺ Reset to 100% Default", nullptr, false, currentPercent != 100)) {
+                            if (ImGui::MenuItem("â†º Reset to 100% Default", nullptr, false, currentPercent != 100)) {
                                 ApplyUIScale(1.0f);
                                 SaveEditorConfig();
                                 AddLog("LogEditor", "UI Scale reset to 100%", 0);
@@ -3936,9 +4141,9 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         ImGui::SetTooltip("Set AO ray length / search radius in world space (WickedEngine aoRange).\nControls the spread distance of ambient contact shadows.");
                     }
 
-                    // 3. Sample Count (WickedEngine aoSampleCountSlider: 1 - 32)
+                    // 3. Sample Count (WickedEngine aoSampleCountSlider: 1 - 64)
                     ImGui::SetNextItemWidth(190.0f);
-                    if (ImGui::SliderInt("Sample Count", &scene.aoSampleCount, 1, 32)) {
+                    if (ImGui::SliderInt("Sample Count", &scene.aoSampleCount, 1, 64)) {
                         Eunoia::PostProcess::PostProcessSystem::Get().GetSettingsRef().sse.ao.sampleCount = scene.aoSampleCount;
                         RequestViewportRedraw(15);
                     }
@@ -4109,7 +4314,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("↺ Reset Layout to Default")) {
+                if (ImGui::MenuItem("â†º Reset Layout to Default")) {
                     leftSidebarWidth = 280.0f;
                     rightSidebarWidth = 320.0f;
                     bottomDockHeight = 260.0f;
@@ -4173,6 +4378,18 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     }
                     ImGui::EndMenu();
                 }
+                ImGui::Separator();
+                if (ImGui::BeginMenu("Volumetric Fog")) {
+                    if (ImGui::MenuItem("Enable Volumetric Fog", nullptr, scene.enableFog)) {
+                        scene.enableFog = !scene.enableFog;
+                        AddLog("LogWorld", scene.enableFog ? "Enabled Volumetric Height Fog" : "Disabled Volumetric Height Fog", 0);
+                    }
+                    ImGui::Separator();
+                    if (ImGui::MenuItem("Volumetric Fog Settings...", nullptr, showVolumetricFogModal)) {
+                        showVolumetricFogModal = true;
+                    }
+                    ImGui::EndMenu();
+                }
                 ImGui::EndMenu();
             }
 
@@ -4184,191 +4401,19 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 if (ImGui::MenuItem("Asset Reference Viewer")) {
                     OpenReferenceViewer();
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Cook Project Assets (Packaging)")) {
-                    OpenCookModal();
-                }
                 ImGui::EndMenu();
             }
 
             if (ImGui::BeginMenu("Build")) {
-                if (ImGui::MenuItem("⚡ Compile Behaviour Scripts", "F7", false, !isCompilingScripts)) {
+                if (ImGui::MenuItem("âš¡ Compile Behaviour Scripts", "F7", false, !isCompilingScripts)) {
                     TriggerCompileScripts(&scene);
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Build Game Project (Stand-Alone)")) {
-                    std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
-                    std::string projName = projectBase.filename().string();
-                    std::filesystem::path gameBuildDir = projectBase / "Build";
-                    std::filesystem::path binariesDir  = gameBuildDir / "Binaries";
-                    std::filesystem::path dataDir      = gameBuildDir / "Data";
-                    std::filesystem::path depsBuildDir = gameBuildDir / "Deps";
-                    std::error_code ec;
-
-                    std::filesystem::create_directories(gameBuildDir, ec);
-                    std::filesystem::create_directories(binariesDir, ec);
-                    std::filesystem::create_directories(dataDir, ec);
-                    std::filesystem::create_directories(depsBuildDir, ec);
-
-                    // Copy template structure from Templates/Game Build Template
-                    std::filesystem::path gameTemplateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Game Build Template";
-                    if (!std::filesystem::exists(gameTemplateDir, ec)) {
-                        gameTemplateDir = std::filesystem::current_path() / "Templates" / "Game Build Template";
-                    }
-                    if (std::filesystem::exists(gameTemplateDir, ec)) {
-                        for (const auto& item : std::filesystem::directory_iterator(gameTemplateDir, ec)) {
-                            if (item.is_directory(ec)) {
-                                std::filesystem::create_directories(gameBuildDir / item.path().filename(), ec);
-                            } else if (item.is_regular_file(ec)) {
-                                std::string fname = item.path().filename().string();
-                                if (fname == "Version.euversion") {
-                                    std::ofstream vf(gameBuildDir / "Version.euversion");
-                                    if (vf.is_open()) {
-                                        nlohmann::json vj;
-                                        vj["engineVersion"] = "0.1.0";
-                                        vj["projectVersion"] = "1.0.0";
-                                        vj["gameName"] = projName;
-                                        vf << vj.dump(4);
-                                        vf.close();
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Determine and save ACTIVE level snapshot as standalone game startup level
-                    std::string activeRelLevel = "Content/Levels/Main.elevel";
-                    std::filesystem::path dataContentDir = dataDir / "Content";
-                    std::filesystem::path dataLevelsDir  = dataContentDir / "Levels";
-                    std::filesystem::create_directories(dataLevelsDir, ec);
-
-                    if (!currentLevelFilePath.empty() && std::filesystem::exists(currentLevelFilePath, ec)) {
-                        // Use existing level path relative to projectBase or contentRootPath
-                        auto relP = std::filesystem::relative(currentLevelFilePath, projectBase, ec);
-                        if (!ec) activeRelLevel = relP.string();
-                        std::replace(activeRelLevel.begin(), activeRelLevel.end(), '\\', '/');
-                    } else {
-                        // User working in an unsaved level: auto-save current state to Content/Levels/Main.elevel
-                        std::filesystem::path saveP = contentRootPath / "Levels" / "Main.elevel";
-                        std::filesystem::create_directories(saveP.parent_path(), ec);
-                        LevelSerializer::SaveLevel(scene, saveP.string());
-                        currentLevelFilePath = saveP.string();
-                        activeRelLevel = "Content/Levels/Main.elevel";
-                    }
-
-                    // Save active level snapshot directly into game build data
-                    LevelSerializer::SaveLevel(scene, (dataDir / activeRelLevel).string());
-                    LevelSerializer::SaveLevel(scene, (gameBuildDir / "Main.elevel").string());
-
-                    // Helper to copy directory recursively
-                    auto copyDirRecursive = [](const std::filesystem::path& src, const std::filesystem::path& dst) {
-                        std::error_code ec;
-                        if (!std::filesystem::exists(src, ec)) return;
-                        std::filesystem::create_directories(dst, ec);
-                        for (const auto& entry : std::filesystem::recursive_directory_iterator(src, std::filesystem::directory_options::skip_permission_denied, ec)) {
-                            const auto rel = std::filesystem::relative(entry.path(), src, ec);
-                            const auto target = dst / rel;
-                            if (entry.is_directory(ec)) {
-                                std::filesystem::create_directories(target, ec);
-                            } else if (entry.is_regular_file(ec)) {
-                                std::filesystem::create_directories(target.parent_path(), ec);
-                                std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::overwrite_existing, ec);
-                            }
-                        }
-                    };
-
-                    // 1. Cook assets to <Project>/Cooked and package into Data/Cooked
-                    std::string cookLog;
-                    std::filesystem::path cookedDir = projectBase / "Cooked";
-                    AssetManager::Get().CookProject(cookedDir, cookLog);
-                    copyDirRecursive(cookedDir, dataDir / "Cooked");
-                    copyDirRecursive(cookedDir, gameBuildDir / "Cooked");
-
-                    // 2. Package Content directory into Data/Content
-                    copyDirRecursive(contentRootPath, dataContentDir);
-                    copyDirRecursive(contentRootPath, gameBuildDir / "Content");
-
-                    // 3. Write Data/GameConfig.json specifying active level as startup level
-                    {
-                        std::ofstream cf(dataDir / "GameConfig.json");
-                        if (cf.is_open()) {
-                            nlohmann::json gj;
-                            gj["gameName"] = projName;
-                            gj["startupLevel"] = activeRelLevel;
-                            gj["defaultLevel"] = activeRelLevel;
-                            gj["version"] = "1.0.0";
-                            cf << gj.dump(4);
-                            cf.close();
-                        }
-                    }
-
-                    // 4. Find and copy engine Shaders and Resources into Data and root
-                    std::filesystem::path engineRoot = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine";
-                    if (!std::filesystem::exists(engineRoot / "Shaders", ec)) {
-                        engineRoot = "C:\\Projects\\Eunoia-Engine";
-                    }
-                    if (!std::filesystem::exists(engineRoot / "Shaders", ec)) {
-                        engineRoot = std::filesystem::current_path();
-                    }
-                    if (std::filesystem::exists(engineRoot / "Shaders", ec)) {
-                        copyDirRecursive(engineRoot / "Shaders", dataDir / "Shaders");
-                        copyDirRecursive(engineRoot / "Shaders", gameBuildDir / "Shaders");
-                    }
-                    if (std::filesystem::exists(engineRoot / "Resources", ec)) {
-                        copyDirRecursive(engineRoot / "Resources", dataDir / "Resources");
-                        copyDirRecursive(engineRoot / "Resources", gameBuildDir / "Resources");
-                    }
-
-                    // 5. Copy external runtime DLLs to Binaries/, Deps/, and root
-                    std::vector<std::filesystem::path> dllSrcs = {
-                        engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "lib-mingw-w64" / "glfw3.dll",
-                        engineRoot / "Plugins" / "primitives" / "primitives.dll"
-                    };
-                    for (const auto& dllSrc : dllSrcs) {
-                        if (std::filesystem::exists(dllSrc, ec)) {
-                            std::string fname = dllSrc.filename().string();
-                            std::filesystem::copy_file(dllSrc, gameBuildDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
-                            std::filesystem::copy_file(dllSrc, binariesDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
-                            std::filesystem::copy_file(dllSrc, depsBuildDir / fname, std::filesystem::copy_options::overwrite_existing, ec);
-                        }
-                    }
-
-                    // 6. Copy or verify game executable
-                    char exeBuf[MAX_PATH] = {};
-                    GetModuleFileNameA(NULL, exeBuf, MAX_PATH);
-                    std::filesystem::path currentEditorExe(exeBuf);
-
-                    std::filesystem::path rootGameExe = gameBuildDir / (projName + ".exe");
-                    std::filesystem::path binGameExe  = binariesDir / (projName + ".exe");
-
-                    if (std::filesystem::exists(currentEditorExe, ec)) {
-                        std::filesystem::copy_file(currentEditorExe, rootGameExe, std::filesystem::copy_options::overwrite_existing, ec);
-                        std::filesystem::copy_file(currentEditorExe, binGameExe, std::filesystem::copy_options::overwrite_existing, ec);
-                    } else {
-                        std::filesystem::path rtExe = engineRoot / "Build" / "Runtime" / "Eunoia-Runtime.exe";
-                        if (std::filesystem::exists(rtExe, ec)) {
-                            std::filesystem::copy_file(rtExe, rootGameExe, std::filesystem::copy_options::overwrite_existing, ec);
-                            std::filesystem::copy_file(rtExe, binGameExe, std::filesystem::copy_options::overwrite_existing, ec);
-                        }
-                    }
-
-                    // 7. Create production launch script Run.bat
-                    std::ofstream runScript(gameBuildDir / "Run.bat");
-                    if (runScript.is_open()) {
-                        runScript << "@echo off\n";
-                        runScript << "cd /d \"%~dp0\"\n";
-                        runScript << "echo Starting " << projName << "...\n";
-                        runScript << "start \"\" \"" << projName << ".exe\" --game \"%~dp0\" --level \"%~dp0Data\\" << activeRelLevel << "\"\n";
-                        runScript.close();
-                    }
-
-                    AddLog("LogBuild", "Game Project built into: " + gameBuildDir.string() + " (Active Level: " + activeRelLevel + ")", 2);
+                if (ImGui::MenuItem("Build Game Project (Stand-Alone)...", "Ctrl+B", false, !isGameBuilding)) {
+                    StartGameBuildAsync(scene);
                 }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Cook Project Assets")) {
-                    OpenCookModal();
-                }
-                if (ImGui::MenuItem(scene.isPlayMode ? "⏹ Stop Play Mode" : "▶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
+
+                if (ImGui::MenuItem(scene.isPlayMode ? "â¹ Stop Play Mode" : "â–¶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
                     if (scene.isPlayMode) ExitPlayMode(scene, currentCamera);
                     else EnterPlayMode(scene, currentCamera);
                 }
@@ -4376,21 +4421,6 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
                     std::filesystem::path gameBuildDir = projectBase / "Build";
                     ShellExecuteA(NULL, "open", gameBuildDir.string().c_str(), NULL, NULL, SW_SHOW);
-                }
-                ImGui::EndMenu();
-            }
-
-            if (ImGui::BeginMenu("Actor")) {
-                if (ImGui::MenuItem("Cube")) { scene.AddObject(PrimitiveType::Cube, {0.0f, 0.5f, 0.0f}, {0.85f, 0.35f, 0.25f}); AddLog("LogActor", "Spawned Cube", 2); }
-                if (ImGui::MenuItem("Plane")) { scene.AddObject(PrimitiveType::Plane, {0.0f, 0.0f, 0.0f}, {0.35f, 0.65f, 0.45f}); AddLog("LogActor", "Spawned Plane", 2); }
-                if (ImGui::MenuItem("Sphere")) { scene.AddObject(PrimitiveType::Sphere, {0.0f, 0.6f, 0.0f}, {0.25f, 0.65f, 0.95f}); AddLog("LogActor", "Spawned Sphere", 2); }
-                if (ImGui::MenuItem("Cylinder")) { scene.AddObject(PrimitiveType::Cylinder, {0.0f, 0.6f, 0.0f}, {0.95f, 0.80f, 0.20f}); AddLog("LogActor", "Spawned Cylinder", 2); }
-                if (ImGui::MenuItem("Pyramid / Cone")) { scene.AddObject(PrimitiveType::Pyramid, {0.0f, 0.0f, 0.0f}, {0.90f, 0.50f, 0.20f}); AddLog("LogActor", "Spawned Pyramid", 2); }
-                if (ImGui::MenuItem("Torus")) { scene.AddObject(PrimitiveType::Torus, {0.0f, 0.6f, 0.0f}, {0.75f, 0.30f, 0.85f}); AddLog("LogActor", "Spawned Torus", 2); }
-                if (ImGui::MenuItem("Camera")) { GameObject& cam = scene.AddObject(PrimitiveType::Camera, {0.0f, 2.0f, -4.0f}); cam.name = "Camera Actor"; AddLog("LogActor", "Spawned Camera", 2); }
-                ImGui::Separator();
-                if (ImGui::MenuItem("Import 3D Mesh (OBJ/GLTF)...")) {
-                    ImportMeshWithSavePrompt(scene);
                 }
                 ImGui::EndMenu();
             }
@@ -4711,6 +4741,125 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
 
         // Camera Picture-in-Picture (PiP) Preview in bottom right of viewport
         RenderCameraPreviewOverlay(scene, camera);
+
+        // Terrain Sculpting & Material Painting 3D Brush Ring & Interactive Raycast
+        GameObject* selObj = scene.GetSelected();
+        if (selObj && (selObj->isTerrain || selObj->type == PrimitiveType::Terrain) &&
+            (selObj->terrain.editModeActive || selObj->terrain.materialPaintModeActive)) {
+            float mouseVpX = mousePos.x - (vp->Pos.x + vpRect.x);
+            float mouseVpY = mousePos.y - (vp->Pos.y + vpRect.y);
+
+            // Verify mouse is within viewport bounds
+            if (mouseVpX >= 0.0f && mouseVpX <= vpRect.width && mouseVpY >= 0.0f && mouseVpY <= vpRect.height) {
+                float ndcX = (2.0f * mouseVpX) / vpRect.width - 1.0f;
+                float ndcY = 1.0f - (2.0f * mouseVpY) / vpRect.height;
+
+                glm::mat4 invVP = glm::inverse(vpMatrix);
+                glm::vec4 pNear = invVP * glm::vec4(ndcX, ndcY, 0.0f, 1.0f);
+                glm::vec4 pFar  = invVP * glm::vec4(ndcX, ndcY, 1.0f, 1.0f);
+                glm::vec3 rayWorldOrigin = glm::vec3(pNear) / pNear.w;
+                glm::vec3 rayWorldFar    = glm::vec3(pFar) / pFar.w;
+                glm::vec3 rayWorldDir    = glm::normalize(rayWorldFar - rayWorldOrigin);
+
+                glm::mat4 model = scene.GetWorldMatrix(*selObj);
+                glm::mat4 invModel = glm::inverse(model);
+
+                glm::vec3 rayLocalOrigin = glm::vec3(invModel * glm::vec4(rayWorldOrigin, 1.0f));
+                glm::vec3 rayLocalDir = glm::normalize(glm::vec3(invModel * glm::vec4(rayWorldDir, 0.0f)));
+
+                glm::vec3 hitLocalPos;
+                if (selObj->terrain.Raycast(rayLocalOrigin, rayLocalDir, hitLocalPos)) {
+                    glm::vec3 hitWorldPos = glm::vec3(model * glm::vec4(hitLocalPos, 1.0f));
+
+                    bool isPaintMode = selObj->terrain.materialPaintModeActive;
+                    float r = isPaintMode ? selObj->terrain.matBrushSize : selObj->terrain.brushSize;
+                    float rInner = r * 0.45f;
+
+                    // Draw 3D projected brush circle ring on the terrain
+                    ImDrawList* fgDraw = ImGui::GetForegroundDrawList();
+                    const int circleSegments = 36;
+                    ImVec2 circlePts[circleSegments];
+                    ImVec2 innerPts[circleSegments];
+
+                    bool allProjected = true;
+                    for (int s = 0; s < circleSegments; ++s) {
+                        float angle = (float)s / (float)circleSegments * 6.2831853f;
+                        glm::vec3 pLocalOuter = hitLocalPos + glm::vec3(cosf(angle) * r, 0.0f, sinf(angle) * r);
+                        glm::vec3 pWorldOuter = glm::vec3(model * glm::vec4(pLocalOuter, 1.0f));
+
+                        glm::vec4 cClip = vpMatrix * glm::vec4(pWorldOuter, 1.0f);
+                        if (cClip.w <= 0.05f) { allProjected = false; break; }
+                        glm::vec3 cNdc = glm::vec3(cClip) / cClip.w;
+                        circlePts[s] = ImVec2(
+                            vp->Pos.x + vpRect.x + (cNdc.x * 0.5f + 0.5f) * vpRect.width,
+                            vp->Pos.y + vpRect.y + ((1.0f - cNdc.y) * 0.5f) * vpRect.height
+                        );
+
+                        glm::vec3 pLocalInner = hitLocalPos + glm::vec3(cosf(angle) * rInner, 0.0f, sinf(angle) * rInner);
+                        glm::vec3 pWorldInner = glm::vec3(model * glm::vec4(pLocalInner, 1.0f));
+                        glm::vec4 cClipInner = vpMatrix * glm::vec4(pWorldInner, 1.0f);
+                        glm::vec3 cNdcInner = glm::vec3(cClipInner) / cClipInner.w;
+                        innerPts[s] = ImVec2(
+                            vp->Pos.x + vpRect.x + (cNdcInner.x * 0.5f + 0.5f) * vpRect.width,
+                            vp->Pos.y + vpRect.y + ((1.0f - cNdcInner.y) * 0.5f) * vpRect.height
+                        );
+                    }
+
+                    if (allProjected && fgDraw) {
+                        ImU32 outerCol = isPaintMode ? IM_COL32(200, 80, 240, 230) : IM_COL32(50, 220, 100, 230);
+                        ImU32 innerCol = isPaintMode ? IM_COL32(220, 140, 255, 140) : IM_COL32(80, 240, 140, 120);
+
+                        // Outer primary circle
+                        fgDraw->AddPolyline(circlePts, circleSegments, outerCol, ImDrawFlags_Closed, 2.5f);
+                        // Inner falloff guide circle
+                        fgDraw->AddPolyline(innerPts, circleSegments, innerCol, ImDrawFlags_Closed, 1.2f);
+                        // Center dot
+                        glm::vec4 hClip = vpMatrix * glm::vec4(hitWorldPos, 1.0f);
+                        if (hClip.w > 0.05f) {
+                            glm::vec3 hNdc = glm::vec3(hClip) / hClip.w;
+                            ImVec2 centerPt(
+                                vp->Pos.x + vpRect.x + (hNdc.x * 0.5f + 0.5f) * vpRect.width,
+                                vp->Pos.y + vpRect.y + ((1.0f - hNdc.y) * 0.5f) * vpRect.height
+                            );
+                            fgDraw->AddCircleFilled(centerPt, 3.5f, IM_COL32(255, 255, 255, 240));
+                        }
+                    }
+
+                    // Stroke tracking for Undo/Redo
+                    static bool s_isInteractingStroke = false;
+                    static Scene s_preInteractSceneSnapshot;
+
+                    // Interaction on LMB drag (when not interacting with UI widgets, gizmos, or fly camera)
+                    if (ImGui::IsMouseDown(ImGuiMouseButton_Left) && !ImGui::GetIO().WantCaptureMouse &&
+                        !ImGuizmo::IsOver() && !ImGuizmo::IsUsing() && !ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
+                        
+                        if (!s_isInteractingStroke) {
+                            s_isInteractingStroke = true;
+                            s_preInteractSceneSnapshot = scene;
+                        }
+
+                        float dt = ImGui::GetIO().DeltaTime;
+                        if (dt > 0.05f) dt = 0.05f;
+
+                        bool invert = ImGui::GetIO().KeyShift;
+                        if (isPaintMode) {
+                            selObj->terrain.ApplyMaterialPaint(hitLocalPos, (uint8_t)selObj->terrain.activePaintMaterialIndex, dt, invert);
+                        } else {
+                            selObj->terrain.ApplyBrush(hitLocalPos, dt, invert);
+                        }
+                        selObj->terrain.RebuildTerrainMesh(selObj->mesh);
+                        RequestViewportRedraw(5);
+                    } else if (s_isInteractingStroke) {
+                        s_isInteractingStroke = false;
+                        if (HasSceneStateChanged(s_preInteractSceneSnapshot, scene)) {
+                            std::string actionName = isPaintMode ? "Terrain Material Paint: " : "Terrain Sculpt: ";
+                            UndoManager::Get().RecordSnapshot(s_preInteractSceneSnapshot, actionName + selObj->name);
+                            AddLog("LogTerrain", "Recorded Undo snapshot for " + actionName + selObj->name, 0);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Rounded border framing the center 3D viewport (rx = 11.0f) + FPS display per SVG blueprint
@@ -4718,6 +4867,38 @@ void EngineUI::RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fp
     ImVec2 vpMin(vp->Pos.x + vpRect.x, vp->Pos.y + vpRect.y);
     ImVec2 vpMax(vp->Pos.x + vpRect.x + vpRect.width, vp->Pos.y + vpRect.y + vpRect.height);
     borderDrawList->AddRect(vpMin, vpMax, IM_COL32(50, 52, 58, 220), 11.0f * uiScale, 0, 1.5f);
+
+    // Viewport Center Screen: Camera Speed overlay (fades out after ~1s)
+    if (cameraSpeedOverlayTimer > 0.0f) {
+        cameraSpeedOverlayTimer -= ImGui::GetIO().DeltaTime;
+        if (cameraSpeedOverlayTimer < 0.0f) cameraSpeedOverlayTimer = 0.0f;
+
+        float alpha = 1.0f;
+        if (cameraSpeedOverlayTimer < 0.35f) {
+            alpha = cameraSpeedOverlayTimer / 0.35f;
+        }
+
+        float centerX = vpMin.x + vpRect.width * 0.5f;
+        float centerY = vpMin.y + vpRect.height * 0.5f;
+
+        char speedBuf[64];
+        snprintf(speedBuf, sizeof(speedBuf), "Camera Speed: %.1f", cameraSpeed);
+
+        ImVec2 textSize = ImGui::CalcTextSize(speedBuf);
+        float padX = 22.0f * uiScale;
+        float padY = 12.0f * uiScale;
+        ImVec2 boxMin(centerX - (textSize.x * 0.5f) - padX, centerY - (textSize.y * 0.5f) - padY);
+        ImVec2 boxMax(centerX + (textSize.x * 0.5f) + padX, centerY + (textSize.y * 0.5f) + padY);
+
+        uint8_t aBg = (uint8_t)(230.0f * alpha);
+        uint8_t aBorder = (uint8_t)(190.0f * alpha);
+        uint8_t aText = (uint8_t)(255.0f * alpha);
+
+        borderDrawList->AddRectFilled(boxMin, boxMax, IM_COL32(22, 22, 26, aBg), 8.0f * uiScale);
+        borderDrawList->AddRect(boxMin, boxMax, IM_COL32(31, 153, 242, aBorder), 8.0f * uiScale, 0, 1.5f);
+        borderDrawList->AddText(ImVec2(centerX - textSize.x * 0.5f, centerY - textSize.y * 0.5f),
+                                IM_COL32(255, 255, 255, aText), speedBuf);
+    }
 
     // FPS counter in top-right of viewport (matching SVG: x ~ 1860, y ~ 95)
     char fpsBuf[32];
@@ -4760,7 +4941,7 @@ void EngineUI::RenderScreenPrintOverlay(float startX, float startY) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bgColor);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, bgColor);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 5.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0.0f);
 
             std::string btnId = "##screen_msg_" + std::to_string(i);
             ImGui::Button((msg.text + btnId).c_str());
@@ -4802,7 +4983,7 @@ void EngineUI::RenderCameraPreviewOverlay(Scene& scene, OrbitCamera& camera) {
                              ImGuiWindowFlags_NoSavedSettings;
 
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4.0f, 4.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     // Transparent window background so the D3D12 hardware rendering of the camera view shines through
     ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -4811,10 +4992,10 @@ void EngineUI::RenderCameraPreviewOverlay(Scene& scene, OrbitCamera& camera) {
         ImDrawList* dl = ImGui::GetWindowDrawList();
 
         // 1. Header background (dark blue/slate with rounded top corners)
-        dl->AddRectFilled(ImVec2(winX, winY), ImVec2(winX + winW, winY + 28.0f), IM_COL32(16, 20, 28, 240), 6.0f, ImDrawFlags_RoundCornersTop);
+        dl->AddRectFilled(ImVec2(winX, winY), ImVec2(winX + winW, winY + 28.0f), IM_COL32(16, 20, 28, 240), 0.0f);
 
         // 2. Full window perimeter border
-        dl->AddRect(ImVec2(winX, winY), ImVec2(winX + winW, winY + winH), IM_COL32(40, 130, 230, 220), 6.0f, 0, 1.5f);
+        dl->AddRect(ImVec2(winX, winY), ImVec2(winX + winW, winY + winH), IM_COL32(40, 130, 230, 220), 0.0f, 0, 1.5f);
 
         // 3. Viewport canvas inner border (accent framing D3D12 hardware preview)
         dl->AddRect(ImVec2(canvasX, canvasY), ImVec2(canvasX + canvasW, canvasY + canvasH), IM_COL32(65, 75, 95, 255), 0.0f, 0, 1.0f);
@@ -4856,7 +5037,7 @@ void EngineUI::RenderCameraPreviewOverlay(Scene& scene, OrbitCamera& camera) {
         // Camera info overlay badge (bottom-left)
         char camInfo[64];
         if (!selObj->camera.isOrthographic) {
-            snprintf(camInfo, sizeof(camInfo), "FOV: %.1f° | Persp", selObj->camera.fov);
+            snprintf(camInfo, sizeof(camInfo), "FOV: %.1fÂ° | Persp", selObj->camera.fov);
         } else {
             snprintf(camInfo, sizeof(camInfo), "Size: %.1f | Ortho", selObj->camera.orthoSize);
         }
@@ -4888,45 +5069,14 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
     ImVec2 rowMax(ImGui::GetWindowPos().x + ImGui::GetWindowWidth(), rowPos.y + rowHeight);
     bool isRowHovered = ImGui::IsMouseHoveringRect(rowMin, rowMax);
 
-    // Visibility eye icon
-    if (outlinerEyeIconGpuHandle) {
-        ImVec4 eyeTint;
-        if (obj.visible) {
-            eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(1.0f, 1.0f, 1.0f, 0.0f);
-        } else {
-            eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 0.85f) : ImVec4(1.0f, 1.0f, 1.0f, 0.35f);
-        }
-
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.25f, 0.35f, 0.5f));
-        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.15f, 0.25f, 0.7f));
-        if (ImGui::ImageButton("##EyeBtn", (ImTextureID)outlinerEyeIconGpuHandle, ImVec2(14.0f, 14.0f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), eyeTint)) {
-            obj.visible = !obj.visible;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
-        }
-        ImGui::PopStyleColor(3);
-    } else {
-        if (ImGui::SmallButton(obj.visible ? "[O]" : "[ ]")) {
-            obj.visible = !obj.visible;
-        }
-        if (ImGui::IsItemHovered()) {
-            ImGui::SetTooltip("Toggle Visibility");
-        }
-    }
-    ImGui::SameLine();
-
     // Type badge matching Old Eunoia Engine
     const char* typeBadge = "[T]";
     if (obj.isLight || IsLightPrimitive(obj.type)) typeBadge = "[L]";
     else if (obj.isCamera || obj.type == PrimitiveType::Camera) typeBadge = "[C]";
     else if (obj.type != PrimitiveType::Empty) typeBadge = "[M]";
-    ImGui::TextDisabled("%s", typeBadge);
-    ImGui::SameLine();
 
     bool hasChildren = !obj.childIds.empty();
-    ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth;
+    ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
     if (!hasChildren) {
         nodeFlags |= ImGuiTreeNodeFlags_Leaf;
     } else {
@@ -4960,8 +5110,8 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
         m_outlinerAppliedNodes.insert(outlinerNodeKey);
     }
 
-    // Only show the object's name in the outliner
-    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)obj.id, nodeFlags, "%s", obj.name.c_str());
+    // TreeNodeEx is the FIRST item on the line: ensures perfect vertical alignment for all siblings
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(intptr_t)obj.id, nodeFlags, "%s  %s", typeBadge, obj.name.c_str());
     if (isSelected) {
         ImGui::PopStyleColor(3);
     }
@@ -4971,13 +5121,11 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
         scene.outlinerNodeOpenState[outlinerIdKey] = nodeOpen;
     }
 
-    // Select only on click-up (mouse release without dragging) to allow drag & drop from hierarchy
-    bool isClickedUp = ImGui::IsItemHovered() && ImGui::IsMouseReleased(ImGuiMouseButton_Left);
-    float dragDistSqr = ImGui::GetIO().MouseDragMaxDistanceSqr[0];
-    float dragThreshold = ImGui::GetIO().MouseDragThreshold;
-    bool wasDragging = (dragDistSqr >= dragThreshold * dragThreshold) || (ImGui::GetDragDropPayload() != nullptr);
+    // Capture TreeNode click and toggle immediately before any other item on this line is rendered
+    bool isNodeClicked = ImGui::IsItemClicked(ImGuiMouseButton_Left);
+    bool isNodeToggledOpen = ImGui::IsItemToggledOpen();
 
-    if (isClickedUp && !wasDragging && !ImGui::IsItemToggledOpen()) {
+    if (isNodeClicked && !isNodeToggledOpen) {
         ImGuiIO& io = ImGui::GetIO();
         if (io.KeyCtrl) {
             if (selectedActorIds.count(obj.id)) {
@@ -5017,6 +5165,60 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
             lastSelectedActorId = obj.id;
         }
     }
+
+    // Drag source on TreeNode item
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+        int actorId = obj.id;
+        ImGui::SetDragDropPayload("OUTLINER_ACTOR", &actorId, sizeof(int));
+        ImGui::Text("Reparent %s", obj.name.c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    // Drag target on TreeNode item
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("OUTLINER_ACTOR")) {
+            if (payload->Data && payload->DataSize == sizeof(int)) {
+                int draggedId = *(const int*)payload->Data;
+                if (draggedId != obj.id && !scene.IsDescendantOf(obj.id, draggedId)) {
+                    m_pendingReparentChild = draggedId;
+                    m_pendingReparentParent = obj.id;
+                }
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    // Right-aligned eye icon for clean outliner visibility toggle
+    float outlinerRightX = ImGui::GetWindowContentRegionMax().x - 22.0f;
+    if (outlinerRightX > ImGui::GetItemRectMin().x + 50.0f) {
+        ImGui::SameLine(outlinerRightX);
+        if (outlinerEyeIconGpuHandle) {
+            ImVec4 eyeTint;
+            if (obj.visible) {
+                eyeTint = isRowHovered ? ImVec4(1.0f, 1.0f, 1.0f, 0.95f) : ImVec4(1.0f, 1.0f, 1.0f, 0.30f);
+            } else {
+                eyeTint = isRowHovered ? ImVec4(1.0f, 0.4f, 0.4f, 0.95f) : ImVec4(0.85f, 0.3f, 0.3f, 0.45f);
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.25f, 0.35f, 0.5f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.10f, 0.15f, 0.25f, 0.7f));
+            if (ImGui::ImageButton("##EyeBtn", (ImTextureID)outlinerEyeIconGpuHandle, ImVec2(14.0f, 14.0f), ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), eyeTint)) {
+                obj.visible = !obj.visible;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip(obj.visible ? "Hide Actor in Viewport" : "Show Actor in Viewport");
+            }
+            ImGui::PopStyleColor(3);
+        } else {
+            if (ImGui::SmallButton(obj.visible ? "[O]" : "[ ]")) {
+                obj.visible = !obj.visible;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Toggle Visibility");
+            }
+        }
+    }
+
     if (ImGui::BeginPopupContextItem()) {
         if (!selectedActorIds.count(obj.id)) {
             selectedActorIds.clear();
@@ -5116,6 +5318,14 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
                 scene.AddUserInterface(glm::vec3(0.0f, 1.5f, 0.0f), "", obj.id);
                 AddLog("LogActor", "Added User Interface as child", 2);
             }
+            if (ImGui::MenuItem("Terrain")) {
+                UndoManager::Get().RecordSnapshot(scene, "Add Terrain Child");
+                GameObject& t = scene.AddTerrain(glm::vec3(0.0f), 64.0f, 64.0f, 128, obj.id);
+                selectedActorIds.clear();
+                selectedActorIds.insert(t.id);
+                scene.selectedId = t.id;
+                AddLog("LogActor", "Added Terrain as child: " + t.name, 2);
+            }
             if (ImGui::BeginMenu("Water Body")) {
                 if (ImGui::MenuItem("Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      glm::vec3(0), "Ocean",       obj.id); AddLog("LogActor", "Added Ocean as child", 2); }
                 if (ImGui::MenuItem("Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        glm::vec3(0), "Sea",         obj.id); AddLog("LogActor", "Added Sea as child", 2); }
@@ -5194,13 +5404,14 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
 void EngineUI::RenderOutliner(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
-    float curBottomH = (showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f);
+    float bottomBarH = bottomBarHeight * uiScale;
     float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - curBottomH;
+    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float outlinerH = showDetails ? std::round(sidebarsH * outlinerHeightRatio) : sidebarsH;
 
-    // Docked flush as Left Sidebar (matching Old Eunoia Engine)
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, sidebarsY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(leftSidebarWidth, sidebarsH), ImGuiCond_Always);
+    // Docked flush as Top-Right Sidebar above Details panel (matching Frame.svg blueprint)
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, sidebarsY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, outlinerH), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Outliner", &showOutliner, flags)) {
@@ -5475,6 +5686,15 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 scene.AddUserInterface();
                 AddLog("LogActor", "Spawned User Interface Actor", 2);
             }
+            if (ImGui::MenuItem("Terrain")) {
+                UndoManager::Get().RecordSnapshot(scene, "Add Terrain");
+                GameObject& terrain = scene.AddTerrain();
+                selectedActorIds.clear();
+                selectedActorIds.insert(terrain.id);
+                scene.selectedId = terrain.id;
+                scene.outlinerNodeOpenState["##LevelRootNode"] = true;
+                AddLog("LogActor", "Spawned Terrain Actor: " + terrain.name, 2);
+            }
             if (ImGui::BeginMenu("Water Body")) {
                 if (ImGui::MenuItem("Ocean"))       { scene.AddWaterBody(WaterBodyType::Ocean,      {0,0,0}, "Ocean");       AddLog("LogActor", "Spawned Ocean Water Body", 2); }
                 if (ImGui::MenuItem("Sea"))          { scene.AddWaterBody(WaterBodyType::Sea,        {0,0,0}, "Sea");         AddLog("LogActor", "Spawned Sea Water Body", 2); }
@@ -5617,16 +5837,92 @@ bool EngineUI::DrawTransformPill(const char* label, float& value, const glm::vec
     return modified;
 }
 
+struct FoundMat {
+    std::string name;        // e.g. "Default_Material"
+    std::string relPath;     // e.g. "Materials/Default_Material.emat"
+    std::string relFolder;   // e.g. "Materials", or "" for project root
+    std::string fullPath;    // Full absolute path on disk
+    glm::vec3 color{0.55f, 0.55f, 0.55f};
+    float metallic = 0.0f;
+    float roughness = 0.5f;
+};
+
+static std::vector<FoundMat> s_cachedMatList;
+static std::map<std::string, std::vector<FoundMat>> s_cachedFolderGroups;
+static auto s_lastMatScanTime = std::chrono::steady_clock::time_point::min();
+
+static void RefreshCachedMaterials(const std::filesystem::path& contentRootPath) {
+    auto now = std::chrono::steady_clock::now();
+    auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_lastMatScanTime).count();
+    if (elapsedMs < 2000 && !s_cachedMatList.empty()) return;
+
+    s_lastMatScanTime = now;
+    s_cachedMatList.clear();
+    s_cachedFolderGroups.clear();
+
+    std::error_code matEc;
+    if (std::filesystem::exists(contentRootPath, matEc)) {
+        auto options = std::filesystem::directory_options::skip_permission_denied;
+        for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, options, matEc);
+             !matEc && it != std::filesystem::recursive_directory_iterator();
+             it.increment(matEc)) {
+            if (!it->is_directory(matEc)) {
+                std::string ext = it->path().extension().string();
+                if (ext == ".emat" || ext == ".mat") {
+                    FoundMat fm;
+                    fm.name = it->path().stem().string();
+                    fm.fullPath = it->path().string();
+
+                    std::filesystem::path rel = std::filesystem::relative(it->path(), contentRootPath, matEc);
+                    if (!matEc) {
+                        fm.relPath = rel.generic_string();
+                        std::string parentFolder = rel.parent_path().generic_string();
+                        fm.relFolder = (parentFolder == ".") ? "" : parentFolder;
+                    } else {
+                        fm.relPath = it->path().filename().string();
+                        fm.relFolder = "";
+                    }
+
+                    MaterialAsset ma;
+                    if (EngineUI::LoadMaterialFile(fm.fullPath, ma)) {
+                        fm.color = ma.baseColor;
+                        fm.metallic = ma.metallic;
+                        fm.roughness = ma.roughness;
+                    }
+
+                    s_cachedMatList.push_back(fm);
+                    s_cachedFolderGroups[fm.relFolder].push_back(fm);
+                }
+            }
+        }
+    }
+
+    if (s_cachedMatList.empty()) {
+        std::filesystem::path defPath = contentRootPath / "Materials" / "Default_Material.emat";
+        FoundMat fm;
+        fm.name = "Default_Material";
+        fm.relPath = "Materials/Default_Material.emat";
+        fm.relFolder = "Materials";
+        fm.fullPath = defPath.string();
+        fm.color = glm::vec3(0.55f, 0.55f, 0.55f);
+        s_cachedMatList.push_back(fm);
+        s_cachedFolderGroups[fm.relFolder].push_back(fm);
+    }
+}
+
 void EngineUI::RenderDetails(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
-    float curBottomH = (showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f);
+    float bottomBarH = bottomBarHeight * uiScale;
     float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - curBottomH;
+    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float outlinerH = showOutliner ? std::round(sidebarsH * outlinerHeightRatio) : 0.0f;
+    float detailsY = sidebarsY + outlinerH;
+    float detailsH = sidebarsH - outlinerH;
 
-    // Docked flush as Right Sidebar (matching Old Eunoia Engine)
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, sidebarsY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, sidebarsH), ImGuiCond_Always);
+    // Docked flush as Bottom-Right Sidebar directly below Outliner (matching Frame.svg blueprint)
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, detailsY), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, detailsH), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Details", &showDetails, flags)) {
@@ -5646,6 +5942,8 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "%s", lightTypeStr);
         } else if (obj->isWaterBody || obj->type == PrimitiveType::WaterBody) {
             ImGui::TextColored(ImVec4(0.00f, 0.60f, 1.00f, 1.0f), "[WaterBodyComponent]");
+        } else if (obj->isTerrain || obj->type == PrimitiveType::Terrain) {
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 0.35f, 1.0f), "[TerrainComponent]");
         } else if (obj->isCamera || obj->type == PrimitiveType::Camera) {
             ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
         } else if (obj->isUserInterface || obj->type == PrimitiveType::UserInterface) {
@@ -5741,6 +6039,358 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
             if (active) ImGui::PopStyleColor();
             if (i < 2) ImGui::SameLine();
+        }
+
+        // Terrain Mode Switching Tabs (Properties vs Sculpt/Edit vs Materials)
+        if (obj->isTerrain || obj->type == PrimitiveType::Terrain) {
+            RefreshCachedMaterials(contentRootPath);
+            ImGui::Separator();
+            ImGui::Spacing();
+            static int s_terrainActiveTab = 0; // 0 = Properties, 1 = Sculpt / Edit, 2 = Materials
+
+            // Sync tab with actor state
+            if (obj->terrain.editModeActive) {
+                s_terrainActiveTab = 1;
+            } else if (obj->terrain.materialPaintModeActive) {
+                s_terrainActiveTab = 2;
+            } else if (s_terrainActiveTab == 1) {
+                obj->terrain.editModeActive = true;
+                obj->terrain.materialPaintModeActive = false;
+            } else if (s_terrainActiveTab == 2) {
+                obj->terrain.materialPaintModeActive = true;
+                obj->terrain.editModeActive = false;
+            }
+
+            float availWidth = ImGui::GetContentRegionAvail().x;
+            float tabBtnWidth = (availWidth - 12.0f) / 3.0f;
+
+            // Tab 0: Properties
+            if (s_terrainActiveTab == 0) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.90f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.65f, 0.98f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.20f, 0.24f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.28f, 0.35f, 1.0f));
+            }
+            if (ImGui::Button("Properties##TerrainPropTab", ImVec2(tabBtnWidth, 30.0f))) {
+                s_terrainActiveTab = 0;
+                obj->terrain.editModeActive = false;
+                obj->terrain.materialPaintModeActive = false;
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::SameLine();
+
+            // Tab 1: Sculpt / Edit
+            if (s_terrainActiveTab == 1) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.75f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.85f, 0.45f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.20f, 0.24f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.28f, 0.35f, 1.0f));
+            }
+            if (ImGui::Button("Sculpt / Edit##TerrainEditTab", ImVec2(tabBtnWidth, 30.0f))) {
+                s_terrainActiveTab = 1;
+                obj->terrain.editModeActive = true;
+                obj->terrain.materialPaintModeActive = false;
+            }
+            ImGui::PopStyleColor(2);
+
+            ImGui::SameLine();
+
+            // Tab 2: Materials
+            if (s_terrainActiveTab == 2) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.30f, 0.85f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.70f, 0.40f, 0.95f, 1.0f));
+            } else {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.20f, 0.24f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.28f, 0.35f, 1.0f));
+            }
+            if (ImGui::Button("Materials##TerrainMatTab", ImVec2(tabBtnWidth, 30.0f))) {
+                s_terrainActiveTab = 2;
+                obj->terrain.materialPaintModeActive = true;
+                obj->terrain.editModeActive = false;
+            }
+            ImGui::PopStyleColor(2);
+
+            if (s_terrainActiveTab == 1) {
+                obj->terrain.editModeActive = true;
+                obj->terrain.materialPaintModeActive = false;
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "â— Terrain Sculpting Active (LMB on Viewport)");
+                ImGui::TextDisabled("Hold Shift to invert brush action (e.g. Lower instead of Raise)");
+
+                if (ImGui::CollapsingHeader("Brush Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    // Brush Types
+                    ImGui::TextDisabled("Brush Mode");
+                    const char* brushModes[] = { "Raise", "Lower", "Smooth", "Flatten", "Noise" };
+                    int curBrush = (int)obj->terrain.brushType;
+                    for (int b = 0; b < 5; ++b) {
+                        bool bActive = (curBrush == b);
+                        if (bActive) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.22f, 0.65f, 0.38f, 1.0f));
+                        if (ImGui::Button(brushModes[b])) {
+                            obj->terrain.brushType = (Eunoia::TerrainBrushType)b;
+                        }
+                        if (bActive) ImGui::PopStyleColor();
+                        if (b < 4) ImGui::SameLine();
+                    }
+                    ImGui::Spacing();
+
+                    // Falloff
+                    const char* falloffNames[] = { "Smooth", "Linear", "Spherical", "Sharp" };
+                    int curFalloff = (int)obj->terrain.brushFalloff;
+                    if (ImGui::Combo("Falloff", &curFalloff, falloffNames, 4)) {
+                        obj->terrain.brushFalloff = (Eunoia::TerrainFalloffType)curFalloff;
+                    }
+
+                    // Brush Radius & Strength
+                    ImGui::SliderFloat("Brush Radius", &obj->terrain.brushSize, 0.5f, 50.0f, "%.1f m");
+                    ImGui::SliderFloat("Brush Strength", &obj->terrain.brushStrength, 0.05f, 20.0f, "%.2f");
+
+                    // Flatten Specifics
+                    if (obj->terrain.brushType == Eunoia::TerrainBrushType::Flatten) {
+                        ImGui::DragFloat("Target Height", &obj->terrain.flattenTargetHeight, 0.1f, -100.0f, 100.0f, "%.2f m");
+                        ImGui::SameLine();
+                        if (ImGui::Button("Zero##FlattenZero")) {
+                            obj->terrain.flattenTargetHeight = 0.0f;
+                        }
+                    }
+
+                    // Noise Specifics
+                    if (obj->terrain.brushType == Eunoia::TerrainBrushType::Noise) {
+                        ImGui::SliderFloat("Noise Scale", &obj->terrain.noiseScale, 0.01f, 1.0f, "%.3f");
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    if (ImGui::Button("Reset All Heights to 0", ImVec2(-1.0f, 26.0f))) {
+                        UndoManager::Get().RecordSnapshot(scene, "Reset Heights: " + obj->name);
+                        std::fill(obj->terrain.heightmap.begin(), obj->terrain.heightmap.end(), 0.0f);
+                        obj->terrain.RebuildTerrainMesh(obj->mesh);
+                        AddLog("LogTerrain", "Reset terrain heights to 0 on " + obj->name, 0);
+                    }
+                }
+            } else if (s_terrainActiveTab == 2) {
+                obj->terrain.materialPaintModeActive = true;
+                obj->terrain.editModeActive = false;
+                obj->terrain.SyncBaseMaterial(obj->materialName, obj->color, obj->metallic, obj->roughness,
+                                              obj->normalStrength, obj->specular, obj->uvScale,
+                                              obj->baseColorTexture, obj->normalTexture, obj->roughnessTexture,
+                                              obj->metallicTexture, obj->aoTexture);
+
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.80f, 0.50f, 1.0f, 1.0f), "â— Terrain Material Painting Active (LMB on Viewport)");
+                ImGui::TextDisabled("Select a layer to paint. Drag & drop layers to reorder. Slot [0] is Base Material.");
+
+                if (ImGui::CollapsingHeader("Material Layers Array", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    for (int i = 0; i < (int)obj->terrain.materialLayers.size(); ++i) {
+                        auto& layer = obj->terrain.materialLayers[i];
+                        ImGui::PushID(i);
+
+                        bool isActivePaint = (obj->terrain.activePaintMaterialIndex == i);
+
+                        std::string slotPrefix = "[" + std::to_string(i) + "]";
+                        if (i == 0) slotPrefix += " (Base)";
+                        else slotPrefix += " (Layer " + std::to_string(i) + ")";
+
+                        if (isActivePaint) {
+                            ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.80f, 0.50f, 1.0f, 1.0f));
+                            ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 2.0f);
+                        }
+
+                        ImGui::BeginGroup();
+
+                        // Swatch button
+                        ImGui::ColorButton("##layerSwatch", ImVec4(layer.baseColor.r, layer.baseColor.g, layer.baseColor.b, 1.0f),
+                            ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(22, 22));
+                        ImGui::SameLine();
+
+                        // Selectable layer title / paint selector
+                        std::string selectTitle = slotPrefix + " " + layer.name;
+                        float availRight = (i > 0) ? 55.0f : 0.0f;
+                        if (ImGui::Selectable(selectTitle.c_str(), isActivePaint, 0, ImVec2(ImGui::GetContentRegionAvail().x - availRight, 22.0f))) {
+                            obj->terrain.activePaintMaterialIndex = i;
+                        }
+
+                        // Drag & Drop Source (reordering)
+                        if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                            ImGui::SetDragDropPayload("TERRAIN_LAYER_REORDER", &i, sizeof(int));
+                            ImGui::Text("Move %s", selectTitle.c_str());
+                            ImGui::EndDragDropSource();
+                        }
+
+                        // Drag & Drop Target (reordering & asset drop)
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("TERRAIN_LAYER_REORDER")) {
+                                int srcIdx = *(const int*)payload->Data;
+                                if (srcIdx != i && srcIdx >= 0 && srcIdx < (int)obj->terrain.materialLayers.size()) {
+                                    UndoManager::Get().RecordSnapshot(scene, "Reorder Terrain Materials");
+                                    obj->terrain.SwapMaterialLayers(srcIdx, i);
+                                    if (srcIdx == 0 || i == 0) {
+                                        // Slot 0 changed, sync to GameObject
+                                        obj->materialName = obj->terrain.materialLayers[0].name;
+                                        obj->color = obj->terrain.materialLayers[0].baseColor;
+                                        obj->metallic = obj->terrain.materialLayers[0].metallic;
+                                        obj->roughness = obj->terrain.materialLayers[0].roughness;
+                                        obj->normalStrength = obj->terrain.materialLayers[0].normalStrength;
+                                        obj->specular = obj->terrain.materialLayers[0].specular;
+                                        obj->uvScale = obj->terrain.materialLayers[0].uvScale;
+                                        obj->baseColorTexture = obj->terrain.materialLayers[0].baseColorTexture;
+                                        obj->normalTexture = obj->terrain.materialLayers[0].normalTexture;
+                                        obj->roughnessTexture = obj->terrain.materialLayers[0].roughnessTexture;
+                                        obj->metallicTexture = obj->terrain.materialLayers[0].metallicTexture;
+                                        obj->aoTexture = obj->terrain.materialLayers[0].aoTexture;
+                                    }
+                                    obj->terrain.RebuildTerrainMesh(obj->mesh);
+                                    RequestViewportRedraw(5);
+                                }
+                            }
+                            // Also accept dropping an ASSET_ID onto this slot to replace it
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
+                                char assetIdBuf[40] = {};
+                                memcpy(assetIdBuf, payload->Data, std::min((size_t)payload->DataSize, sizeof(assetIdBuf) - 1));
+                                AssetID droppedId = AssetID::FromString(assetIdBuf);
+                                AssetMetadata* meta = AssetRegistry::Get().Find(droppedId);
+                                if (meta && meta->type == AssetType::Material) {
+                                    std::filesystem::path fullPath = contentRootPath / meta->sourcePath;
+                                    MaterialAsset ma;
+                                    if (LoadMaterialFile(fullPath.string(), ma)) {
+                                        UndoManager::Get().RecordSnapshot(scene, "Replace Terrain Material Layer");
+                                        layer.name = ma.name;
+                                        layer.path = meta->sourcePath;
+                                        layer.baseColor = ma.baseColor;
+                                        layer.metallic = ma.metallic;
+                                        layer.roughness = ma.roughness;
+                                        layer.normalStrength = ma.normalStrength;
+                                        layer.specular = ma.specular;
+                                        layer.uvScale = ma.uvScale;
+                                        layer.baseColorTexture = ma.baseColorTexture;
+                                        layer.normalTexture = ma.normalTexture;
+                                        layer.roughnessTexture = ma.roughnessTexture;
+                                        layer.metallicTexture = ma.metallicTexture;
+                                        layer.aoTexture = ma.aoTexture;
+                                        if (i == 0) {
+                                            ApplyMaterialToActorAndChildren(scene, obj, ma);
+                                        }
+                                        obj->terrain.RebuildTerrainMesh(obj->mesh);
+                                        RequestViewportRedraw(5);
+                                    }
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
+
+                        if (i > 0) {
+                            ImGui::SameLine();
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.45f, 0.15f, 0.15f, 0.8f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.75f, 0.20f, 0.20f, 1.0f));
+                            if (ImGui::Button("X##RemoveLayer", ImVec2(22, 22))) {
+                                UndoManager::Get().RecordSnapshot(scene, "Remove Terrain Material Layer");
+                                obj->terrain.RemoveMaterialLayer(i);
+                                obj->terrain.RebuildTerrainMesh(obj->mesh);
+                                RequestViewportRedraw(5);
+                                ImGui::PopStyleColor(2);
+                                ImGui::EndGroup();
+                                if (isActivePaint) {
+                                    ImGui::PopStyleVar();
+                                    ImGui::PopStyleColor();
+                                }
+                                ImGui::PopID();
+                                break;
+                            }
+                            ImGui::PopStyleColor(2);
+                            if (ImGui::IsItemHovered()) {
+                                ImGui::SetTooltip("Remove this material layer (painted quads revert to base material)");
+                            }
+                        }
+
+                        ImGui::EndGroup();
+
+                        if (isActivePaint) {
+                            ImGui::PopStyleVar();
+                            ImGui::PopStyleColor();
+                        }
+
+                        // UV Tiling per layer
+                        ImGui::Indent(28.0f);
+                        std::string uvId = "UV Scale##MatLayerUV_" + std::to_string(i);
+                        if (ImGui::DragFloat2(uvId.c_str(), &layer.uvScale.x, 0.05f, 0.01f, 100.0f, "%.2f")) {
+                            if (i == 0) obj->uvScale = layer.uvScale;
+                            RequestViewportRedraw(3);
+                        }
+                        ImGui::Unindent(28.0f);
+                        ImGui::Spacing();
+
+                        ImGui::PopID();
+                    }
+
+                    ImGui::Spacing();
+                    // Add Material Layer Button
+                    if (ImGui::Button("+ Add Material Layer...", ImVec2(ImGui::GetContentRegionAvail().x, 28.0f))) {
+                        ImGui::OpenPopup("AddMaterialLayerPopup");
+                    }
+
+                    if (ImGui::BeginPopup("AddMaterialLayerPopup")) {
+                        ImGui::Text("Select Material to Add:");
+                        ImGui::Separator();
+                        for (const auto& m : s_cachedMatList) {
+                            ImGui::ColorButton("##addSwatch", ImVec4(m.color.r, m.color.g, m.color.b, 1.0f),
+                                ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(16, 16));
+                            ImGui::SameLine();
+                            if (ImGui::Selectable(m.name.c_str())) {
+                                MaterialAsset ma;
+                                if (LoadMaterialFile(m.fullPath, ma)) {
+                                    UndoManager::Get().RecordSnapshot(scene, "Add Material Layer: " + ma.name);
+                                    Eunoia::TerrainMaterialLayer newLayer;
+                                    newLayer.name = ma.name;
+                                    newLayer.path = m.relPath;
+                                    newLayer.baseColor = ma.baseColor;
+                                    newLayer.metallic = ma.metallic;
+                                    newLayer.roughness = ma.roughness;
+                                    newLayer.normalStrength = ma.normalStrength;
+                                    newLayer.specular = ma.specular;
+                                    newLayer.uvScale = ma.uvScale;
+                                    newLayer.baseColorTexture = ma.baseColorTexture;
+                                    newLayer.normalTexture = ma.normalTexture;
+                                    newLayer.roughnessTexture = ma.roughnessTexture;
+                                    newLayer.metallicTexture = ma.metallicTexture;
+                                    newLayer.aoTexture = ma.aoTexture;
+                                    obj->terrain.materialLayers.push_back(newLayer);
+                                    obj->terrain.activePaintMaterialIndex = (int)obj->terrain.materialLayers.size() - 1;
+                                    obj->terrain.RebuildTerrainMesh(obj->mesh);
+                                    RequestViewportRedraw(5);
+                                }
+                            }
+                        }
+                        ImGui::EndPopup();
+                    }
+                }
+
+                // Section 2: Material Brush Settings
+                if (ImGui::CollapsingHeader("Material Brush Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    const char* matFalloffNames[] = { "Smooth (Cosine)", "Linear", "Spherical", "Sharp" };
+                    int curMatFalloff = (int)obj->terrain.matBrushFalloff;
+                    if (ImGui::Combo("Brush Falloff##MatFalloff", &curMatFalloff, matFalloffNames, 4)) {
+                        obj->terrain.matBrushFalloff = (Eunoia::TerrainFalloffType)curMatFalloff;
+                    }
+
+                    ImGui::SliderFloat("Brush Radius##MatRadius", &obj->terrain.matBrushSize, 0.5f, 50.0f, "%.1f m");
+                    ImGui::SliderFloat("Brush Strength (Flow)##MatStrength", &obj->terrain.matBrushStrength, 0.05f, 10.0f, "%.2f");
+                    ImGui::TextDisabled("Tip: Hold Shift + LMB to erase active layer back to base material.");
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    if (ImGui::Button("Fill All with Active Material", ImVec2(-1.0f, 26.0f))) {
+                        UndoManager::Get().RecordSnapshot(scene, "Fill Terrain with Material");
+                        obj->terrain.FillAllWithMaterial(obj->terrain.activePaintMaterialIndex);
+                        obj->terrain.RebuildTerrainMesh(obj->mesh);
+                        RequestViewportRedraw(5);
+                    }
+                }
+            } else {
+                obj->terrain.editModeActive = false;
+                obj->terrain.materialPaintModeActive = false;
+            }
         }
 
         ImGui::Separator();
@@ -5903,7 +6553,7 @@ void EngineUI::RenderDetails(Scene& scene) {
 
                 if (obj->light.type == LightType::Spot) {
                     ImGui::Separator();
-                    ImGui::TextDisabled("Spot Cone & Range Smoothing");
+                    ImGui::TextDisabled("Spot Cone & Falloff");
                     ImGui::SliderFloat("Inner Cone Angle", &obj->light.innerConeAngle, 0.0f, 89.0f, "%.1f deg");
                     if (obj->light.outerConeAngle < obj->light.innerConeAngle) obj->light.outerConeAngle = obj->light.innerConeAngle;
                     ImGui::SliderFloat("Outer Cone Angle", &obj->light.outerConeAngle, obj->light.innerConeAngle, 89.9f, "%.1f deg");
@@ -5911,50 +6561,123 @@ void EngineUI::RenderDetails(Scene& scene) {
                     ImGui::SliderFloat("Range Smoothing", &obj->light.rangeSmoothing, 0.01f, 1.0f, "%.2f");
                 }
 
-                if (obj->light.type == LightType::Area) {
+                if (obj->light.type == LightType::Point) {
                     ImGui::Separator();
-                    ImGui::TextDisabled("Area Light Shape");
+                    ImGui::TextDisabled("Punctual / Capsule Light");
+                    ImGui::DragFloat("Source Radius", &obj->light.radius, 0.005f, 0.001f, 100.0f, "%.3f m");
+                    ImGui::DragFloat("Capsule Length", &obj->light.length, 0.05f, 0.0f, 1000.0f, "%.2f m");
+                }
+
+                if (obj->light.type == LightType::Rectangle || obj->light.type == LightType::Area) {
+                    ImGui::Separator();
+                    ImGui::TextDisabled("Rectangle / Area Light");
                     const char* areaShapes[] = { "Rectangle", "Disk" };
                     ImGui::Combo("Shape", &obj->light.areaShape, areaShapes, 2);
                     if (obj->light.areaShape == 0) {
-                        ImGui::DragFloat("Width", &obj->light.width, 0.1f, 0.01f, 1000000.0f, "%.2f m");
-                        ImGui::DragFloat("Height", &obj->light.height, 0.1f, 0.01f, 1000000.0f, "%.2f m");
+                        float w = obj->light.length > 0.001f ? obj->light.length : obj->light.width;
+                        if (ImGui::DragFloat("Width", &w, 0.1f, 0.01f, 1000.0f, "%.2f m")) {
+                            obj->light.length = w;
+                            obj->light.width = w;
+                        }
+                        ImGui::DragFloat("Height", &obj->light.height, 0.1f, 0.01f, 1000.0f, "%.2f m");
                     } else {
-                        ImGui::DragFloat("Radius", &obj->light.radius, 0.1f, 0.01f, 1000000.0f, "%.2f m");
+                        ImGui::DragFloat("Radius", &obj->light.radius, 0.1f, 0.01f, 1000.0f, "%.2f m");
                     }
                     ImGui::Checkbox("Two Sided", &obj->light.twoSided);
                 }
 
                 if (obj->light.type == LightType::Directional || obj->light.type == LightType::Point ||
-                    obj->light.type == LightType::Spot || obj->light.type == LightType::Area) {
+                    obj->light.type == LightType::Spot || obj->light.type == LightType::Rectangle || obj->light.type == LightType::Area) {
                     ImGui::Separator();
-                    ImGui::TextDisabled("Shadows");
-                    ImGui::Checkbox("Cast Shadows", &obj->light.castShadows);
-                    if (obj->light.castShadows) {
+                    ImGui::TextDisabled("Shadows (Wicked Engine Technique)");
+                    bool castShadow = obj->light.IsCastingShadow();
+                    if (ImGui::Checkbox("Cast Shadows", &castShadow)) {
+                        obj->light.SetCastShadow(castShadow);
+                    }
+                    if (castShadow) {
                         ImGui::SliderFloat("Shadow Strength", &obj->light.shadowStrength, 0.0f, 1.0f);
                         ImGui::DragFloat("Shadow Bias", &obj->light.shadowBias, 0.0001f, 0.000001f, 1.0f, "%.6f");
-                        const char* resOptions[] = { "256", "512", "1024", "2048", "4096" };
-                        int resVals[] = { 256, 512, 1024, 2048, 4096 };
+
+                        const char* resOptions[] = { "Auto (-1)", "256", "512", "1024", "2048", "4096" };
+                        int resVals[] = { -1, 256, 512, 1024, 2048, 4096 };
                         int curResIdx = 0;
-                        for (int r = 0; r < 5; ++r) {
-                            if (obj->light.shadowResolution == resVals[r]) { curResIdx = r; break; }
+                        for (int r = 0; r < 6; ++r) {
+                            if (obj->light.forced_shadow_resolution == resVals[r]) { curResIdx = r; break; }
                         }
-                        if (ImGui::Combo("Shadow Resolution", &curResIdx, resOptions, 5)) {
-                            obj->light.shadowResolution = resVals[curResIdx];
+                        if (ImGui::Combo("Forced Resolution", &curResIdx, resOptions, 6)) {
+                            obj->light.forced_shadow_resolution = resVals[curResIdx];
+                            if (obj->light.forced_shadow_resolution > 0) {
+                                obj->light.shadowResolution = obj->light.forced_shadow_resolution;
+                            }
                         }
+
                         ImGui::DragFloat("Shadow Distance", &obj->light.shadowDistance, 1.0f, 1.0f, 1000000.0f, "%.1f m");
                         if (obj->light.type == LightType::Directional) {
                             ImGui::Checkbox("Show Light Frustum", &scene.showLightFrustum);
+                            if (obj->light.cascade_distances.size() >= 3) {
+                                ImGui::DragFloat("Cascade 1 (Near)", &obj->light.cascade_distances[0], 0.5f, 1.0f, 100.0f, "%.1f m");
+                                ImGui::DragFloat("Cascade 2 (Mid)", &obj->light.cascade_distances[1], 1.0f, 10.0f, 500.0f, "%.1f m");
+                                ImGui::DragFloat("Cascade 3 (Far)", &obj->light.cascade_distances[2], 5.0f, 50.0f, 5000.0f, "%.1f m");
+                            }
                         }
                     }
                 }
 
                 ImGui::Separator();
-                ImGui::TextDisabled("Volumetric Lighting");
-                ImGui::Checkbox("Volumetric Scattering", &obj->light.volumetric);
-                if (obj->light.volumetric) {
-                    ImGui::SliderFloat("Scattering", &obj->light.volumetricScattering, 0.0f, 1.0f);
-                    ImGui::DragFloat("Volumetric Intensity", &obj->light.volumetricIntensity, 0.05f, 0.0f, 1000.0f);
+                if (!scene.enableFog) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.70f, 0.25f, 1.0f));
+                    ImGui::Text("Volumetric Fog & God Rays [Level Fog Disabled]");
+                    ImGui::PopStyleColor();
+                    ImGui::TextDisabled("Volumetric fog is disabled for this level.");
+                    ImGui::TextDisabled("Turn on Volumetric Fog to activate God Rays.");
+                    if (ImGui::Button("Enable Volumetric Fog in Level")) {
+                        scene.enableFog = true;
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Enables Volumetric Height Fog for the level (same as World -> Volumetric Fog).");
+                    }
+                } else {
+                    ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "Volumetric Fog & God Rays (Wicked Engine Technique)");
+                    bool volEnabled = obj->light.IsVolumetricsEnabled();
+                    if (ImGui::Checkbox("Enable Volumetric God Rays", &volEnabled)) {
+                        obj->light.SetVolumetricsEnabled(volEnabled);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Enables raymarched volumetric scattering and god rays through level fog.");
+                    }
+                    if (volEnabled) {
+                        ImGui::SliderFloat("Volumetric Fog Boost", &obj->light.volumetric_boost, 0.0f, 20.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Adjusts fog penetration and brightness of rays just for this light.");
+                        }
+                        ImGui::SliderFloat("Scattering Anisotropy (Phase G)", &obj->light.volumetricScattering, 0.0f, 0.95f, "%.2f");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Mie Henyey-Greenstein phase g factor (0.66 = Wicked Engine default forward-scattering).");
+                        }
+                        ImGui::DragFloat("God Rays Intensity", &obj->light.volumetricIntensity, 0.05f, 0.0f, 20.0f, "%.2f");
+                        
+                        // Quality sample steps
+                        const char* qualityLabels[] = { "Low (8 steps)", "Balanced (16 steps)", "High (24 steps)", "Cinematic (32 steps)" };
+                        int qualityValues[] = { 8, 16, 24, 32 };
+                        int currentQualityIdx = 1; // default 16
+                        for (int q = 0; q < 4; ++q) {
+                            if (obj->light.volumetricSteps == qualityValues[q]) { currentQualityIdx = q; break; }
+                        }
+                        if (ImGui::Combo("Sample Quality", &currentQualityIdx, qualityLabels, 4)) {
+                            obj->light.volumetricSteps = qualityValues[currentQualityIdx];
+                        }
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Number of raymarching samples along the view ray. 16 steps with dither provides excellent performance and quality.");
+                        }
+
+                        ImGui::DragFloat("Max Ray Distance", &obj->light.volumetricMaxDistance, 1.0f, 10.0f, 1000.0f, "%.1f m");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Maximum distance along the view ray to calculate god ray volumetric inscattering.");
+                        }
+
+                        ImGui::TextDisabled("Status: Active with Level Fog (Density: %.4f, Height: %.0f-%.0fm)",
+                            scene.fogDensity, scene.fogHeightStart, scene.fogHeightEnd);
+                    }
                 }
 
                 ImGui::Separator();
@@ -5964,81 +6687,18 @@ void EngineUI::RenderDetails(Scene& scene) {
                     obj->light.lightLayer = (uint32_t)std::max(0, layer);
                 }
 
-                // BAKING Section (dev.md Section 3)
                 ImGui::Separator();
-                ImGui::TextDisabled("BAKING");
-
-                // Bake Resolution combo
-                const char* bakeResOptions[] = { "256", "512", "1024", "2048", "4096" };
-                int bakeResVals[] = { 256, 512, 1024, 2048, 4096 };
-                int curBakeResIdx = 2; // default 1024
-                for (int r = 0; r < 5; ++r) {
-                    if (obj->light.bakeResolution == bakeResVals[r]) { curBakeResIdx = r; break; }
-                }
-                if (ImGui::Combo("Bake Resolution", &curBakeResIdx, bakeResOptions, 5)) {
-                    obj->light.bakeResolution = bakeResVals[curBakeResIdx];
-                    if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
-                        obj->light.isBakeDirty = true;
+                ImGui::TextDisabled("Performance");
+                ImGui::Checkbox("Enable Distance Culling", &obj->light.enableDistanceCulling);
+                if (obj->light.enableDistanceCulling) {
+                    ImGui::DragFloat("Min Visible Distance", &obj->light.minVisibleDistance, 1.0f, 0.0f, 10000.0f, "%.1f m");
+                    if (obj->light.maxVisibleDistance < obj->light.minVisibleDistance) {
+                        obj->light.maxVisibleDistance = obj->light.minVisibleDistance;
                     }
-                }
-
-                // Dirty / Outdated check
-                Eunoia::LightBakeManager::Get().CheckBakeDirty(*obj);
-                const char* statusStr = "Realtime";
-                ImVec4 statusColor(0.4f, 0.9f, 0.4f, 1.0f);
-                if (obj->light.bakeState == Eunoia::LightBakeState::Baking) {
-                    statusStr = "Baking...";
-                    statusColor = ImVec4(0.3f, 0.7f, 1.0f, 1.0f);
-                } else if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
-                    if (obj->light.isBakeDirty) {
-                        statusStr = "Baked - Outdated";
-                        statusColor = ImVec4(1.0f, 0.7f, 0.2f, 1.0f);
-                    } else {
-                        statusStr = "Baked";
-                        statusColor = ImVec4(0.3f, 1.0f, 0.5f, 1.0f);
+                    ImGui::DragFloat("Max View Distance", &obj->light.maxVisibleDistance, 1.0f, obj->light.minVisibleDistance, 10000.0f, "%.1f m");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Smoothly fades light to 0 between min and max visible distance.\nBeyond max visible distance, the light is completely culled and not rendered.");
                     }
-                }
-                ImGui::Text("Status:             ");
-                ImGui::SameLine();
-                ImGui::TextColored(statusColor, "%s", statusStr);
-
-                std::vector<Eunoia::BakeStaticMesh> previewMeshes;
-                std::string previewErr;
-                Eunoia::LightBakeManager::Get().CollectBakeGeometry(scene, previewMeshes, previewErr);
-                ImGui::TextDisabled("Geometry:           %d participating mesh(es)", (int)previewMeshes.size());
-
-                static std::string s_lastBakeFeedback;
-                static bool s_lastBakeSuccess = false;
-
-                if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
-                    if (!obj->light.bakedLightmapPath.empty()) {
-                        ImGui::TextDisabled("Light Map:          %s", obj->light.bakedLightmapPath.c_str());
-                    }
-                    if (!obj->light.bakedShadowmapPath.empty()) {
-                        ImGui::TextDisabled("Shadow Map:         %s", obj->light.bakedShadowmapPath.c_str());
-                    }
-
-                    if (ImGui::Button("Re-Bake Light", ImVec2(120, 26))) {
-                        s_lastBakeSuccess = Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, s_lastBakeFeedback);
-                        AddLog("Lighting", s_lastBakeFeedback, s_lastBakeSuccess ? 0 : 2);
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Clear Bake", ImVec2(110, 26))) {
-                        Eunoia::LightBakeManager::Get().ClearBake(scene, *obj, activeProjectRoot);
-                        s_lastBakeFeedback = "Cleared baked data for light: " + obj->name;
-                        s_lastBakeSuccess = true;
-                        AddLog("Lighting", s_lastBakeFeedback, 0);
-                    }
-                } else {
-                    if (ImGui::Button("Bake Light", ImVec2(120, 28))) {
-                        s_lastBakeSuccess = Eunoia::LightBakeManager::Get().BakeLight(scene, *obj, activeProjectRoot, s_lastBakeFeedback);
-                        AddLog("Lighting", s_lastBakeFeedback, s_lastBakeSuccess ? 0 : 2);
-                    }
-                }
-
-                if (!s_lastBakeFeedback.empty()) {
-                    ImVec4 col = s_lastBakeSuccess ? ImVec4(0.3f, 1.0f, 0.4f, 1.0f) : ImVec4(1.0f, 0.35f, 0.35f, 1.0f);
-                    ImGui::TextColored(col, "%s", s_lastBakeFeedback.c_str());
                 }
             }
 
@@ -6056,6 +6716,9 @@ void EngineUI::RenderDetails(Scene& scene) {
                 pl.shadowBias = obj->light.shadowBias;
                 pl.shadowResolution = obj->light.shadowResolution;
                 pl.shadowDistance = obj->light.shadowDistance;
+                pl.enableDistanceCulling = obj->light.enableDistanceCulling;
+                pl.minVisibleDistance = obj->light.minVisibleDistance;
+                pl.maxVisibleDistance = obj->light.maxVisibleDistance;
                 pl.innerConeAngle = obj->light.innerConeAngle;
                 pl.outerConeAngle = obj->light.outerConeAngle;
                 pl.coneFalloff = obj->light.coneFalloff;
@@ -6063,23 +6726,30 @@ void EngineUI::RenderDetails(Scene& scene) {
                 pl.width = obj->light.width;
                 pl.height = obj->light.height;
                 pl.radius = obj->light.radius;
+                pl.length = obj->light.length;
                 pl.twoSided = obj->light.twoSided;
-                pl.bakeState = obj->light.bakeState;
-                pl.bakeResolution = obj->light.bakeResolution;
+                pl.volumetric = obj->light.IsVolumetricsEnabled();
+                pl.volumetric_boost = obj->light.volumetric_boost;
+                pl.volumetricScattering = obj->light.volumetricScattering;
+                pl.volumetricIntensity = obj->light.volumetricIntensity;
+                pl.volumetricSteps = obj->light.volumetricSteps;
+                pl.volumetricMaxDistance = obj->light.volumetricMaxDistance;
+                pl.forced_shadow_resolution = obj->light.forced_shadow_resolution;
             }
             if (obj->light.type == LightType::Directional) {
-                if (obj->light.bakeState == Eunoia::LightBakeState::Baked) {
-                    scene.lightIntensity = 0.0f;
-                    scene.enableShadows = false;
-                } else {
-                    scene.lightColor = obj->light.color;
-                    scene.lightIntensity = obj->light.intensity;
-                    scene.enableShadows = obj->light.castShadows;
-                    scene.shadowStrength = obj->light.shadowStrength;
-                    scene.shadowBias = obj->light.shadowBias;
-                    scene.shadowResolution = obj->light.shadowResolution;
-                    scene.shadowDistance = obj->light.shadowDistance;
-                }
+                scene.lightColor = obj->light.color;
+                scene.lightIntensity = obj->light.intensity;
+                scene.enableShadows = obj->light.castShadows;
+                scene.shadowStrength = obj->light.shadowStrength;
+                scene.shadowBias = obj->light.shadowBias;
+                scene.shadowResolution = obj->light.shadowResolution;
+                scene.shadowDistance = obj->light.shadowDistance;
+                scene.directionalVolumetric = obj->light.IsVolumetricsEnabled();
+                scene.directionalVolumetricBoost = obj->light.volumetric_boost;
+                scene.directionalVolumetricScattering = obj->light.volumetricScattering;
+                scene.directionalVolumetricIntensity = obj->light.volumetricIntensity;
+                scene.directionalVolumetricSteps = obj->light.volumetricSteps;
+                scene.directionalVolumetricMaxDistance = obj->light.volumetricMaxDistance;
             } else if (obj->light.type == LightType::Sky) {
                 scene.ambientColor = obj->light.color;
                 scene.ambientIntensity = obj->light.intensity;
@@ -6183,7 +6853,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                 };
                 int wt = (int)w.type;
                 if (ImGui::Combo("Water Type", &wt, waterTypeNames, 14)) {
-                    // Re-apply preset for new type (§30 type switching)
+                    // Re-apply preset for new type (Â§30 type switching)
                     Scene::ApplyWaterBodyPreset(w, (WaterBodyType)wt);
                     // Rebuild mesh with new preset dimensions
                     obj->mesh = GeometryBuilder::CreatePlane(w.width, w.length, w.gridResolution, w.gridResolution);
@@ -6289,7 +6959,7 @@ void EngineUI::RenderDetails(Scene& scene) {
 
             // Flow (River, Stream, Waterfall)
             bool isFlowing = (w.type == WaterBodyType::River || w.type == WaterBodyType::Stream || w.type == WaterBodyType::Waterfall);
-            if (isFlowing && ImGui::CollapsingHeader("➡️ Flow")) {
+            if (isFlowing && ImGui::CollapsingHeader("âž¡ï¸ Flow")) {
                 ImGui::Checkbox("Enable Flow", &w.enableFlow);
                 if (w.enableFlow) {
                     ImGui::DragFloat2("Flow Direction (XZ)", &w.flowDirection.x, 0.01f, -1.0f, 1.0f);
@@ -6451,7 +7121,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // Primitive Shape Settings Category (dev.md)
-        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
+        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && !obj->isTerrain && obj->type != PrimitiveType::Terrain && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
             char shapeHeader[128];
             snprintf(shapeHeader, sizeof(shapeHeader), "%s Parameters", GetPrimitiveTypeName(obj->type));
             if (ImGui::CollapsingHeader(shapeHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -6543,6 +7213,65 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
+        // Terrain Dimensions & Grid Parameters (when Properties tab is active)
+        if ((obj->isTerrain || obj->type == PrimitiveType::Terrain) && ImGui::CollapsingHeader("Terrain Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+            static Eunoia::TerrainComponent s_preResizeTerrain;
+            static Scene s_preResizeSceneSnapshot;
+            static bool s_isResizingTerrain = false;
+            static int s_terrainAnchorMode = 0; // 0: Center, 1: Min Corner (-X, -Z), 2: Max Corner (+X, +Z)
+
+            bool gridChanged = false;
+            float w = obj->terrain.width;
+            float l = obj->terrain.length;
+            int res = obj->terrain.resolution;
+
+            const char* anchorNames[] = { "Center (Preserve World Position)", "Min Corner (-X, -Z)", "Max Corner (+X, +Z)" };
+            ImGui::Combo("Extend Anchor##TerrAnchor", &s_terrainAnchorMode, anchorNames, 3);
+
+            if (ImGui::DragFloat("Width (X)##TerrW", &w, 1.0f, 4.0f, 4096.0f, "%.1f m")) {
+                if (w < 4.0f) w = 4.0f;
+                gridChanged = true;
+            }
+            bool wDeactivated = ImGui::IsItemDeactivatedAfterEdit();
+
+            if (ImGui::DragFloat("Length (Z)##TerrL", &l, 1.0f, 4.0f, 4096.0f, "%.1f m")) {
+                if (l < 4.0f) l = 4.0f;
+                gridChanged = true;
+            }
+            bool lDeactivated = ImGui::IsItemDeactivatedAfterEdit();
+
+            if (ImGui::SliderInt("Resolution (Grid)##TerrRes", &res, 8, 512)) {
+                gridChanged = true;
+            }
+            bool resDeactivated = ImGui::IsItemDeactivatedAfterEdit();
+
+            if (gridChanged) {
+                if (!s_isResizingTerrain) {
+                    s_preResizeTerrain = obj->terrain;
+                    s_preResizeSceneSnapshot = scene;
+                    s_isResizingTerrain = true;
+                }
+                obj->terrain = s_preResizeTerrain;
+                obj->terrain.ResizeGrid(w, l, res, s_terrainAnchorMode);
+                obj->terrain.RebuildTerrainMesh(obj->mesh);
+                RequestViewportRedraw(5);
+            }
+
+            if (wDeactivated || lDeactivated || resDeactivated) {
+                if (s_isResizingTerrain) {
+                    UndoManager::Get().RecordSnapshot(s_preResizeSceneSnapshot, "Resize/Extend Terrain: " + obj->name);
+                    s_isResizingTerrain = false;
+                    AddLog("LogTerrain", "Resized terrain to " + std::to_string((int)obj->terrain.width) + "m x " + std::to_string((int)obj->terrain.length) + "m (sculpt & painted materials preserved)", 0);
+                }
+            }
+
+            float quadSpacing = obj->terrain.width / (float)std::max(1, obj->terrain.resolution);
+            ImGui::TextDisabled("Grid Vertices: %d x %d (%zu verts, %zu triangles, quad spacing: %.2fm)",
+                obj->terrain.resolution + 1, obj->terrain.resolution + 1,
+                obj->mesh.vertices.size(), obj->mesh.indices.size() / 3, quadSpacing);
+            ImGui::TextDisabled("Extending Width or Length preserves all sculpted heights, tilts, and painted materials.");
+        }
+
         // Empty Actor Information
         if (obj->type == PrimitiveType::Empty) {
             ImGui::Spacing();
@@ -6564,82 +7293,11 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextDisabled("Element 0: Material Slot");
             if (!obj->childIds.empty()) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 0.9f), "(↳ Cascades to all %zu children)", obj->childIds.size());
+                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 0.9f), "(â†³ Cascades to all %zu children)", obj->childIds.size());
             }
 
             // Scan for all materials in contentRootPath (recursively across the entire project root)
-            struct FoundMat {
-                std::string name;        // e.g. "Default_Material"
-                std::string relPath;     // e.g. "Materials/Default_Material.emat"
-                std::string relFolder;   // e.g. "Materials", or "" for project root
-                std::string fullPath;    // Full absolute path on disk
-                glm::vec3 color{0.55f, 0.55f, 0.55f};
-                float metallic = 0.0f;
-                float roughness = 0.5f;
-            };
-
-            static std::vector<FoundMat> s_cachedMatList;
-            static std::map<std::string, std::vector<FoundMat>> s_cachedFolderGroups;
-            static auto s_lastMatScanTime = std::chrono::steady_clock::time_point::min();
-            auto now = std::chrono::steady_clock::now();
-            auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - s_lastMatScanTime).count();
-
-            if (elapsedMs >= 2000 || s_cachedMatList.empty()) {
-                s_lastMatScanTime = now;
-                s_cachedMatList.clear();
-                s_cachedFolderGroups.clear();
-
-                std::error_code matEc;
-                if (std::filesystem::exists(contentRootPath, matEc)) {
-                    auto options = std::filesystem::directory_options::skip_permission_denied;
-                    for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, options, matEc);
-                         !matEc && it != std::filesystem::recursive_directory_iterator();
-                         it.increment(matEc)) {
-                        if (!it->is_directory(matEc)) {
-                            std::string ext = it->path().extension().string();
-                            if (ext == ".emat" || ext == ".mat") {
-                                FoundMat fm;
-                                fm.name = it->path().stem().string();
-                                fm.fullPath = it->path().string();
-
-                                std::filesystem::path rel = std::filesystem::relative(it->path(), contentRootPath, matEc);
-                                if (!matEc) {
-                                    fm.relPath = rel.generic_string();
-                                    std::string parentFolder = rel.parent_path().generic_string();
-                                    fm.relFolder = (parentFolder == ".") ? "" : parentFolder;
-                                } else {
-                                    fm.relPath = it->path().filename().string();
-                                    fm.relFolder = "";
-                                }
-
-                                MaterialAsset ma;
-                                if (LoadMaterialFile(fm.fullPath, ma)) {
-                                    fm.color = ma.baseColor;
-                                    fm.metallic = ma.metallic;
-                                    fm.roughness = ma.roughness;
-                                }
-
-                                s_cachedMatList.push_back(fm);
-                                s_cachedFolderGroups[fm.relFolder].push_back(fm);
-                            }
-                        }
-                    }
-                }
-
-                // Ensure Default_Material is always available
-                if (s_cachedMatList.empty()) {
-                    std::filesystem::path defPath = contentRootPath / "Materials" / "Default_Material.emat";
-                    FoundMat fm;
-                    fm.name = "Default_Material";
-                    fm.relPath = "Materials/Default_Material.emat";
-                    fm.relFolder = "Materials";
-                    fm.fullPath = defPath.string();
-                    fm.color = glm::vec3(0.55f, 0.55f, 0.55f);
-                    s_cachedMatList.push_back(fm);
-                    s_cachedFolderGroups[fm.relFolder].push_back(fm);
-                }
-            }
-
+            RefreshCachedMaterials(contentRootPath);
             const auto& matList = s_cachedMatList;
             const auto& folderGroups = s_cachedFolderGroups;
 
@@ -6843,17 +7501,98 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
-        // 4.5 Rendering: Mesh Cluster Culling
-        if (!obj->isLight && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Rendering", ImGuiTreeNodeFlags_DefaultOpen)) {
-            bool mcc = obj->meshClusterCulling;
-            if (ImGui::Checkbox("Mesh Cluster Culling", &mcc)) {
-                scene.SetMeshClusterCullingRecursive(obj->id, mcc);
+        // 4.5 Wicked Engine Mesh LOD (Disabled by default - full quality when disabled)
+        if (!obj->isLight && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Wicked Engine Mesh LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool lodEnabled = obj->enableLOD;
+            if (ImGui::Checkbox("Enable Mesh LOD", &lodEnabled)) {
+                scene.SetMeshLODRecursive(obj->id, lodEnabled);
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Enables mesh-cluster visibility culling for this object.");
+                ImGui::SetTooltip("When disabled (default), the mesh always renders at full quality (LOD 0) at all distances.\nWhen enabled, Wicked Engine screen-space coverage LOD scaling dynamically selects continuous simplified LOD levels.");
+            }
+
+            auto PropagateLODToChildren = [&](auto& self, int parentId, int forcedLOD, float lodBias, int minLOD, int maxLOD) -> void {
+                GameObject* parent = scene.FindObject(parentId);
+                if (!parent) return;
+                for (int childId : parent->childIds) {
+                    GameObject* child = scene.FindObject(childId);
+                    if (child) {
+                        child->forcedLOD = forcedLOD;
+                        child->lodBias = lodBias;
+                        child->minLOD = minLOD;
+                        child->maxLOD = maxLOD;
+                        self(self, childId, forcedLOD, lodBias, minLOD, maxLOD);
+                    }
+                }
+            };
+
+            uint32_t lodCount = obj->mesh.GetLODCount();
+
+            if (!obj->enableLOD) {
+                ImGui::BeginDisabled(true);
+            }
+
+            const char* lodOptions[] = {
+                "Auto (Distance / Coverage)",
+                "Forced LOD 0", "Forced LOD 1", "Forced LOD 2", "Forced LOD 3", "Forced LOD 4",
+                "Forced LOD 5", "Forced LOD 6", "Forced LOD 7", "Forced LOD 8", "Forced LOD 9",
+                "Forced LOD 10", "Forced LOD 11", "Forced LOD 12", "Forced LOD 13", "Forced LOD 14",
+                "Forced LOD 15", "Forced LOD 16", "Forced LOD 17", "Forced LOD 18", "Forced LOD 19",
+                "Forced LOD 20"
+            };
+            int currentLodOpt = (obj->forcedLOD < 0) ? 0 : std::min(obj->forcedLOD + 1, 21);
+            if (ImGui::Combo("LOD Mode", &currentLodOpt, lodOptions, 22)) {
+                obj->forcedLOD = (currentLodOpt == 0) ? -1 : (currentLodOpt - 1);
+                PropagateLODToChildren(PropagateLODToChildren, obj->id, obj->forcedLOD, obj->lodBias, obj->minLOD, obj->maxLOD);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Controls Level of Detail (LOD) selection (0 to 20).\nAuto: dynamically selects LOD based on screen-space coverage.\nForced: locks object and all its children to a specific LOD level.");
+            }
+
+            if (ImGui::SliderFloat("LOD Bias", &obj->lodBias, -20.0f, 20.0f, "%.2f")) {
+                PropagateLODToChildren(PropagateLODToChildren, obj->id, obj->forcedLOD, obj->lodBias, obj->minLOD, obj->maxLOD);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Offset applied to screen-space LOD calculation (-20.0 to +20.0).\nNegative: prefers higher detail closer.\nPositive: transitions to lower detail sooner.\nApplies recursively to all children.");
+            }
+
+            if (ImGui::SliderInt("Min LOD", &obj->minLOD, 0, 20)) {
+                if (obj->minLOD > obj->maxLOD) obj->maxLOD = obj->minLOD;
+                PropagateLODToChildren(PropagateLODToChildren, obj->id, obj->forcedLOD, obj->lodBias, obj->minLOD, obj->maxLOD);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Minimum LOD level (highest detail limit). Applies recursively to all children.");
+            }
+
+            if (ImGui::SliderInt("Max LOD", &obj->maxLOD, obj->minLOD, 20)) {
+                PropagateLODToChildren(PropagateLODToChildren, obj->id, obj->forcedLOD, obj->lodBias, obj->minLOD, obj->maxLOD);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Maximum LOD level (lowest detail limit). Applies recursively to all children.");
+            }
+
+            if (!obj->enableLOD) {
+                ImGui::EndDisabled();
+            }
+
+            // Real-time LOD Telemetry
+            uint32_t activeLod = obj->enableLOD ? (uint32_t)glm::clamp(obj->currentLOD, 0, (int)lodCount - 1) : 0;
+            uint32_t activeTriangles = (uint32_t)obj->mesh.GetIndicesForLOD(activeLod).size() / 3;
+            uint32_t lod0Triangles = (uint32_t)obj->mesh.indices.size() / 3;
+            float reductionPercent = (lod0Triangles > 0 && obj->enableLOD) ? ((1.0f - (float)activeTriangles / (float)lod0Triangles) * 100.0f) : 0.0f;
+
+            ImGui::Text("Active LOD: ");
+            ImGui::SameLine();
+            if (obj->enableLOD) {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "LOD %u / %u", activeLod, lodCount);
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%u Tris, -%.1f%%)", activeTriangles, reductionPercent);
+            } else {
+                ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "LOD 0 / %u (Disabled - Full Quality)", lodCount);
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%u Tris)", lod0Triangles);
             }
         }
-
         // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
         if (!obj->isLight && !obj->isCamera && !IsLightPrimitive(obj->type) && !IsCameraPrimitive(obj->type)) {
             char modHeaderTitle[64];
@@ -6899,6 +7638,10 @@ void EngineUI::RenderDetails(Scene& scene) {
                     if (ImGui::MenuItem("Character Collision")) {
                         obj->AddModifier(CollisionShapeType::Character);
                         AddLog("LogPhysics", "Added Character Collision to " + obj->name, 0);
+                    }
+                    if (ImGui::MenuItem("Terrain Collision")) {
+                        obj->AddModifier(CollisionShapeType::Terrain);
+                        AddLog("LogPhysics", "Added Terrain Collision to " + obj->name, 0);
                     }
 
                     ImGui::Spacing();
@@ -7024,6 +7767,13 @@ void EngineUI::RenderDetails(Scene& scene) {
                                     ImGui::DragFloat2("Plane Size", &mod.planeSize.x, 0.05f, 0.1f, 10000.0f, "%.2f");
                                     break;
 
+                                case CollisionShapeType::Terrain:
+                                    ImGui::DragFloat3("Box Bounds", &mod.boxExtents.x, 0.02f, 0.01f, 1000.0f, "%.2f");
+                                    ImGui::DragFloat("Height Offset", &mod.terrainOffsetHeight, 0.05f, -100.0f, 100.0f, "%.2f m");
+                                    ImGui::SliderFloat("Follow Terrain Tilt", &mod.terrainFollowTilt, 0.0f, 1.0f, "%.2f (Blend)");
+                                    ImGui::Checkbox("Dynamic Surface Stick", &mod.terrainStickToSurface);
+                                    break;
+
                                 default:
                                     break;
                             }
@@ -7112,7 +7862,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                             if (obj->physics.useGravity) {
                                 ImGui::DragFloat("Gravity Multiplier", &obj->physics.gravityMultiplier, 0.05f, 0.0f, 100.0f, "%.2fx");
                                 if (ImGui::IsItemHovered()) {
-                                    ImGui::SetTooltip("Multiplies global gravity (e.g. 1.0 = normal 9.81 m/s², 2.0 = double gravity).");
+                                    ImGui::SetTooltip("Multiplies global gravity (e.g. 1.0 = normal 9.81 m/sÂ², 2.0 = double gravity).");
                                 }
                             }
 
@@ -7363,7 +8113,7 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
     ImGui::SameLine();
     bool hasTex = textureSlotAssetId.IsValid() || !textureSlotValue.empty();
     if (!hasTex) ImGui::BeginDisabled();
-    if (ImGui::Button("×", ImVec2(clearBtnW, 0))) {
+    if (ImGui::Button("Ã—", ImVec2(clearBtnW, 0))) {
         textureSlotValue = "";
         textureSlotAssetId = AssetID::Null();
         changed = true;
@@ -7374,32 +8124,53 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
     }
 
     if (hasTex && !textureSlotValue.empty()) {
-        CachedTexture* ct = TextureManager::Get().GetTexture(textureSlotValue);
-        if (ct && ct->valid) {
-            ImGui::TextDisabled("   ↳ %dx%d | %s | %zu Mip%s",
-                ct->width, ct->height, DirectX::GetFormatName(ct->format), ct->mipLevels, ct->mipLevels > 1 ? "s" : "");
+        auto info = Eunoia::TextureStreamingSystem::Get().GetOrProbeTextureInfo(textureSlotValue);
+        if (info.isValid) {
+            const char* fmtName = DirectX::GetFormatName(info.format);
+            std::string fmtStr = (fmtName && strlen(fmtName) > 0) ? fmtName : "DXGI_FORMAT_R8G8B8A8_UNORM";
+            if (info.isGpuReady) {
+                ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "   â†³ %dx%d | %s | %u Mip%s",
+                    info.width, info.height, fmtStr.c_str(), info.mipLevels, info.mipLevels > 1 ? "s" : "");
+            } else {
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "   â†³ %dx%d | %s | %u Mip%s  [Streaming...]",
+                    info.width, info.height, fmtStr.c_str(), info.mipLevels, info.mipLevels > 1 ? "s" : "");
+            }
             ImGui::SameLine();
             if (ImGui::SmallButton("Bake DDS##BakeSlotBtn")) {
                 std::string resolved = TextureManager::Get().ResolvePath(textureSlotValue);
                 if (!resolved.empty()) {
-                    std::filesystem::path p(resolved);
-                    std::string ddsPath = p.replace_extension(".dds").string();
-                    if (ct->scratchImage.GetImageCount() > 0) {
-                        DirectX::SaveToDDSFile(ct->scratchImage.GetImages(), ct->scratchImage.GetImageCount(), ct->scratchImage.GetMetadata(), ddsPath.c_str());
-                    } else if (!ct->data.empty()) {
-                        DirectX::Image baseImg;
-                        baseImg.width = ct->width; baseImg.height = ct->height;
-                        baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
-                        baseImg.rowPitch = ct->width * 4;
-                        baseImg.slicePitch = ct->width * ct->height * 4;
-                        baseImg.pixels = ct->data.data();
-                        DirectX::ScratchImage mips;
-                        DirectX::GenerateMipMaps(baseImg, DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_SRGB, 0, mips);
-                        DirectX::SaveToDDSFile(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), ddsPath.c_str());
+                    TextureUsageSlot slot = TextureUsageSlot::BaseColor;
+                    std::string lbl = label ? label : "";
+                    if (lbl.find("Normal") != std::string::npos) slot = TextureUsageSlot::Normal;
+                    else if (lbl.find("Rough") != std::string::npos) slot = TextureUsageSlot::Roughness;
+                    else if (lbl.find("Metal") != std::string::npos) slot = TextureUsageSlot::Metallic;
+                    else if (lbl.find("Occlusion") != std::string::npos || lbl.find("AO") != std::string::npos) slot = TextureUsageSlot::AO;
+                    else if (lbl.find("Emission") != std::string::npos) slot = TextureUsageSlot::Emission;
+                    else if (lbl.find("Opacity") != std::string::npos) slot = TextureUsageSlot::Opacity;
+
+                    CachedTexture* ct = TextureManager::Get().GetTexture(textureSlotValue, slot);
+                    if (ct && ct->valid) {
+                        std::filesystem::path p(resolved);
+                        std::string ddsPath = p.replace_extension(".dds").string();
+                        if (ct->scratchImage.GetImageCount() > 0) {
+                            DirectX::SaveToDDSFile(ct->scratchImage.GetImages(), ct->scratchImage.GetImageCount(), ct->scratchImage.GetMetadata(), ddsPath.c_str());
+                        } else if (!ct->data.empty()) {
+                            DirectX::Image baseImg;
+                            baseImg.width = ct->width; baseImg.height = ct->height;
+                            baseImg.format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                            baseImg.rowPitch = ct->width * 4;
+                            baseImg.slicePitch = ct->width * ct->height * 4;
+                            baseImg.pixels = ct->data.data();
+                            DirectX::ScratchImage mips;
+                            DirectX::GenerateMipMaps(baseImg, DirectX::TEX_FILTER_BOX | DirectX::TEX_FILTER_SRGB, 0, mips);
+                            DirectX::SaveToDDSFile(mips.GetImages(), mips.GetImageCount(), mips.GetMetadata(), ddsPath.c_str());
+                        }
+                        AddLog("DirectXTex", "Exported optimized DDS texture with mipmaps: " + ddsPath, 0);
                     }
-                    AddLog("DirectXTex", "Exported optimized DDS texture with mipmaps: " + ddsPath, 0);
                 }
             }
+        } else {
+            ImGui::TextDisabled("   â†³ [File Not Found or Unreadable]");
         }
     }
 
@@ -7443,6 +8214,7 @@ void EngineUI::ApplyMaterialToActorAndChildren(Scene& scene, GameObject* rootObj
             cur->roughnessChannel = ma.roughnessChannel;
             cur->aoChannel = ma.aoChannel;
             cur->materialDebugMode = ma.materialDebugMode;
+            cur->disableStreaming = ma.disableStreaming;
             if (cur != rootObj) {
                 childCount++;
             }
@@ -7468,7 +8240,15 @@ void EngineUI::ApplyMaterialToActorAndChildren(Scene& scene, GameObject* rootObj
 }
 
 bool EngineUI::LoadMaterialFile(const std::string& path, MaterialAsset& outMat) {
-    std::ifstream file(path);
+    std::string actualPath = path;
+    std::error_code ec;
+    if (!std::filesystem::exists(actualPath, ec) || std::filesystem::file_size(actualPath, ec) == 0) {
+        std::filesystem::path resolved = AssetManager::Get().ResolvePhysicalOrCookedPath(path);
+        if (!resolved.empty() && std::filesystem::exists(resolved, ec) && std::filesystem::file_size(resolved, ec) > 0) {
+            actualPath = resolved.string();
+        }
+    }
+    std::ifstream file(actualPath);
     if (!file.is_open()) return false;
     outMat.filePath = path;
     outMat.name = std::filesystem::path(path).stem().string();
@@ -7492,16 +8272,16 @@ bool EngineUI::LoadMaterialFile(const std::string& path, MaterialAsset& outMat) 
             std::stringstream ss(val);
             ss >> outMat.baseColor.r >> outMat.baseColor.g >> outMat.baseColor.b;
         }
-        else if (key == "metallic") {
+        else if (key == "metallic" || key == "metalness") {
             try { outMat.metallic = std::stof(val); } catch (...) {}
         }
         else if (key == "roughness") {
             try { outMat.roughness = std::stof(val); } catch (...) {}
         }
-        else if (key == "normalStrength") {
+        else if (key == "normalStrength" || key == "normalMapStrength") {
             try { outMat.normalStrength = std::stof(val); } catch (...) {}
         }
-        else if (key == "specular") {
+        else if (key == "specular" || key == "reflectance") {
             try { outMat.specular = std::stof(val); } catch (...) {}
         }
         else if (key == "emissiveColor") {
@@ -7511,33 +8291,36 @@ bool EngineUI::LoadMaterialFile(const std::string& path, MaterialAsset& outMat) 
         else if (key == "emissiveIntensity" || key == "emissionPower") {
             try { outMat.emissiveIntensity = std::stof(val); } catch (...) {}
         }
-        else if (key == "shadingModel" || key == "shader") {
+        else if (key == "shadingModel" || key == "shader" || key == "shaderType") {
             try { outMat.shadingModel = std::stoi(val); } catch (...) {}
         }
-        else if (key == "blendMode") {
+        else if (key == "blendMode" || key == "userBlendMode") {
             try { outMat.blendMode = std::stoi(val); } catch (...) {}
         }
-        else if (key == "twoSided") {
+        else if (key == "twoSided" || key == "doubleSided") {
             outMat.twoSided = (val == "1" || val == "true");
         }
-        else if (key == "castShadows") {
+        else if (key == "castShadows" || key == "castShadow") {
             outMat.castShadows = (val == "1" || val == "true");
         }
-        else if (key == "receiveShadows") {
+        else if (key == "receiveShadows" || key == "receiveShadow") {
             outMat.receiveShadows = (val == "1" || val == "true");
         }
-        else if (key == "uvScale" || key == "uvscale" || key == "tiling") {
+        else if (key == "uvScale" || key == "uvscale" || key == "tiling" || key == "texMulAdd") {
             std::stringstream ss(val);
             ss >> outMat.uvScale.x >> outMat.uvScale.y;
         }
         else if (key == "opacity") {
             try { outMat.opacity = std::stof(val); } catch (...) {}
         }
-        else if (key == "opacityMaskClipValue") {
+        else if (key == "opacityMaskClipValue" || key == "alphaRef") {
             try { outMat.opacityMaskClipValue = std::stof(val); } catch (...) {}
         }
         else if (key == "normalMapYFlip") {
             outMat.normalMapYFlip = (val == "1" || val == "true");
+        }
+        else if (key == "disableStreaming") {
+            outMat.disableStreaming = (val == "1" || val == "true");
         }
         else if (key == "metallicChannel") {
             try { outMat.metallicChannel = std::stoi(val); } catch (...) {}
@@ -7558,13 +8341,21 @@ bool EngineUI::LoadMaterialFile(const std::string& path, MaterialAsset& outMat) 
         else if (key == "aoAssetId") outMat.aoAssetId = AssetID::FromString(val);
         else if (key == "emissionAssetId") outMat.emissionAssetId = AssetID::FromString(val);
         else if (key == "opacityAssetId") outMat.opacityAssetId = AssetID::FromString(val);
-        else if (key == "baseColorTexture") outMat.baseColorTexture = val;
-        else if (key == "normalTexture") outMat.normalTexture = val;
-        else if (key == "roughnessTexture") outMat.roughnessTexture = val;
-        else if (key == "metallicTexture") outMat.metallicTexture = val;
-        else if (key == "aoTexture") outMat.aoTexture = val;
-        else if (key == "emissionTexture") outMat.emissionTexture = val;
-        else if (key == "opacityTexture") outMat.opacityTexture = val;
+        else if (key == "baseColorTexture" || key == "baseColorMap") outMat.baseColorTexture = val;
+        else if (key == "normalTexture" || key == "normalMap") outMat.normalTexture = val;
+        else if (key == "roughnessTexture" || key == "roughnessMap") outMat.roughnessTexture = val;
+        else if (key == "metallicTexture" || key == "metalnessMap") outMat.metallicTexture = val;
+        else if (key == "aoTexture" || key == "occlusionMap") outMat.aoTexture = val;
+        else if (key == "emissionTexture" || key == "emissiveMap") outMat.emissionTexture = val;
+        else if (key == "opacityTexture" || key == "transparencyMap") outMat.opacityTexture = val;
+        else if (key == "surfaceMap" || key == "surfacemap" || key == "surfaceTexture") {
+            outMat.roughnessTexture = val;
+            outMat.metallicTexture = val;
+            outMat.aoTexture = val;
+            outMat.aoChannel = 0;
+            outMat.roughnessChannel = 1;
+            outMat.metallicChannel = 2;
+        }
     }
 
     // Resolve AssetID if not present
@@ -7621,6 +8412,7 @@ bool EngineUI::SaveMaterialFile(const std::string& path, const MaterialAsset& ma
     file << "opacityMaskClipValue: " << mat.opacityMaskClipValue << "\n";
     file << "uvScale: " << mat.uvScale.x << " " << mat.uvScale.y << "\n";
     file << "normalMapYFlip: " << (mat.normalMapYFlip ? 1 : 0) << "\n";
+    file << "disableStreaming: " << (mat.disableStreaming ? 1 : 0) << "\n";
     file << "metallicChannel: " << mat.metallicChannel << "\n";
     file << "roughnessChannel: " << mat.roughnessChannel << "\n";
     file << "aoChannel: " << mat.aoChannel << "\n";
@@ -7657,9 +8449,103 @@ bool EngineUI::SaveMaterialFile(const std::string& path, const MaterialAsset& ma
     return true;
 }
 
+void EngineUI::PropagateMaterialChangesToScene(Scene& scene, const MaterialAsset& mat) {
+    std::string matStem = !mat.filePath.empty() ? std::filesystem::path(mat.filePath).stem().string() : mat.name;
+    bool anyChanged = false;
+
+    for (auto& obj : scene.objects) {
+        bool objMatched = (!mat.name.empty() && obj.materialName == mat.name) ||
+                           (!mat.filePath.empty() && obj.materialName == mat.filePath) ||
+                           (!matStem.empty() && obj.materialName == matStem);
+
+        if (objMatched) {
+            obj.color = mat.baseColor;
+            obj.metallic = mat.metallic;
+            obj.roughness = mat.roughness;
+            obj.normalStrength = mat.normalStrength;
+            obj.specular = mat.specular;
+            obj.emissiveColor = mat.emissiveColor;
+            obj.emissiveIntensity = mat.emissiveIntensity;
+            obj.shadingModel = mat.shadingModel;
+            obj.blendMode = mat.blendMode;
+            obj.twoSided = mat.twoSided;
+            obj.castShadows = mat.castShadows;
+            obj.receiveShadows = mat.receiveShadows;
+            obj.opacity = mat.opacity;
+            obj.opacityMaskClipValue = mat.opacityMaskClipValue;
+            obj.baseColorTexture = mat.baseColorTexture;
+            obj.normalTexture = mat.normalTexture;
+            obj.roughnessTexture = mat.roughnessTexture;
+            obj.metallicTexture = mat.metallicTexture;
+            obj.aoTexture = mat.aoTexture;
+            obj.emissionTexture = mat.emissionTexture;
+            obj.opacityTexture = mat.opacityTexture;
+            obj.uvScale = mat.uvScale;
+            obj.normalMapYFlip = mat.normalMapYFlip;
+            obj.metallicChannel = mat.metallicChannel;
+            obj.roughnessChannel = mat.roughnessChannel;
+            obj.aoChannel = mat.aoChannel;
+            obj.materialDebugMode = mat.materialDebugMode;
+            obj.disableStreaming = mat.disableStreaming;
+            anyChanged = true;
+        }
+
+        if (obj.isTerrain || obj.type == PrimitiveType::Terrain) {
+            bool terrainLayerMatched = false;
+            for (size_t l = 0; l < obj.terrain.materialLayers.size(); ++l) {
+                auto& layer = obj.terrain.materialLayers[l];
+                std::string layerStem = !layer.path.empty() ? std::filesystem::path(layer.path).stem().string() : layer.name;
+                bool layerMatch = (!mat.name.empty() && layer.name == mat.name) ||
+                                   (!mat.filePath.empty() && layer.path == mat.filePath) ||
+                                   (!matStem.empty() && layer.name == matStem) ||
+                                   (!matStem.empty() && layerStem == matStem) ||
+                                   (l == 0 && objMatched);
+
+                if (layerMatch) {
+                    layer.baseColor = mat.baseColor;
+                    layer.metallic = mat.metallic;
+                    layer.roughness = mat.roughness;
+                    layer.normalStrength = mat.normalStrength;
+                    layer.specular = mat.specular;
+                    layer.uvScale = mat.uvScale;
+                    layer.baseColorTexture = mat.baseColorTexture;
+                    layer.normalTexture = mat.normalTexture;
+                    layer.roughnessTexture = mat.roughnessTexture;
+                    layer.metallicTexture = mat.metallicTexture;
+                    layer.aoTexture = mat.aoTexture;
+                    terrainLayerMatched = true;
+
+                    if (l == 0) {
+                        obj.color = mat.baseColor;
+                        obj.metallic = mat.metallic;
+                        obj.roughness = mat.roughness;
+                        obj.normalStrength = mat.normalStrength;
+                        obj.specular = mat.specular;
+                        obj.uvScale = mat.uvScale;
+                        obj.baseColorTexture = mat.baseColorTexture;
+                        obj.normalTexture = mat.normalTexture;
+                        obj.roughnessTexture = mat.roughnessTexture;
+                        obj.metallicTexture = mat.metallicTexture;
+                        obj.aoTexture = mat.aoTexture;
+                    }
+                }
+            }
+            if (terrainLayerMatched) {
+                obj.terrain.isDirty = true;
+                anyChanged = true;
+            }
+        }
+    }
+
+    if (anyChanged) {
+        RequestViewportRedraw(5);
+    }
+}
+
 void EngineUI::OpenMaterialEditor(const std::string& path) {
     if (LoadMaterialFile(path, activeMaterial)) {
         showMaterialEditor = true;
+        materialWorkspaceActive = true;
         materialDirty = false;
         AddLog("LogMaterial", "Opened Material Editor: " + activeMaterial.name, 0);
     } else {
@@ -7675,66 +8561,8 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
                 materialDirty = false;
-                int updatedCount = 0;
-                for (auto& obj : scene.objects) {
-                    if (obj.materialName == activeMaterial.name || 
-                        obj.materialName == activeMaterial.filePath ||
-                        std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
-                        obj.color = activeMaterial.baseColor;
-                        obj.metallic = activeMaterial.metallic;
-                        obj.roughness = activeMaterial.roughness;
-                        obj.normalStrength = activeMaterial.normalStrength;
-                        obj.specular = activeMaterial.specular;
-                        obj.emissiveColor = activeMaterial.emissiveColor;
-                        obj.emissiveIntensity = activeMaterial.emissiveIntensity;
-                        obj.shadingModel = activeMaterial.shadingModel;
-                        obj.blendMode = activeMaterial.blendMode;
-                        obj.twoSided = activeMaterial.twoSided;
-                        obj.castShadows = activeMaterial.castShadows;
-                        obj.receiveShadows = activeMaterial.receiveShadows;
-                        obj.baseColorTexture = activeMaterial.baseColorTexture;
-                        obj.normalTexture = activeMaterial.normalTexture;
-                        obj.roughnessTexture = activeMaterial.roughnessTexture;
-                        obj.metallicTexture = activeMaterial.metallicTexture;
-                        obj.aoTexture = activeMaterial.aoTexture;
-                        obj.emissionTexture = activeMaterial.emissionTexture;
-                        obj.uvScale = activeMaterial.uvScale;
-                        obj.normalMapYFlip = activeMaterial.normalMapYFlip;
-                        obj.metallicChannel = activeMaterial.metallicChannel;
-                        obj.roughnessChannel = activeMaterial.roughnessChannel;
-                        obj.aoChannel = activeMaterial.aoChannel;
-                        obj.materialDebugMode = activeMaterial.materialDebugMode;
-                        updatedCount++;
-                    }
-                }
-                GameObject* sel = scene.GetSelected();
-                if (sel && sel->materialName == activeMaterial.name) {
-                    sel->color = activeMaterial.baseColor;
-                    sel->metallic = activeMaterial.metallic;
-                    sel->roughness = activeMaterial.roughness;
-                    sel->normalStrength = activeMaterial.normalStrength;
-                    sel->specular = activeMaterial.specular;
-                    sel->emissiveColor = activeMaterial.emissiveColor;
-                    sel->emissiveIntensity = activeMaterial.emissiveIntensity;
-                    sel->shadingModel = activeMaterial.shadingModel;
-                    sel->blendMode = activeMaterial.blendMode;
-                    sel->twoSided = activeMaterial.twoSided;
-                    sel->castShadows = activeMaterial.castShadows;
-                    sel->receiveShadows = activeMaterial.receiveShadows;
-                    sel->baseColorTexture = activeMaterial.baseColorTexture;
-                    sel->normalTexture = activeMaterial.normalTexture;
-                    sel->roughnessTexture = activeMaterial.roughnessTexture;
-                    sel->metallicTexture = activeMaterial.metallicTexture;
-                    sel->aoTexture = activeMaterial.aoTexture;
-                    sel->emissionTexture = activeMaterial.emissionTexture;
-                    sel->uvScale = activeMaterial.uvScale;
-                    sel->normalMapYFlip = activeMaterial.normalMapYFlip;
-                    sel->metallicChannel = activeMaterial.metallicChannel;
-                    sel->roughnessChannel = activeMaterial.roughnessChannel;
-                    sel->aoChannel = activeMaterial.aoChannel;
-                    sel->materialDebugMode = activeMaterial.materialDebugMode;
-                }
-                AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in " + std::to_string(updatedCount) + " actors in viewport)", 2);
+                PropagateMaterialChangesToScene(scene, activeMaterial);
+                AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in viewport and terrain layers)", 2);
             }
         }
         ImGui::SameLine();
@@ -7767,28 +8595,40 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         std::vector<TextureAssetEntry> availableTextures = ScanProjectTextures();
 
         // Two-pane Layout (Left: MATERIAL PREVIEW, Right: SURFACE, VALUES, SETTINGS)
+        // Two-pane Layout (Left: MATERIAL PREVIEW, Right: SURFACE, VALUES, SETTINGS)
         float previewPaneW = 270.0f;
         ImGui::BeginChild("MatPreviewPane", ImVec2(previewPaneW, 0), true);
 
         ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "MATERIAL PREVIEW");
         ImGui::Spacing();
 
-        // Mesh selector tabs/buttons: Sphere, Cube, Plane
-        const char* meshNames[] = { "Sphere", "Cube", "Plane" };
-        for (int m = 0; m < 3; ++m) {
+        // 6 3D Mesh Selector Buttons: Cube (default), Sphere, Cylinder, Plane, Torus, Capsule
+        const char* meshNames[] = { "Cube", "Sphere", "Cylinder", "Plane", "Torus", "Capsule" };
+        float shapeBtnW = (previewPaneW - 20.0f - 8.0f) / 3.0f;
+        for (int m = 0; m < 6; ++m) {
             bool isCur = (matEditorPreviewMesh == m);
             if (isCur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
-            if (ImGui::Button(meshNames[m], ImVec2(55.0f, 22.0f))) {
+            if (ImGui::Button(meshNames[m], ImVec2(shapeBtnW, 22.0f))) {
                 matEditorPreviewMesh = m;
             }
             if (isCur) ImGui::PopStyleColor();
-            if (m < 2) ImGui::SameLine(0.0f, 4.0f);
+            if (m % 3 < 2) ImGui::SameLine(0.0f, 4.0f);
         }
+
+        ImGui::Spacing();
 
         // Predefined Light Presets
         const char* lightPresets[] = { "Key Light", "Studio 3-Point", "Warm Sunset", "Cool Moonlight" };
         ImGui::SetNextItemWidth(previewPaneW - 20.0f);
         ImGui::Combo("##LightPresetCombo", &matEditorLightPreset, lightPresets, IM_ARRAYSIZE(lightPresets));
+
+        // Auto-Rotate & Reset
+        ImGui::Checkbox("Auto-Rotate", &matEditorAutoRotate);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset View")) {
+            matEditorRotationAngle = 0.0f;
+            matEditorLightAngle = 45.0f;
+        }
 
         ImGui::Spacing();
 
@@ -7796,223 +8636,62 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         ImVec2 canvasSize(previewPaneW - 20.0f, previewPaneW - 20.0f);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
-        // Invisible button to capture drag for light rotation
-        ImGui::InvisibleButton("##PreviewCanvasBtn", canvasSize);
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-            matEditorLightAngle += dragDelta.x * 0.5f;
-            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
-        }
+        // Register preview Pip rect
+        matPreviewPipRect.active = true;
+        matPreviewPipRect.x = canvasPos.x;
+        matPreviewPipRect.y = canvasPos.y;
+        matPreviewPipRect.width = canvasSize.x;
+        matPreviewPipRect.height = canvasSize.y;
+        matPreviewPipRect.meshType = matEditorPreviewMesh;
+        matPreviewPipRect.lightPreset = matEditorLightPreset;
+        matPreviewPipRect.lightAngle = matEditorLightAngle;
+        matPreviewPipRect.rotationAngle = matEditorRotationAngle;
 
-        // Viewport background
-        drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(18, 20, 25, 255), 6.0f);
-        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 48, 56, 255), 6.0f);
-
-        // Center and dimensions
-        ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-        float radius = (canvasSize.x * 0.5f) - 16.0f;
-
-        // Base color and textures
-        glm::vec3 col = activeMaterial.baseColor;
-        CachedTexture* previewAlbedo = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
-        if (previewAlbedo && previewAlbedo->valid) {
-            col = previewAlbedo->averageColor;
-        }
-
-        // Predefined lights setup
-        glm::vec3 lightCol = glm::vec3(1.0f);
-        glm::vec3 fillCol = glm::vec3(0.3f, 0.35f, 0.45f);
-        float lightRad = glm::radians(matEditorLightAngle);
-        glm::vec3 L = glm::normalize(glm::vec3(sinf(lightRad) * 0.7f, -cosf(lightRad) * 0.5f - 0.2f, 0.75f));
-
-        if (matEditorLightPreset == 1) { // Studio 3-Point
-            lightCol = glm::vec3(1.0f, 0.98f, 0.94f);
-            fillCol = glm::vec3(0.40f, 0.48f, 0.60f);
-        } else if (matEditorLightPreset == 2) { // Warm Sunset
-            lightCol = glm::vec3(1.0f, 0.65f, 0.35f);
-            fillCol = glm::vec3(0.55f, 0.25f, 0.25f);
-        } else if (matEditorLightPreset == 3) { // Cool Moonlight
-            lightCol = glm::vec3(0.55f, 0.75f, 1.0f);
-            fillCol = glm::vec3(0.20f, 0.25f, 0.40f);
-        }
-
-        glm::vec3 V = glm::vec3(0.0f, 0.0f, 1.0f);
-        glm::vec3 H = glm::normalize(L + V);
-
-        float sphereAlpha = (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty()) 
-                            ? glm::clamp(activeMaterial.opacity, 0.08f, 1.0f) : 1.0f;
-        int alphaByte = (int)(sphereAlpha * 255.0f);
-        float aoDarken = activeMaterial.aoTexture.empty() ? 1.0f : 0.75f;
-        float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
-        glm::vec3 specColor = glm::mix(lightCol, col, activeMaterial.metallic);
-
-        if (matEditorPreviewMesh == 0) {
-            // ── SPHERE PREVIEW ──
-            // Checkerboard backdrop for transparency
-            if (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty() || activeMaterial.opacity < 1.0f) {
-                float checkSize = 14.0f;
-                for (float cy = center.y - radius; cy < center.y + radius; cy += checkSize) {
-                    for (float cx = center.x - radius; cx < center.x + radius; cx += checkSize) {
-                        float dx = (cx + checkSize * 0.5f) - center.x;
-                        float dy = (cy + checkSize * 0.5f) - center.y;
-                        if (dx * dx + dy * dy <= radius * radius) {
-                            int ix = (int)((cx - (center.x - radius)) / checkSize);
-                            int iy = (int)((cy - (center.y - radius)) / checkSize);
-                            ImU32 checkCol = ((ix + iy) % 2 == 0) ? IM_COL32(42, 46, 56, 255) : IM_COL32(22, 24, 30, 255);
-                            drawList->AddRectFilled(ImVec2(cx, cy), ImVec2(cx + checkSize, cy + checkSize), checkCol);
-                        }
-                    }
-                }
-            }
-
-            // Pass 1: Ambient / Fill
-            drawList->AddCircleFilled(center, radius,
-                IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
-                         (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-            if (activeMaterial.shadingModel == 1) {
-                // Unlit
-                drawList->AddCircleFilled(center, radius,
-                    IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
-            } else {
-                // Pass 2: Diffuse
-                ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
-                drawList->AddCircleFilled(diffCenter, radius * 0.88f,
-                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-                // Pass 3: Core lit disk
-                ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
-                drawList->AddCircleFilled(coreCenter, radius * 0.68f,
-                    IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
-
-                // Pass 4: Specular
-                float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
-                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
-                drawList->AddCircleFilled(specCenter, specRadius,
-                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
-
-                if (specRough < 0.5f) {
-                    drawList->AddCircleFilled(specCenter, specRadius * 0.35f,
-                        IM_COL32(255, 255, 255, (int)(specAlpha * 0.9f)), 24);
-                }
-            }
-
-            // Emissive glow
-            if (activeMaterial.emissiveIntensity > 0.01f) {
-                glm::vec3 emCol = activeMaterial.emissiveColor;
-                float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
-                drawList->AddCircle(center, radius + 3.5f,
-                    IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
-            }
-            drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
-
-        } else if (matEditorPreviewMesh == 1) {
-            // ── CUBE PREVIEW (Isometric 3D box) ──
-            float sz = radius * 0.78f;
-            // Top Face
-            ImVec2 top[4] = {
-                ImVec2(center.x, center.y - sz * 0.85f),
-                ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
-                ImVec2(center.x, center.y + sz * 0.15f),
-                ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
-            };
-            // Left Face
-            ImVec2 leftF[4] = {
-                top[3],
-                top[2],
-                ImVec2(center.x, center.y + sz * 0.95f),
-                ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
-            };
-            // Right Face
-            ImVec2 rightF[4] = {
-                top[2],
-                top[1],
-                ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
-                ImVec2(center.x, center.y + sz * 0.95f)
-            };
-
-            // Calculate lighting per cube face normal
-            float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
-            float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-            float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-
-            glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
-            glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
-            glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
-
-            drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
-                IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
-            drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
-                IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
-            drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
-                IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
-
-            // Wire outlines
-            ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
-            drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
-            drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
-            drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
-
+        // Render DirectX 12 3D PBR Realtime Texture
+        if (matPreviewTextureId != 0) {
+            ImGui::Image((ImTextureID)matPreviewTextureId, canvasSize, ImVec2(0, 0), ImVec2(1, 1));
         } else {
-            // ── PLANE PREVIEW (Tilted 3D quad) ──
-            float pw = radius * 0.95f;
-            float ph = radius * 0.65f;
-            ImVec2 p[4] = {
-                ImVec2(center.x - pw * 0.7f, center.y - ph),
-                ImVec2(center.x + pw * 0.7f, center.y - ph),
-                ImVec2(center.x + pw, center.y + ph),
-                ImVec2(center.x - pw, center.y + ph)
-            };
+            drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 22, 26, 255), 6.0f);
+            drawList->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y * 0.5f - 8.0f), IM_COL32(160, 180, 200, 220), "Initializing 3D DX12 PBR...");
+        }
 
-            float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
-            glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
+        // Elegant border overlay
+        drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(45, 48, 56, 255), 6.0f, 0, 1.5f);
+        drawList->AddText(ImVec2(canvasPos.x + 8.0f, canvasPos.y + 6.0f), IM_COL32(100, 200, 255, 220), "DX12 Realtime PBR");
 
-            drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
-                IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
-                         (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
-
-            // Specular hotspot on plane
-            if (activeMaterial.shadingModel != 1) {
-                float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
-                int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
-                drawList->AddCircleFilled(specCenter, specRadius,
-                    IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
+        // Invisible button to capture drag for model rotation (Left) and light rotation (Right)
+        ImGui::SetCursorScreenPos(canvasPos);
+        ImGui::InvisibleButton("##PreviewCanvasBtn", canvasSize);
+        if (ImGui::IsItemActive()) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+                matEditorRotationAngle += dragDelta.x * 0.75f;
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
             }
-
-            drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+                matEditorLightAngle += dragDelta.x * 0.5f;
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
+            }
         }
 
         // Texture indicator badge overlaid
-        if (!activeMaterial.baseColorTexture.empty()) {
+        if (!activeMaterial.baseColorTexture.empty() && activeMaterial.baseColorTexture != "none") {
             drawList->AddRectFilled(ImVec2(canvasPos.x + 8, canvasPos.y + canvasSize.y - 24),
                                     ImVec2(canvasPos.x + canvasSize.x - 8, canvasPos.y + canvasSize.y - 6),
                                     IM_COL32(0, 0, 0, 180), 4.0f);
-            std::string texBadge = "Texture: " + activeMaterial.baseColorTexture;
+            std::string texBadge = "Tex: " + activeMaterial.baseColorTexture;
             if (texBadge.length() > 28) texBadge = texBadge.substr(0, 25) + "...";
             drawList->AddText(ImVec2(canvasPos.x + 12, canvasPos.y + canvasSize.y - 22),
                               IM_COL32(100, 220, 255, 255), texBadge.c_str());
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Preview: %s", meshNames[matEditorPreviewMesh]);
-        ImGui::TextDisabled("Light: %.0f° (Drag to orbit)", matEditorLightAngle);
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÂ°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
+        ImGui::TextDisabled("Light: %.0fÂ° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
         ImGui::TextDisabled("Shader: %s", activeMaterial.shadingModel == 0 ? "PBR Cook-Torrance" : (activeMaterial.shadingModel == 1 ? "Unlit" : "Subsurface"));
 
         ImGui::EndChild();
-
-        ImGui::SameLine();
 
         // Right Pane: SURFACE, VALUES, SETTINGS (dev.md layout)
         ImGui::BeginChild("MatPropertiesPane", ImVec2(0, 0), true);
@@ -8045,19 +8724,30 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // SECTION 1: SURFACE (dev.md)
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         if (ImGui::CollapsingHeader("SURFACE", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             if (DrawTextureSlot("Base Color", activeMaterial.baseColorTexture, activeMaterial.baseColorAssetId, availableTextures)) {
                 materialDirty = true;
-                CachedTexture* tex = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
-                if (tex && tex->valid) {
-                    activeMaterial.baseColor = tex->averageColor;
+                if (TextureManager::Get().IsTextureLoaded(activeMaterial.baseColorTexture)) {
+                    CachedTexture* tex = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
+                    if (tex && tex->valid) {
+                        activeMaterial.baseColor = tex->averageColor;
+                    }
                 }
             }
             if (DrawTextureSlot("Normal", activeMaterial.normalTexture, activeMaterial.normalAssetId, availableTextures)) {
+                materialDirty = true;
+            }
+            if (DrawTextureSlot("Surface Map (Packed R=AO, G=Rough, B=Metal)", matEditorSurfaceMap, activeMaterial.roughnessAssetId, availableTextures)) {
+                activeMaterial.roughnessTexture = matEditorSurfaceMap;
+                activeMaterial.metallicTexture = matEditorSurfaceMap;
+                activeMaterial.aoTexture = matEditorSurfaceMap;
+                activeMaterial.aoChannel = 0;
+                activeMaterial.roughnessChannel = 1;
+                activeMaterial.metallicChannel = 2;
                 materialDirty = true;
             }
             if (DrawTextureSlot("Roughness", activeMaterial.roughnessTexture, activeMaterial.roughnessAssetId, availableTextures)) {
@@ -8078,9 +8768,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // SECTION 2: VALUES (dev.md)
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         if (ImGui::CollapsingHeader("VALUES", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             if (ImGui::ColorEdit3("Base Color", &activeMaterial.baseColor.r, ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_DisplayRGB)) {
@@ -8141,24 +8831,28 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::TextColored(ImVec4(0.2f, 0.75f, 1.0f, 1.0f), "UV Tiling (UV Scale):");
             if (ImGui::DragFloat2("UV Scale (X, Y)", &activeMaterial.uvScale.x, 0.05f, 0.001f, 100.0f, "%.2f")) {
                 materialDirty = true;
+                PropagateMaterialChangesToScene(scene, activeMaterial);
             }
             if (ImGui::DragFloat("Tiling X (U)", &activeMaterial.uvScale.x, 0.05f, 0.001f, 100.0f, "%.2f")) {
                 materialDirty = true;
+                PropagateMaterialChangesToScene(scene, activeMaterial);
             }
             if (ImGui::DragFloat("Tiling Y (V)", &activeMaterial.uvScale.y, 0.05f, 0.001f, 100.0f, "%.2f")) {
                 materialDirty = true;
+                PropagateMaterialChangesToScene(scene, activeMaterial);
             }
             ImGui::SameLine();
             if (ImGui::Button("Reset (1, 1)##MatUVReset")) {
                 activeMaterial.uvScale = glm::vec2(1.0f, 1.0f);
                 materialDirty = true;
+                PropagateMaterialChangesToScene(scene, activeMaterial);
             }
             ImGui::Spacing();
         }
 
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // SECTION 3: SETTINGS (dev.md)
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         if (ImGui::CollapsingHeader("SETTINGS", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             const char* shaders[] = { "PBR", "Unlit", "Subsurface" };
@@ -8180,6 +8874,12 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             if (ImGui::Checkbox("Receive Shadows", &activeMaterial.receiveShadows)) {
                 materialDirty = true;
             }
+            if (ImGui::Checkbox("Disable Texture Streaming", &activeMaterial.disableStreaming)) {
+                materialDirty = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Wicked Engine: When checked, keeps textures of this material at full native resolution even when outside viewport.");
+            }
 
             const char* debugModes[] = {
                 "0: Final PBR",
@@ -8200,9 +8900,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         // SECTION 4: DIRECTXTEX TOOLS
-        // ═══════════════════════════════════════════
+        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
         if (ImGui::CollapsingHeader("DIRECTXTEX TOOLS", ImGuiTreeNodeFlags_None)) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "DirectXTex Mipmap & Texture Processing Engine");
@@ -8212,7 +8912,7 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             static float normalAmp = 1.0f;
             ImGui::SliderFloat("Normal Map Amplitude", &normalAmp, 0.1f, 10.0f, "%.2f");
             if (!activeMaterial.baseColorTexture.empty()) {
-                if (ImGui::Button("⚡ Generate Normal Map from Base Color (DirectXTex)##GenNormBtn")) {
+                if (ImGui::Button("âš¡ Generate Normal Map from Base Color (DirectXTex)##GenNormBtn")) {
                     std::string res = TextureManager::Get().ResolvePath(activeMaterial.baseColorTexture);
                     CachedTexture* ct = TextureManager::Get().GetTexture(res);
                     if (ct && ct->valid && !ct->data.empty()) {
@@ -8240,41 +8940,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // If Live Viewport Sync is enabled, update all scene actors in real-time
+        // If Live Viewport Sync is enabled, update all scene actors and terrain layers in real-time
         if (liveMaterialViewportSync && materialDirty) {
-            for (auto& obj : scene.objects) {
-                if (obj.materialName == activeMaterial.name || 
-                    obj.materialName == activeMaterial.filePath ||
-                    std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
-                    obj.color = activeMaterial.baseColor;
-                    obj.metallic = activeMaterial.metallic;
-                    obj.roughness = activeMaterial.roughness;
-                    obj.normalStrength = activeMaterial.normalStrength;
-                    obj.specular = activeMaterial.specular;
-                    obj.emissiveColor = activeMaterial.emissiveColor;
-                    obj.emissiveIntensity = activeMaterial.emissiveIntensity;
-                    obj.shadingModel = activeMaterial.shadingModel;
-                    obj.blendMode = activeMaterial.blendMode;
-                    obj.twoSided = activeMaterial.twoSided;
-                    obj.castShadows = activeMaterial.castShadows;
-                    obj.receiveShadows = activeMaterial.receiveShadows;
-                    obj.opacity = activeMaterial.opacity;
-                    obj.opacityMaskClipValue = activeMaterial.opacityMaskClipValue;
-                    obj.baseColorTexture = activeMaterial.baseColorTexture;
-                    obj.normalTexture = activeMaterial.normalTexture;
-                    obj.roughnessTexture = activeMaterial.roughnessTexture;
-                    obj.metallicTexture = activeMaterial.metallicTexture;
-                    obj.aoTexture = activeMaterial.aoTexture;
-                    obj.emissionTexture = activeMaterial.emissionTexture;
-                    obj.opacityTexture = activeMaterial.opacityTexture;
-                    obj.uvScale = activeMaterial.uvScale;
-                    obj.normalMapYFlip = activeMaterial.normalMapYFlip;
-                    obj.metallicChannel = activeMaterial.metallicChannel;
-                    obj.roughnessChannel = activeMaterial.roughnessChannel;
-                    obj.aoChannel = activeMaterial.aoChannel;
-                    obj.materialDebugMode = activeMaterial.materialDebugMode;
-                }
-            }
+            PropagateMaterialChangesToScene(scene, activeMaterial);
         }
 
         ImGui::EndChild();
@@ -8294,43 +8962,12 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
 
     if (ImGui::Begin("MaterialWorkspaceView", nullptr, flags)) {
-        // Toolbar
+        // Toolbar ("Existing Menu" across the top)
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
                 materialDirty = false;
-                int updatedCount = 0;
-                for (auto& obj : scene.objects) {
-                    if (obj.materialName == activeMaterial.name || 
-                        obj.materialName == activeMaterial.filePath ||
-                        std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
-                        obj.color = activeMaterial.baseColor;
-                        obj.metallic = activeMaterial.metallic;
-                        obj.roughness = activeMaterial.roughness;
-                        obj.normalStrength = activeMaterial.normalStrength;
-                        obj.specular = activeMaterial.specular;
-                        obj.emissiveColor = activeMaterial.emissiveColor;
-                        obj.emissiveIntensity = activeMaterial.emissiveIntensity;
-                        obj.shadingModel = activeMaterial.shadingModel;
-                        obj.blendMode = activeMaterial.blendMode;
-                        obj.twoSided = activeMaterial.twoSided;
-                        obj.castShadows = activeMaterial.castShadows;
-                        obj.receiveShadows = activeMaterial.receiveShadows;
-                        obj.baseColorTexture = activeMaterial.baseColorTexture;
-                        obj.normalTexture = activeMaterial.normalTexture;
-                        obj.roughnessTexture = activeMaterial.roughnessTexture;
-                        obj.metallicTexture = activeMaterial.metallicTexture;
-                        obj.aoTexture = activeMaterial.aoTexture;
-                        obj.emissionTexture = activeMaterial.emissionTexture;
-                        obj.uvScale = activeMaterial.uvScale;
-                        obj.normalMapYFlip = activeMaterial.normalMapYFlip;
-                        obj.metallicChannel = activeMaterial.metallicChannel;
-                        obj.roughnessChannel = activeMaterial.roughnessChannel;
-                        obj.aoChannel = activeMaterial.aoChannel;
-                        obj.materialDebugMode = activeMaterial.materialDebugMode;
-                        updatedCount++;
-                    }
-                }
-                AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in " + std::to_string(updatedCount) + " actors in viewport)", 2);
+                PropagateMaterialChangesToScene(scene, activeMaterial);
+                AddLog("LogMaterial", "Saved Material to " + activeMaterial.filePath + " (Reflected in viewport and terrain layers)", 2);
             }
         }
         ImGui::SameLine();
@@ -8357,6 +8994,7 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         ImGui::SameLine(ImGui::GetWindowWidth() - 90.0f * uiScale);
         if (ImGui::Button("Close Tab", ImVec2(80.0f * uiScale, 22.0f * uiScale))) {
             showMaterialEditor = false;
+            materialWorkspaceActive = false;
         }
 
         ImGui::Separator();
@@ -8364,37 +9002,58 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         // Scan available textures
         std::vector<TextureAssetEntry> availableTextures = ScanProjectTextures();
 
-        // Left Pane: MATERIAL PREVIEW (Left Top live preview in mesh)
-        float previewPaneW = std::max(340.0f * uiScale, wsSize.x * 0.32f);
-        ImGui::BeginChild("MatWorkspacePreviewPane", ImVec2(previewPaneW, 0), true);
+        // 3-Column Layout: [Preview (Top-Left)] | [Texture Selecting Fields (Center)] | [Material Properties (Right)]
+        float totalAvailW = wsSize.x - 28.0f * uiScale;
+        float previewColW = std::clamp(totalAvailW * 0.28f, 320.0f * uiScale, 420.0f * uiScale);
+        float propsColW = std::clamp(totalAvailW * 0.36f, 380.0f * uiScale, 520.0f * uiScale);
+        float texturesColW = totalAvailW - previewColW - propsColW - 16.0f * uiScale;
+        if (texturesColW < 300.0f * uiScale) {
+            texturesColW = std::max(280.0f * uiScale, totalAvailW * 0.34f);
+            propsColW = totalAvailW - previewColW - texturesColW - 16.0f * uiScale;
+        }
 
-        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "LIVE MATERIAL PREVIEW");
+        // ====================================================================
+        // COLUMN 1 (TOP-LEFT): PREVIEW
+        // ====================================================================
+        ImGui::BeginChild("MatWorkspacePreviewCol", ImVec2(previewColW, 0), true);
+
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Preview");
+        ImGui::Separator();
         ImGui::Spacing();
 
-        // Mesh selector tabs: Sphere, Cube, Plane
-        const char* meshNames[] = { "Sphere", "Cube", "Plane" };
-        for (int m = 0; m < 3; ++m) {
+        // 6 3D Mesh selector buttons: Cube (default), Sphere, Cylinder, Plane, Torus, Capsule
+        const char* meshNames[] = { "Cube", "Sphere", "Cylinder", "Plane", "Torus", "Capsule" };
+        float shapeBtnW = (previewColW - 20.0f - 12.0f * uiScale) / 3.0f;
+        for (int m = 0; m < 6; ++m) {
             bool isCur = (matEditorPreviewMesh == m);
             if (isCur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.122f, 0.600f, 0.949f, 1.0f));
-            if (ImGui::Button(meshNames[m], ImVec2(70.0f * uiScale, 24.0f * uiScale))) {
+            if (ImGui::Button(meshNames[m], ImVec2(shapeBtnW, 24.0f * uiScale))) {
                 matEditorPreviewMesh = m;
             }
             if (isCur) ImGui::PopStyleColor();
-            if (m < 2) ImGui::SameLine(0.0f, 6.0f);
+            if (m % 3 < 2) ImGui::SameLine(0.0f, 6.0f);
         }
 
         ImGui::Spacing();
 
-        // Predefined Light Presets
+        // Environment Lighting Presets
         const char* lightPresets[] = { "Key Light", "Studio 3-Point", "Warm Sunset", "Cool Moonlight" };
         ImGui::TextDisabled("Environment Lighting:");
-        ImGui::SetNextItemWidth(previewPaneW - 20.0f);
+        ImGui::SetNextItemWidth(previewColW - 20.0f);
         ImGui::Combo("##WorkspaceLightPresetCombo", &matEditorLightPreset, lightPresets, IM_ARRAYSIZE(lightPresets));
+
+        // Auto-Rotate & Reset View
+        ImGui::Checkbox("Auto-Rotate##WorkspaceAutoRot", &matEditorAutoRotate);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Reset View##WorkspaceResetView")) {
+            matEditorRotationAngle = 0.0f;
+            matEditorLightAngle = 45.0f;
+        }
 
         ImGui::Spacing();
 
         ImVec2 canvasPos = ImGui::GetCursorScreenPos();
-        float canvasDim = std::min(previewPaneW - 24.0f, 320.0f * uiScale);
+        float canvasDim = std::min(previewColW - 24.0f, 320.0f * uiScale);
         ImVec2 canvasSize(canvasDim, canvasDim);
         ImDrawList* drawList = ImGui::GetWindowDrawList();
 
@@ -8407,186 +9066,62 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         matPreviewPipRect.meshType = matEditorPreviewMesh;
         matPreviewPipRect.lightPreset = matEditorLightPreset;
         matPreviewPipRect.lightAngle = matEditorLightAngle;
+        matPreviewPipRect.rotationAngle = matEditorRotationAngle;
 
-        // Canvas button for interactive light rotation
-        ImGui::InvisibleButton("##WorkspacePreviewCanvasBtn", canvasSize);
-        if (ImGui::IsItemActive() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
-            ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
-            matEditorLightAngle += dragDelta.x * 0.5f;
-            ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+        // Render DirectX 12 3D PBR Realtime Texture
+        if (matPreviewTextureId != 0) {
+            ImGui::Image((ImTextureID)matPreviewTextureId, canvasSize, ImVec2(0, 0), ImVec2(1, 1));
+        } else {
+            drawList->AddRectFilled(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(20, 22, 26, 255), 6.0f);
+            drawList->AddText(ImVec2(canvasPos.x + 12.0f, canvasPos.y + canvasSize.y * 0.5f - 8.0f), IM_COL32(160, 180, 200, 220), "Initializing 3D DX12 PBR...");
         }
 
         // Elegant border around the DirectX 12 3D PBR preview viewport
         drawList->AddRect(canvasPos, ImVec2(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y), IM_COL32(31, 153, 242, 200), 4.0f, 0, 1.5f);
         drawList->AddRect(ImVec2(canvasPos.x - 1, canvasPos.y - 1), ImVec2(canvasPos.x + canvasSize.x + 1, canvasPos.y + canvasSize.y + 1), IM_COL32(10, 12, 16, 255), 5.0f, 0, 1.0f);
-        drawList->AddText(ImVec2(canvasPos.x + 8.0f, canvasPos.y + 8.0f), IM_COL32(200, 220, 240, 180), "DX12 PBR 3D");
+        drawList->AddText(ImVec2(canvasPos.x + 8.0f, canvasPos.y + 8.0f), IM_COL32(200, 220, 240, 220), "DX12 PBR 3D");
 
-        ImVec2 center(canvasPos.x + canvasSize.x * 0.5f, canvasPos.y + canvasSize.y * 0.5f);
-        float radius = (canvasSize.x * 0.5f) - 18.0f;
-
-        glm::vec3 col = activeMaterial.baseColor;
-        CachedTexture* previewAlbedo = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
-        if (previewAlbedo && previewAlbedo->valid) {
-            col = previewAlbedo->averageColor;
-        }
-
-        glm::vec3 lightCol = glm::vec3(1.0f);
-        glm::vec3 fillCol = glm::vec3(0.3f, 0.35f, 0.45f);
-        float lightRad = glm::radians(matEditorLightAngle);
-        glm::vec3 L = glm::normalize(glm::vec3(sinf(lightRad) * 0.7f, -cosf(lightRad) * 0.5f - 0.2f, 0.75f));
-
-        if (matEditorLightPreset == 1) { // Studio 3-Point
-            lightCol = glm::vec3(1.0f, 0.98f, 0.94f);
-            fillCol = glm::vec3(0.40f, 0.48f, 0.60f);
-        } else if (matEditorLightPreset == 2) { // Warm Sunset
-            lightCol = glm::vec3(1.0f, 0.65f, 0.35f);
-            fillCol = glm::vec3(0.55f, 0.25f, 0.25f);
-        } else if (matEditorLightPreset == 3) { // Cool Moonlight
-            lightCol = glm::vec3(0.55f, 0.75f, 1.0f);
-            fillCol = glm::vec3(0.20f, 0.25f, 0.40f);
-        }
-
-        glm::vec3 V = glm::vec3(0.0f, 0.0f, 1.0f);
-        glm::vec3 H = glm::normalize(L + V);
-
-        float sphereAlpha = (activeMaterial.blendMode != 0 || !activeMaterial.opacityTexture.empty()) 
-                            ? glm::clamp(activeMaterial.opacity, 0.08f, 1.0f) : 1.0f;
-        int alphaByte = (int)(sphereAlpha * 255.0f);
-        float aoDarken = activeMaterial.aoTexture.empty() ? 1.0f : 0.75f;
-        float specRough = glm::clamp(activeMaterial.roughness, 0.05f, 1.0f);
-        glm::vec3 specColor = glm::mix(lightCol, col, activeMaterial.metallic);
-
-        if (!matPreviewPipRect.active) {
-            if (matEditorPreviewMesh == 0) {
-                // Sphere
-                drawList->AddCircleFilled(center, radius,
-                    IM_COL32((int)glm::clamp(col.r * fillCol.r * 80 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.g * fillCol.g * 80 * aoDarken, 0.0f, 255.0f),
-                             (int)glm::clamp(col.b * fillCol.b * 80 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-                if (activeMaterial.shadingModel == 1) {
-                    drawList->AddCircleFilled(center, radius,
-                        IM_COL32((int)glm::clamp(col.r * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.g * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.b * 255, 0.0f, 255.0f), alphaByte), 64);
-                } else {
-                    ImVec2 diffCenter(center.x - L.x * radius * 0.22f, center.y + L.y * radius * 0.22f);
-                    drawList->AddCircleFilled(diffCenter, radius * 0.88f,
-                        IM_COL32((int)glm::clamp(col.r * lightCol.r * 180 * aoDarken, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.g * lightCol.g * 180 * aoDarken, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.b * lightCol.b * 180 * aoDarken, 0.0f, 255.0f), alphaByte), 64);
-
-                    ImVec2 coreCenter(center.x - L.x * radius * 0.38f, center.y + L.y * radius * 0.38f);
-                    drawList->AddCircleFilled(coreCenter, radius * 0.68f,
-                        IM_COL32((int)glm::clamp(col.r * lightCol.r * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.g * lightCol.g * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(col.b * lightCol.b * 255, 0.0f, 255.0f), alphaByte), 64);
-
-                    float specRadius = radius * glm::mix(0.32f, 0.04f, specRough);
-                    int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                    ImVec2 specCenter(center.x - H.x * radius * 0.52f, center.y + H.y * radius * 0.52f);
-                    drawList->AddCircleFilled(specCenter, specRadius,
-                        IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
-                }
-
-                if (activeMaterial.emissiveIntensity > 0.01f) {
-                    glm::vec3 emCol = activeMaterial.emissiveColor;
-                    float glowAlpha = glm::clamp(activeMaterial.emissiveIntensity * 0.25f, 0.2f, 1.0f);
-                    drawList->AddCircle(center, radius + 3.5f,
-                        IM_COL32((int)glm::clamp(emCol.r * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(emCol.g * 255, 0.0f, 255.0f),
-                                 (int)glm::clamp(emCol.b * 255, 0.0f, 255.0f), (int)(glowAlpha * 255)), 64, 4.0f);
-                }
-                drawList->AddCircle(center, radius, IM_COL32(40, 42, 50, 255), 64, 1.5f);
-
-            } else if (matEditorPreviewMesh == 1) {
-                // Cube
-                float sz = radius * 0.78f;
-                ImVec2 top[4] = {
-                    ImVec2(center.x, center.y - sz * 0.85f),
-                    ImVec2(center.x + sz * 0.866f, center.y - sz * 0.35f),
-                    ImVec2(center.x, center.y + sz * 0.15f),
-                    ImVec2(center.x - sz * 0.866f, center.y - sz * 0.35f)
-                };
-                ImVec2 leftF[4] = {
-                    top[3], top[2],
-                    ImVec2(center.x, center.y + sz * 0.95f),
-                    ImVec2(center.x - sz * 0.866f, center.y + sz * 0.45f)
-                };
-                ImVec2 rightF[4] = {
-                    top[2], top[1],
-                    ImVec2(center.x + sz * 0.866f, center.y + sz * 0.45f),
-                    ImVec2(center.x, center.y + sz * 0.95f)
-                };
-
-                float dotTop = glm::clamp(glm::dot(glm::vec3(0, 1, 0), L), 0.2f, 1.0f);
-                float dotLeft = glm::clamp(glm::dot(glm::normalize(glm::vec3(-0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-                float dotRight = glm::clamp(glm::dot(glm::normalize(glm::vec3(0.866f, 0, 0.5f)), L), 0.15f, 0.9f);
-
-                glm::vec3 cTop = col * lightCol * dotTop * aoDarken;
-                glm::vec3 cLeft = col * fillCol * dotLeft * aoDarken;
-                glm::vec3 cRight = col * lightCol * dotRight * aoDarken;
-
-                drawList->AddQuadFilled(top[0], top[1], top[2], top[3],
-                    IM_COL32((int)glm::clamp(cTop.r * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.g * 255, 0.0f, 255.0f), (int)glm::clamp(cTop.b * 255, 0.0f, 255.0f), alphaByte));
-                drawList->AddQuadFilled(leftF[0], leftF[1], leftF[2], leftF[3],
-                    IM_COL32((int)glm::clamp(cLeft.r * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.g * 255, 0.0f, 255.0f), (int)glm::clamp(cLeft.b * 255, 0.0f, 255.0f), alphaByte));
-                drawList->AddQuadFilled(rightF[0], rightF[1], rightF[2], rightF[3],
-                    IM_COL32((int)glm::clamp(cRight.r * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.g * 255, 0.0f, 255.0f), (int)glm::clamp(cRight.b * 255, 0.0f, 255.0f), alphaByte));
-
-                ImU32 edgeCol = IM_COL32(50, 52, 60, 255);
-                drawList->AddQuad(top[0], top[1], top[2], top[3], edgeCol, 1.5f);
-                drawList->AddQuad(leftF[0], leftF[1], leftF[2], leftF[3], edgeCol, 1.5f);
-                drawList->AddQuad(rightF[0], rightF[1], rightF[2], rightF[3], edgeCol, 1.5f);
-
-            } else {
-                // Plane
-                float pw = radius * 0.95f;
-                float ph = radius * 0.65f;
-                ImVec2 p[4] = {
-                    ImVec2(center.x - pw * 0.7f, center.y - ph),
-                    ImVec2(center.x + pw * 0.7f, center.y - ph),
-                    ImVec2(center.x + pw, center.y + ph),
-                    ImVec2(center.x - pw, center.y + ph)
-                };
-
-                float dotPlane = glm::clamp(glm::dot(glm::vec3(0, 0, 1), L), 0.25f, 1.0f);
-                glm::vec3 cPlane = col * lightCol * dotPlane * aoDarken;
-
-                drawList->AddQuadFilled(p[0], p[1], p[2], p[3],
-                    IM_COL32((int)glm::clamp(cPlane.r * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(cPlane.g * 255, 0.0f, 255.0f),
-                             (int)glm::clamp(cPlane.b * 255, 0.0f, 255.0f), alphaByte));
-
-                if (activeMaterial.shadingModel != 1) {
-                    float specRadius = radius * glm::mix(0.35f, 0.05f, specRough);
-                    int specAlpha = (int)(255.0f * (1.0f - specRough * 0.65f) * sphereAlpha);
-                    ImVec2 specCenter(center.x - H.x * radius * 0.4f, center.y - H.y * radius * 0.3f);
-                    drawList->AddCircleFilled(specCenter, specRadius,
-                        IM_COL32((int)(specColor.r * 255), (int)(specColor.g * 255), (int)(specColor.b * 255), specAlpha), 32);
-                }
-
-                drawList->AddQuad(p[0], p[1], p[2], p[3], IM_COL32(50, 52, 60, 255), 1.5f);
+        // Invisible button to capture drag for model rotation (Left) and light rotation (Right)
+        ImGui::SetCursorScreenPos(canvasPos);
+        ImGui::InvisibleButton("##WorkspacePreviewCanvasBtn", canvasSize);
+        if (ImGui::IsItemActive()) {
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+                ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Left);
+                matEditorRotationAngle += dragDelta.x * 0.75f;
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Left);
+            }
+            if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                ImVec2 dragDelta = ImGui::GetMouseDragDelta(ImGuiMouseButton_Right);
+                matEditorLightAngle += dragDelta.x * 0.5f;
+                ImGui::ResetMouseDragDelta(ImGuiMouseButton_Right);
             }
         }
 
+        // Texture indicator badge overlaid
+        if (!activeMaterial.baseColorTexture.empty() && activeMaterial.baseColorTexture != "none") {
+            drawList->AddRectFilled(ImVec2(canvasPos.x + 8, canvasPos.y + canvasSize.y - 24),
+                                    ImVec2(canvasPos.x + canvasSize.x - 8, canvasPos.y + canvasSize.y - 6),
+                                    IM_COL32(0, 0, 0, 180), 4.0f);
+            std::string texBadge = "Tex: " + activeMaterial.baseColorTexture;
+            if (texBadge.length() > 28) texBadge = texBadge.substr(0, 25) + "...";
+            drawList->AddText(ImVec2(canvasPos.x + 12, canvasPos.y + canvasSize.y - 22),
+                              IM_COL32(100, 220, 255, 255), texBadge.c_str());
+        }
+
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Preview: %s", meshNames[matEditorPreviewMesh]);
-        ImGui::TextDisabled("Light: %.0f° (Drag to orbit)", matEditorLightAngle);
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÃ‚Â°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
+        ImGui::TextDisabled("Light: %.0fÃ‚Â° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
 
-        ImGui::EndChild();
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
 
-        ImGui::SameLine();
-
-        // Right Pane: SURFACE, VALUES, SETTINGS
-        ImGui::BeginChild("MatWorkspacePropertiesPane", ImVec2(0, 0), true);
-
+        // Material Identity & File Metadata card
+        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Material Info");
         char nameEdit[64];
         strncpy(nameEdit, activeMaterial.name.c_str(), sizeof(nameEdit));
         nameEdit[sizeof(nameEdit) - 1] = '\0';
-        ImGui::Text("Material:");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 10.0f);
+        ImGui::SetNextItemWidth(previewColW - 20.0f);
         if (ImGui::InputText("##MatNameWorkspaceHeader", nameEdit, sizeof(nameEdit))) {
             activeMaterial.name = nameEdit;
             materialDirty = true;
@@ -8594,110 +9129,216 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
 
         if (activeMaterial.assetId.IsValid()) {
             ImGui::TextDisabled("AssetID: %s", activeMaterial.assetId.ToString().c_str());
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Copy##CopyMatAssetIdWS")) {
+            if (ImGui::SmallButton("Copy AssetID##CopyMatAssetIdWS")) {
                 ImGui::SetClipboardText(activeMaterial.assetId.ToString().c_str());
                 AddLog("LogMaterial", "Copied AssetID to clipboard: " + activeMaterial.assetId.ToString(), 0);
             }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("View References##MatRefViewWS")) {
+                OpenReferenceViewer(activeMaterial.assetId);
+            }
         }
 
+        if (!activeMaterial.filePath.empty()) {
+            ImGui::TextDisabled("Path: %s", activeMaterial.filePath.c_str());
+        }
+
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // ====================================================================
+        // COLUMN 2 (CENTER): TEXTURE SELECTING FIELDS
+        // ====================================================================
+        ImGui::BeginChild("MatWorkspaceTexturesCol", ImVec2(texturesColW, 0), true);
+
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Texture Selecting Fields");
+        ImGui::TextDisabled("Select or drop textures for PBR channels");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 1. Base Color (Albedo)
+        if (DrawTextureSlot("Base Color (Albedo)", activeMaterial.baseColorTexture, activeMaterial.baseColorAssetId, availableTextures)) {
+            materialDirty = true;
+            if (TextureManager::Get().IsTextureLoaded(activeMaterial.baseColorTexture)) {
+                CachedTexture* tex = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
+                if (tex && tex->valid) activeMaterial.baseColor = tex->averageColor;
+            }
+        }
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
 
-        // SECTION 1: SURFACE
-        if (ImGui::CollapsingHeader("SURFACE", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            if (DrawTextureSlot("Base Color", activeMaterial.baseColorTexture, activeMaterial.baseColorAssetId, availableTextures)) {
-                materialDirty = true;
-                CachedTexture* tex = TextureManager::Get().GetTexture(activeMaterial.baseColorTexture);
-                if (tex && tex->valid) activeMaterial.baseColor = tex->averageColor;
-            }
-            if (DrawTextureSlot("Normal", activeMaterial.normalTexture, activeMaterial.normalAssetId, availableTextures)) materialDirty = true;
-            if (DrawTextureSlot("Roughness", activeMaterial.roughnessTexture, activeMaterial.roughnessAssetId, availableTextures)) materialDirty = true;
-            if (DrawTextureSlot("Metallic", activeMaterial.metallicTexture, activeMaterial.metallicAssetId, availableTextures)) materialDirty = true;
-            if (DrawTextureSlot("Ambient Occlusion", activeMaterial.aoTexture, activeMaterial.aoAssetId, availableTextures)) materialDirty = true;
-            if (DrawTextureSlot("Emission", activeMaterial.emissionTexture, activeMaterial.emissionAssetId, availableTextures)) materialDirty = true;
-            if (DrawTextureSlot("Opacity / Mask", activeMaterial.opacityTexture, activeMaterial.opacityAssetId, availableTextures)) materialDirty = true;
-            ImGui::Spacing();
+        // 2. Normal Map
+        if (DrawTextureSlot("Normal Map", activeMaterial.normalTexture, activeMaterial.normalAssetId, availableTextures)) {
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 3. Surface Map (Packed ORM / RMA)
+        if (DrawTextureSlot("Surface Map (Packed R=AO, G=Rough, B=Metal)", matEditorSurfaceMap, activeMaterial.roughnessAssetId, availableTextures)) {
+            activeMaterial.roughnessTexture = matEditorSurfaceMap;
+            activeMaterial.metallicTexture = matEditorSurfaceMap;
+            activeMaterial.aoTexture = matEditorSurfaceMap;
+            activeMaterial.aoChannel = 0;
+            activeMaterial.roughnessChannel = 1;
+            activeMaterial.metallicChannel = 2;
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 4. Roughness Map
+        if (DrawTextureSlot("Roughness Map", activeMaterial.roughnessTexture, activeMaterial.roughnessAssetId, availableTextures)) {
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 5. Metallic Map
+        if (DrawTextureSlot("Metallic Map", activeMaterial.metallicTexture, activeMaterial.metallicAssetId, availableTextures)) {
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 6. Ambient Occlusion Map
+        if (DrawTextureSlot("Ambient Occlusion (AO) Map", activeMaterial.aoTexture, activeMaterial.aoAssetId, availableTextures)) {
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 7. Emissive / Emission Map
+        if (DrawTextureSlot("Emissive Map", activeMaterial.emissionTexture, activeMaterial.emissionAssetId, availableTextures)) {
+            materialDirty = true;
+        }
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 8. Opacity / Mask Map
+        if (DrawTextureSlot("Opacity / Mask Map", activeMaterial.opacityTexture, activeMaterial.opacityAssetId, availableTextures)) {
+            materialDirty = true;
         }
 
-        // SECTION 2: VALUES
-        if (ImGui::CollapsingHeader("VALUES", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            if (ImGui::ColorEdit3("Base Color Tint", &activeMaterial.baseColor.x)) materialDirty = true;
-            if (ImGui::SliderFloat("Roughness", &activeMaterial.roughness, 0.0f, 1.0f, "%.2f")) materialDirty = true;
-            if (ImGui::SliderFloat("Metallic", &activeMaterial.metallic, 0.0f, 1.0f, "%.2f")) materialDirty = true;
-            if (ImGui::SliderFloat("Normal Strength", &activeMaterial.normalStrength, 0.0f, 3.0f, "%.2f")) materialDirty = true;
-            if (ImGui::SliderFloat("Specular", &activeMaterial.specular, 0.0f, 1.0f, "%.2f")) materialDirty = true;
-            if (ImGui::ColorEdit3("Emissive Color", &activeMaterial.emissiveColor.x)) materialDirty = true;
-            if (ImGui::DragFloat("Emissive Intensity", &activeMaterial.emissiveIntensity, 0.1f, 0.0f, 100.0f, "%.1f")) materialDirty = true;
-            if (activeMaterial.blendMode != 0) {
-                if (ImGui::SliderFloat("Opacity", &activeMaterial.opacity, 0.0f, 1.0f, "%.2f")) materialDirty = true;
-                if (activeMaterial.blendMode == 1) {
-                    if (ImGui::SliderFloat("Mask Clip Value", &activeMaterial.opacityMaskClipValue, 0.0f, 1.0f, "%.2f")) materialDirty = true;
-                }
-            }
-            if (ImGui::DragFloat2("UV Scale", &activeMaterial.uvScale.x, 0.05f, 0.01f, 100.0f, "%.2f")) materialDirty = true;
-            ImGui::Spacing();
-        }
+        ImGui::EndChild();
 
-        // SECTION 3: MATERIAL SETTINGS
-        if (ImGui::CollapsingHeader("MATERIAL SETTINGS", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::SameLine();
+
+        // ====================================================================
+        // COLUMN 3 (RIGHT): MATERIAL PROPERTIES
+        // ====================================================================
+        ImGui::BeginChild("MatWorkspacePropertiesCol", ImVec2(0, 0), true);
+
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Material Properties");
+        ImGui::TextDisabled("Physical properties, opacity, and shading parameters");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // SECTION 1: MATERIAL TYPE & SHADING
+        if (ImGui::CollapsingHeader("MATERIAL TYPE & SHADING", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             const char* shadingModels[] = { "Default Lit (PBR Cook-Torrance)", "Unlit", "Subsurface Profile" };
             if (ImGui::Combo("Shading Model", &activeMaterial.shadingModel, shadingModels, IM_ARRAYSIZE(shadingModels))) materialDirty = true;
+
             const char* blendModes[] = { "Opaque", "Masked", "Translucent" };
-            if (ImGui::Combo("Blend Mode", &activeMaterial.blendMode, blendModes, IM_ARRAYSIZE(blendModes))) materialDirty = true;
+            if (ImGui::Combo("Material Type (Blend Mode)", &activeMaterial.blendMode, blendModes, IM_ARRAYSIZE(blendModes))) materialDirty = true;
+
             if (ImGui::Checkbox("Two Sided", &activeMaterial.twoSided)) materialDirty = true;
+            ImGui::SameLine();
             if (ImGui::Checkbox("Cast Shadows", &activeMaterial.castShadows)) materialDirty = true;
+            ImGui::SameLine();
             if (ImGui::Checkbox("Receive Shadows", &activeMaterial.receiveShadows)) materialDirty = true;
             ImGui::Spacing();
         }
 
-        // Real-time viewport sync if enabled
-        if (liveMaterialViewportSync && materialDirty) {
-            for (auto& obj : scene.objects) {
-                if (obj.materialName == activeMaterial.name || 
-                    obj.materialName == activeMaterial.filePath ||
-                    std::filesystem::path(activeMaterial.filePath).stem().string() == obj.materialName) {
-                    obj.color = activeMaterial.baseColor;
-                    obj.metallic = activeMaterial.metallic;
-                    obj.roughness = activeMaterial.roughness;
-                    obj.normalStrength = activeMaterial.normalStrength;
-                    obj.specular = activeMaterial.specular;
-                    obj.emissiveColor = activeMaterial.emissiveColor;
-                    obj.emissiveIntensity = activeMaterial.emissiveIntensity;
-                    obj.shadingModel = activeMaterial.shadingModel;
-                    obj.blendMode = activeMaterial.blendMode;
-                    obj.twoSided = activeMaterial.twoSided;
-                    obj.castShadows = activeMaterial.castShadows;
-                    obj.receiveShadows = activeMaterial.receiveShadows;
-                    obj.opacity = activeMaterial.opacity;
-                    obj.opacityMaskClipValue = activeMaterial.opacityMaskClipValue;
-                    obj.baseColorTexture = activeMaterial.baseColorTexture;
-                    obj.normalTexture = activeMaterial.normalTexture;
-                    obj.roughnessTexture = activeMaterial.roughnessTexture;
-                    obj.metallicTexture = activeMaterial.metallicTexture;
-                    obj.aoTexture = activeMaterial.aoTexture;
-                    obj.emissionTexture = activeMaterial.emissionTexture;
-                    obj.opacityTexture = activeMaterial.opacityTexture;
-                    obj.uvScale = activeMaterial.uvScale;
-                    obj.normalMapYFlip = activeMaterial.normalMapYFlip;
-                    obj.metallicChannel = activeMaterial.metallicChannel;
-                    obj.roughnessChannel = activeMaterial.roughnessChannel;
-                    obj.aoChannel = activeMaterial.aoChannel;
-                    obj.materialDebugMode = activeMaterial.materialDebugMode;
-                }
+        // SECTION 2: OPACITY & MASKING
+        if (ImGui::CollapsingHeader("OPACITY & MASKING", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Opacity", &activeMaterial.opacity, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (activeMaterial.blendMode == 1) { // Masked
+                if (ImGui::SliderFloat("Mask Clip Value", &activeMaterial.opacityMaskClipValue, 0.0f, 1.0f, "%.2f")) materialDirty = true;
             }
+            ImGui::Spacing();
+        }
+
+        // SECTION 3: SURFACE VALUES (PBR)
+        if (ImGui::CollapsingHeader("SURFACE VALUES (PBR)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::ColorEdit3("Base Color Tint", &activeMaterial.baseColor.x, ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_DisplayRGB)) materialDirty = true;
+            if (ImGui::SliderFloat("Roughness", &activeMaterial.roughness, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Metallic", &activeMaterial.metallic, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Specular", &activeMaterial.specular, 0.0f, 1.0f, "%.2f")) materialDirty = true;
+            if (ImGui::SliderFloat("Normal Strength", &activeMaterial.normalStrength, 0.0f, 3.0f, "%.2f")) materialDirty = true;
+            if (ImGui::Checkbox("Normal Map Y / Green Flip (OpenGL / Blender)", &activeMaterial.normalMapYFlip)) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // SECTION 4: EMISSIVE LIGHTING
+        if (ImGui::CollapsingHeader("EMISSIVE LIGHTING", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::ColorEdit3("Emissive Color", &activeMaterial.emissiveColor.x, ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_DisplayRGB)) materialDirty = true;
+            if (ImGui::DragFloat("Emissive Intensity", &activeMaterial.emissiveIntensity, 0.1f, 0.0f, 100.0f, "%.1f")) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // SECTION 5: UV COORDINATES & TILING
+        if (ImGui::CollapsingHeader("UV COORDINATES & TILING", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::DragFloat2("UV Scale / Tiling", &activeMaterial.uvScale.x, 0.05f, 0.01f, 100.0f, "%.2f")) {
+                materialDirty = true;
+                PropagateMaterialChangesToScene(scene, activeMaterial);
+            }
+            ImGui::Spacing();
+        }
+
+        // SECTION 6: TEXTURE CHANNEL ROUTING
+        if (ImGui::CollapsingHeader("TEXTURE CHANNEL ROUTING", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            const char* channelNames[] = { "Red (R)", "Green (G)", "Blue (B)", "Alpha (A)" };
+            if (ImGui::Combo("Metallic Channel", &activeMaterial.metallicChannel, channelNames, IM_ARRAYSIZE(channelNames))) materialDirty = true;
+            if (ImGui::Combo("Roughness Channel", &activeMaterial.roughnessChannel, channelNames, IM_ARRAYSIZE(channelNames))) materialDirty = true;
+            if (ImGui::Combo("AO Channel", &activeMaterial.aoChannel, channelNames, IM_ARRAYSIZE(channelNames))) materialDirty = true;
+            ImGui::Spacing();
+        }
+
+        // SECTION 7: MATERIAL DIAGNOSTICS & DEBUG
+        if (ImGui::CollapsingHeader("MATERIAL DIAGNOSTICS", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            const char* debugModes[] = {
+                "Full PBR Lit (Default)",
+                "Unlit",
+                "Base Color Only",
+                "Normal Only",
+                "Roughness Only",
+                "Metallic Only",
+                "Ambient Occlusion Only",
+                "Emissive Only",
+                "UV Coordinates"
+            };
+            if (ImGui::Combo("Debug View Mode", &activeMaterial.materialDebugMode, debugModes, IM_ARRAYSIZE(debugModes))) materialDirty = true;
+            if (ImGui::Checkbox("Disable Texture Streaming", &activeMaterial.disableStreaming)) materialDirty = true;
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Wicked Engine: When checked, keeps textures of this material at full native resolution even when outside viewport.");
+            ImGui::Spacing();
         }
 
         ImGui::EndChild();
+
+        // Real-time viewport sync if enabled
+        if (liveMaterialViewportSync && materialDirty) {
+            PropagateMaterialChangesToScene(scene, activeMaterial);
+        }
     }
     ImGui::End();
     ImGui::PopStyleVar(2);
 }
-
 bool EngineUI::LoadWaterFile(const std::string& path, WaterAsset& out) {
     std::ifstream file(path);
     if (!file.is_open()) return false;
@@ -8791,6 +9432,12 @@ bool EngineUI::LoadSkyboxFile(const std::string& path, SkyboxAsset& outSkybox) {
         else if (key == "rotation") {
             try { outSkybox.rotation = std::stof(val); } catch (...) {}
         }
+        else if (key == "autoRotate") {
+            outSkybox.autoRotate = (val == "1" || val == "true" || val == "True");
+        }
+        else if (key == "autoRotateSpeed") {
+            try { outSkybox.autoRotateSpeed = std::stof(val); } catch (...) {}
+        }
         else if (key == "tint") {
             std::stringstream ss(val);
             ss >> outSkybox.tint.r >> outSkybox.tint.g >> outSkybox.tint.b;
@@ -8838,6 +9485,8 @@ bool EngineUI::SaveSkyboxFile(const std::string& path, const SkyboxAsset& skybox
     file << "hdrTexture: " << skybox.hdrTexturePath << "\n";
     file << "exposure: " << skybox.exposure << "\n";
     file << "rotation: " << skybox.rotation << "\n";
+    file << "autoRotate: " << (skybox.autoRotate ? 1 : 0) << "\n";
+    file << "autoRotateSpeed: " << skybox.autoRotateSpeed << "\n";
     file << "tint: " << skybox.tint.r << " " << skybox.tint.g << " " << skybox.tint.b << "\n";
     file << "ambientContribution: " << skybox.ambientContribution << "\n";
     file << "enableSkybox: " << (skybox.enableSkybox ? 1 : 0) << "\n";
@@ -8860,15 +9509,8 @@ void EngineUI::OpenSkyboxEditor(const std::string& path) {
 }
 
 void EngineUI::OpenUIEditor(const std::string& path) {
-    VisualBehaviuors::BehaviourEditorManager::Get().Deactivate();
     EunoiaUI::UIEditorManager::Get().Open(path);
     AddLog("LogContent", "Opened UI Editor for: " + path, 0);
-}
-
-void EngineUI::OpenVisualBehaviourEditor(const std::string& path) {
-    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
-    VisualBehaviuors::BehaviourEditorManager::Get().Open(path);
-    AddLog("LogContent", "Opened Visual Behaviour: " + path, 0);
 }
 
 void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
@@ -8877,6 +9519,8 @@ void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
     scene.skyboxTexturePath = skybox.hdrTexturePath;
     scene.skyboxExposure = skybox.exposure;
     scene.skyboxRotation = skybox.rotation;
+    scene.skyboxAutoRotate = skybox.autoRotate;
+    scene.skyboxAutoRotateSpeed = skybox.autoRotateSpeed;
     scene.skyboxTint = skybox.tint;
     scene.skyboxAmbientContribution = skybox.ambientContribution;
     scene.enableSkyboxLighting = skybox.enableSkyboxLighting;
@@ -8949,6 +9593,16 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             if (ImGui::SliderFloat("Rotation (Azimuth)", &activeSkybox.rotation, 0.0f, 360.0f, "%.1f°")) {
                 skyboxDirty = true;
             }
+            if (ImGui::Checkbox("Auto Rotate Sky", &activeSkybox.autoRotate)) {
+                skyboxDirty = true;
+            }
+            if (activeSkybox.autoRotate) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f * uiScale);
+                if (ImGui::SliderFloat("Speed##SkyEditSpeed", &activeSkybox.autoRotateSpeed, -20.0f, 20.0f, "%.1f°/s")) {
+                    skyboxDirty = true;
+                }
+            }
             if (ImGui::ColorEdit3("Color Tint", &activeSkybox.tint.x)) {
                 skyboxDirty = true;
             }
@@ -8999,6 +9653,8 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             scene.skyboxTexturePath = activeSkybox.hdrTexturePath;
             scene.skyboxExposure = activeSkybox.exposure;
             scene.skyboxRotation = activeSkybox.rotation;
+            scene.skyboxAutoRotate = activeSkybox.autoRotate;
+            scene.skyboxAutoRotateSpeed = activeSkybox.autoRotateSpeed;
             scene.skyboxTint = activeSkybox.tint;
             scene.skyboxAmbientContribution = activeSkybox.ambientContribution;
             scene.enableSkyboxLighting = activeSkybox.enableSkyboxLighting;
@@ -9025,67 +9681,23 @@ void EngineUI::RenderWorldSkyboxSettingsModal(Scene& scene) {
         ImGui::Checkbox("Enable World Skybox", &scene.enableSkybox);
         ImGui::Spacing();
 
-        if (ImGui::CollapsingHeader("ACTIVE SKYBOX ASSET", ImGuiTreeNodeFlags_DefaultOpen)) {
-            ImGui::Spacing();
-            std::vector<AssetMetadata> skyboxAssets;
-            for (const auto& kv : AssetRegistry::Get().GetAllAssets()) {
-                if (kv.second.type == AssetType::Skybox) {
-                    skyboxAssets.push_back(kv.second);
-                }
-            }
-
-            std::string currentSkyboxName = "(Direct Settings / No Asset)";
-            if (!scene.skyboxAssetPath.empty()) {
-                currentSkyboxName = std::filesystem::path(scene.skyboxAssetPath).stem().string();
-            }
-
-            ImGui::SetNextItemWidth(320.0f);
-            if (ImGui::BeginCombo("Skybox Asset", currentSkyboxName.c_str())) {
-                if (ImGui::Selectable("(Direct Custom Settings)", scene.skyboxAssetPath.empty())) {
-                    scene.skyboxAssetPath = "";
-                }
-                ImGui::Separator();
-                for (const auto& sa : skyboxAssets) {
-                    bool isSel = (scene.skyboxAssetPath == sa.sourcePath || scene.skyboxAssetPath.find(sa.objectName) != std::string::npos);
-                    std::string itemText = "" + sa.objectName;
-                    if (ImGui::Selectable(itemText.c_str(), isSel)) {
-                        SkyboxAsset loaded;
-                        std::filesystem::path fullPath = sa.sourcePath;
-                        if (!fullPath.is_absolute()) {
-                            fullPath = contentRootPath / sa.sourcePath;
-                        }
-                        if (LoadSkyboxFile(fullPath.string(), loaded)) {
-                            ApplySkyboxToScene(scene, loaded);
-                        }
-                    }
-                }
-                ImGui::EndCombo();
-            }
-
-            if (!scene.skyboxAssetPath.empty()) {
-                ImGui::SameLine();
-                if (ImGui::Button("Edit Asset##EditSkyboxAssetBtn")) {
-                    OpenSkyboxEditor(scene.skyboxAssetPath);
-                }
-            }
-
-            ImGui::SameLine();
-            if (ImGui::Button("New Asset")) {
-                showNewSkyboxPopup = true;
-                snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
-            }
-            ImGui::Spacing();
-        }
-
         if (ImGui::CollapsingHeader("TEXTURE & ILLUMINATION", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             auto availableTextures = ScanProjectTextures();
             AssetID dummyAssetId;
-            DrawTextureSlot("HDR Texture", scene.skyboxTexturePath, dummyAssetId, availableTextures);
+            if (DrawTextureSlot("HDR Texture", scene.skyboxTexturePath, dummyAssetId, availableTextures)) {
+                scene.skyboxAssetPath = "";
+            }
             ImGui::Spacing();
 
             ImGui::SliderFloat("Exposure / Intensity", &scene.skyboxExposure, 0.05f, 10.0f, "%.2f");
             ImGui::SliderFloat("Rotation (Azimuth)", &scene.skyboxRotation, 0.0f, 360.0f, "%.1f°");
+            ImGui::Checkbox("Auto Rotate Sky", &scene.skyboxAutoRotate);
+            if (scene.skyboxAutoRotate) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(120.0f * uiScale);
+                ImGui::SliderFloat("Speed##SkyRotateSpeed", &scene.skyboxAutoRotateSpeed, -20.0f, 20.0f, "%.1f°/s");
+            }
             ImGui::ColorEdit3("Sky Tint", &scene.skyboxTint.x);
             ImGui::SliderFloat("Ambient Scene Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
             ImGui::Spacing();
@@ -9378,8 +9990,8 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
                 ImGui::SetTooltip("Set AO sample radius / ray length in world meters (WickedEngine aoRange).\nControls the physical distance across which ambient occlusion spreads.");
             }
 
-            // Sample Count (WickedEngine aoSampleCountSlider: 1 - 32)
-            if (ImGui::SliderInt("Sample Count##AoSamples", &scene.aoSampleCount, 1, 32)) {
+            // Sample Count (WickedEngine aoSampleCountSlider: 1 - 64)
+            if (ImGui::SliderInt("Sample Count##AoSamples", &scene.aoSampleCount, 1, 64)) {
                 RequestViewportRedraw(15);
             }
             if (ImGui::IsItemHovered()) {
@@ -9495,6 +10107,116 @@ void EngineUI::RenderAmbientOcclusionModal(Scene& scene) {
     ImGui::End();
 }
 
+void EngineUI::RenderVolumetricFogModal(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(560, 480), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("World Volumetric Fog Settings###WorldVolumetricFogWin", &showVolumetricFogModal, ImGuiWindowFlags_NoCollapse)) {
+        ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "Wicked Engine Volumetric Height Fog");
+        ImGui::TextWrapped("Configure real-time exponential height fog parameters referencing Wicked Engine fogHF.hlsli. Blends smoothly across distance and altitude.");
+        ImGui::Separator();
+
+        // Master Enable Toggle
+        ImGui::PushStyleColor(ImGuiCol_CheckMark, ImVec4(0.2f, 0.9f, 0.4f, 1.0f));
+        if (ImGui::Checkbox("Enable Volumetric Fog for Scene", &scene.enableFog)) {
+            AddLog("LogRenderer", scene.enableFog ? "Volumetric Fog Enabled" : "Volumetric Fog Disabled", 0);
+            RequestViewportRedraw(15);
+        }
+        ImGui::PopStyleColor();
+
+        ImGui::SameLine();
+        if (scene.enableFog) {
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "[ACTIVE]");
+        } else {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.65f, 1.0f), "[DISABLED]");
+        }
+        ImGui::Spacing();
+
+        if (ImGui::CollapsingHeader("FOG PROPERTIES (fogHF.hlsli Reference)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+
+            if (ImGui::SliderFloat("Fog Start Distance", &scene.fogStart, 0.0f, 500.0f, "%.1f m")) {
+                RequestViewportRedraw(15);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Distance from camera where fog begins to appear.");
+            }
+
+            if (ImGui::SliderFloat("Global Fog Density", &scene.fogDensity, 0.0001f, 0.05f, "%.5f")) {
+                RequestViewportRedraw(15);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Exponential fog extinction factor (Wicked Engine density).");
+            }
+
+            if (ImGui::SliderFloat("Height Start (Bottom)", &scene.fogHeightStart, -100.0f, 200.0f, "%.1f m")) {
+                if (scene.fogHeightEnd < scene.fogHeightStart) scene.fogHeightEnd = scene.fogHeightStart + 1.0f;
+                RequestViewportRedraw(15);
+            }
+
+            if (ImGui::SliderFloat("Height End (Top)", &scene.fogHeightEnd, scene.fogHeightStart, 500.0f, "%.1f m")) {
+                RequestViewportRedraw(15);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Upper altitude boundary where fog thins out to zero.");
+            }
+
+            if (ImGui::ColorEdit3("Fog Scattering Color", &scene.fogColor.x)) {
+                RequestViewportRedraw(15);
+            }
+            ImGui::Spacing();
+        }
+
+        if (ImGui::CollapsingHeader("QUICK PRESETS", ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Spacing();
+            if (ImGui::Button("Morning Mist", ImVec2(120, 26))) {
+                scene.enableFog = true; scene.fogStart = 15.0f; scene.fogDensity = 0.008f;
+                scene.fogHeightStart = -5.0f; scene.fogHeightEnd = 30.0f;
+                scene.fogColor = glm::vec3(0.75f, 0.80f, 0.90f);
+                RequestViewportRedraw(15);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Dense Valley Fog", ImVec2(140, 26))) {
+                scene.enableFog = true; scene.fogStart = 5.0f; scene.fogDensity = 0.020f;
+                scene.fogHeightStart = -10.0f; scene.fogHeightEnd = 20.0f;
+                scene.fogColor = glm::vec3(0.65f, 0.70f, 0.75f);
+                RequestViewportRedraw(15);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Atmospheric Haze", ImVec2(140, 26))) {
+                scene.enableFog = true; scene.fogStart = 50.0f; scene.fogDensity = 0.002f;
+                scene.fogHeightStart = -50.0f; scene.fogHeightEnd = 200.0f;
+                scene.fogColor = glm::vec3(0.70f, 0.75f, 0.85f);
+                RequestViewportRedraw(15);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Disable Fog", ImVec2(100, 26))) {
+                scene.enableFog = false;
+                RequestViewportRedraw(15);
+            }
+            ImGui::Spacing();
+        }
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (ImGui::Button("Reset to Defaults##ResetFogModal", ImVec2(160, 30))) {
+            scene.enableFog = false;
+            scene.fogStart = 10.0f;
+            scene.fogDensity = 0.005f;
+            scene.fogHeightStart = 0.0f;
+            scene.fogHeightEnd = 50.0f;
+            scene.fogColor = glm::vec3(0.7f, 0.75f, 0.85f);
+            AddLog("LogRenderer", "Reset volumetric fog settings to defaults.", 0);
+            RequestViewportRedraw(15);
+        }
+
+        ImGui::SameLine();
+        if (ImGui::Button("Close##CloseFogModal", ImVec2(100, 30))) {
+            showVolumetricFogModal = false;
+        }
+    }
+    ImGui::End();
+}
+
 
 
 
@@ -9559,11 +10281,13 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
 
 void EngineUI::RenderContentBrowser(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float curBottomH = bottomDrawerOpen ? bottomDockHeight : 32.0f;
-    float bottomW = vp->Size.x;
-    float bottomY = vp->Pos.y + vp->Size.y - curBottomH;
+    float bottomBarH = bottomBarHeight * uiScale;
+    float curBottomH = bottomDrawerOpen ? bottomDockHeight : 26.0f;
+    float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
+    float bottomW = vp->Size.x - rightW;
+    float bottomY = vp->Pos.y + vp->Size.y - bottomBarH - curBottomH;
 
-    // Docked flush as Full-Width Bottom Dock (matching Old Eunoia Engine)
+    // Docked flush as Bottom-Left Dock, sitting above bottom progress bar (matching Frame.svg blueprint)
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, bottomY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(bottomW, curBottomH), ImGuiCond_Always);
 
@@ -9577,22 +10301,22 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
         const ImVec4 accentBlue = ImVec4(0.122f, 0.600f, 0.949f, 1.0f); // #1F99F2
         const ImVec4 inactiveTab = ImVec4(0.129f, 0.129f, 0.129f, 1.0f); // #212121
 
-        float tabBtnHeight = 24.0f * uiScale;
+        float tabBtnHeight = 20.0f * uiScale;
 
         ImGui::PushStyleColor(ImGuiCol_Button, isContentTab ? accentBlue : inactiveTab);
-        if (ImGui::Button("Content Browser", ImVec2(120.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 0;
+        if (ImGui::Button("Content Browser", ImVec2(100.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 0;
         ImGui::PopStyleColor();
 
         ImGui::SameLine(0.0f, 5.0f);
         ImGui::PushStyleColor(ImGuiCol_Button, isLogTab ? accentBlue : inactiveTab);
-        if (ImGui::Button("Output Logs", ImVec2(95.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
+        if (ImGui::Button("Output Logs", ImVec2(80.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
         ImGui::PopStyleColor();
 
         ImGui::SameLine(0.0f, 8.0f);
         ImGui::AlignTextToFramePadding();
         ImGui::TextDisabled("|");
         ImGui::SameLine(0.0f, 8.0f);
-        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]", ImVec2(90.0f * uiScale, tabBtnHeight))) {
+        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]", ImVec2(75.0f * uiScale, tabBtnHeight))) {
             bottomDrawerOpen = !bottomDrawerOpen;
         }
         ImGui::Separator();
@@ -9707,11 +10431,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             defName = "NewBehaviour_" + std::to_string(bIdx);
                         }
                         snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
-                    }
-                    if (ImGui::MenuItem("New Skybox (.eskybox)...")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewSkyboxPopup = true;
-                        snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
                     }
                     ImGui::Separator();
                     if (ImGui::MenuItem("Import 3D Model / Level...")) {
@@ -10001,62 +10720,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
-                if (showNewSkyboxPopup) {
-                    ImGui::OpenPopup("Create Skybox##Modal");
-                    showNewSkyboxPopup = false;
-                }
-                if (ImGui::BeginPopupModal("Create Skybox##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Creating Skybox in: %s", targetDir.c_str());
-                    ImGui::Spacing();
-                    ImGui::Text("Enter HDR skybox asset name:");
-                    ImGui::SetNextItemWidth(260.0f);
-                    ImGui::InputText("##SkyboxNameInput", newSkyboxNameBuf, sizeof(newSkyboxNameBuf));
-                    ImGui::Spacing();
-                    if (ImGui::Button("Create", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-                        if (strlen(newSkyboxNameBuf) > 0) {
-                            std::string skyFileName = newSkyboxNameBuf;
-                            if (skyFileName.find(".eskybox") == std::string::npos) skyFileName += ".eskybox";
-                            std::string diskSub = targetDir;
-                            if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                            if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                            std::filesystem::path dstDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
-                            std::filesystem::create_directories(dstDir, ec);
-                            std::filesystem::path skyFilePath = dstDir / skyFileName;
-
-                            SkyboxAsset newSky;
-                            newSky.name = std::filesystem::path(skyFileName).stem().string();
-                            newSky.filePath = skyFilePath.string();
-                            newSky.assetId = AssetID::CreateRandom();
-                            newSky.virtualPath = AssetPath::Combine(targetDir, newSky.name);
-                            newSky.exposure = 1.0f;
-                            newSky.rotation = 0.0f;
-                            newSky.tint = glm::vec3(1.0f, 1.0f, 1.0f);
-                            newSky.ambientContribution = 0.5f;
-                            newSky.enableSkybox = true;
-                            newSky.enableSkyboxLighting = false;
-                            newSky.skyboxLightingIntensity = 1.0f;
-                            newSky.skyboxLightingColor = glm::vec3(1.0f, 1.0f, 1.0f);
-                            newSky.skyboxLightingSpecular = 1.0f;
-                            newSky.skyboxLightingDiffuse = 1.0f;
-
-                            if (SaveSkyboxFile(skyFilePath.string(), newSky)) {
-                                TriggerBackgroundRegistrySync(contentRootPath);
-                                AddLog("LogContent", "Created Skybox asset: " + newSky.name + " (" + newSky.assetId.ToString() + ") in " + targetDir, 2);
-                                OpenSkyboxEditor(skyFilePath.string());
-                            }
-                        }
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-
                 if (showNewBehaviourPopup) {
                     ImGui::OpenPopup("Create Behaviour##Modal");
                     showNewBehaviourPopup = false;
@@ -10187,89 +10850,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
-                // Visual Behaviour asset creation modal
-                if (showNewVisualBehaviourPopup) {
-                    ImGui::OpenPopup("Create Visual Behaviour##VBModal");
-                    showNewVisualBehaviourPopup = false;
-                }
-                if (ImGui::BeginPopupModal("Create Visual Behaviour##VBModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Enter Visual Behaviour Name (.ebehaviour):");
-                    ImGui::SetNextItemWidth(300.0f);
-                    ImGui::InputText("##VBehNameInput", newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf));
-
-                    std::string inputName = newVisualBehaviourNameBuf;
-                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
-                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
-
-                    bool isValidName = !inputName.empty();
-                    if (isValidName) {
-                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "Will create: %s.ebehaviour in %s", inputName.c_str(), targetDir.c_str());
-                    }
-                    ImGui::Spacing();
-
-                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
-                    if (!isValidName) ImGui::BeginDisabled();
-                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
-                    if (!isValidName) ImGui::EndDisabled();
-
-                    if (isValidName && (createClicked || enterPressed)) {
-                        std::string diskSub = targetDir;
-                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                        std::filesystem::path behDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
-                        std::error_code bec;
-                        std::filesystem::create_directories(behDir, bec);
-
-                        std::filesystem::path vbPath = behDir / (inputName + ".ebehaviour");
-                        // Create a new graph with default event stubs
-                        VisualBehaviuors::RegisterBuiltinNodes();
-                        VisualBehaviuors::BehaviourGraph g;
-                        g.name = inputName;
-                        g.AddNode("Event.BeginPlay", 50.0f, 100.0f);
-                        g.AddNode("Event.Tick",      50.0f, 220.0f);
-                        VisualBehaviuors::SaveGraph(g, vbPath.string());
-
-                        // Write .assetmeta sidecar
-                        std::filesystem::path metaPath = behDir / (inputName + ".ebehaviour.assetmeta");
-                        std::ofstream metaFile(metaPath);
-                        AssetID aid = AssetID::CreateRandom();
-                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
-                            ("/" + inputName) : (targetDir + "/" + inputName);
-                        if (metaFile.is_open()) {
-                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
-                                     << "assetId: " << aid.ToString() << "\n"
-                                     << "type: Visual Behaviour\n"
-                                     << "virtualPath: " << vPath << "\n";
-                        }
-#ifdef _WIN32
-                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
-#endif
-                        // Register in AssetRegistry immediately so it displays without delay
-                        AssetMetadata vMeta;
-                        vMeta.id = aid;
-                        vMeta.type = AssetType::VisualBehaviour;
-                        vMeta.objectName = inputName;
-                        std::filesystem::path rel = std::filesystem::relative(vbPath, contentRootPath, bec);
-                        vMeta.sourcePath = bec ? (inputName + ".ebehaviour") : rel.generic_string();
-                        vMeta.virtualPath = vPath;
-                        AssetRegistry::Get().RegisterAsset(vMeta);
-
-                        TriggerBackgroundRegistrySync(contentRootPath);
-                        OpenVisualBehaviourEditor(vbPath.string());
-                        AddLog("LogContent", "Created Visual Behaviour: " + inputName + ".ebehaviour in " + targetDir, 2);
-
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-
                 // User Interface asset creation modal
                 if (showNewUIPopup) {
                     ImGui::OpenPopup("Create User Interface##UIModal");
@@ -10335,83 +10915,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         TriggerBackgroundRegistrySync(contentRootPath);
                         OpenUIEditor(euiPath.string());
                         AddLog("LogContent", "Created User Interface: " + inputName + ".eui in " + targetDir, 2);
-
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-
-                // User Interface 3D asset creation modal
-                if (showNewUI3DPopup) {
-                    ImGui::OpenPopup("Create User Interface 3D##UI3DModal");
-                    showNewUI3DPopup = false;
-                }
-                if (ImGui::BeginPopupModal("Create User Interface 3D##UI3DModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Enter User Interface 3D Name (.eui3d):");
-                    ImGui::SetNextItemWidth(300.0f);
-                    ImGui::InputText("##UI3DNameInput", newUI3DNameBuf, sizeof(newUI3DNameBuf));
-
-                    std::string inputName = newUI3DNameBuf;
-                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
-                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
-
-                    bool isValidName = !inputName.empty();
-                    if (isValidName) {
-                        ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "Will create: %s.eui3d in %s", inputName.c_str(), targetDir.c_str());
-                    }
-                    ImGui::Spacing();
-
-                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
-                    if (!isValidName) ImGui::BeginDisabled();
-                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
-                    if (!isValidName) ImGui::EndDisabled();
-
-                    if (isValidName && (createClicked || enterPressed)) {
-                        std::string diskSub = targetDir;
-                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                        std::filesystem::path uiDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
-                        std::error_code bec;
-                        std::filesystem::create_directories(uiDir, bec);
-
-                        std::filesystem::path eui3dPath = uiDir / (inputName + ".eui3d");
-                        EunoiaUI::UISystem3DManager::Get().CreateNewUI3D(inputName, eui3dPath.string());
-
-                        // Write .assetmeta sidecar
-                        std::filesystem::path metaPath = uiDir / (inputName + ".eui3d.assetmeta");
-                        std::ofstream metaFile(metaPath);
-                        AssetID aid = AssetID::CreateRandom();
-                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
-                            ("/" + inputName) : (targetDir + "/" + inputName);
-                        if (metaFile.is_open()) {
-                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
-                                     << "assetId: " << aid.ToString() << "\n"
-                                     << "type: User Interface 3D\n"
-                                     << "virtualPath: " << vPath << "\n";
-                        }
-#ifdef _WIN32
-                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
-#endif
-                        // Register in AssetRegistry immediately
-                        AssetMetadata vMeta;
-                        vMeta.id = aid;
-                        vMeta.type = AssetType::UserInterface3D;
-                        vMeta.objectName = inputName;
-                        std::filesystem::path rel = std::filesystem::relative(eui3dPath, contentRootPath, bec);
-                        vMeta.sourcePath = bec ? (inputName + ".eui3d") : rel.generic_string();
-                        vMeta.virtualPath = vPath;
-                        AssetRegistry::Get().RegisterAsset(vMeta);
-
-                        TriggerBackgroundRegistrySync(contentRootPath);
-                        OpenUIEditor(eui3dPath.string());
-                        AddLog("LogContent", "Created User Interface 3D: " + inputName + ".eui3d in " + targetDir, 2);
 
                         popupTargetVirtualDir = "";
                         ImGui::CloseCurrentPopup();
@@ -10533,11 +11036,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewMaterialPopup = true;
                             snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                         }
-                        if (ImGui::MenuItem("New Skybox...")) {
-                            popupTargetVirtualDir = vDir;
-                            showNewSkyboxPopup = true;
-                            snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
-                        }
                         if (ImGui::MenuItem("New Behaviour Script")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
@@ -10549,20 +11047,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             }
                             snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
                         }
-                        if (ImGui::MenuItem("New Visual Behaviour")) {
-                            popupTargetVirtualDir = vDir;
-                            showNewVisualBehaviourPopup = true;
-                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
-                        }
                         if (ImGui::MenuItem("New User Interface")) {
                             popupTargetVirtualDir = vDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
-                        }
-                        if (ImGui::MenuItem("New User Interface 3D")) {
-                            popupTargetVirtualDir = vDir;
-                            showNewUI3DPopup = true;
-                            snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("Import Model...")) {
@@ -10931,7 +11419,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 lastSelectedContentItem = "";
                             } else {
                                 if (item.meta.type == AssetType::Material) {
-                                    std::filesystem::path fullMat = contentRootPath / item.meta.sourcePath;
+                                    std::filesystem::path fullMat = AssetManager::Get().ResolvePhysicalOrCookedPath(item.meta.sourcePath);
+                                    std::error_code ec;
+                                    if (fullMat.empty() || !std::filesystem::exists(fullMat, ec) || std::filesystem::file_size(fullMat, ec) == 0) {
+                                        fullMat = contentRootPath / item.meta.sourcePath;
+                                    }
                                     OpenMaterialEditor(fullMat.string());
                                 } else if (item.meta.type == AssetType::Skybox) {
                                     std::filesystem::path fullSky = contentRootPath / item.meta.sourcePath;
@@ -10944,25 +11436,24 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     OpenUIEditor(fullUI.string());
                                     AddLog("LogContent", "Opened User Interface: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::Mesh) {
-                                    std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
+                                    std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(item.meta.sourcePath);
+                                    std::error_code ec;
+                                    if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
+                                        fullMesh = contentRootPath / item.meta.sourcePath;
+                                    }
                                     GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
                                     scene.selectedId = newObj.id;
                                     AddLog("LogMesh", "Spawned 3D Mesh in level: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::Level) {
-                                    std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
+                                    std::filesystem::path fullLevel = AssetManager::Get().ResolvePhysicalOrCookedPath(item.meta.sourcePath);
+                                    std::error_code ec;
+                                    if (fullLevel.empty() || !std::filesystem::exists(fullLevel, ec) || std::filesystem::file_size(fullLevel, ec) == 0) {
+                                        fullLevel = contentRootPath / item.meta.sourcePath;
+                                    }
                                     OpenLevelFromPath(scene, fullLevel.string());
-                                } else if (item.meta.type == AssetType::VisualBehaviour) {
-                                    std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
-                                    OpenVisualBehaviourEditor(fullScript.string());
                                 } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
-                                    std::string ext = fullScript.extension().string();
-                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                                    if (ext == ".ebehaviour") {
-                                        OpenVisualBehaviourEditor(fullScript.string());
-                                    } else {
-                                        OpenScriptInCodeEditor(fullScript.string());
-                                    }
+                                    OpenScriptInCodeEditor(fullScript.string());
                                 } else if (item.meta.type == AssetType::Project) {
                                     std::filesystem::path fullProjPath = contentRootPath / item.meta.sourcePath;
                                     std::error_code ec;
@@ -11062,11 +11553,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewMaterialPopup = true;
                                     snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                                 }
-                                if (ImGui::MenuItem("New Skybox")) {
-                                    popupTargetVirtualDir = item.subDir;
-                                    showNewSkyboxPopup = true;
-                                    snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
-                                }
                                 if (ImGui::MenuItem("New Behaviour Script")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
@@ -11078,20 +11564,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
                                 }
-                                if (ImGui::MenuItem("New Visual Behaviour")) {
-                                    popupTargetVirtualDir = item.subDir;
-                                    showNewVisualBehaviourPopup = true;
-                                    snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
-                                }
                                 if (ImGui::MenuItem("New User Interface")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewUIPopup = true;
                                     snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
-                                }
-                                if (ImGui::MenuItem("New User Interface 3D")) {
-                                    popupTargetVirtualDir = item.subDir;
-                                    showNewUI3DPopup = true;
-                                    snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
                                 }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Import Model...")) {
@@ -11132,24 +11608,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     lastSelectedContentItem = item.itemKey;
                                 }
 
-                                if (item.meta.type == AssetType::VisualBehaviour) {
-                                    if (ImGui::MenuItem("Open in Visual Behaviour Editor")) {
-                                        std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
-                                        OpenVisualBehaviourEditor(fullScript.string());
-                                    }
-                                    ImGui::Separator();
-                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
-                                    std::string ext = fullScript.extension().string();
-                                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                                    if (ext == ".ebehaviour") {
-                                        if (ImGui::MenuItem("Open in Visual Behaviour Editor")) {
-                                            OpenVisualBehaviourEditor(fullScript.string());
-                                        }
-                                    } else {
-                                        if (ImGui::MenuItem("Open in VS Code")) {
-                                            OpenScriptInCodeEditor(fullScript.string());
-                                        }
+                                    if (ImGui::MenuItem("Open in VS Code")) {
+                                        OpenScriptInCodeEditor(fullScript.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -11260,6 +11722,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                                         std::filesystem::path fullDisk = contentRootPath / dMeta->sourcePath;
                                                         std::filesystem::remove(fullDisk, ec);
                                                         std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+
+                                                        // Also delete respective cooked content files
+                                                        std::filesystem::path cookedFile = AssetManager::Get().ResolvePhysicalOrCookedPath(dMeta->id);
+                                                        if (!cookedFile.empty() && std::filesystem::exists(cookedFile, ec) && cookedFile != fullDisk) {
+                                                            std::filesystem::remove(cookedFile, ec);
+                                                        }
+                                                        if (!activeProjectRoot.empty() && !dMeta->cookedPath.empty()) {
+                                                            std::filesystem::path cookedByMeta = activeProjectRoot / "Cooked" / dMeta->cookedPath;
+                                                            if (std::filesystem::exists(cookedByMeta, ec)) std::filesystem::remove(cookedByMeta, ec);
+                                                        }
+                                                        if (!activeProjectRoot.empty()) {
+                                                            std::filesystem::path cookedBySrc = activeProjectRoot / "Cooked" / "Content" / dMeta->sourcePath;
+                                                            if (std::filesystem::exists(cookedBySrc, ec)) std::filesystem::remove(cookedBySrc, ec);
+                                                        }
+
                                                         AssetRegistry::Get().UnregisterAsset(dMeta->id);
                                                         delCount++;
                                                     }
@@ -11268,7 +11745,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         }
                                         selectedContentItems.clear();
                                         selectedContentItem = "";
-                                        AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets", 1);
+                                        AddLog("LogAsset", "Deleted " + std::to_string(delCount) + " assets (including cooked content)", 1);
                                         TriggerBackgroundRegistrySync(contentRootPath);
                                     } else {
                                         auto refs = AssetRegistry::Get().GetReferences(item.meta.id);
@@ -11279,10 +11756,25 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                             std::filesystem::path fullDisk = contentRootPath / item.meta.sourcePath;
                                             std::filesystem::remove(fullDisk, ec);
                                             std::filesystem::remove(fullDisk.string() + ".assetmeta", ec);
+
+                                            // Also delete respective cooked content files
+                                            std::filesystem::path cookedFile = AssetManager::Get().ResolvePhysicalOrCookedPath(item.meta.id);
+                                            if (!cookedFile.empty() && std::filesystem::exists(cookedFile, ec) && cookedFile != fullDisk) {
+                                                std::filesystem::remove(cookedFile, ec);
+                                            }
+                                            if (!activeProjectRoot.empty() && !item.meta.cookedPath.empty()) {
+                                                std::filesystem::path cookedByMeta = activeProjectRoot / "Cooked" / item.meta.cookedPath;
+                                                if (std::filesystem::exists(cookedByMeta, ec)) std::filesystem::remove(cookedByMeta, ec);
+                                            }
+                                            if (!activeProjectRoot.empty()) {
+                                                std::filesystem::path cookedBySrc = activeProjectRoot / "Cooked" / "Content" / item.meta.sourcePath;
+                                                if (std::filesystem::exists(cookedBySrc, ec)) std::filesystem::remove(cookedBySrc, ec);
+                                            }
+
                                             AssetRegistry::Get().UnregisterAsset(item.meta.id);
                                             selectedContentItems.erase(item.itemKey);
                                             if (selectedContentItem == item.meta.virtualPath) selectedContentItem = "";
-                                            AddLog("LogAsset", "Deleted asset: " + item.meta.objectName, 1);
+                                            AddLog("LogAsset", "Deleted asset and respective cooked content: " + item.meta.objectName, 1);
                                             TriggerBackgroundRegistrySync(contentRootPath);
                                         }
                                     }
@@ -11298,9 +11790,15 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             } else {
                                 size_t depCount = item.meta.dependencies.size();
                                 size_t refCount = AssetRegistry::Get().GetReferences(item.meta.id).size();
-                                const char* statusStr = item.meta.isMissing ? "Missing" : (AssetManager::Get().IsLoaded(item.meta.id) ? "Loaded" : "Ready");
-                                ImGui::SetTooltip("Object: %s\nType: %s\nVirtual: %s\nAssetID: %s\nDisk: %s\nDeps: %d | Refs: %d | Status: %s\n(Double-click to open | Drag & Drop to viewport/folder)",
-                                    item.meta.objectName.c_str(), AssetTypeToString(item.meta.type), item.meta.virtualPath.c_str(), item.meta.id.ToString().c_str(), item.meta.sourcePath.c_str(), (int)depCount, (int)refCount, statusStr);
+                                bool isDummyRef = false;
+                                std::error_code ec;
+                                std::filesystem::path fullDisk = contentRootPath / item.meta.sourcePath;
+                                if (!std::filesystem::exists(fullDisk, ec) || std::filesystem::file_size(fullDisk, ec) == 0) {
+                                    if (!item.meta.cookedPath.empty()) isDummyRef = true;
+                                }
+                                const char* statusStr = isDummyRef ? "Cooked (Dummy Reference)" : (item.meta.isMissing ? "Missing" : (AssetManager::Get().IsLoaded(item.meta.id) ? "Loaded" : "Ready"));
+                                ImGui::SetTooltip("Object: %s\nType: %s\nVirtual: %s\nAssetID: %s\nDisk: %s%s\nDeps: %d | Refs: %d | Status: %s\n(Double-click to open | Drag & Drop to viewport/folder)",
+                                    item.meta.objectName.c_str(), AssetTypeToString(item.meta.type), item.meta.virtualPath.c_str(), item.meta.id.ToString().c_str(), item.meta.sourcePath.c_str(), isDummyRef ? " [Virtual Dummy]" : "", (int)depCount, (int)refCount, statusStr);
                             }
                         }
 
@@ -11419,36 +11917,16 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewMaterialPopup = true;
                         snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                     }
-                    if (ImGui::MenuItem("New Skybox")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewSkyboxPopup = true;
-                        snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
-                    }
                     if (ImGui::MenuItem("New User Interface")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewUIPopup = true;
                         snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
-                    }
-                    if (ImGui::MenuItem("New User Interface 3D")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewUI3DPopup = true;
-                        snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
                     }
                     if (ImGui::BeginMenu("Create")) {
                         if (ImGui::MenuItem("User Interface (.eui)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
-                        }
-                        if (ImGui::MenuItem("User Interface 3D (.eui3d)")) {
-                            popupTargetVirtualDir = currentVirtualDir;
-                            showNewUI3DPopup = true;
-                            snprintf(newUI3DNameBuf, sizeof(newUI3DNameBuf), "UI3D_NewInterface");
-                        }
-                        if (ImGui::MenuItem("Visual Behaviour (.ebehaviour)")) {
-                            popupTargetVirtualDir = currentVirtualDir;
-                            showNewVisualBehaviourPopup = true;
-                            snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
                         }
                         if (ImGui::MenuItem("Behaviour Script (.cpp)")) {
                             popupTargetVirtualDir = currentVirtualDir;
@@ -11466,11 +11944,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewMaterialPopup = true;
                             snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                         }
-                        if (ImGui::MenuItem("Skybox")) {
-                            popupTargetVirtualDir = currentVirtualDir;
-                            showNewSkyboxPopup = true;
-                            snprintf(newSkyboxNameBuf, sizeof(newSkyboxNameBuf), "Skybox_New");
-                        }
                         if (ImGui::MenuItem("Folder")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewFolderPopup = true;
@@ -11479,11 +11952,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         ImGui::EndMenu();
                     }
                     ImGui::Separator();
-                    if (ImGui::MenuItem("New Visual Behaviour")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewVisualBehaviourPopup = true;
-                        snprintf(newVisualBehaviourNameBuf, sizeof(newVisualBehaviourNameBuf), "NewVisualBehaviour");
-                    }
                     if (ImGui::MenuItem("New Behaviour Script")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
@@ -11500,9 +11968,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         popupTargetVirtualDir = currentVirtualDir;
                         ImportMeshWithSavePrompt(scene);
                     }
-                    if (ImGui::MenuItem("Cook & Package Assets...")) {
-                        OpenCookModal();
-                    }
+
                     if (ImGui::MenuItem("Show in Explorer")) {
                         std::string diskSub = currentVirtualDir;
                         if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
@@ -11678,56 +12144,29 @@ void EngineUI::RenderLayoutSplitters() {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp || vp->Size.x <= 10.0f || vp->Size.y <= 10.0f) return;
 
-    float curBottomH = (showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f);
+    float bottomBarH = bottomBarHeight * uiScale;
     float sidebarsY = vp->Pos.y + topBarHeight;
-    float sidebarsH = vp->Size.y - topBarHeight - curBottomH;
-    float bottomY = vp->Pos.y + vp->Size.y - curBottomH;
+    float sidebarsH = vp->Size.y - topBarHeight - bottomBarH;
+    float curBottomH = (showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f);
+    float bottomY = vp->Pos.y + vp->Size.y - bottomBarH - curBottomH;
+    float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
 
     ImVec2 mousePos = ImGui::GetIO().MousePos;
     bool mouseDown = ImGui::IsMouseDown(ImGuiMouseButton_Left);
     bool mouseClicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left);
     ImDrawList* drawList = ImGui::GetForegroundDrawList();
 
-    static bool s_dragLeft = false;
     static bool s_dragRight = false;
+    static bool s_dragOutlinerDetails = false;
     static bool s_dragBottom = false;
 
-    // 1. Left Sidebar Splitter (adjusts leftSidebarWidth)
-    if (showOutliner) {
-        float splitX = vp->Pos.x + leftSidebarWidth;
-        bool inLeftHit = (mousePos.x >= splitX - 5.0f && mousePos.x <= splitX + 5.0f &&
-                          mousePos.y >= sidebarsY && mousePos.y <= sidebarsY + sidebarsH);
-
-        if (!s_dragRight && !s_dragBottom) {
-            if (inLeftHit && mouseClicked) s_dragLeft = true;
-        }
-
-        if (s_dragLeft) {
-            if (mouseDown) {
-                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-                float delta = ImGui::GetIO().MouseDelta.x;
-                if (delta != 0.0f) {
-                    float maxW = vp->Size.x - rightSidebarWidth - 250.0f;
-                    leftSidebarWidth = std::clamp(leftSidebarWidth + delta, 180.0f, std::max(200.0f, maxW));
-                }
-                drawList->AddLine(ImVec2(splitX, sidebarsY), ImVec2(splitX, sidebarsY + sidebarsH), IM_COL32(0, 122, 204, 255), 3.0f);
-            } else {
-                s_dragLeft = false;
-                SaveEditorConfig();
-            }
-        } else if (inLeftHit && !s_dragRight && !s_dragBottom) {
-            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
-            drawList->AddLine(ImVec2(splitX, sidebarsY), ImVec2(splitX, sidebarsY + sidebarsH), IM_COL32(0, 122, 204, 200), 2.0f);
-        }
-    }
-
-    // 2. Right Sidebar Splitter (adjusts rightSidebarWidth)
-    if (showDetails) {
+    // 1. Right Sidebar Vertical Splitter (adjusts rightSidebarWidth)
+    if (showOutliner || showDetails) {
         float splitX = vp->Pos.x + vp->Size.x - rightSidebarWidth;
         bool inRightHit = (mousePos.x >= splitX - 5.0f && mousePos.x <= splitX + 5.0f &&
                            mousePos.y >= sidebarsY && mousePos.y <= sidebarsY + sidebarsH);
 
-        if (!s_dragLeft && !s_dragBottom) {
+        if (!s_dragOutlinerDetails && !s_dragBottom) {
             if (inRightHit && mouseClicked) s_dragRight = true;
         }
 
@@ -11736,7 +12175,7 @@ void EngineUI::RenderLayoutSplitters() {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
                 float delta = ImGui::GetIO().MouseDelta.x;
                 if (delta != 0.0f) {
-                    float maxW = vp->Size.x - leftSidebarWidth - 250.0f;
+                    float maxW = vp->Size.x - 300.0f;
                     rightSidebarWidth = std::clamp(rightSidebarWidth - delta, 200.0f, std::max(220.0f, maxW));
                 }
                 drawList->AddLine(ImVec2(splitX, sidebarsY), ImVec2(splitX, sidebarsY + sidebarsH), IM_COL32(0, 122, 204, 255), 3.0f);
@@ -11744,9 +12183,40 @@ void EngineUI::RenderLayoutSplitters() {
                 s_dragRight = false;
                 SaveEditorConfig();
             }
-        } else if (inRightHit && !s_dragLeft && !s_dragBottom) {
+        } else if (inRightHit && !s_dragOutlinerDetails && !s_dragBottom) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
             drawList->AddLine(ImVec2(splitX, sidebarsY), ImVec2(splitX, sidebarsY + sidebarsH), IM_COL32(0, 122, 204, 200), 2.0f);
+        }
+    }
+
+    // 2. Horizontal Splitter between Outliner (top) and Details (bottom) in the Right Sidebar
+    if (showOutliner && showDetails) {
+        float splitX = vp->Pos.x + vp->Size.x - rightSidebarWidth;
+        float outlinerH = std::round(sidebarsH * outlinerHeightRatio);
+        float splitY = sidebarsY + outlinerH;
+        float endX = vp->Pos.x + vp->Size.x;
+        bool inSplitHit = (mousePos.y >= splitY - 5.0f && mousePos.y <= splitY + 5.0f &&
+                           mousePos.x >= splitX && mousePos.x <= endX);
+
+        if (!s_dragRight && !s_dragBottom) {
+            if (inSplitHit && mouseClicked) s_dragOutlinerDetails = true;
+        }
+
+        if (s_dragOutlinerDetails) {
+            if (mouseDown) {
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+                float relY = mousePos.y - sidebarsY;
+                if (sidebarsH > 50.0f) {
+                    outlinerHeightRatio = std::clamp(relY / sidebarsH, 0.15f, 0.85f);
+                }
+                drawList->AddLine(ImVec2(splitX, splitY), ImVec2(endX, splitY), IM_COL32(0, 122, 204, 255), 3.0f);
+            } else {
+                s_dragOutlinerDetails = false;
+                SaveEditorConfig();
+            }
+        } else if (inSplitHit && !s_dragRight && !s_dragBottom) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+            drawList->AddLine(ImVec2(splitX, splitY), ImVec2(endX, splitY), IM_COL32(0, 122, 204, 200), 2.0f);
         }
     }
 
@@ -11754,11 +12224,11 @@ void EngineUI::RenderLayoutSplitters() {
     if (showBottomDrawer && bottomDrawerOpen) {
         float splitY = bottomY;
         float startX = vp->Pos.x;
-        float endX = vp->Pos.x + vp->Size.x;
+        float endX = vp->Pos.x + vp->Size.x - rightW;
         bool inBottomHit = (mousePos.y >= splitY - 5.0f && mousePos.y <= splitY + 5.0f &&
                             mousePos.x >= startX && mousePos.x <= endX);
 
-        if (!s_dragLeft && !s_dragRight) {
+        if (!s_dragRight && !s_dragOutlinerDetails) {
             if (inBottomHit && mouseClicked) s_dragBottom = true;
         }
 
@@ -11767,7 +12237,7 @@ void EngineUI::RenderLayoutSplitters() {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
                 float delta = ImGui::GetIO().MouseDelta.y;
                 if (delta != 0.0f) {
-                    float maxH = vp->Size.y - topBarHeight - 120.0f;
+                    float maxH = vp->Size.y - topBarHeight - bottomBarH - 120.0f;
                     bottomDockHeight = std::clamp(bottomDockHeight - delta, 100.0f, std::max(150.0f, maxH));
                 }
                 drawList->AddLine(ImVec2(startX, splitY), ImVec2(endX, splitY), IM_COL32(0, 122, 204, 255), 3.0f);
@@ -11775,7 +12245,7 @@ void EngineUI::RenderLayoutSplitters() {
                 s_dragBottom = false;
                 SaveEditorConfig();
             }
-        } else if (inBottomHit && !s_dragLeft && !s_dragRight) {
+        } else if (inBottomHit && !s_dragRight && !s_dragOutlinerDetails) {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
             drawList->AddLine(ImVec2(startX, splitY), ImVec2(endX, splitY), IM_COL32(0, 122, 204, 200), 2.0f);
         }
@@ -11813,7 +12283,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
     }
 
     // Task 2: bail out before ImGuizmo::Manipulate if modelMatrix is corrupted.
-    // Selecting a broken object should never hang rendering — it should just
+    // Selecting a broken object should never hang rendering â€” it should just
     // not show a gizmo for it until its data is fixed.
     {
         const float* mp = glm::value_ptr(modelMatrix);
@@ -11825,7 +12295,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
             static int lastWarnedId = -1;
             if (lastWarnedId != obj->id) {
                 std::cerr << "[RECOVERY] Object \"" << obj->name << "\" (id=" << obj->id
-                          << ") has a corrupted transform/mesh — gizmo suppressed to avoid GPU hang.\n";
+                          << ") has a corrupted transform/mesh â€” gizmo suppressed to avoid GPU hang.\n";
                 AddLog("LogRecovery",
                     "Object \"" + obj->name + "\" has a corrupted transform or mesh and its gizmo was suppressed. Fix or delete it.", 2);
                 lastWarnedId = obj->id;
@@ -11886,7 +12356,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
             if (std::abs(parentDet) > 1e-6f && !std::isnan(parentDet)) {
                 localMatrix = glm::inverse(parentWorld) * modelMatrix;
             }
-            // else: parent transform is degenerate — fall back to using modelMatrix
+            // else: parent transform is degenerate â€” fall back to using modelMatrix
             // as-is (world space) rather than propagating Inf/NaN into localMatrix.
         }
 
@@ -12141,6 +12611,35 @@ void EngineUI::RenderQualitySettings() {
                     }
                 }
             }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "TEXTURE STREAMING (Wicked Engine Viewport Visibility)");
+            
+            bool streamingEnabled = Eunoia::TextureStreamingSystem::Get().IsTextureStreamingEnabled();
+            if (ImGui::Checkbox("Enable Viewport Texture Streaming", &streamingEnabled)) {
+                Eunoia::TextureStreamingSystem::Get().SetTextureStreamingEnabled(streamingEnabled);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, only textures of objects visible in the active camera viewport render at full native quality.\nOut-of-view textures drop to low resolution (dynamic LOD clamp) saving GPU memory and bandwidth.");
+            }
+
+            float lodClamp = Eunoia::TextureStreamingSystem::Get().GetNonVisibleLodClamp();
+            if (ImGui::SliderFloat("Out-of-View LOD Clamp", &lodClamp, 1.0f, 4.0f, "Mip +%.1f")) {
+                Eunoia::TextureStreamingSystem::Get().SetNonVisibleLodClamp(lodClamp);
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("LOD clamp applied to out-of-view textures (2.0 = 1/4 resolution, 3.0 = 1/8 resolution). Zero GPU reallocations.");
+            }
+
+            auto metrics = Eunoia::TextureStreamingSystem::Get().GetMetrics();
+            ImGui::Spacing();
+            ImGui::TextDisabled("Streaming Telemetry:");
+            ImGui::BulletText("Total Streamed Textures: %zu", metrics.totalRegistered);
+            ImGui::BulletText("Viewport Visible (Full Quality): %zu", metrics.visibleHighResCount);
+            ImGui::BulletText("Out-of-Viewport (Low Resolution): %zu", metrics.nonVisibleLowResCount);
+            ImGui::BulletText("In-Flight GPU Uploads: %zu", metrics.inFlightUploads);
+            ImGui::BulletText("Allocated Texture VRAM: ~%zu MB", metrics.totalGpuMemoryBytes / (1024 * 1024));
         }
     }
     ImGui::End();
@@ -12178,7 +12677,7 @@ void EngineUI::RenderLoadingModal() {
                              ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoSavedSettings;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(24.0f, 20.0f));
 
@@ -12187,7 +12686,7 @@ void EngineUI::RenderLoadingModal() {
                          ImVec4(0.12f, 0.68f, 1.00f, 0.95f));
 
     ImGui::PushStyleColor(ImGuiCol_Border, borderColor);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.07f, 0.08f, 0.11f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.118f, 0.118f, 0.118f, 0.98f));
 
     if (ImGui::Begin("###LoadingOverlayWindow", nullptr, flags)) {
         float curTime = (float)ImGui::GetTime();
@@ -12267,8 +12766,8 @@ void EngineUI::RenderLoadingModal() {
         ImGui::Spacing();
 
         // Details Panel under progress bar showing "What's happening now"
-        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.04f, 0.05f, 0.08f, 0.95f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 6.0f);
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.145f, 0.145f, 0.145f, 0.95f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
         ImGui::BeginChild("LoadingDetailsRegion", ImVec2(-1, 80.0f), true, ImGuiWindowFlags_NoScrollbar);
 
         ImGui::TextColored(ImVec4(0.55f, 0.60f, 0.70f, 1.0f), "CURRENT STATUS:");
@@ -12727,71 +13226,6 @@ void EngineUI::RenderReferenceViewer(Scene& scene) {
         AssetRegistry::Get().ScanDirectory(contentRootPath);
         AddLog("LogRefViewer", "Refreshed Asset Registry dependency graph", 0);
     }
-
-    ImGui::End();
-}
-
-void EngineUI::RenderCookModal() {
-    ImGui::SetNextWindowSize(ImVec2(650, 420), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin("Asset Cooking Pipeline (dev.md Section 24, 25)", &showCookModal)) {
-        ImGui::End();
-        return;
-    }
-
-    ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "Project Asset Cooking & Packaging");
-    ImGui::TextWrapped("Cooks source assets into runtime-optimized format and writes the Cooked Asset Registry (CookedAssetRegistry.json).");
-    ImGui::Separator();
-
-    static char outputDirBuf[260] = "Cooked";
-    ImGui::InputText("Target Subdirectory", outputDirBuf, sizeof(outputDirBuf));
-    std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
-    std::filesystem::path fullCookedPath = projectBase / outputDirBuf;
-    ImGui::TextDisabled("Output Location: %s", fullCookedPath.string().c_str());
-
-    static int targetPlatform = 0;
-    const char* platforms[] = { "Windows (DirectX 12)", "Universal (SPIR-V / HLSL)" };
-    ImGui::Combo("Platform Target", &targetPlatform, platforms, IM_ARRAYSIZE(platforms));
-
-    ImGui::Spacing();
-    if (ImGui::Button("Start Cooking Now", ImVec2(180, 30))) {
-        cookLog += "\n=== Starting Asset Cooking Pipeline ===\n";
-        cookLog += "Target Platform: " + std::string(platforms[targetPlatform]) + "\n";
-        cookLog += "Project Root: " + projectBase.string() + "\n";
-        cookLog += "Cooked Destination: " + fullCookedPath.string() + "\n";
-
-        StartLoadingTask("Cooking Project Assets", "Initializing destination...", 0.05f);
-        bool ok = AssetManager::Get().CookProject(fullCookedPath, cookLog, [](float p, const std::string& item, const std::string& sub) {
-            UpdateLoadingTask(p, item, sub);
-        });
-        if (ok) {
-            cookLog += ">>> SUCCESS: All project assets cooked successfully!\n";
-            cookLog += ">>> Cooked Asset Registry saved to: " + (fullCookedPath / "CookedAssetRegistry.json").string() + "\n";
-            AddLog("LogCook", "Project cooking finished successfully at " + fullCookedPath.string(), 2);
-            FinishLoadingTask("Project assets cooked successfully!");
-        } else {
-            cookLog += ">>> ERROR: Asset cooking encountered errors. Check output log.\n";
-            AddLog("LogCook", "Asset cooking failed! Check log.", 1);
-            FinishLoadingTask("Asset cooking failed! Check log.", false);
-        }
-    }
-
-    ImGui::SameLine();
-    if (ImGui::Button("Clear Cook Log", ImVec2(120, 30))) {
-        cookLog = "";
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Close", ImVec2(90, 30))) {
-        showCookModal = false;
-    }
-
-    ImGui::Spacing();
-    ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Cooking Output Log:");
-    ImGui::BeginChild("CookLogRegion", ImVec2(0, 0), true, ImGuiWindowFlags_HorizontalScrollbar);
-    ImGui::TextUnformatted(cookLog.c_str());
-    if (ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-        ImGui::SetScrollHereY(1.0f);
-    }
-    ImGui::EndChild();
 
     ImGui::End();
 }
@@ -13338,12 +13772,16 @@ bool EngineUI::OpenModelImportView(const std::string& filePath) {
 }
 
 void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQueue) {
+    StartLoadingTask("Importing 3D Model: " + currentModelImport.modelName, "Analyzing geometry and textures...", 0.12f, false);
+
     std::error_code ec;
     std::filesystem::path modelPath(currentModelImport.sourceFilePath);
-    std::filesystem::path matDir(currentModelImport.targetFolder.empty() ? (modelPath.parent_path() / "Materials").string() : currentModelImport.targetFolder);
-    std::filesystem::create_directories(matDir, ec);
+    std::filesystem::path modelDir = modelPath.parent_path();
+    std::filesystem::path matDir = currentModelImport.targetFolder.empty() ? (modelDir / "Materials") : std::filesystem::path(currentModelImport.targetFolder);
+    std::filesystem::path texDir = modelDir / "Textures";
 
-    int matsCreated = 0;
+    std::filesystem::create_directories(matDir, ec);
+    std::filesystem::create_directories(texDir, ec);
 
     std::string matVirtualDir = "/Game/Materials";
     std::filesystem::path relMat = std::filesystem::relative(matDir, contentRootPath, ec);
@@ -13351,7 +13789,58 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         matVirtualDir = "/Game/" + relMat.generic_string();
     }
 
-    // 1. Create .emat files and register in AssetRegistry
+    std::string texVirtualDir = "/Game/Textures";
+    std::filesystem::path relTex = std::filesystem::relative(texDir, contentRootPath, ec);
+    if (!ec && !relTex.empty() && relTex != ".") {
+        texVirtualDir = "/Game/" + relTex.generic_string();
+    }
+
+    // Helper to ensure a texture is copied locally into the model's Textures folder and registered
+    auto ensureTextureLocalAndRegistered = [&](std::string& texPath) {
+        if (texPath.empty()) return;
+        std::filesystem::path tp(texPath);
+        std::error_code tec;
+        if (!std::filesystem::exists(tp, tec)) {
+            std::string resolved = MeshImporter::ResolveModelTexturePath(texPath, modelDir, currentModelImport.modelName);
+            if (!resolved.empty()) tp = resolved;
+        }
+
+        if (std::filesystem::exists(tp, tec)) {
+            std::filesystem::path targetTexPath = texDir / tp.filename();
+            if (std::filesystem::absolute(tp) != std::filesystem::absolute(targetTexPath)) {
+                std::filesystem::copy_file(tp, targetTexPath, std::filesystem::copy_options::overwrite_existing, tec);
+            }
+            texPath = targetTexPath.string();
+
+            AssetMetadata texMeta;
+            texMeta.id = AssetID::CreateRandom();
+            texMeta.objectName = targetTexPath.stem().string();
+            texMeta.type = AssetType::Texture;
+            texMeta.sourcePath = targetTexPath.string();
+            texMeta.virtualPath = texVirtualDir + "/" + texMeta.objectName;
+            AssetRegistry::Get().RegisterAsset(texMeta);
+        }
+    };
+
+    UpdateLoadingTask(0.35f, "Organizing and linking textures...", currentModelImport.modelName);
+
+    // 1. Process all materials and copy textures to <ModelDir>/Textures/
+    for (auto& pm : currentModelImport.materials) {
+        ensureTextureLocalAndRegistered(pm.baseColorTexture);
+        ensureTextureLocalAndRegistered(pm.normalTexture);
+        ensureTextureLocalAndRegistered(pm.roughnessTexture);
+        ensureTextureLocalAndRegistered(pm.metallicTexture);
+        ensureTextureLocalAndRegistered(pm.aoTexture);
+        ensureTextureLocalAndRegistered(pm.emissionTexture);
+        ensureTextureLocalAndRegistered(pm.opacityTexture);
+    }
+
+    UpdateLoadingTask(0.60f, "Generating material assets (.emat)...", currentModelImport.modelName);
+
+    int matsCreated = 0;
+    std::vector<ImportedMaterial> updatedCachedMats;
+
+    // 2. Create .emat files and register in AssetRegistry
     for (const auto& pm : currentModelImport.materials) {
         if (!pm.createMaterial) continue;
 
@@ -13386,9 +13875,33 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
             meta.virtualPath = ma.virtualPath;
             AssetRegistry::Get().RegisterAsset(meta);
         }
+
+        ImportedMaterial im;
+        im.name = pm.materialName;
+        im.baseColor = pm.baseColor;
+        im.metallic = pm.metallic;
+        im.roughness = pm.roughness;
+        im.baseColorTexture = pm.baseColorTexture;
+        im.normalTexture = pm.normalTexture;
+        im.roughnessTexture = pm.roughnessTexture;
+        im.metallicTexture = pm.metallicTexture;
+        im.aoTexture = pm.aoTexture;
+        im.emissionTexture = pm.emissionTexture;
+        im.emissiveColor = pm.emissiveColor;
+        im.emissiveIntensity = pm.emissiveIntensity;
+        im.blendMode = pm.blendMode;
+        im.opacity = pm.opacity;
+        im.opacityTexture = pm.opacityTexture;
+        im.hasMaterial = true;
+        updatedCachedMats.push_back(im);
     }
 
-    // 2. Register 3D Model in AssetRegistry
+    UpdateLoadingTask(0.80f, "Updating model cache & scene objects...", currentModelImport.modelName);
+
+    // Update MeshImporter cached materials so any current or subsequent instantiation loads with these textures & materials
+    MeshImporter::UpdateCachedModelMaterials(currentModelImport.sourceFilePath, updatedCachedMats);
+
+    // 3. Register 3D Model in AssetRegistry
     if (std::filesystem::exists(currentModelImport.sourceFilePath, ec)) {
         AssetMetadata meta;
         meta.id = AssetID::CreateRandom();
@@ -13404,7 +13917,7 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         AssetRegistry::Get().RegisterAsset(meta);
     }
 
-    // 3. Helper to apply created materials to a GameObject
+    // 4. Helper to apply created materials to a GameObject
     auto applyMatToObj = [&](GameObject* obj, int submeshIdx) {
         if (!obj) return;
         const PendingModelMaterial* matchedPm = nullptr;
@@ -13439,7 +13952,7 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         }
     };
 
-    // 4. If spawn requested, add imported mesh to scene and apply materials
+    // 5. If spawn requested, add imported mesh to scene and apply materials
     if (spawnInLevel) {
         GameObject& spawned = scene.AddImportedMesh(currentModelImport.sourceFilePath, {0.0f, 0.5f, 0.0f});
         scene.selectedId = spawned.id;
@@ -13463,7 +13976,10 @@ void EngineUI::ExecuteModelImport(Scene& scene, bool spawnInLevel, bool advanceQ
         }
     }
 
+    UpdateLoadingTask(0.95f, "Synchronizing asset registry & content browser...", currentModelImport.modelName);
     SyncRegistryWithUIProgress(contentRootPath);
+
+    FinishLoadingTask("Successfully imported " + currentModelImport.modelName + " (" + std::to_string(matsCreated) + " materials created & assigned)", true);
     AddLog("LogImport", "Imported 3D Model: " + currentModelImport.modelName + " (" + std::to_string(matsCreated) + " material(s) created & applied)", 2);
 
     if (advanceQueue) {
@@ -13477,7 +13993,7 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
     ImGui::SetNextWindowSize(ImVec2(1060, 680), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
-    std::string title = "3D Model Import Wizard — " + currentModelImport.modelName;
+    std::string title = "3D Model Import Wizard â€” " + currentModelImport.modelName;
     if (pendingModelImportQueue.size() > 1) {
         title += " (1 of " + std::to_string(pendingModelImportQueue.size()) + " queued)";
     }
@@ -13857,7 +14373,7 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.40f, 0.75f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.50f, 0.90f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.32f, 0.65f, 1.0f));
-            if (ImGui::Button("⚡ Import All", ImVec2(110, 32))) {
+            if (ImGui::Button("âš¡ Import All", ImVec2(110, 32))) {
                 ExecuteModelImport(scene, currentModelImport.spawnInLevel, false);
                 while (pendingModelImportQueue.size() > 1) {
                     pendingModelImportQueue.erase(pendingModelImportQueue.begin());
@@ -13871,12 +14387,12 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("⏭ Skip", ImVec2(80, 32))) {
+        if (ImGui::Button("â­ Skip", ImVec2(80, 32))) {
             AdvanceModelImportQueue();
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("✕ Cancel All", ImVec2(100, 32))) {
+        if (ImGui::Button("âœ• Cancel All", ImVec2(100, 32))) {
             pendingModelImportQueue.clear();
             showModelImportModal = false;
         }
@@ -13901,7 +14417,7 @@ void EngineUI::OpenScriptInCodeEditor(const std::string& path) {
 void EngineUI::RenderCodeEditor() {
     if (!showCodeEditor) return;
 
-    std::string title = "Code Editor — " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
+    std::string title = "Code Editor â€” " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
     ImGui::SetNextWindowSize(ImVec2(740, 540), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title.c_str(), &showCodeEditor, ImGuiWindowFlags_MenuBar)) {
         if (ImGui::BeginMenuBar()) {
@@ -13917,7 +14433,7 @@ void EngineUI::RenderCodeEditor() {
                 LaunchVSCodeWorkspace(activeCodeEditorPath);
                 AddLog("LogContent", "Launched VS Code workspace for: " + activeCodeEditorFilename, 0);
             }
-            if (ImGui::MenuItem("⚡ Compile Script", "F7", false, !isCompilingScripts)) {
+            if (ImGui::MenuItem("âš¡ Compile Script", "F7", false, !isCompilingScripts)) {
                 TriggerCompileScripts(nullptr);
             }
             ImGui::EndMenuBar();
@@ -13939,9 +14455,9 @@ void EngineUI::RenderCodeEditor() {
         }
         ImGui::SameLine();
         if (isCompilingScripts) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "⏳ Compiling...");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "â³ Compiling...");
         } else {
-            if (ImGui::Button("⚡ Compile")) {
+            if (ImGui::Button("âš¡ Compile")) {
                 TriggerCompileScripts(nullptr);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile this behaviour script and rebuild standalone game");
@@ -14004,7 +14520,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             if (!isPlayActive) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.70f, 0.32f, 1.0f));
-                if (ImGui::Button("▶ Play Mode (Full Screen Fit)", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                if (ImGui::Button("â–¶ Play Mode (Full Screen Fit)", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                     EnterPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor(2);
@@ -14012,11 +14528,11 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 ImGui::Spacing();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button("⏹ Stop Play Mode", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                if (ImGui::Button("â¹ Stop Play Mode", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                     ExitPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor();
-                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "▶ Simulation Active");
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "â–¶ Simulation Active");
                 ImGui::Spacing();
             }
         }
@@ -14052,13 +14568,6 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                     BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
                                 }
                             }
-                        } else if (it->path().extension() == ".ebehaviour") {
-                            std::string pStr = it->path().string();
-                            std::string pLower = pStr;
-                            std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
-                                VisualBehaviuors::RegisterVisualBehaviourAsset(it->path().string());
-                            }
                         }
                     }
                 }
@@ -14078,8 +14587,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 }
 
                 matchCount++;
-                bool isVisual = (info.className.rfind("VisualBehaviour:", 0) == 0);
-                std::string itemText = (isVisual ? "⚡ " : "") + info.displayName;
+                std::string itemText = info.displayName;
                 if (ImGui::Selectable(itemText.c_str(), false)) {
                     UndoManager::Get().RecordSnapshot(scene, "Add Behaviour: " + info.className);
                     auto newB = BehaviourRegistry::Get().Create(info.className);
@@ -14127,48 +14635,40 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             auto& b = obj->behaviours[i];
             if (!b) continue;
 
-            // Check if Visual Behaviour instance
-            VisualBehaviuors::VisualBehaviourInstance* vbi = dynamic_cast<VisualBehaviuors::VisualBehaviourInstance*>(b.get());
-            if (vbi) {
-                vbi->SetScene(&scene);
-                vbi->RefreshPropertiesFromSource();
-                vbi->ResolveReferences(scene);
-            } else {
-                // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
-                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
-                auto regIt = allRegistry.find(b->GetClassName());
-                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                    if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
-                        auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
-                        dynB->SetScene(&scene);
-                        dynB->SetOwner(obj);
-                        dynB->SetEnabled(b->IsEnabled());
-                        dynB->CopyPropertiesFrom(*b);
-                        dynB->ResolveReferences(scene);
-                        b = std::move(dynB);
-                    } else {
-                        b->SetScene(&scene);
-                        b->RefreshPropertiesFromSource();
-                        b->ResolveReferences(scene);
-                    }
+            // Ensure user script behaviours are upgraded to dynamic script reflection with latest properties from .cpp
+            const auto& allRegistry = BehaviourRegistry::Get().GetAll();
+            auto regIt = allRegistry.find(b->GetClassName());
+            if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
+                if (dynamic_cast<DynamicScriptBehaviour*>(b.get()) == nullptr || b->GetProperties().empty()) {
+                    auto dynB = std::make_unique<DynamicScriptBehaviour>(b->GetClassName(), regIt->second.sourceCpp);
+                    dynB->SetScene(&scene);
+                    dynB->SetOwner(obj);
+                    dynB->SetEnabled(b->IsEnabled());
+                    dynB->CopyPropertiesFrom(*b);
+                    dynB->ResolveReferences(scene);
+                    b = std::move(dynB);
                 } else {
                     b->SetScene(&scene);
                     b->RefreshPropertiesFromSource();
                     b->ResolveReferences(scene);
                 }
+            } else {
+                b->SetScene(&scene);
+                b->RefreshPropertiesFromSource();
+                b->ResolveReferences(scene);
             }
 
             ImGui::PushID((int)i);
-            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 0.0f);
             ImGui::BeginChild("BehaviourCard", ImVec2(0, 0), ImGuiChildFlags_Borders | ImGuiChildFlags_AutoResizeY);
 
             // Header line: Reorder, Class Title, Enable checkbox, Reset & Remove buttons
             if (i > 0) {
-                if (ImGui::SmallButton("▲")) moveUpIdx = (int)i;
+                if (ImGui::SmallButton("â–²")) moveUpIdx = (int)i;
                 ImGui::SameLine();
             }
             if (i + 1 < obj->behaviours.size()) {
-                if (ImGui::SmallButton("▼")) moveDownIdx = (int)i;
+                if (ImGui::SmallButton("â–¼")) moveDownIdx = (int)i;
                 ImGui::SameLine();
             }
 
@@ -14179,36 +14679,20 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
             ImGui::SameLine();
 
-            bool isVisualCard = (vbi != nullptr);
-            ImGui::TextColored(isVisualCard ? ImVec4(1.0f, 0.78f, 0.25f, 1.0f) : ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
+            ImGui::TextColored(ImVec4(0.4f, 0.85f, 1.0f, 1.0f), "%s", b->GetDisplayName().c_str());
             ImGui::SameLine();
             ImGui::TextDisabled("(%s)", b->GetClassName().c_str());
 
-            if (isVisualCard && vbi) {
+            if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
                 ImGui::SameLine();
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
-                if (ImGui::SmallButton("Edit Graph")) {
-                    OpenVisualBehaviourEditor(vbi->GetAssetPath());
+                if (ImGui::SmallButton("Edit in VS Code")) {
+                    OpenScriptInCodeEditor(regIt->second.sourceCpp);
                 }
                 ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Open in Visual Behaviour Editor: %s", vbi->GetAssetPath().c_str());
-                }
-            } else {
-                const auto& allRegistry = BehaviourRegistry::Get().GetAll();
-                auto regIt = allRegistry.find(b->GetClassName());
-                if (regIt != allRegistry.end() && !regIt->second.sourceCpp.empty()) {
-                    ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
-                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.0f));
-                    if (ImGui::SmallButton("Edit in VS Code")) {
-                        OpenScriptInCodeEditor(regIt->second.sourceCpp);
-                    }
-                    ImGui::PopStyleColor(2);
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Open script in VS Code: %s", regIt->second.sourceCpp.c_str());
-                    }
+                    ImGui::SetTooltip("Open script in VS Code: %s", regIt->second.sourceCpp.c_str());
                 }
             }
 
@@ -14478,7 +14962,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                         b->ResolveReferences(scene);
                                         AddLog("LogBehaviour", "Assigned " + draggedObj->name + " to " + prop.displayName, 2);
                                     } else {
-                                        AddLog("LogBehaviour", "Cannot assign " + draggedObj->name + " — incompatible type (" + ObjectRefTypeToString(prop.refType) + " expected).", 1);
+                                        AddLog("LogBehaviour", "Cannot assign " + draggedObj->name + " â€” incompatible type (" + ObjectRefTypeToString(prop.refType) + " expected).", 1);
                                     }
                                 }
                             }
@@ -14542,11 +15026,11 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoScrollbar;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 2.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 18.0f));
     ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.12f, 0.60f, 0.95f, 0.85f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.10f, 0.12f, 0.16f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.118f, 0.118f, 0.118f, 0.98f));
 
     bool open = true;
     bool hasActiveProject = !activeProjectRoot.empty();
@@ -14559,10 +15043,10 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
         // Title Header
         ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "EUNOIA ENGINE");
         ImGui::SameLine();
-        ImGui::TextDisabled("— Project Browser");
+        ImGui::TextDisabled("â€” Project Browser");
         if (hasActiveProject) {
             ImGui::SameLine(winW - 140.0f);
-            if (ImGui::SmallButton("✖ Return to Editor")) {
+            if (ImGui::SmallButton("âœ– Return to Editor")) {
                 showProjectBrowser = false;
             }
         }
@@ -14773,7 +15257,7 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
             } else if (targetExists) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Folder already exists on disk. Will initialize/load project.");
             } else {
-                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "✅ Ready to create empty project in selected path.");
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "âœ… Ready to create empty project in selected path.");
             }
 
             ImGui::Spacing();
@@ -14782,7 +15266,7 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
 
             bool canCreate = nameValid && pathValid;
             if (!canCreate) ImGui::BeginDisabled();
-            if (ImGui::Button("✨ Create Project", ImVec2(180, 36))) {
+            if (ImGui::Button("âœ¨ Create Project", ImVec2(180, 36))) {
                 CreateNewProject(newProjectPathBuf, newProjectNameBuf, scene, camera);
             }
             if (!canCreate) ImGui::EndDisabled();
@@ -14804,3 +15288,483 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
 }
 
 
+
+
+// ============================================================================
+// Standalone Game Build Pipeline Implementation
+// ============================================================================
+
+void EngineUI::OpenGameBuildModal(Scene& scene) {
+    showGameBuildModal = true;
+    if (isGameBuilding) return;
+
+    std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
+    std::string projName = projectBase.filename().string();
+    if (projName.empty()) projName = "Game";
+    std::filesystem::path gameBuildDir = projectBase / "Build";
+
+    std::lock_guard<std::mutex> lock(gameBuildMutex);
+    gameBuildOutputDir = gameBuildDir;
+    gameBuildExePath = (gameBuildDir / (projName + ".exe")).string();
+    gameBuildProgress = 0.0f;
+    gameBuildStage = "Ready to Build";
+    gameBuildLog = "[SYSTEM] Ready to package standalone game project: " + projName + "\n";
+    gameBuildSuccess = false;
+}
+
+void EngineUI::StartGameBuildAsync(Scene& scene) {
+    if (isGameBuilding) return;
+
+    if (gameBuildThread.joinable()) {
+        gameBuildThread.join();
+    }
+
+    std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
+    std::string projName = projectBase.filename().string();
+    if (projName.empty()) projName = "Game";
+    std::filesystem::path gameBuildDir = projectBase / "Build";
+    std::filesystem::path localContentRoot = contentRootPath;
+
+    // Snapshot current active level on main thread before launching background thread
+    std::error_code ec;
+    std::string activeRelLevel = "Content/Levels/Main.elevel";
+    std::filesystem::path activeLevelAbsPath;
+
+    if (!currentLevelFilePath.empty() && std::filesystem::exists(currentLevelFilePath, ec)) {
+        auto relP = std::filesystem::relative(currentLevelFilePath, projectBase, ec);
+        if (!ec) activeRelLevel = relP.string();
+        std::replace(activeRelLevel.begin(), activeRelLevel.end(), '\\', '/');
+        activeLevelAbsPath = currentLevelFilePath;
+    } else {
+        std::filesystem::path saveP = localContentRoot / "Levels" / "Main.elevel";
+        std::filesystem::create_directories(saveP.parent_path(), ec);
+        currentLevelFilePath = saveP.string();
+        activeLevelAbsPath = saveP;
+        activeRelLevel = "Content/Levels/Main.elevel";
+    }
+
+    LevelSerializer::SaveLevel(scene, activeLevelAbsPath.string());
+    AddLog("LogBuild", "Snapshotted active editor level: " + activeLevelAbsPath.string(), 1);
+
+    isGameBuilding = true;
+    gameBuildProgress = 0.05f;
+    gameBuildStage = "Initializing standalone packaging pipeline...";
+    gameBuildSuccess = false;
+    gameBuildOutputDir = gameBuildDir;
+    gameBuildExePath = (gameBuildDir / (projName + ".exe")).string();
+
+    {
+        std::lock_guard<std::mutex> lock(gameBuildMutex);
+        gameBuildLog = "[BUILD START] Packaging standalone game: " + projName + "\n";
+        gameBuildLog += "[BUILD] Target output directory: " + gameBuildDir.string() + "\n";
+        gameBuildLog += "[BUILD] Active level snapshot: " + activeRelLevel + "\n";
+    }
+
+    gameBuildThread = std::thread([this, projectBase, projName, gameBuildDir, localContentRoot, activeRelLevel, activeLevelAbsPath]() {
+        auto updateStatus = [this](float progress, const std::string& stage, const std::string& logLine) {
+            std::lock_guard<std::mutex> lock(gameBuildMutex);
+            gameBuildProgress = progress;
+            gameBuildStage = stage;
+            if (!logLine.empty()) {
+                time_t rawtime;
+                struct tm* timeinfo;
+                char timeBuf[32] = {};
+                time(&rawtime);
+                timeinfo = localtime(&rawtime);
+                if (timeinfo) {
+                    strftime(timeBuf, sizeof(timeBuf), "[%H:%M:%S] ", timeinfo);
+                }
+                gameBuildLog += std::string(timeBuf) + logLine + "\n";
+            }
+        };
+
+        std::error_code sec;
+
+        try {
+            updateStatus(0.10f, "Creating directory layout...", "Creating standalone distribution directories in: " + gameBuildDir.string());
+
+            std::filesystem::path binariesDir    = gameBuildDir / "Binaries";
+            std::filesystem::path dataDir        = gameBuildDir / "Data";
+            std::filesystem::path depsBuildDir   = gameBuildDir / "Deps";
+            std::filesystem::path buildContent   = gameBuildDir / "Content";
+            std::filesystem::path buildShaders   = gameBuildDir / "Shaders";
+            std::filesystem::path buildResources = gameBuildDir / "Resources";
+            std::filesystem::path buildCooked    = gameBuildDir / "Cooked";
+
+            std::filesystem::create_directories(gameBuildDir, sec);
+            std::filesystem::create_directories(binariesDir, sec);
+            std::filesystem::create_directories(dataDir, sec);
+            std::filesystem::create_directories(depsBuildDir, sec);
+            std::filesystem::create_directories(buildContent, sec);
+            std::filesystem::create_directories(buildShaders, sec);
+            std::filesystem::create_directories(buildResources, sec);
+            std::filesystem::create_directories(buildCooked, sec);
+
+            std::filesystem::create_directories(dataDir / "Content", sec);
+            std::filesystem::create_directories(dataDir / "Shaders", sec);
+            std::filesystem::create_directories(dataDir / "Resources", sec);
+            std::filesystem::create_directories(dataDir / "Cooked", sec);
+
+            // Copy template structure if available
+            std::filesystem::path gameTemplateDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Templates\\Game Build Template";
+            if (!std::filesystem::exists(gameTemplateDir, sec)) {
+                gameTemplateDir = std::filesystem::current_path() / "Templates" / "Game Build Template";
+            }
+            if (std::filesystem::exists(gameTemplateDir, sec)) {
+                for (const auto& item : std::filesystem::directory_iterator(gameTemplateDir, sec)) {
+                    if (item.is_directory(sec)) {
+                        std::filesystem::create_directories(gameBuildDir / item.path().filename(), sec);
+                    }
+                }
+            }
+
+            // Stage 2: Deploy Active Level Snapshot
+            updateStatus(0.25f, "Deploying active level snapshot...", "Deploying startup level: " + activeRelLevel);
+            std::filesystem::path targetLevel1 = gameBuildDir / activeRelLevel;
+            std::filesystem::path targetLevel2 = dataDir / activeRelLevel;
+            std::filesystem::path targetLevelFallback = gameBuildDir / "Main.elevel";
+            std::filesystem::path targetLevelFallbackData = dataDir / "Main.elevel";
+
+            std::filesystem::create_directories(targetLevel1.parent_path(), sec);
+            std::filesystem::create_directories(targetLevel2.parent_path(), sec);
+
+            if (std::filesystem::exists(activeLevelAbsPath, sec)) {
+                std::filesystem::copy_file(activeLevelAbsPath, targetLevel1, std::filesystem::copy_options::overwrite_existing, sec);
+                std::filesystem::copy_file(activeLevelAbsPath, targetLevel2, std::filesystem::copy_options::overwrite_existing, sec);
+                std::filesystem::copy_file(activeLevelAbsPath, targetLevelFallback, std::filesystem::copy_options::overwrite_existing, sec);
+                std::filesystem::copy_file(activeLevelAbsPath, targetLevelFallbackData, std::filesystem::copy_options::overwrite_existing, sec);
+                updateStatus(0.30f, "Active level deployed", "Active level deployed to standalone root and Data/ successfully.");
+            } else {
+                updateStatus(0.30f, "Warning: Level snapshot missing", "Warning: Could not read level snapshot at " + activeLevelAbsPath.string());
+            }
+
+            // Recursive copy lambda that filters out source code and developer files
+            auto copyGameFiles = [](const std::filesystem::path& src, const std::filesystem::path& dst) {
+                std::error_code ec;
+                if (!std::filesystem::exists(src, ec)) return;
+                std::filesystem::create_directories(dst, ec);
+                for (const auto& entry : std::filesystem::recursive_directory_iterator(src, std::filesystem::directory_options::skip_permission_denied, ec)) {
+                    const auto rel = std::filesystem::relative(entry.path(), src, ec);
+                    const auto target = dst / rel;
+                    if (entry.is_directory(ec)) {
+                        std::filesystem::create_directories(target, ec);
+                    } else if (entry.is_regular_file(ec)) {
+                        std::string ext = entry.path().extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        std::string relStr = rel.string();
+                        bool isBehaviourScript = (ext == ".cpp" && (relStr.find("Behaviours") != std::string::npos || relStr.find("behaviours") != std::string::npos));
+                        // Filter out engine source code, intermediate compiler files, and git files (keep behaviour scripts for runtime)
+                        if (!isBehaviourScript) {
+                            if (ext == ".cpp" || ext == ".c" || ext == ".h" || ext == ".hpp" ||
+                                ext == ".obj" || ext == ".o" || ext == ".pdb" || ext == ".idb" ||
+                                ext == ".ilk" || ext == ".tlog" || ext == ".log" || ext == ".tmp" ||
+                                ext == ".econfigs" || ext == ".git" || ext == ".gitignore") {
+                                continue;
+                        }
+                        }
+                        std::filesystem::create_directories(target.parent_path(), ec);
+                        std::filesystem::copy_file(entry.path(), target, std::filesystem::copy_options::overwrite_existing, ec);
+                    }
+                }
+            };
+
+            // Stage 3: Packaging Project Content
+            updateStatus(0.40f, "Packaging game content...", "Copying game levels, textures, materials, and audio from: " + localContentRoot.string());
+            copyGameFiles(localContentRoot, buildContent);
+            copyGameFiles(localContentRoot, dataDir / "Content");
+            updateStatus(0.65f, "Game content packaged", "Project content copied directly without engine developer artifacts.");
+
+            // Stage 5: Deploying Shaders and Engine Resources
+            updateStatus(0.70f, "Deploying Shaders & Resources...", "Deploying DirectX 12 shaders and engine graphics resources...");
+            std::filesystem::path engineRoot = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine";
+            if (!std::filesystem::exists(engineRoot / "Shaders", sec)) {
+                engineRoot = "C:\\Projects\\Eunoia-Engine";
+            }
+            if (!std::filesystem::exists(engineRoot / "Shaders", sec)) {
+                engineRoot = std::filesystem::current_path();
+            }
+
+            if (std::filesystem::exists(engineRoot / "Shaders", sec)) {
+                copyGameFiles(engineRoot / "Shaders", buildShaders);
+                copyGameFiles(engineRoot / "Shaders", dataDir / "Shaders");
+                updateStatus(0.75f, "Shaders deployed", "DirectX 12 Shaders deployed.");
+            }
+            if (std::filesystem::exists(engineRoot / "Resources", sec)) {
+                copyGameFiles(engineRoot / "Resources", buildResources);
+                copyGameFiles(engineRoot / "Resources", dataDir / "Resources");
+                updateStatus(0.80f, "Resources deployed", "Engine graphics resources deployed.");
+            }
+
+            // Stage 6: Deploying Runtime Dependencies (DLLs)
+            updateStatus(0.85f, "Deploying runtime dependencies...", "Deploying glfw3.dll and runtime libraries...");
+            char curExeBuf[MAX_PATH] = {};
+            GetModuleFileNameA(NULL, curExeBuf, MAX_PATH);
+            std::filesystem::path curExePath(curExeBuf);
+            std::filesystem::path curExeDir = curExePath.parent_path();
+
+            std::vector<std::filesystem::path> dllCandidates = {
+                curExeDir / "glfw3.dll",
+                engineRoot / "deps" / "glfw-3.5.1.bin.WIN64" / "lib-mingw-w64" / "glfw3.dll",
+                engineRoot / "Plugins" / "primitives" / "primitives.dll",
+                curExeDir / "primitives.dll"
+            };
+
+            for (const auto& dllSrc : dllCandidates) {
+                if (std::filesystem::exists(dllSrc, sec)) {
+                    std::string fname = dllSrc.filename().string();
+                    std::filesystem::copy_file(dllSrc, gameBuildDir / fname, std::filesystem::copy_options::overwrite_existing, sec);
+                    std::filesystem::copy_file(dllSrc, binariesDir / fname, std::filesystem::copy_options::overwrite_existing, sec);
+                    std::filesystem::copy_file(dllSrc, depsBuildDir / fname, std::filesystem::copy_options::overwrite_existing, sec);
+                    updateStatus(0.88f, "Dependency deployed", "Deployed DLL: " + fname);
+                }
+            }
+
+            // Stage 7: Writing GameConfig.json, Version.euversion, and Run.bat
+            updateStatus(0.90f, "Configuring standalone game metadata...", "Generating GameConfig.json and Version.euversion...");
+
+            auto writeGameConfig = [&](const std::filesystem::path& destCfg) {
+                std::ofstream cf(destCfg);
+                if (cf.is_open()) {
+                    nlohmann::json gj;
+                    gj["gameName"] = projName;
+                    gj["startupLevel"] = activeRelLevel;
+                    gj["defaultLevel"] = activeRelLevel;
+                    gj["standalone"] = true;
+                    gj["version"] = "1.0.0";
+                    gj["renderer"] = {
+                        {"backend", "DirectX12"},
+                        {"preferDX12", true}
+                    };
+                    gj["window"] = {
+                        {"title", projName},
+                        {"width", 1920},
+                        {"height", 1080},
+                        {"fullscreen", false},
+                        {"vsync", true}
+                    };
+                    cf << gj.dump(4);
+                    cf.close();
+                }
+            };
+
+            writeGameConfig(gameBuildDir / "GameConfig.json");
+            writeGameConfig(dataDir / "GameConfig.json");
+
+            {
+                std::ofstream vf(gameBuildDir / "Version.euversion");
+                if (vf.is_open()) {
+                    nlohmann::json vj;
+                    vj["engineVersion"] = "0.1.0";
+                    vj["projectVersion"] = "1.0.0";
+                    vj["gameName"] = projName;
+                    vf << vj.dump(4);
+                    vf.close();
+                }
+            }
+
+            {
+                std::ofstream runScript(gameBuildDir / "Run.bat");
+                if (runScript.is_open()) {
+                    runScript << "@echo off\n";
+                    runScript << "cd /d \"%~dp0\"\n";
+                    runScript << "echo Launching " << projName << " (DirectX 12 Standalone)...\n";
+                    runScript << "start \"\" \"" << projName << ".exe\"\n";
+                    runScript.close();
+                }
+            }
+
+            // Stage 8: Building / Copying Standalone Executable
+            updateStatus(0.95f, "Deploying standalone executable...", "Packaging " + projName + ".exe...");
+            std::filesystem::path rootGameExe = gameBuildDir / (projName + ".exe");
+            std::filesystem::path binGameExe  = binariesDir / (projName + ".exe");
+
+            std::filesystem::path exeSource = curExePath;
+            if (!std::filesystem::exists(exeSource, sec)) {
+                exeSource = "C:\\Projects\\Eunoia-Engine\\Build\\Engine\\Eunoia-Editor.exe";
+            }
+            if (!std::filesystem::exists(exeSource, sec)) {
+                exeSource = engineRoot / "Build" / "Runtime" / "Eunoia-Runtime.exe";
+            }
+
+            if (std::filesystem::exists(exeSource, sec)) {
+                std::filesystem::copy_file(exeSource, rootGameExe, std::filesystem::copy_options::overwrite_existing, sec);
+                std::filesystem::copy_file(exeSource, binGameExe, std::filesystem::copy_options::overwrite_existing, sec);
+                updateStatus(0.98f, "Executable created", "Executable deployed: " + rootGameExe.string());
+            } else {
+                updateStatus(0.98f, "Executable error", "Warning: Could not find base executable source!");
+            }
+
+            // Stage 9: Completion
+            {
+                std::lock_guard<std::mutex> lock(gameBuildMutex);
+                gameBuildProgress = 1.0f;
+                gameBuildStage = "Build Succeeded";
+                gameBuildSuccess = true;
+                isGameBuilding = false;
+                gameBuildExePath = rootGameExe.string();
+                gameBuildOutputDir = gameBuildDir;
+                gameBuildLog += "[BUILD SUCCESS] Standalone Game Package created successfully!\n";
+                gameBuildLog += "[BUILD SUCCESS] Executable: " + rootGameExe.filename().string() + "\n";
+                gameBuildLog += "[BUILD SUCCESS] Startup Level: " + activeRelLevel + "\n";
+                gameBuildLog += "[BUILD SUCCESS] Standalone build complete in: " + gameBuildDir.string() + "\n";
+
+                m_bottomProgress.active = true;
+                m_bottomProgress.completionTimer = 3.5f;
+                m_bottomProgress.title = "Standalone Game Package Built Successfully";
+                m_bottomProgress.success = true;
+            }
+
+        } catch (const std::exception& e) {
+            std::lock_guard<std::mutex> lock(gameBuildMutex);
+            gameBuildProgress = 1.0f;
+            gameBuildStage = "Build Failed";
+            gameBuildSuccess = false;
+            isGameBuilding = false;
+            gameBuildLog += "[BUILD ERROR] Exception occurred during packaging: " + std::string(e.what()) + "\n";
+
+            m_bottomProgress.active = true;
+            m_bottomProgress.completionTimer = 4.0f;
+            m_bottomProgress.title = "Standalone Game Build Failed";
+            m_bottomProgress.success = false;
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(gameBuildMutex);
+            gameBuildProgress = 1.0f;
+            gameBuildStage = "Build Failed";
+            gameBuildSuccess = false;
+            isGameBuilding = false;
+            gameBuildLog += "[BUILD ERROR] Unknown exception occurred during packaging!\n";
+
+            m_bottomProgress.active = true;
+            m_bottomProgress.completionTimer = 4.0f;
+            m_bottomProgress.title = "Standalone Game Build Failed";
+            m_bottomProgress.success = false;
+        }
+    });
+}
+
+void EngineUI::RenderGameBuildModal(Scene& scene) {
+    if (!showGameBuildModal) return;
+
+    ImGui::SetNextWindowSize(ImVec2(680, 520), ImGuiCond_Appearing);
+    ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+    if (isGameBuilding) {
+        flags |= ImGuiWindowFlags_NoMove;
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.12f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.24f, 0.24f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.10f, 0.10f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.14f, 0.14f, 0.14f, 1.0f));
+
+    if (ImGui::Begin("Standalone Game Project Build###GameBuildModal", &showGameBuildModal, flags)) {
+        float progress;
+        std::string stage;
+        std::string logCopy;
+        bool success;
+        bool building;
+        std::string exePath;
+        std::filesystem::path outDir;
+
+        {
+            std::lock_guard<std::mutex> lock(gameBuildMutex);
+            progress = gameBuildProgress;
+            stage = gameBuildStage;
+            logCopy = gameBuildLog;
+            success = gameBuildSuccess;
+            building = isGameBuilding;
+            exePath = gameBuildExePath;
+            outDir = gameBuildOutputDir;
+        }
+
+        // Header Title
+        ImGui::TextColored(ImVec4(0.18f, 0.68f, 1.0f, 1.0f), "Ã°Å¸â€ºÂ  Standalone Game Build Pipeline");
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Project Info
+        std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
+        std::string projName = projectBase.filename().string();
+        ImGui::Text("Project: %s", projName.c_str());
+        ImGui::SameLine(340);
+        ImGui::Text("Output: %s", outDir.empty() ? "(default Build/)" : outDir.string().c_str());
+
+        ImGui::Spacing();
+
+        // Progress Bar
+        char overlay[128];
+        snprintf(overlay, sizeof(overlay), "%.0f%% - %s", progress * 100.0f, stage.c_str());
+        ImVec4 barColor = building ? ImVec4(0.18f, 0.65f, 1.0f, 1.0f) : (success ? ImVec4(0.2f, 0.85f, 0.35f, 1.0f) : ImVec4(0.9f, 0.25f, 0.25f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_PlotHistogram, barColor);
+        ImGui::ProgressBar(progress, ImVec2(-1.0f, 26.0f), overlay);
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+
+        // Current Stage Status text
+        if (building) {
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f), "Ã¢ÂÂ³ Building Standalone Package: %s", stage.c_str());
+        } else if (success) {
+            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.35f, 1.0f), "Ã¢Å“â€¦ Standalone Build Succeeded! Ready for distribution.");
+        } else {
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Ã¢ÂÅ’ %s", stage.c_str());
+        }
+
+        ImGui::Spacing();
+
+        // Build Log Streaming Console
+        ImGui::TextDisabled("Build Output & Diagnostics Log:");
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.08f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.20f, 0.20f, 1.0f));
+        if (ImGui::BeginChild("GameBuildLogChild", ImVec2(-1.0f, 240.0f), true, ImGuiWindowFlags_HorizontalScrollbar)) {
+            ImGui::TextUnformatted(logCopy.c_str());
+            if (building || ImGui::GetScrollY() >= ImGui::GetScrollMaxY() - 20.0f) {
+                ImGui::SetScrollHereY(1.0f);
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor(2);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Action Buttons
+        if (building) {
+            ImGui::BeginDisabled();
+            ImGui::Button("Packaging Standalone Game...", ImVec2(220, 32));
+            ImGui::EndDisabled();
+        } else {
+            if (success) {
+                if (ImGui::Button("Ã°Å¸Å¡â‚¬ Launch Game (.exe)", ImVec2(170, 32))) {
+                    if (!exePath.empty() && std::filesystem::exists(exePath)) {
+                        ShellExecuteA(NULL, "open", exePath.c_str(), NULL, outDir.string().c_str(), SW_SHOW);
+                    } else if (std::filesystem::exists(outDir / "Run.bat")) {
+                        std::string batPath = (outDir / "Run.bat").string();
+                        ShellExecuteA(NULL, "open", batPath.c_str(), NULL, outDir.string().c_str(), SW_SHOW);
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::Button("Ã°Å¸â€œÂ Open Build Folder", ImVec2(170, 32))) {
+                    if (!outDir.empty() && std::filesystem::exists(outDir)) {
+                        ShellExecuteA(NULL, "open", outDir.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
+                    }
+                }
+                ImGui::SameLine();
+            }
+
+            if (ImGui::Button("Rebuild Project", ImVec2(130, 32))) {
+                StartGameBuildAsync(scene);
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Close", ImVec2(100, 32))) {
+                showGameBuildModal = false;
+            }
+        }
+    }
+    ImGui::End();
+
+    ImGui::PopStyleColor(4);
+}

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UITypes.h"
 #include "HtmlCssParser.h"
@@ -239,6 +239,15 @@ public:
         return "";
     }
 
+    std::string GetHtmlDirectory() const {
+        std::string hp = GetHtmlPath();
+        if (!hp.empty()) {
+            std::error_code ec;
+            return std::filesystem::path(hp).parent_path().string();
+        }
+        return "";
+    }
+
     CssStyleSheet htmlSheet;
 
     bool LoadFromHtml(const std::string& path) {
@@ -253,9 +262,15 @@ public:
             std::string content = ss.str();
             if (content.empty()) return false;
 
+            std::string baseDir = "";
+            try {
+                baseDir = std::filesystem::path(path).parent_path().string();
+            } catch (...) {}
+
             CssStyleSheet newSheet;
-            auto newRoot = HtmlCssParser::Parse(content, &newSheet);
+            auto newRoot = HtmlCssParser::Parse(content, &newSheet, baseDir);
             if (newRoot) {
+                newRoot->baseDir = baseDir;
                 newRoot->ComputeLayout(glm::vec4(0.0f, 0.0f, canvasResolution.x, canvasResolution.y));
                 htmlSource = std::move(content);
                 htmlPath = path;

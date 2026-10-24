@@ -417,6 +417,7 @@ void EditorGizmoSystem::RenderGizmos(const Scene& scene, const glm::vec3& camera
         b.startIndex = startIdx;
         b.indexCount = count;
         b.isUnlit = true;
+        b.twoSided = true;
         b.castShadows = false;
         b.receiveShadows = false;
         b.baseColor = {1.0f, 1.0f, 1.0f};

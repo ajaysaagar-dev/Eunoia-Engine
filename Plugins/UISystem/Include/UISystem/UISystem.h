@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "UITypes.h"
 #include "UserInterface.h"
@@ -47,13 +47,20 @@ public:
     void RenderActiveUIs(const glm::vec2& viewportPos, const glm::vec2& viewportSize);
     void RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, const glm::vec2& screenMax, const UserInterface& ui);
 
+    // Texture loading for UI (HTML <img> and CSS background-image)
+    using TextureLoaderCallback = std::function<uint64_t(const std::string& path, int* outWidth, int* outHeight)>;
+    void SetTextureLoader(TextureLoaderCallback cb) { m_textureLoader = cb; }
+    uint64_t LoadTexture(const std::string& path, int* outWidth = nullptr, int* outHeight = nullptr);
+    uint64_t ResolveTextureId(const std::string& rawPath, const std::string& baseDir = "", int* outWidth = nullptr, int* outHeight = nullptr);
+
 private:
-    UISystemManager() = default;
+    UISystemManager();
     ~UISystemManager() override = default;
 
     void* m_currentScene = nullptr;
     std::vector<UserInterface*> m_activeUIs;
     std::unordered_map<std::string, std::shared_ptr<UserInterface>> m_loadedUIs;
+    TextureLoaderCallback m_textureLoader = nullptr;
 };
 
 // Global accessor proxy struct allowing:
@@ -84,6 +91,9 @@ struct UISystemProxy {
     }
     static UserInterface* CreateNewUI(const std::string& name, const std::string& path) {
         return UISystemManager::Get().CreateNewUI(name, path);
+    }
+    static void SetTextureLoader(std::function<uint64_t(const std::string&, int*, int*)> cb) {
+        UISystemManager::Get().SetTextureLoader(cb);
     }
 };
 

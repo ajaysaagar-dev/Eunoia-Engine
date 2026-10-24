@@ -106,6 +106,7 @@ struct MaterialAsset {
     int roughnessChannel = 1; // 0=R, 1=G, 2=B, 3=A
     int aoChannel = 0;        // 0=R, 1=G, 2=B, 3=A
     int materialDebugMode = 0;
+    bool disableStreaming = false; // Wicked Engine: Keep textures of this material at full native resolution
 };
 
 struct SkyboxAsset {
@@ -121,6 +122,8 @@ struct SkyboxAsset {
     // Skybox Properties
     float exposure = 1.0f;
     float rotation = 0.0f; // degrees 0..360
+    bool autoRotate = false;
+    float autoRotateSpeed = 1.0f;
     glm::vec3 tint{1.0f, 1.0f, 1.0f};
     float ambientContribution = 0.5f;
     bool enableSkybox = true;
@@ -288,12 +291,17 @@ public:
 
     // Material Editor Window & In-Editor Tab Workspace
     bool showMaterialEditor = false;
+    bool materialWorkspaceActive = false; // Whether the material tab is currently active/focused in the workspace
     MaterialAsset activeMaterial;
     bool materialDirty = false;
     bool liveMaterialViewportSync = true;
     float matEditorLightAngle = 45.0f;
-    int matEditorPreviewMesh = 0; // 0 = Sphere, 1 = Cube, 2 = Plane
-    int matEditorLightPreset = 0; // 0 = Directional Key Light, 1 = Studio 3-Point Lights, 2 = Warm Sunset, 3 = Cool Night / Moonlight
+    int matEditorPreviewMesh = 0; // 0 = Cube (Default), 1 = Sphere, 2 = Cylinder, 3 = Plane, 4 = Torus, 5 = Capsule
+    float matEditorRotationAngle = 0.0f;
+    bool matEditorAutoRotate = true;
+    uint64_t matPreviewTextureId = 0;
+    std::string matEditorSurfaceMap = "";
+    int matEditorLightPreset = 1; // 0 = Directional Key Light, 1 = Studio 3-Point Lights (Default), 2 = Warm Sunset, 3 = Cool Night / Moonlight
 
     // Gizmos configuration
     bool showGizmo = true;
@@ -308,12 +316,34 @@ public:
     // UI layout dimensions (scaled for friendly visibility and comfort)
     float uiMargin = 0.0f;
     float uiGap = 0.0f;
-    float topBarHeight = 76.0f;
-    float leftSidebarWidth = 310.0f;
+    float topBarHeight = 56.0f;
+    float leftSidebarWidth = 250.0f;
     float rightSidebarWidth = 320.0f;
-    float bottomDockHeight = 240.0f;
-    float contentBrowserFolderTreeWidth = 220.0f;
+    float outlinerHeightRatio = 0.38f; // Ratio of right sidebar height dedicated to Outliner (above Details)
+    float bottomBarHeight = 24.0f;     // Full-width horizontal bottom progress & status bar
+    float bottomDockHeight = 190.0f;
+    float contentBrowserFolderTreeWidth = 180.0f;
     float uiScale = 1.0f; // UI Scale factor (0.25f to 2.50f, 1.0f = 100%)
+
+    struct BottomProgressState {
+        bool active = false;
+        float progress = 0.0f;
+        std::string title = "";
+        std::string detail = "";
+        float completionTimer = 0.0f;
+        bool success = true;
+    } m_bottomProgress;
+
+    struct TabSaveProgressState {
+        bool isSaving = false;
+        float progress = 0.0f;
+        std::string tabName = "";
+        float fadeTimer = 0.0f;
+    };
+    TabSaveProgressState m_levelSaveState;
+    TabSaveProgressState m_materialSaveState;
+    TabSaveProgressState m_uiSaveState;
+    std::atomic<bool> m_isAsyncLevelSaving{false};
 
     struct ViewportRect {
         float x, y, width, height;
@@ -324,14 +354,14 @@ public:
             return { 0.0f, 0.0f, windowWidth, windowHeight };
         }
         float topH = topBarHeight;
-        float bottomH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 32.0f) : 0.0f;
-        float leftW = showOutliner ? leftSidebarWidth : 0.0f;
-        float rightW = showDetails ? rightSidebarWidth : 0.0f;
+        float bottomBarH = bottomBarHeight * uiScale;
+        float curBottomH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f;
+        float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
 
-        float vpX = leftW;
+        float vpX = 0.0f; // Outliner is now docked above Details on the right side
         float vpY = topH;
-        float vpW = windowWidth - leftW - rightW;
-        float vpH = windowHeight - topH - bottomH;
+        float vpW = windowWidth - rightW;
+        float vpH = windowHeight - topH - curBottomH - bottomBarH;
 
         if (vpW < 10.0f) vpW = 10.0f;
         if (vpH < 10.0f) vpH = 10.0f;
@@ -379,7 +409,8 @@ public:
         float y = 0.0f;
         float width = 0.0f;
         float height = 0.0f;
-        int meshType = 0; // 0 = Sphere, 1 = Cube, 2 = Plane
+        int meshType = 0; // 0 = Cube (Default), 1 = Sphere, 2 = Cylinder, 3 = Plane, 4 = Torus, 5 = Capsule
+        float rotationAngle = 0.0f;
         int lightPreset = 0;
         float lightAngle = 45.0f;
     };
@@ -393,6 +424,8 @@ public:
     // Viewport display mode
     int viewMode = 0; // 0=Lit, 1=Wireframe, 2=Unlit
     float cameraSpeed = 4.0f;
+    float cameraSpeedOverlayTimer = 0.0f;
+    void ShowCameraSpeedOverlay(float speed) { cameraSpeed = speed; cameraSpeedOverlayTimer = 1.0f; }
     float currentFps = 60.0f;
     bool lockAspectScale = false;
 
@@ -430,6 +463,7 @@ public:
 
     // Level File Management (In whole project "Level" is used instead of "Scene")
     std::string currentLevelFilePath = "";
+    std::string lastOpenedLevelConfig = "";
     bool levelUnsaved = false;
     std::string& currentSceneFilePath = currentLevelFilePath;
     bool& sceneUnsaved = levelUnsaved;
@@ -476,6 +510,7 @@ public:
     glm::vec3 CalculateDropSpawnPosition(OrbitCamera& camera, float mouseX, float mouseY, float screenW, float screenH);
 
     EngineUI();
+    ~EngineUI();
 
     // Initialize EngineUI with a pre-selected project path (called after standalone project browser)
     void InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode = false, const std::string& specificScenePath = "", const std::string& specificBinPath = "");
@@ -484,6 +519,8 @@ public:
     void LoadEditorConfig();
     void SaveEditorConfig();
     void RenderLayoutSplitters();
+    void RenderBottomProgressBar();
+    bool RenderTabWithSaveProgress(const char* label, bool isActive, const TabSaveProgressState& saveState, float btnHeight);
 
     // Standalone Project Browser window (runs before editor, returns selected project path or empty)
     static std::filesystem::path RunStandaloneProjectBrowser();
@@ -497,20 +534,34 @@ public:
     void Render(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs, uint32_t vertexCount, uint32_t indexCount, bool& outShouldExit);
     void RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidth, float viewportHeight);
 
-    // Reference Viewer & Asset Cooking (dev.md Section 24, 33)
+    // Reference Viewer (dev.md Section 33)
     bool showReferenceViewer = false;
     AssetID refViewerSelectedAsset;
-    bool showCookModal = false;
-    std::string cookLog = "";
     std::string currentVirtualDir = "/Game";
 
     void OpenReferenceViewer(const AssetID& id = AssetID::Null());
-    void OpenCookModal();
+
+    // Standalone Game Build Pipeline
+    bool showGameBuildModal = false;
+    bool isGameBuilding = false;
+    float gameBuildProgress = 0.0f;
+    std::string gameBuildStage = "Ready";
+    std::string gameBuildLog = "";
+    bool gameBuildSuccess = false;
+    std::filesystem::path gameBuildOutputDir;
+    std::string gameBuildExePath;
+    std::thread gameBuildThread;
+    std::mutex gameBuildMutex;
+
+    void OpenGameBuildModal(Scene& scene);
+    void RenderGameBuildModal(Scene& scene);
+    void StartGameBuildAsync(Scene& scene);
 
     // Material file I/O & Textures
     static bool LoadMaterialFile(const std::string& path, MaterialAsset& outMat);
     static bool SaveMaterialFile(const std::string& path, const MaterialAsset& mat);
     void OpenMaterialEditor(const std::string& path);
+    void PropagateMaterialChangesToScene(Scene& scene, const MaterialAsset& mat);
     void RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, const glm::vec2& wsSize);
     void ApplyMaterialToActorAndChildren(Scene& scene, GameObject* rootObj, const MaterialAsset& ma);
     std::vector<TextureAssetEntry> ScanProjectTextures();
@@ -521,8 +572,7 @@ public:
     bool showSkyboxSettingsModal = false;
     bool showPostProcessingModal = false;
     bool showAmbientOcclusionModal = false;
-    bool showNewSkyboxPopup = false;
-    char newSkyboxNameBuf[64] = "Skybox_New";
+    bool showVolumetricFogModal = false;
     SkyboxAsset activeSkybox;
     bool skyboxDirty = false;
 
@@ -546,10 +596,7 @@ public:
     // UI Editor & Asset File I/O
     bool showNewUIPopup = false;
     char newUINameBuf[64] = "UI_NewInterface";
-    bool showNewUI3DPopup = false;
-    char newUI3DNameBuf[64] = "UI3D_NewInterface";
     void OpenUIEditor(const std::string& path);
-    void OpenVisualBehaviourEditor(const std::string& path);
 
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
@@ -557,8 +604,6 @@ public:
     char behaviourSearchBuf[64] = "";
     bool showNewBehaviourPopup = false;
     char newBehaviourNameBuf[64] = "NewBehaviour";
-    bool showNewVisualBehaviourPopup = false;
-    char newVisualBehaviourNameBuf[64] = "NewVisualBehaviour";
     bool IsBehaviourNameAlreadyExists(const std::string& name) const;
 
     // In-Editor Code Editor (dev.md & User Request)
@@ -633,7 +678,6 @@ public:
     uint64_t cbTextureIconGpuHandle = 0;
     uint64_t cbLevelIconGpuHandle = 0;
     uint64_t cbBehaviourIconGpuHandle = 0;
-    uint64_t cbVisualBehaviourIconGpuHandle = 0;
 
     uint64_t GetLightIconGpuHandle(LightType type) const {
         switch (type) {
@@ -655,7 +699,6 @@ public:
             case AssetType::Level:           return cbLevelIconGpuHandle;
             case AssetType::Behaviour:
             case AssetType::Script:          return cbBehaviourIconGpuHandle;
-            case AssetType::VisualBehaviour: return cbVisualBehaviourIconGpuHandle ? cbVisualBehaviourIconGpuHandle : cbBehaviourIconGpuHandle;
             case AssetType::UserInterface:   return cbMaterialIconGpuHandle ? cbMaterialIconGpuHandle : cbBehaviourIconGpuHandle;
             default:                         return 0;
         }
@@ -718,8 +761,8 @@ private:
     void RenderWorldSkyboxSettingsModal(Scene& scene);
     void RenderPostProcessingModal(Scene& scene);
     void RenderAmbientOcclusionModal(Scene& scene);
+    void RenderVolumetricFogModal(Scene& scene);
     void RenderReferenceViewer(Scene& scene);
-    void RenderCookModal();
     void RenderHelpModal();
     void RenderLoadingModal();
     void RenderProjectBrowser(Scene& scene, OrbitCamera& camera);

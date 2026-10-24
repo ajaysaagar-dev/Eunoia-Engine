@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <string>
 #include <vector>
@@ -266,6 +266,7 @@ struct CssStyle {
     glm::vec4 borderColor{ 0.0f, 0.0f, 0.0f, 0.0f };
     float borderThickness = 0.0f;
     float cornerRounding = 0.0f;
+    std::string backgroundImage = "";
 
     // Typography
     glm::vec4 textColor{ 0.95f, 0.95f, 0.95f, 1.0f };
@@ -352,6 +353,18 @@ struct CssStyle {
         }
     }
 
+    static std::string ExtractUrlFromCss(const std::string& val) {
+        size_t urlPos = val.find("url(");
+        if (urlPos == std::string::npos) return "";
+        size_t start = urlPos + 4;
+        size_t end = val.find(')', start);
+        if (end == std::string::npos) return "";
+        std::string url = val.substr(start, end - start);
+        while (!url.empty() && (url.front() == '"' || url.front() == '\'' || url.front() == ' ' || url.front() == '\t')) url.erase(url.begin());
+        while (!url.empty() && (url.back() == '"' || url.back() == '\'' || url.back() == ' ' || url.back() == '\t')) url.pop_back();
+        return url;
+    }
+
     void ApplyProperty(const std::string& rawProp, const std::string& rawVal) {
         std::string prop = CssColor::ToLower(CssColor::Trim(rawProp));
         std::string val = CssColor::Trim(rawVal);
@@ -420,7 +433,12 @@ struct CssStyle {
         else if (prop == "color") {
             textColor = CssColor::Parse(val);
         } else if (prop == "background" || prop == "background-color") {
+            if (val.find("url(") != std::string::npos) {
+                backgroundImage = ExtractUrlFromCss(val);
+            }
             backgroundColor = CssColor::Parse(val);
+        } else if (prop == "background-image") {
+            backgroundImage = ExtractUrlFromCss(val);
         }
 
         // Typography
@@ -685,6 +703,31 @@ public:
     std::vector<std::shared_ptr<HtmlNode>> children;
     HtmlNode* parent = nullptr;
     glm::vec4 computedRect{ 0.0f, 0.0f, 0.0f, 0.0f }; // x, y, width, height
+    std::string src = "";
+    std::string baseDir = "";
+    mutable uint64_t cachedTextureId = 0;
+    mutable int nativeImageWidth = 0;
+    mutable int nativeImageHeight = 0;
+
+    using TextureResolverFn = std::function<uint64_t(const std::string& path, const std::string& baseDir, int* outW, int* outH)>;
+    static inline TextureResolverFn s_textureResolver = nullptr;
+    static void SetTextureResolver(TextureResolverFn fn) { s_textureResolver = fn; }
+
+    uint64_t ResolveTexture(const std::string& rawPath) const {
+        if (rawPath.empty()) return 0;
+        if (cachedTextureId != 0) return cachedTextureId;
+        if (s_textureResolver) {
+            int w = 0, h = 0;
+            uint64_t id = s_textureResolver(rawPath, baseDir, &w, &h);
+            if (id != 0) {
+                cachedTextureId = id;
+                nativeImageWidth = w;
+                nativeImageHeight = h;
+                return id;
+            }
+        }
+        return 0;
+    }
 
     // Interactivity State & Event Bindings
     bool isHovered = false;
@@ -752,7 +795,7 @@ public:
             } else if (tag == "button") {
                 elemW = std::max(100.0f, (float)textContent.length() * (style.fontSize * 0.60f) + style.paddingLeft + style.paddingRight + 20.0f);
             } else {
-                elemW = (float)textContent.length() * (style.fontSize * 0.58f) + style.paddingLeft + style.paddingRight;
+                elemW = (tag == "img") ? ((nativeImageWidth > 0) ? (float)nativeImageWidth : 64.0f) : ((float)textContent.length() * (style.fontSize * 0.58f) + style.paddingLeft + style.paddingRight);
             }
         }
         elemW = std::clamp(elemW, style.minWidth, style.maxWidth);
@@ -770,6 +813,7 @@ public:
             else if (tag == "button") elemH = style.fontSize + style.paddingTop + style.paddingBottom + 12.0f;
             else if (tag == "hr") elemH = 2.0f + style.marginTop + style.marginBottom;
             else if (tag == "body") elemH = pH;
+            else if (tag == "img") elemH = (nativeImageHeight > 0) ? (float)nativeImageHeight : ((elemW > 0.0f && elemW != pW) ? elemW : 64.0f);
             else elemH = 32.0f;
         }
         elemH = std::clamp(elemH, style.minHeight, style.maxHeight);
@@ -1244,6 +1288,35 @@ inline void HtmlNode::Render(void* imDrawListPtr, const glm::vec2& canvasOrigin,
         dl->AddRectFilled(imMin, imMax, bgCol, rounding);
     }
 
+    // 2.1 Background Image
+    if (!effStyle.backgroundImage.empty()) {
+        uint64_t bgTexId = ResolveTexture(effStyle.backgroundImage);
+        if (bgTexId != 0) {
+            ImU32 imgTint = IM_COL32(255, 255, 255, (int)(effStyle.opacity * 255));
+            if (rounding > 0.0f) {
+                dl->AddImageRounded((ImTextureID)bgTexId, imMin, imMax, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), imgTint, rounding);
+            } else {
+                dl->AddImage((ImTextureID)bgTexId, imMin, imMax, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), imgTint);
+            }
+        }
+    }
+
+    // 2.2 <img> Tag Image
+    if (tag == "img" && !src.empty()) {
+        uint64_t imgTexId = ResolveTexture(src);
+        if (imgTexId != 0) {
+            ImU32 imgTint = IM_COL32(255, 255, 255, (int)(effStyle.opacity * 255));
+            if (rounding > 0.0f) {
+                dl->AddImageRounded((ImTextureID)imgTexId, imMin, imMax, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), imgTint, rounding);
+            } else {
+                dl->AddImage((ImTextureID)imgTexId, imMin, imMax, ImVec2(0.0f, 0.0f), ImVec2(1.0f, 1.0f), imgTint);
+            }
+        } else {
+            ImU32 phBorder = IM_COL32(200, 90, 90, (int)(effStyle.opacity * 200));
+            dl->AddRect(imMin, imMax, phBorder, rounding, 0, 1.0f * scale);
+        }
+    }
+
     // 3. Border
     if (effStyle.borderThickness > 0.0f && effStyle.borderColor.a > 0.0f) {
         ImU32 bdCol = IM_COL32((int)(effStyle.borderColor.r * 255), (int)(effStyle.borderColor.g * 255), (int)(effStyle.borderColor.b * 255), (int)(effStyle.borderColor.a * effStyle.opacity * 255));
@@ -1312,9 +1385,10 @@ inline void HtmlNode::Render(void* imDrawListPtr, const glm::vec2& canvasOrigin,
 // ============================================================================
 class HtmlCssParser {
 public:
-    static std::shared_ptr<HtmlNode> Parse(const std::string& htmlSource, CssStyleSheet* outSheet = nullptr) {
+    static std::shared_ptr<HtmlNode> Parse(const std::string& htmlSource, CssStyleSheet* outSheet = nullptr, const std::string& baseDir = "") {
         auto root = std::make_shared<HtmlNode>();
         root->tag = "root";
+        root->baseDir = baseDir;
         root->style.isFlex = true;
         root->style.isFlexCol = true;
         root->style.isWidthPercent = true;
@@ -1446,6 +1520,27 @@ public:
             auto node = std::make_shared<HtmlNode>();
             node->tag = tagName;
             node->parent = currentParent;
+            node->baseDir = baseDir;
+
+            std::string srcAttr = ExtractAttribute(tagContent, "src");
+            if (!srcAttr.empty()) {
+                node->src = srcAttr;
+                node->attributes["src"] = srcAttr;
+            }
+            std::string widthAttr = ExtractAttribute(tagContent, "width");
+            if (!widthAttr.empty()) {
+                node->attributes["width"] = widthAttr;
+                node->style.width = CssStyle::ParseUnit(widthAttr);
+            }
+            std::string heightAttr = ExtractAttribute(tagContent, "height");
+            if (!heightAttr.empty()) {
+                node->attributes["height"] = heightAttr;
+                node->style.height = CssStyle::ParseUnit(heightAttr);
+            }
+            std::string altAttr = ExtractAttribute(tagContent, "alt");
+            if (!altAttr.empty()) {
+                node->attributes["alt"] = altAttr;
+            }
 
             std::string classAttr = ExtractAttribute(tagContent, "class");
             node->ParseClasses(classAttr);
@@ -1651,26 +1746,52 @@ private:
     }
 
     static std::string ExtractAttribute(const std::string& tagContent, const std::string& attrName) {
-        std::string query = attrName + "=";
-        size_t p = tagContent.find(query);
-        if (p == std::string::npos) return "";
+        std::string tagLower = CssColor::ToLower(tagContent);
+        std::string attrLower = CssColor::ToLower(attrName);
+        size_t searchPos = 0;
 
-        size_t valStart = p + query.size();
-        if (valStart >= tagContent.size()) return "";
+        while (searchPos < tagLower.size()) {
+            size_t p = tagLower.find(attrLower, searchPos);
+            if (p == std::string::npos) return "";
 
-        char quote = tagContent[valStart];
-        if (quote == '"' || quote == '\'') {
-            valStart++;
-            size_t valEnd = tagContent.find(quote, valStart);
-            if (valEnd != std::string::npos) {
+            if (p > 0 && !std::isspace(static_cast<unsigned char>(tagLower[p - 1])) && tagLower[p - 1] != '<') {
+                searchPos = p + attrLower.size();
+                continue;
+            }
+
+            size_t afterAttr = p + attrLower.size();
+            while (afterAttr < tagLower.size() && std::isspace(static_cast<unsigned char>(tagLower[afterAttr]))) {
+                afterAttr++;
+            }
+
+            if (afterAttr >= tagLower.size() || tagLower[afterAttr] != '=') {
+                searchPos = p + attrLower.size();
+                continue;
+            }
+
+            size_t valStart = afterAttr + 1;
+            while (valStart < tagContent.size() && std::isspace(static_cast<unsigned char>(tagContent[valStart]))) {
+                valStart++;
+            }
+            if (valStart >= tagContent.size()) return "";
+
+            char quote = tagContent[valStart];
+            if (quote == '"' || quote == '\'') {
+                valStart++;
+                size_t valEnd = tagContent.find(quote, valStart);
+                if (valEnd != std::string::npos) {
+                    return tagContent.substr(valStart, valEnd - valStart);
+                }
+            } else {
+                size_t valEnd = tagContent.find_first_of(" \t\r\n/>", valStart);
+                if (valEnd == std::string::npos) valEnd = tagContent.size();
                 return tagContent.substr(valStart, valEnd - valStart);
             }
-        } else {
-            size_t valEnd = tagContent.find_first_of(" >", valStart);
-            return tagContent.substr(valStart, valEnd - valStart);
+            return "";
         }
         return "";
     }
+
 };
 
 } // namespace EunoiaUI

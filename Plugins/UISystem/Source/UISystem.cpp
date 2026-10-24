@@ -1,4 +1,4 @@
-#include "UISystem/UISystem.h"
+﻿#include "UISystem/UISystem.h"
 #include <iostream>
 
 #if __has_include(<imgui.h>)
@@ -20,9 +20,72 @@
 
 namespace EunoiaUI {
 
+UISystemManager::UISystemManager() {
+    HtmlNode::SetTextureResolver([this](const std::string& path, const std::string& baseDir, int* outW, int* outH) -> uint64_t {
+        return this->ResolveTextureId(path, baseDir, outW, outH);
+    });
+}
+
 UISystemManager& UISystemManager::Get() {
     static UISystemManager instance;
     return instance;
+}
+
+uint64_t UISystemManager::LoadTexture(const std::string& path, int* outWidth, int* outHeight) {
+    if (path.empty() || !m_textureLoader) return 0;
+    return m_textureLoader(path, outWidth, outHeight);
+}
+
+uint64_t UISystemManager::ResolveTextureId(const std::string& rawPath, const std::string& baseDir, int* outWidth, int* outHeight) {
+    if (rawPath.empty()) return 0;
+
+    std::string clean = rawPath;
+    size_t first = clean.find_first_not_of(" \t\r\n\"'");
+    size_t last = clean.find_last_not_of(" \t\r\n\"'");
+    if (first == std::string::npos) return 0;
+    clean = clean.substr(first, (last - first + 1));
+
+    if (clean.rfind("file:///", 0) == 0) {
+        clean = clean.substr(8);
+    } else if (clean.rfind("file://", 0) == 0) {
+        clean = clean.substr(7);
+    }
+
+    for (char& c : clean) {
+        if (c == '\\') c = '/';
+    }
+
+    std::error_code ec;
+
+    // 1. Try relative to baseDir (HTML directory)
+    if (!baseDir.empty()) {
+        std::filesystem::path p = std::filesystem::path(baseDir) / clean;
+        if (std::filesystem::exists(p, ec)) {
+            uint64_t id = LoadTexture(p.lexically_normal().string(), outWidth, outHeight);
+            if (id != 0) return id;
+        }
+    }
+
+    // 2. Try direct filesystem path
+    if (std::filesystem::exists(clean, ec)) {
+        uint64_t id = LoadTexture(std::filesystem::path(clean).lexically_normal().string(), outWidth, outHeight);
+        if (id != 0) return id;
+    }
+
+    // 3. Try passing directly to loader (which queries TextureManager / AssetRegistry)
+    uint64_t id = LoadTexture(clean, outWidth, outHeight);
+    if (id != 0) return id;
+
+    // 4. Try under Content/ if not already prefixed
+    if (clean.rfind("Content/", 0) != 0 && clean.rfind("content/", 0) != 0) {
+        std::string withContent = "Content/" + clean;
+        if (std::filesystem::exists(withContent, ec)) {
+            uint64_t cid = LoadTexture(withContent, outWidth, outHeight);
+            if (cid != 0) return cid;
+        }
+    }
+
+    return 0;
 }
 
 void UISystemManager::DispatchEvent(const UIEventBinding& binding) {
@@ -121,19 +184,40 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
     std::error_code ec;
     if (std::filesystem::exists(path, ec) && !std::filesystem::is_directory(path, ec)) {
         auto ui = std::make_shared<UserInterface>();
-        if (ui->LoadFromFile(path)) {
+        bool loaded = false;
+        std::string lowerPath = path;
+        for (char& c : lowerPath) c = (char)tolower(c);
+        if (lowerPath.ends_with(".html") || lowerPath.ends_with(".htm")) {
+            loaded = ui->LoadFromHtml(path);
+        } else {
+            loaded = ui->LoadFromFile(path);
+            if (!loaded) {
+                loaded = ui->LoadFromHtml(path);
+            }
+        }
+        if (loaded) {
             UserInterface* ptr = ui.get();
             m_loadedUIs[path] = ui;
             return ptr;
         }
     }
 
-    // Try appending .eui if missing
-    if (path.rfind(".eui") == std::string::npos && path.rfind(".html") == std::string::npos) {
+    // Try appending .html or .eui if missing
+    if (path.rfind(".eui") == std::string::npos && path.rfind(".html") == std::string::npos && path.rfind(".htm") == std::string::npos) {
+        std::string withHtml = path + ".html";
+        if (std::filesystem::exists(withHtml, ec)) {
+            auto ui = std::make_shared<UserInterface>();
+            if (ui->LoadFromHtml(withHtml)) {
+                UserInterface* ptr = ui.get();
+                m_loadedUIs[path] = ui;
+                m_loadedUIs[withHtml] = ui;
+                return ptr;
+            }
+        }
         std::string withEui = path + ".eui";
         if (std::filesystem::exists(withEui, ec)) {
             auto ui = std::make_shared<UserInterface>();
-            if (ui->LoadFromFile(withEui)) {
+            if (ui->LoadFromFile(withEui) || ui->LoadFromHtml(withEui)) {
                 UserInterface* ptr = ui.get();
                 m_loadedUIs[path] = ui;
                 m_loadedUIs[withEui] = ui;
@@ -149,9 +233,29 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
         }
     }
 
+    // If not found and path is a simple name (no slashes), check common content directories
+    if (path.find('/') == std::string::npos && path.find('\\') == std::string::npos) {
+        static const std::vector<std::string> prefixes = {
+            "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/", "Data/Content/UI/UI_"
+        };
+        for (const auto& pre : prefixes) {
+            UserInterface* u = GetOrLoadUI(pre + path);
+            if (u) {
+                m_loadedUIs[path] = m_loadedUIs[pre + path];
+                return u;
+            }
+            if (!path.starts_with("UI_")) {
+                u = GetOrLoadUI(pre + "UI_" + path);
+                if (u) {
+                    m_loadedUIs[path] = m_loadedUIs[pre + "UI_" + path];
+                    return u;
+                }
+            }
+        }
+    }
+
     return nullptr;
 }
-
 UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::string& path) {
     auto ui = std::make_shared<UserInterface>(name);
     ui->filePath = path;
@@ -255,6 +359,22 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
                 drawList->AddText(nullptr, fontSize, shdPos, shdCol, el.text.c_str());
             }
             drawList->AddText(nullptr, fontSize, textPos, txtCol, el.text.c_str());
+        } else if (el.type == UIElementType::Image) {
+            uint64_t texId = 0;
+            if (!el.texturePath.empty()) {
+                texId = ResolveTextureId(el.texturePath, ui.GetHtmlDirectory());
+            }
+            if (texId != 0) {
+                ImU32 tintCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
+                if (el.backgroundColor.a <= 0.0f) {
+                    tintCol = IM_COL32(255, 255, 255, 255);
+                }
+                if (el.cornerRounding > 0.0f) {
+                    drawList->AddImageRounded((ImTextureID)texId, pMin, pMax, ImVec2(0, 0), ImVec2(1, 1), tintCol, el.cornerRounding * scale);
+                } else {
+                    drawList->AddImage((ImTextureID)texId, pMin, pMax, ImVec2(0, 0), ImVec2(1, 1), tintCol);
+                }
+            }
         }
     }
 #endif

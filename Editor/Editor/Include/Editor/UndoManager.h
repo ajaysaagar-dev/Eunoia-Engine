@@ -73,6 +73,13 @@ public:
         scene.onPreChange = hook;
         scene.selectedId = target.selectedId;
         scene.SyncLightPositionsFromActors();
+
+        // Rebuild dynamic procedural meshes such as terrain
+        for (auto& obj : scene.objects) {
+            if (obj.isTerrain || obj.type == PrimitiveType::Terrain) {
+                obj.terrain.RebuildTerrainMesh(obj.mesh);
+            }
+        }
         return true;
     }
 
@@ -99,6 +106,13 @@ public:
         scene.onPreChange = hook;
         scene.selectedId = target.selectedId;
         scene.SyncLightPositionsFromActors();
+
+        // Rebuild dynamic procedural meshes such as terrain
+        for (auto& obj : scene.objects) {
+            if (obj.isTerrain || obj.type == PrimitiveType::Terrain) {
+                obj.terrain.RebuildTerrainMesh(obj.mesh);
+            }
+        }
         return true;
     }
 
