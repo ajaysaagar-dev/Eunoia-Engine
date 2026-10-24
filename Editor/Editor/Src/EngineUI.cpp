@@ -3653,11 +3653,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
                         !(showMaterialEditor && materialWorkspaceActive);
 
-    // 1. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" top panel)
-    RenderTopMenuBar(scene, camera, outShouldExit);
+    // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
+    RenderWorkspaceTabBar(scene, outShouldExit);
 
-    // 1b. Top Document Tab Switches (Level Editor, Material Editor, UI Editor)
-    RenderWorkspaceTabBar(scene);
+    // 2. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" second row)
+    RenderTopMenuBar(scene, camera, outShouldExit);
 
     if (isMainEditor) {
         // 2. Outliner (Matches UI_Ref.svg "Outliner" left sidebar)
@@ -3981,19 +3981,9 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float topBarW = vp->Size.x;
     float topBarH = topBarHeight;
+    float topBarY = vp->Pos.y + (tabBarHeight * uiScale);
 
-    HWND hwnd = nullptr;
-    bool isMaximized = false;
-#ifdef _WIN32
-    if (m_window) {
-        hwnd = glfwGetWin32Window(m_window);
-        if (hwnd) {
-            isMaximized = (IsZoomed(hwnd) != 0);
-        }
-    }
-#endif
-
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, vp->Pos.y), ImGuiCond_Always);
+    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, topBarY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(topBarW, topBarH), ImGuiCond_Always);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
@@ -4007,12 +3997,6 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
 
     if (ImGui::Begin("TopMenuBarWin", nullptr, flags)) {
         if (ImGui::BeginMenuBar()) {
-
-            // App branding / Logo mini (dev.md text-blue-400 fa-cube)
-            ImGui::AlignTextToFramePadding();
-            ImGui::TextColored(ImVec4(0.376f, 0.647f, 0.980f, 1.0f), "[E]");
-            ImGui::SameLine(0.0f, 6.0f * uiScale);
-
             // Menu Bar Dropdowns
             if (ImGui::BeginMenu("File")) {
                 if (ImGui::MenuItem("New Level", "Ctrl+N")) {
@@ -4768,90 +4752,35 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                 ImGui::PopStyleColor(2);
             }
 
-            // Right side: Window Frame Controls (Minimize, Maximize, Close per dev.md)
-            float winBtnW = 28.0f * uiScale;
-            float winBtnH = 22.0f * uiScale;
-            float totalWinControlsW = winBtnW * 3.0f + 16.0f * uiScale;
-
-            if (ImGui::GetContentRegionAvail().x > totalWinControlsW) {
-                ImGui::SameLine(ImGui::GetWindowWidth() - totalWinControlsW);
-
-                // Minimize [-]
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
-                if (ImGui::Button("-##WinMin", ImVec2(winBtnW, winBtnH))) {
-                    if (m_window) glfwIconifyWindow(m_window);
-                }
-                ImGui::PopStyleColor(4);
-
-                // Maximize [Square]
-                ImGui::SameLine(0.0f, 2.0f * uiScale);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
-                if (ImGui::Button(isMaximized ? "2##WinMax" : "1##WinMax", ImVec2(winBtnW, winBtnH))) {
-#ifdef _WIN32
-                    if (hwnd) {
-                        if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
-                        else ShowWindow(hwnd, SW_MAXIMIZE);
-                    }
-#endif
-                }
-                ImGui::PopStyleColor(4);
-
-                // Close [X]
-                ImGui::SameLine(0.0f, 2.0f * uiScale);
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f)); // Red hover
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
-                if (ImGui::Button("X##WinClose", ImVec2(winBtnW, winBtnH))) {
-                    outShouldExit = true;
-                }
-                ImGui::PopStyleColor(4);
-            }
-
             ImGui::EndMenuBar();
         }
 
         // Draw bottom border #1f1f23
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddLine(ImVec2(vp->Pos.x, vp->Pos.y + topBarH),
-                    ImVec2(vp->Pos.x + topBarW, vp->Pos.y + topBarH),
+        dl->AddLine(ImVec2(vp->Pos.x, topBarY + topBarH),
+                    ImVec2(vp->Pos.x + topBarW, topBarY + topBarH),
                     IM_COL32(31, 31, 35, 255), 1.0f);
-
-        // Window drag & double-click maximize
-#ifdef _WIN32
-        bool isHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
-        bool anyActive = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered();
-        if (isHovered && !anyActive) {
-            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
-                if (hwnd) {
-                    if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
-                    else ShowWindow(hwnd, SW_MAXIMIZE);
-                }
-            } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
-                if (hwnd) {
-                    ReleaseCapture();
-                    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
-                    ImGui::GetIO().MouseDown[0] = false;
-                }
-            }
-        }
-#endif
     }
     ImGui::End();
     ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 }
-void EngineUI::RenderWorkspaceTabBar(Scene& scene) {
+void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
     float barW = vp->Size.x;
     float barH = tabBarHeight * uiScale;
-    float barY = vp->Pos.y + topBarHeight;
+    float barY = vp->Pos.y; // Topmost row in the application window
+
+    HWND hwnd = nullptr;
+    bool isMaximized = false;
+#ifdef _WIN32
+    if (m_window) {
+        hwnd = glfwGetWin32Window(m_window);
+        if (hwnd) {
+            isMaximized = (IsZoomed(hwnd) != 0);
+        }
+    }
+#endif
 
     ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, barY), ImGuiCond_Always);
     ImGui::SetNextWindowSize(ImVec2(barW, barH), ImGuiCond_Always);
@@ -4863,13 +4792,24 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene) {
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f * uiScale, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.00f, 0.00f, 0.00f, 1.0f)); // #000000
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.020f, 0.020f, 0.025f, 1.0f)); // #050506
 
     if (ImGui::Begin("###WorkspaceTabBarWin", nullptr, flags)) {
         auto& uiMgr = EunoiaUI::UIEditorManager::Get();
         float tabBtnH = 22.0f * uiScale;
         float tabY = (barH - tabBtnH) * 0.5f;
         ImGui::SetCursorPosY(tabY);
+
+        // 0. Eunoia Logo Icon [E]
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.000f, 0.400f, 1.000f, 1.0f)); // #0066ff accent
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 3.0f);
+        ImGui::Button(" E ", ImVec2(22.0f * uiScale, tabBtnH));
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(2);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Eunoia Engine v2.0");
+
+        ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
         bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive());
@@ -5013,6 +4953,71 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene) {
             }
             ImGui::EndPopup();
         }
+
+        // 5. Window Frame Controls ONLY at the end of the tab switch view (Minimize, Maximize, Close)
+        float winBtnW = 28.0f * uiScale;
+        float winBtnH = tabBtnH;
+        float totalWinControlsW = winBtnW * 3.0f + 16.0f * uiScale;
+        const ImVec4 textMuted = ImVec4(0.631f, 0.631f, 0.667f, 1.0f);
+
+        ImGui::SameLine(barW - totalWinControlsW);
+
+        // Minimize [-]
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
+        if (ImGui::Button("-##WinMin", ImVec2(winBtnW, winBtnH))) {
+            if (m_window) glfwIconifyWindow(m_window);
+        }
+        ImGui::PopStyleColor(4);
+
+        // Maximize [Square]
+        ImGui::SameLine(0.0f, 2.0f * uiScale);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
+        if (ImGui::Button(isMaximized ? "2##WinMax" : "1##WinMax", ImVec2(winBtnW, winBtnH))) {
+#ifdef _WIN32
+            if (hwnd) {
+                if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
+                else ShowWindow(hwnd, SW_MAXIMIZE);
+            }
+#endif
+        }
+        ImGui::PopStyleColor(4);
+
+        // Close [X]
+        ImGui::SameLine(0.0f, 2.0f * uiScale);
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f)); // Red hover
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, textMuted);
+        if (ImGui::Button("X##WinClose", ImVec2(winBtnW, winBtnH))) {
+            outShouldExit = true;
+        }
+        ImGui::PopStyleColor(4);
+
+        // Window drag & double-click maximize on empty tab bar space
+#ifdef _WIN32
+        bool isHovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows);
+        bool anyActive = ImGui::IsAnyItemActive() || ImGui::IsAnyItemHovered();
+        if (isHovered && !anyActive) {
+            if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+                if (hwnd) {
+                    if (isMaximized) ShowWindow(hwnd, SW_RESTORE);
+                    else ShowWindow(hwnd, SW_MAXIMIZE);
+                }
+            } else if (ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+                if (hwnd) {
+                    ReleaseCapture();
+                    SendMessage(hwnd, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+                    ImGui::GetIO().MouseDown[0] = false;
+                }
+            }
+        }
+#endif
 
         // Bottom border line #1f1f23
         ImDrawList* dl = ImGui::GetWindowDrawList();

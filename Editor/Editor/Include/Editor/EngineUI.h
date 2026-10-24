@@ -325,7 +325,7 @@ public:
     float bottomDockHeight = 256.0f;   // dev.md h-64 = 256px
     float contentBrowserFolderTreeWidth = 256.0f; // dev.md w-64 = 256px
     float uiScale = 1.0f; // UI Scale factor (0.25f to 2.50f, 1.0f = 100%)
-    float GetTopBarsTotalHeight() const { return topBarHeight + (tabBarHeight * uiScale); }
+    float GetTopBarsTotalHeight() const { return (tabBarHeight * uiScale) + topBarHeight; }
 
     struct BottomProgressState {
         bool active = false;
@@ -363,7 +363,7 @@ public:
         if (isImmersiveMode || isGameOnlyWindow || isPlayModeActive) {
             return { 0.0f, 0.0f, windowWidth, windowHeight };
         }
-        float topH = topBarHeight;
+        float topH = GetTopBarsTotalHeight();
         float bottomBarH = bottomBarHeight * uiScale;
         float curBottomH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f;
         float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
@@ -773,7 +773,7 @@ private:
     void RenderTopMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit);
     void RenderCustomTitleBar(Scene& scene, bool& outShouldExit);
     void RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outShouldExit);
-    void RenderWorkspaceTabBar(Scene& scene);
+    void RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit);
     void RenderViewportOverlay(Scene& scene, OrbitCamera& camera, float fps, float frameTimeMs);
     void RenderOutliner(Scene& scene);
     void DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_set<int>& visitedIds, int depth = 0);
