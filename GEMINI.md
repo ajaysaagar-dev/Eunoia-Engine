@@ -1,16 +1,24 @@
-# Project Guidelines & Rules
+# Eunoia Engine Development Guidelines & Directives
 
-## Automatic GitHub Synchronization
-- Whenever changes are made to this codebase/project, all modified files, features, and fixes must be logically grouped into modular, well-described commits.
-- Automatically stage, commit, and push all commits to GitHub (`origin`) at the completion of the work.
-- Keep the local branch synchronized with `origin` at all times without requiring manual reminders.
+## 1. Asset Storage & Content Management
+- **No Content Cooking**: The "cooking content" / 0-byte dummy reference system is permanently removed.
+- **Direct Content Usage**: All assets (textures, materials, models, levels, sounds, UI) must always remain directly in the project's `Content/` folder as real, full-sized files.
+- Never delete, truncate to 0 bytes, or replace files in `Content/` with dummy references.
 
-## Build Rules
-- Never auto build the engine or run build scripts (`Build.bat`, `CompileGameScripts.bat`, etc.) unless the user explicitly requests to build.
+## 2. Git & Version Control Policy
+- **Dual Repository Architecture**:
+  1. **Engine Source Repository (`Eunoia-Engine`)**:
+     - Remote: `https://github.com/ajaysaagar-dev/Eunoia-Engine.git`
+     - Local Path: `C:\Projects\Eunoia-Engine\Eunoia-Engine`
+     - Workflow: After each code change/feature, create multiple granular functional commits divided logically by functional area (e.g., Editor/UI, Asset Management, Renderer/Shaders, Scene & Core, Build System/Tools), then push all commits together to `origin/main`.
+  2. **Engine Build Repository (`Eunoia-Engine-Build`)**:
+     - Remote: `https://github.com/ajaysaagar-dev/Eunoia-Engine-Build.git`
+     - Local Path: `C:\Projects\Eunoia-Engine\Eunoia-Engine-Build`
+     - Workflow: Once the engine is built via `Build.bat`, update `Eunoia-Editor.exe` and distribution files in this repository, commit with build details, and push to `origin/main`.
+- **GitHub Authentication**:
+  - Remote Base: `https://github.com/ajaysaagar-dev/`
+  - Token: `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`
 
-## Always Active Skills & Communication Rules
-- Always use and apply the `caveman` skill (located globally at `~/.gemini/config/skills/caveman/SKILL.md`) for all responses and communications.
-- Follow `caveman` mode (default: `full`):
-  - Respond terse like smart caveman. All technical substance stay. Only fluff die.
-  - Drop articles (a/an/the), filler (just/really/basically/actually/simply), pleasantries (sure/certainly/happy to), hedging. Fragments OK. Short synonyms.
-  - No tool-call narration or status preamble. Technical terms, commands, code blocks, and error quotes remain exact and verbatim.
+## 3. Strict Project Constraints
+- **Preserve Player Script**: Under NO circumstances modify `Projects/GameTest/Content/Behaviours/BS_Player.cpp`.
+- Maintain code cleanliness, documentation, and clickable `file://` links in user communications.
