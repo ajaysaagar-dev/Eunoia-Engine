@@ -2117,6 +2117,10 @@ struct RenderBatch {
                 b0.specular = baseLayer ? baseLayer->specular : obj.specular;
                 b0.emissiveColor = obj.emissiveColor;
                 b0.emissiveIntensity = obj.emissiveIntensity;
+                if (obj.id == selectedId && !isPlayMode) {
+                    b0.emissiveColor = glm::max(b0.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
+                    b0.emissiveIntensity = std::max(b0.emissiveIntensity, 1.5f);
+                }
                 b0.opacity = obj.opacity;
                 b0.opacityMaskClipValue = obj.opacityMaskClipValue;
                 b0.blendMode = 0; // Opaque base
@@ -2229,6 +2233,10 @@ struct RenderBatch {
                         ob.specular = layer.specular;
                         ob.emissiveColor = obj.emissiveColor;
                         ob.emissiveIntensity = obj.emissiveIntensity;
+                        if (obj.id == selectedId && !isPlayMode) {
+                            ob.emissiveColor = glm::max(ob.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
+                            ob.emissiveIntensity = std::max(ob.emissiveIntensity, 1.5f);
+                        }
                         ob.opacity = 1.0f;
                         ob.opacityMaskClipValue = 0.333f;
                         ob.blendMode = 2; // Translucent hardware alpha blend
@@ -2273,6 +2281,10 @@ struct RenderBatch {
                 b.specular = obj.specular;
                 b.emissiveColor = obj.emissiveColor;
                 b.emissiveIntensity = obj.emissiveIntensity;
+                if (obj.id == selectedId && !isPlayMode) {
+                    b.emissiveColor = glm::max(b.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
+                    b.emissiveIntensity = std::max(b.emissiveIntensity, 1.5f);
+                }
                 b.opacity = obj.opacity;
                 b.opacityMaskClipValue = obj.opacityMaskClipValue;
                 b.blendMode = obj.blendMode;
@@ -2295,27 +2307,8 @@ struct RenderBatch {
             }
         }
 
-        // 3. Highlight Selected Object: Unity-Style Viewport Silhouette Outline (Only in Editor Mode)
-        if (selectedId != -1 && !isPlayMode) {
-            GameObject* selObj = FindObject(selectedId);
-            if (selObj && selObj->visible) {
-                uint32_t outlineStart = (uint32_t)outIndices.size();
-                // Unity vibrant selection outline orange
-                glm::vec3 unitySelectionColor{1.0f, 0.58f, 0.08f};
-                AppendObjectEdgeOutline(outVertices, outIndices, *selObj, cameraPos, unitySelectionColor);
-
-                uint32_t outlineCount = (uint32_t)outIndices.size() - outlineStart;
-                if (outlineCount > 0) {
-                    RenderBatch b;
-                    b.startIndex = outlineStart;
-                    b.indexCount = outlineCount;
-                    b.isUnlit = true;
-                    b.twoSided = true;
-                    b.baseColor = {1.0f, 1.0f, 1.0f};
-                    outBatches.push_back(b);
-                }
-            }
-        }
+        // 3. Highlight Selected Object: Clean surface emissive highlight (Only in Editor Mode)
+        // Highlighted on mesh surfaces directly without drawing noisy edge lines across the mesh geometry.
 
         // 3b. Visualize All Scene Collisions (when selected in Viewport Visualize menu)
         if (showAllCollisions) {
