@@ -2835,6 +2835,7 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     showProjectBrowser = false;
     if (!isGameMode) {
         AddLog("LogProject", "Opened project '" + activeProjectName + "' [Content Root: " + contentRootPath.string() + "]", 2);
+        TriggerBackgroundRegistrySync(contentRootPath);
     }
 
     return true;
