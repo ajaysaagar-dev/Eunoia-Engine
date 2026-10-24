@@ -1,7 +1,6 @@
 #pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
-#include <VisualBehaviuors/VisualBehaviourInstance.h>
 #include <SaveSystem/SaveSystem.h>
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/SceneCacheManager.h>
@@ -85,7 +84,8 @@ public:
     // Save the entire scene to a JSON file
     static bool SaveScene(const Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr) {
         if (onProgress) onProgress(0.1f, "Opening file for writing", filePath);
-        std::ofstream file(filePath);
+        std::string tempPath = filePath + ".tmp";
+        std::ofstream file(tempPath);
         if (!file.is_open()) return false;
 
         file << "{\n";
@@ -124,6 +124,8 @@ public:
         file << "      \"texturePath\": " << QuoteStr(scene.skyboxTexturePath) << ",\n";
         file << "      \"exposure\": " << scene.skyboxExposure << ",\n";
         file << "      \"rotation\": " << scene.skyboxRotation << ",\n";
+        file << "      \"autoRotate\": " << BoolStr(scene.skyboxAutoRotate) << ",\n";
+        file << "      \"autoRotateSpeed\": " << scene.skyboxAutoRotateSpeed << ",\n";
         file << "      \"tint\": " << WriteVec3(scene.skyboxTint) << ",\n";
         file << "      \"ambientContribution\": " << scene.skyboxAmbientContribution << ",\n";
         file << "      \"enableLighting\": " << BoolStr(scene.enableSkyboxLighting) << ",\n";
@@ -157,6 +159,14 @@ public:
         file << "      \"blurRadius\": " << scene.aoBlurRadius << ",\n";
         file << "      \"temporal\": " << BoolStr(scene.aoTemporal) << ",\n";
         file << "      \"temporalBlend\": " << scene.aoTemporalBlend << "\n";
+        file << "    },\n";
+        file << "    \"volumetricFog\": {\n";
+        file << "      \"enabled\": " << BoolStr(scene.enableFog) << ",\n";
+        file << "      \"start\": " << scene.fogStart << ",\n";
+        file << "      \"density\": " << scene.fogDensity << ",\n";
+        file << "      \"heightStart\": " << scene.fogHeightStart << ",\n";
+        file << "      \"heightEnd\": " << scene.fogHeightEnd << ",\n";
+        file << "      \"color\": [" << scene.fogColor.r << ", " << scene.fogColor.g << ", " << scene.fogColor.b << "]\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -210,9 +220,15 @@ public:
             file << "        \"castShadows\": " << BoolStr(obj.castShadows) << ",\n";
             file << "        \"receiveShadows\": " << BoolStr(obj.receiveShadows) << ",\n";
             file << "        \"meshClusterCulling\": " << BoolStr(obj.meshClusterCulling) << ",\n";
+            file << "        \"enableLOD\": " << BoolStr(obj.enableLOD) << ",\n";
+            file << "        \"forcedLOD\": " << obj.forcedLOD << ",\n";
+            file << "        \"lodBias\": " << obj.lodBias << ",\n";
+            file << "        \"minLOD\": " << obj.minLOD << ",\n";
+            file << "        \"maxLOD\": " << obj.maxLOD << ",\n";
             file << "        \"opacity\": " << obj.opacity << ",\n";
             file << "        \"opacityMaskClipValue\": " << obj.opacityMaskClipValue << ",\n";
             file << "        \"normalMapYFlip\": " << BoolStr(obj.normalMapYFlip) << ",\n";
+            file << "        \"disableStreaming\": " << BoolStr(obj.disableStreaming) << ",\n";
             file << "        \"metallicChannel\": " << obj.metallicChannel << ",\n";
             file << "        \"roughnessChannel\": " << obj.roughnessChannel << ",\n";
             file << "        \"aoChannel\": " << obj.aoChannel << ",\n";
@@ -268,7 +284,8 @@ public:
             file << "      \"paramCapTop\": " << BoolStr(obj.params.capTop) << ",\n";
             file << "      \"paramCapBottom\": " << BoolStr(obj.params.capBottom) << ",\n";
 
-            // Light Component Properties (dev.md)
+            // Wicked Engine Light Component Properties
+            file << "      \"lightFlags\": " << obj.light._flags << ",\n";
             file << "      \"lightType\": " << (int)obj.light.type << ",\n";
             file << "      \"lightEnabled\": " << BoolStr(obj.light.enabled) << ",\n";
             file << "      \"lightColor\": " << WriteVec3(obj.light.color) << ",\n";
@@ -281,11 +298,14 @@ public:
             file << "      \"lightInnerCone\": " << obj.light.innerConeAngle << ",\n";
             file << "      \"lightOuterCone\": " << obj.light.outerConeAngle << ",\n";
             file << "      \"lightConeFalloff\": " << obj.light.coneFalloff << ",\n";
+            file << "      \"lightRadius\": " << obj.light.radius << ",\n";
+            file << "      \"lightLength\": " << obj.light.length << ",\n";
+            file << "      \"lightHeight\": " << obj.light.height << ",\n";
+            file << "      \"lightVolumetricBoost\": " << obj.light.volumetric_boost << ",\n";
+            file << "      \"lightForcedShadowRes\": " << obj.light.forced_shadow_resolution << ",\n";
             file << "      \"lightAreaShape\": " << obj.light.areaShape << ",\n";
             file << "      \"lightAreaWidth\": " << obj.light.width << ",\n";
             file << "      \"lightAreaHeight\": " << obj.light.height << ",\n";
-            file << "      \"lightAreaRadius\": " << obj.light.radius << ",\n";
-            file << "      \"lightAreaLength\": " << obj.light.length << ",\n";
             file << "      \"lightTwoSided\": " << BoolStr(obj.light.twoSided) << ",\n";
             file << "      \"lightSkyColor\": " << WriteVec3(obj.light.skyColor) << ",\n";
             file << "      \"lightGroundColor\": " << WriteVec3(obj.light.groundColor) << ",\n";
@@ -298,24 +318,12 @@ public:
             file << "      \"lightVolumetric\": " << BoolStr(obj.light.volumetric) << ",\n";
             file << "      \"lightVolScattering\": " << obj.light.volumetricScattering << ",\n";
             file << "      \"lightVolIntensity\": " << obj.light.volumetricIntensity << ",\n";
+            file << "      \"lightVolSteps\": " << obj.light.volumetricSteps << ",\n";
+            file << "      \"lightVolMaxDist\": " << obj.light.volumetricMaxDistance << ",\n";
+            file << "      \"lightEnableDistCulling\": " << BoolStr(obj.light.enableDistanceCulling) << ",\n";
+            file << "      \"lightMinVisibleDist\": " << obj.light.minVisibleDistance << ",\n";
+            file << "      \"lightMaxVisibleDist\": " << obj.light.maxVisibleDistance << ",\n";
             file << "      \"lightLayer\": " << obj.light.lightLayer << ",\n";
-
-            // Baking System (dev.md)
-            file << "      \"lightBakeState\": " << (int)obj.light.bakeState << ",\n";
-            file << "      \"lightBakeRes\": " << obj.light.bakeResolution << ",\n";
-            file << "      \"lightBakeDirty\": " << BoolStr(obj.light.isBakeDirty) << ",\n";
-            file << "      \"lightGuid\": " << QuoteStr(obj.light.lightGuid) << ",\n";
-            file << "      \"lightBakedLightmap\": " << QuoteStr(obj.light.bakedLightmapPath) << ",\n";
-            file << "      \"lightBakedShadowmap\": " << QuoteStr(obj.light.bakedShadowmapPath) << ",\n";
-            file << "      \"lightBakeSig\": " << QuoteStr(std::to_string(obj.light.bakeSignature)) << ",\n";
-            file << "      \"lightBakedPos\": " << WriteVec3(obj.light.bakedPosition) << ",\n";
-            file << "      \"lightBakedRot\": " << WriteVec3(obj.light.bakedRotation) << ",\n";
-            file << "      \"lightBakedIntensity\": " << obj.light.bakedIntensity << ",\n";
-            file << "      \"lightBakedColor\": " << WriteVec3(obj.light.bakedColor) << ",\n";
-            file << "      \"lightBakedRange\": " << obj.light.bakedRange << ",\n";
-            file << "      \"lightBakedInnerCone\": " << obj.light.bakedInnerCone << ",\n";
-            file << "      \"lightBakedOuterCone\": " << obj.light.bakedOuterCone << ",\n";
-            file << "      \"lightBakedShadowBias\": " << obj.light.bakedShadowBias << ",\n";
 
             // Camera Component Properties
             file << "      \"isCamera\": " << BoolStr(obj.isCamera) << ",\n";
@@ -354,6 +362,59 @@ public:
             file << "      \"waterOceanExtent\": " << obj.water.oceanExtent << ",\n";
             file << "      \"waterIsCameraCentered\": " << BoolStr(obj.water.isCameraCentered) << ",\n";
             file << "      \"waterDebugMode\": " << obj.water.debugMode << ",\n";
+
+            file << "      \"isTerrain\": " << BoolStr(obj.isTerrain || obj.type == PrimitiveType::Terrain) << ",\n";
+            if (obj.isTerrain || obj.type == PrimitiveType::Terrain) {
+                file << "      \"terrainWidth\": " << obj.terrain.width << ",\n";
+                file << "      \"terrainLength\": " << obj.terrain.length << ",\n";
+                file << "      \"terrainResolution\": " << obj.terrain.resolution << ",\n";
+                file << "      \"terrainHeightScale\": " << obj.terrain.heightScale << ",\n";
+                file << "      \"terrainBrushType\": " << (int)obj.terrain.brushType << ",\n";
+                file << "      \"terrainBrushFalloff\": " << (int)obj.terrain.brushFalloff << ",\n";
+                file << "      \"terrainBrushSize\": " << obj.terrain.brushSize << ",\n";
+                file << "      \"terrainBrushStrength\": " << obj.terrain.brushStrength << ",\n";
+                file << "      \"terrainFlattenTarget\": " << obj.terrain.flattenTargetHeight << ",\n";
+                file << "      \"terrainNoiseScale\": " << obj.terrain.noiseScale << ",\n";
+                file << "      \"terrainHeights\": [";
+                for (size_t hi = 0; hi < obj.terrain.heightmap.size(); ++hi) {
+                    file << obj.terrain.heightmap[hi];
+                    if (hi + 1 < obj.terrain.heightmap.size()) file << ",";
+                }
+                file << "],\n";
+
+                file << "      \"terrainMaterialLayers\": [\n";
+                for (size_t li = 0; li < obj.terrain.materialLayers.size(); ++li) {
+                    const auto& l = obj.terrain.materialLayers[li];
+                    file << "        {\n";
+                    file << "          \"name\": " << QuoteStr(l.name) << ",\n";
+                    file << "          \"path\": " << QuoteStr(l.path) << ",\n";
+                    file << "          \"baseColor\": [" << l.baseColor.r << ", " << l.baseColor.g << ", " << l.baseColor.b << "],\n";
+                    file << "          \"metallic\": " << l.metallic << ",\n";
+                    file << "          \"roughness\": " << l.roughness << ",\n";
+                    file << "          \"normalStrength\": " << l.normalStrength << ",\n";
+                    file << "          \"specular\": " << l.specular << ",\n";
+                    file << "          \"uvScale\": [" << l.uvScale.x << ", " << l.uvScale.y << "],\n";
+                    file << "          \"baseColorTexture\": " << QuoteStr(l.baseColorTexture) << ",\n";
+                    file << "          \"normalTexture\": " << QuoteStr(l.normalTexture) << ",\n";
+                    file << "          \"roughnessTexture\": " << QuoteStr(l.roughnessTexture) << ",\n";
+                    file << "          \"metallicTexture\": " << QuoteStr(l.metallicTexture) << ",\n";
+                    file << "          \"aoTexture\": " << QuoteStr(l.aoTexture) << "\n";
+                    file << "        }" << (li + 1 < obj.terrain.materialLayers.size() ? "," : "") << "\n";
+                }
+                file << "      ],\n";
+
+                file << "      \"terrainLayerWeights\": [\n";
+                for (size_t l = 0; l < obj.terrain.layerWeights.size(); ++l) {
+                    file << "        [";
+                    const auto& wList = obj.terrain.layerWeights[l];
+                    for (size_t wi = 0; wi < wList.size(); ++wi) {
+                        file << wList[wi];
+                        if (wi + 1 < wList.size()) file << ",";
+                    }
+                    file << "]" << (l + 1 < obj.terrain.layerWeights.size() ? "," : "") << "\n";
+                }
+                file << "      ],\n";
+            }
 
             file << "      \"isUserInterface\": " << BoolStr(obj.isUserInterface || obj.type == PrimitiveType::UserInterface) << ",\n";
             file << "      \"uiAssetPath\": " << QuoteStr(obj.ui3d.uiAssetPath) << ",\n";
@@ -533,11 +594,27 @@ public:
         file << "}\n";
         file.close();
 
+        // Atomically replace target JSON file from temporary file to prevent level data corruption/loss
+        std::error_code ec;
+        std::filesystem::remove(filePath, ec);
+        std::filesystem::rename(tempPath, filePath, ec);
+        if (ec) {
+            std::filesystem::copy_file(tempPath, filePath, std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::remove(tempPath, ec);
+        }
+
         // WickedEngine Fast Binary Archive Technique:
         // Automatically save pre-parsed binary cache side-by-side (.bin) for instant loading
         std::filesystem::path binP(filePath);
         std::string autoBin = (binP.parent_path() / (binP.stem().string() + ".bin")).string();
-        SaveFastMeshCache(scene, autoBin);
+        std::string autoBinTmp = autoBin + ".tmp";
+        SaveFastMeshCache(scene, autoBinTmp);
+        std::filesystem::remove(autoBin, ec);
+        std::filesystem::rename(autoBinTmp, autoBin, ec);
+        if (ec) {
+            std::filesystem::copy_file(autoBinTmp, autoBin, std::filesystem::copy_options::overwrite_existing, ec);
+            std::filesystem::remove(autoBinTmp, ec);
+        }
 
         return true;
     }
@@ -550,7 +627,15 @@ public:
     // Load a scene from a JSON file
     static bool LoadScene(Scene& scene, const std::string& filePath, SceneProgressFn onProgress = nullptr, const std::string& binPath = "") {
         if (onProgress) onProgress(0.1f, "Opening level file", filePath);
-        std::ifstream file(filePath);
+        std::string actualPath = filePath;
+        std::error_code ec;
+        if (!std::filesystem::exists(actualPath, ec) || std::filesystem::file_size(actualPath, ec) == 0) {
+            std::filesystem::path resolved = AssetManager::Get().ResolvePhysicalOrCookedPath(filePath);
+            if (!resolved.empty() && std::filesystem::exists(resolved, ec) && std::filesystem::file_size(resolved, ec) > 0) {
+                actualPath = resolved.string();
+            }
+        }
+        std::ifstream file(actualPath);
         if (!file.is_open()) return false;
 
         // Read entire file
@@ -1019,6 +1104,8 @@ public:
             p = sBlock.find("\"texturePath\""); if (p != std::string::npos) scene.skyboxTexturePath = ParseString(sBlock, "\"texturePath\"", "");
             p = sBlock.find("\"exposure\""); if (p != std::string::npos) scene.skyboxExposure = ParseFloatAt(sBlock, p, 1.0f);
             p = sBlock.find("\"rotation\""); if (p != std::string::npos) scene.skyboxRotation = ParseFloatAt(sBlock, p, 0.0f);
+            p = sBlock.find("\"autoRotate\""); if (p != std::string::npos) scene.skyboxAutoRotate = ParseBoolAt(sBlock, p, false);
+            p = sBlock.find("\"autoRotateSpeed\""); if (p != std::string::npos) scene.skyboxAutoRotateSpeed = ParseFloatAt(sBlock, p, 1.0f);
             p = sBlock.find("\"tint\""); if (p != std::string::npos) scene.skyboxTint = ParseVec3(sBlock, p);
             p = sBlock.find("\"ambientContribution\""); if (p != std::string::npos) scene.skyboxAmbientContribution = ParseFloatAt(sBlock, p, 0.5f);
             p = sBlock.find("\"enableLighting\""); if (p != std::string::npos) scene.enableSkyboxLighting = ParseBoolAt(sBlock, p, false);
@@ -1124,6 +1211,23 @@ public:
             p = aBlock.find("\"blurRadius\""); if (p != std::string::npos) scene.aoBlurRadius = ParseFloatAt(aBlock, p, 2.0f);
             p = aBlock.find("\"temporal\""); if (p != std::string::npos) scene.aoTemporal = ParseBoolAt(aBlock, p, true);
             p = aBlock.find("\"temporalBlend\""); if (p != std::string::npos) scene.aoTemporalBlend = ParseFloatAt(aBlock, p, 0.85f);
+        }
+
+        size_t fogPos = envBlock.find("\"volumetricFog\"");
+        if (fogPos != std::string::npos) {
+            size_t fStart = envBlock.find('{', fogPos);
+            size_t fEnd = FindMatchingBrace(envBlock, fStart);
+            std::string fBlock = envBlock.substr(fStart, fEnd - fStart + 1);
+
+            size_t p;
+            p = fBlock.find("\"enabled\""); if (p != std::string::npos) scene.enableFog = ParseBoolAt(fBlock, p, false);
+            p = fBlock.find("\"start\""); if (p != std::string::npos) scene.fogStart = ParseFloatAt(fBlock, p, 10.0f);
+            p = fBlock.find("\"density\""); if (p != std::string::npos) scene.fogDensity = ParseFloatAt(fBlock, p, 0.005f);
+            p = fBlock.find("\"heightStart\""); if (p != std::string::npos) scene.fogHeightStart = ParseFloatAt(fBlock, p, 0.0f);
+            p = fBlock.find("\"heightEnd\""); if (p != std::string::npos) scene.fogHeightEnd = ParseFloatAt(fBlock, p, 50.0f);
+            p = fBlock.find("\"color\""); if (p != std::string::npos) scene.fogColor = ParseVec3(fBlock, p);
+        } else {
+            scene.enableFog = false;
         }
     }
 
@@ -1316,9 +1420,15 @@ public:
             p = matBlock.find("\"castShadows\""); if (p != std::string::npos) obj.castShadows = ParseBoolAt(matBlock, p, true);
             p = matBlock.find("\"receiveShadows\""); if (p != std::string::npos) obj.receiveShadows = ParseBoolAt(matBlock, p, true);
             p = matBlock.find("\"meshClusterCulling\""); if (p != std::string::npos) obj.meshClusterCulling = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"enableLOD\""); if (p != std::string::npos) obj.enableLOD = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"forcedLOD\""); if (p != std::string::npos) obj.forcedLOD = ParseIntAt(matBlock, p, -1);
+            p = matBlock.find("\"lodBias\""); if (p != std::string::npos) obj.lodBias = ParseFloatAt(matBlock, p, 0.0f);
+            p = matBlock.find("\"minLOD\""); if (p != std::string::npos) obj.minLOD = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"maxLOD\""); if (p != std::string::npos) obj.maxLOD = ParseIntAt(matBlock, p, 20);
             p = matBlock.find("\"opacity\""); if (p != std::string::npos) obj.opacity = ParseFloatAt(matBlock, p, 1.0f);
             p = matBlock.find("\"opacityMaskClipValue\""); if (p != std::string::npos) obj.opacityMaskClipValue = ParseFloatAt(matBlock, p, 0.333f);
             p = matBlock.find("\"normalMapYFlip\""); if (p != std::string::npos) obj.normalMapYFlip = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"disableStreaming\""); if (p != std::string::npos) obj.disableStreaming = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"metallicChannel\""); if (p != std::string::npos) obj.metallicChannel = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"roughnessChannel\""); if (p != std::string::npos) obj.roughnessChannel = ParseIntAt(matBlock, p, 1);
             p = matBlock.find("\"aoChannel\""); if (p != std::string::npos) obj.aoChannel = ParseIntAt(matBlock, p, 0);
@@ -1406,57 +1516,52 @@ public:
 
         // Parse Light Properties
         p = actorBlock.find("\"lightType\""); if (p != std::string::npos) obj.light.type = (LightType)ParseIntAt(actorBlock, p, 0);
+        p = actorBlock.find("\"lightFlags\""); if (p != std::string::npos) obj.light._flags = (uint32_t)ParseIntAt(actorBlock, p, LightComponent::CAST_SHADOW);
         p = actorBlock.find("\"lightEnabled\""); if (p != std::string::npos) obj.light.enabled = ParseBoolAt(actorBlock, p, true);
         p = actorBlock.find("\"lightColor\""); if (p != std::string::npos) obj.light.color = ParseVec3(actorBlock, p);
-        p = actorBlock.find("\"lightIntensity\""); if (p != std::string::npos) obj.light.intensity = ParseFloatAt(actorBlock, p, 2.0f);
+        p = actorBlock.find("\"lightIntensity\""); if (p != std::string::npos) obj.light.intensity = ParseFloatAt(actorBlock, p, 1.0f);
         p = actorBlock.find("\"lightTemperature\""); if (p != std::string::npos) obj.light.temperature = ParseFloatAt(actorBlock, p, 6500.0f);
         p = actorBlock.find("\"lightUseTemp\""); if (p != std::string::npos) obj.light.useTemperature = ParseBoolAt(actorBlock, p, false);
         p = actorBlock.find("\"lightRange\""); if (p != std::string::npos) obj.light.range = ParseFloatAt(actorBlock, p, 10.0f);
         p = actorBlock.find("\"lightRangeSmoothing\""); if (p != std::string::npos) obj.light.rangeSmoothing = ParseFloatAt(actorBlock, p, 0.2f);
         p = actorBlock.find("\"lightAttenuation\""); if (p != std::string::npos) obj.light.attenuation = ParseFloatAt(actorBlock, p, 2.0f);
-        p = actorBlock.find("\"lightInnerCone\""); if (p != std::string::npos) obj.light.innerConeAngle = ParseFloatAt(actorBlock, p, 20.0f);
+        p = actorBlock.find("\"lightInnerCone\""); if (p != std::string::npos) obj.light.innerConeAngle = ParseFloatAt(actorBlock, p, 0.0f);
         p = actorBlock.find("\"lightOuterCone\""); if (p != std::string::npos) obj.light.outerConeAngle = ParseFloatAt(actorBlock, p, 45.0f);
         p = actorBlock.find("\"lightConeFalloff\""); if (p != std::string::npos) obj.light.coneFalloff = ParseFloatAt(actorBlock, p, 1.0f);
+        p = actorBlock.find("\"lightRadius\""); if (p != std::string::npos) obj.light.radius = ParseFloatAt(actorBlock, p, 0.025f);
+        p = actorBlock.find("\"lightLength\""); if (p != std::string::npos) obj.light.length = ParseFloatAt(actorBlock, p, 0.0f);
+        p = actorBlock.find("\"lightHeight\""); if (p != std::string::npos) obj.light.height = ParseFloatAt(actorBlock, p, 0.0f);
+        p = actorBlock.find("\"lightVolumetricBoost\""); if (p != std::string::npos) obj.light.volumetric_boost = ParseFloatAt(actorBlock, p, 0.0f);
+        p = actorBlock.find("\"lightForcedShadowRes\""); if (p != std::string::npos) obj.light.forced_shadow_resolution = ParseIntAt(actorBlock, p, -1);
         p = actorBlock.find("\"lightAreaShape\""); if (p != std::string::npos) obj.light.areaShape = ParseIntAt(actorBlock, p, 0);
         p = actorBlock.find("\"lightAreaWidth\""); if (p != std::string::npos) obj.light.width = ParseFloatAt(actorBlock, p, 1.0f);
         p = actorBlock.find("\"lightAreaHeight\""); if (p != std::string::npos) obj.light.height = ParseFloatAt(actorBlock, p, 1.0f);
-        p = actorBlock.find("\"lightAreaRadius\""); if (p != std::string::npos) obj.light.radius = ParseFloatAt(actorBlock, p, 0.5f);
-        p = actorBlock.find("\"lightAreaLength\""); if (p != std::string::npos) obj.light.length = ParseFloatAt(actorBlock, p, 1.0f);
+        p = actorBlock.find("\"lightAreaRadius\""); if (p != std::string::npos) obj.light.radius = ParseFloatAt(actorBlock, p, 0.025f);
+        p = actorBlock.find("\"lightAreaLength\""); if (p != std::string::npos) obj.light.length = ParseFloatAt(actorBlock, p, 0.0f);
         p = actorBlock.find("\"lightTwoSided\""); if (p != std::string::npos) obj.light.twoSided = ParseBoolAt(actorBlock, p, false);
         p = actorBlock.find("\"lightSkyColor\""); if (p != std::string::npos) obj.light.skyColor = ParseVec3(actorBlock, p);
         p = actorBlock.find("\"lightGroundColor\""); if (p != std::string::npos) obj.light.groundColor = ParseVec3(actorBlock, p);
         p = actorBlock.find("\"lightEnvMap\""); if (p != std::string::npos) obj.light.envMapTexture = ParseStringAt(actorBlock, p, "");
-        p = actorBlock.find("\"lightCastShadows\""); if (p != std::string::npos) obj.light.castShadows = ParseBoolAt(actorBlock, p, true);
+        p = actorBlock.find("\"lightCastShadows\""); if (p != std::string::npos) {
+            obj.light.castShadows = ParseBoolAt(actorBlock, p, true);
+            obj.light.SetCastShadow(obj.light.castShadows);
+        }
         p = actorBlock.find("\"lightShadowStrength\""); if (p != std::string::npos) obj.light.shadowStrength = ParseFloatAt(actorBlock, p, 0.85f);
         p = actorBlock.find("\"lightShadowBias\""); if (p != std::string::npos) obj.light.shadowBias = ParseFloatAt(actorBlock, p, 0.0012f);
         p = actorBlock.find("\"lightShadowRes\""); if (p != std::string::npos) obj.light.shadowResolution = ParseIntAt(actorBlock, p, 2048);
         p = actorBlock.find("\"lightShadowDist\""); if (p != std::string::npos) obj.light.shadowDistance = ParseFloatAt(actorBlock, p, 50.0f);
-        p = actorBlock.find("\"lightVolumetric\""); if (p != std::string::npos) obj.light.volumetric = ParseBoolAt(actorBlock, p, false);
-        p = actorBlock.find("\"lightVolScattering\""); if (p != std::string::npos) obj.light.volumetricScattering = ParseFloatAt(actorBlock, p, 0.2f);
-        p = actorBlock.find("\"lightVolIntensity\""); if (p != std::string::npos) obj.light.volumetricIntensity = ParseFloatAt(actorBlock, p, 1.0f);
-        p = actorBlock.find("\"lightLayer\""); if (p != std::string::npos) obj.light.lightLayer = (uint32_t)ParseIntAt(actorBlock, p, 1);
-
-        // Parse Baking Properties
-        p = actorBlock.find("\"lightBakeState\""); if (p != std::string::npos) obj.light.bakeState = (Eunoia::LightBakeState)ParseIntAt(actorBlock, p, 0);
-        p = actorBlock.find("\"lightBakeRes\""); if (p != std::string::npos) obj.light.bakeResolution = ParseIntAt(actorBlock, p, 1024);
-        p = actorBlock.find("\"lightBakeDirty\""); if (p != std::string::npos) obj.light.isBakeDirty = ParseBoolAt(actorBlock, p, false);
-        p = actorBlock.find("\"lightGuid\""); if (p != std::string::npos) obj.light.lightGuid = ParseStringAt(actorBlock, p, "");
-        p = actorBlock.find("\"lightBakedLightmap\""); if (p != std::string::npos) obj.light.bakedLightmapPath = ParseStringAt(actorBlock, p, "");
-        p = actorBlock.find("\"lightBakedShadowmap\""); if (p != std::string::npos) obj.light.bakedShadowmapPath = ParseStringAt(actorBlock, p, "");
-        p = actorBlock.find("\"lightBakeSig\""); if (p != std::string::npos) {
-            std::string sigStr = ParseStringAt(actorBlock, p, "");
-            if (!sigStr.empty()) {
-                try { obj.light.bakeSignature = std::stoull(sigStr); } catch (...) {}
-            }
+        p = actorBlock.find("\"lightVolumetric\""); if (p != std::string::npos) {
+            obj.light.volumetric = ParseBoolAt(actorBlock, p, false);
+            obj.light.SetVolumetricsEnabled(obj.light.volumetric);
         }
-        p = actorBlock.find("\"lightBakedPos\""); if (p != std::string::npos) obj.light.bakedPosition = ParseVec3(actorBlock, p);
-        p = actorBlock.find("\"lightBakedRot\""); if (p != std::string::npos) obj.light.bakedRotation = ParseVec3(actorBlock, p);
-        p = actorBlock.find("\"lightBakedIntensity\""); if (p != std::string::npos) obj.light.bakedIntensity = ParseFloatAt(actorBlock, p, 2.0f);
-        p = actorBlock.find("\"lightBakedColor\""); if (p != std::string::npos) obj.light.bakedColor = ParseVec3(actorBlock, p);
-        p = actorBlock.find("\"lightBakedRange\""); if (p != std::string::npos) obj.light.bakedRange = ParseFloatAt(actorBlock, p, 10.0f);
-        p = actorBlock.find("\"lightBakedInnerCone\""); if (p != std::string::npos) obj.light.bakedInnerCone = ParseFloatAt(actorBlock, p, 20.0f);
-        p = actorBlock.find("\"lightBakedOuterCone\""); if (p != std::string::npos) obj.light.bakedOuterCone = ParseFloatAt(actorBlock, p, 45.0f);
-        p = actorBlock.find("\"lightBakedShadowBias\""); if (p != std::string::npos) obj.light.bakedShadowBias = ParseFloatAt(actorBlock, p, 0.0012f);
+        p = actorBlock.find("\"lightVolScattering\""); if (p != std::string::npos) obj.light.volumetricScattering = ParseFloatAt(actorBlock, p, 0.66f);
+        p = actorBlock.find("\"lightVolIntensity\""); if (p != std::string::npos) obj.light.volumetricIntensity = ParseFloatAt(actorBlock, p, 1.0f);
+        p = actorBlock.find("\"lightVolSteps\""); if (p != std::string::npos) obj.light.volumetricSteps = ParseIntAt(actorBlock, p, 16);
+        p = actorBlock.find("\"lightVolMaxDist\""); if (p != std::string::npos) obj.light.volumetricMaxDistance = ParseFloatAt(actorBlock, p, 120.0f);
+        p = actorBlock.find("\"lightEnableDistCulling\""); if (p != std::string::npos) obj.light.enableDistanceCulling = ParseBoolAt(actorBlock, p, false);
+        p = actorBlock.find("\"lightMinVisibleDist\""); if (p != std::string::npos) obj.light.minVisibleDistance = ParseFloatAt(actorBlock, p, 50.0f);
+        p = actorBlock.find("\"lightMaxVisibleDist\""); if (p != std::string::npos) obj.light.maxVisibleDistance = ParseFloatAt(actorBlock, p, 100.0f);
+        p = actorBlock.find("\"lightLayer\""); if (p != std::string::npos) obj.light.lightLayer = (uint32_t)ParseIntAt(actorBlock, p, 1);
 
         // Parse Camera Properties
         p = actorBlock.find("\"isCamera\""); if (p != std::string::npos) obj.isCamera = ParseBoolAt(actorBlock, p, false);
@@ -1501,6 +1606,178 @@ public:
         p = actorBlock.find("\"waterChoppiness\""); if (p != std::string::npos) obj.water.choppiness = ParseFloatAt(actorBlock, p, 0.7f);
         p = actorBlock.find("\"waterOceanExtent\""); if (p != std::string::npos) obj.water.oceanExtent = ParseFloatAt(actorBlock, p, 3000.0f);
         p = actorBlock.find("\"waterIsCameraCentered\""); if (p != std::string::npos) obj.water.isCameraCentered = ParseBoolAt(actorBlock, p, true);
+
+        // Parse Terrain Properties
+        p = actorBlock.find("\"isTerrain\""); if (p != std::string::npos) obj.isTerrain = ParseBoolAt(actorBlock, p, false);
+        if (obj.type == PrimitiveType::Terrain) obj.isTerrain = true;
+        if (obj.isTerrain) {
+            p = actorBlock.find("\"terrainWidth\""); if (p != std::string::npos) obj.terrain.width = ParseFloatAt(actorBlock, p, 64.0f);
+            p = actorBlock.find("\"terrainLength\""); if (p != std::string::npos) obj.terrain.length = ParseFloatAt(actorBlock, p, 64.0f);
+            p = actorBlock.find("\"terrainResolution\""); if (p != std::string::npos) obj.terrain.resolution = ParseIntAt(actorBlock, p, 128);
+            p = actorBlock.find("\"terrainHeightScale\""); if (p != std::string::npos) obj.terrain.heightScale = ParseFloatAt(actorBlock, p, 1.0f);
+            p = actorBlock.find("\"terrainBrushType\""); if (p != std::string::npos) obj.terrain.brushType = (Eunoia::TerrainBrushType)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"terrainBrushFalloff\""); if (p != std::string::npos) obj.terrain.brushFalloff = (Eunoia::TerrainFalloffType)ParseIntAt(actorBlock, p, 0);
+            p = actorBlock.find("\"terrainBrushSize\""); if (p != std::string::npos) obj.terrain.brushSize = ParseFloatAt(actorBlock, p, 8.0f);
+            p = actorBlock.find("\"terrainBrushStrength\""); if (p != std::string::npos) obj.terrain.brushStrength = ParseFloatAt(actorBlock, p, 5.0f);
+            p = actorBlock.find("\"terrainFlattenTarget\""); if (p != std::string::npos) obj.terrain.flattenTargetHeight = ParseFloatAt(actorBlock, p, 0.0f);
+            p = actorBlock.find("\"terrainNoiseScale\""); if (p != std::string::npos) obj.terrain.noiseScale = ParseFloatAt(actorBlock, p, 0.15f);
+
+            p = actorBlock.find("\"terrainHeights\"");
+            if (p != std::string::npos) {
+                size_t lb = actorBlock.find('[', p);
+                size_t rb = actorBlock.find(']', lb);
+                if (lb != std::string::npos && rb != std::string::npos) {
+                    std::string hList = actorBlock.substr(lb + 1, rb - lb - 1);
+                    std::stringstream ss(hList);
+                    std::string item;
+                    obj.terrain.heightmap.clear();
+                    while (std::getline(ss, item, ',')) {
+                        try { obj.terrain.heightmap.push_back(std::stof(item)); } catch (...) {}
+                    }
+                }
+            }
+            if (obj.terrain.heightmap.empty()) {
+                obj.terrain.InitializeGrid(obj.terrain.width, obj.terrain.length, obj.terrain.resolution);
+            }
+
+            // Parse Terrain Material Layers
+            size_t tmlPos = actorBlock.find("\"terrainMaterialLayers\"");
+            if (tmlPos != std::string::npos) {
+                size_t tmlStart = actorBlock.find('[', tmlPos);
+                size_t tmlEnd = (tmlStart != std::string::npos) ? FindMatchingBracket(actorBlock, tmlStart) : std::string::npos;
+                if (tmlStart != std::string::npos && tmlEnd != std::string::npos) {
+                    obj.terrain.materialLayers.clear();
+                    std::string tmlArray = actorBlock.substr(tmlStart, tmlEnd - tmlStart + 1);
+                    size_t tmlSearchPos = 0;
+                    while (true) {
+                        size_t lObjStart = tmlArray.find('{', tmlSearchPos);
+                        if (lObjStart == std::string::npos) break;
+                        size_t lObjEnd = FindMatchingBrace(tmlArray, lObjStart);
+                        if (lObjEnd == std::string::npos) break;
+
+                        std::string lBlock = tmlArray.substr(lObjStart, lObjEnd - lObjStart + 1);
+                        Eunoia::TerrainMaterialLayer layer;
+                        size_t lp;
+                        lp = lBlock.find("\"name\""); if (lp != std::string::npos) layer.name = ParseStringAt(lBlock, lp, "Default_Material");
+                        lp = lBlock.find("\"path\""); if (lp != std::string::npos) layer.path = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"baseColor\""); if (lp != std::string::npos) layer.baseColor = ParseVec3(lBlock, lp);
+                        lp = lBlock.find("\"metallic\""); if (lp != std::string::npos) layer.metallic = ParseFloatAt(lBlock, lp, 0.0f);
+                        lp = lBlock.find("\"roughness\""); if (lp != std::string::npos) layer.roughness = ParseFloatAt(lBlock, lp, 0.5f);
+                        lp = lBlock.find("\"normalStrength\""); if (lp != std::string::npos) layer.normalStrength = ParseFloatAt(lBlock, lp, 1.0f);
+                        lp = lBlock.find("\"specular\""); if (lp != std::string::npos) layer.specular = ParseFloatAt(lBlock, lp, 0.5f);
+                        lp = lBlock.find("\"baseColorTexture\""); if (lp != std::string::npos) layer.baseColorTexture = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"normalTexture\""); if (lp != std::string::npos) layer.normalTexture = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"roughnessTexture\""); if (lp != std::string::npos) layer.roughnessTexture = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"metallicTexture\""); if (lp != std::string::npos) layer.metallicTexture = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"aoTexture\""); if (lp != std::string::npos) layer.aoTexture = ParseStringAt(lBlock, lp, "");
+                        lp = lBlock.find("\"uvScale\"");
+                        if (lp != std::string::npos) {
+                            size_t lb = lBlock.find('[', lp);
+                            size_t rb = lBlock.find(']', lb);
+                            if (lb != std::string::npos && rb != std::string::npos) {
+                                std::string arr = lBlock.substr(lb + 1, rb - lb - 1);
+                                std::stringstream ss(arr);
+                                char comma;
+                                ss >> layer.uvScale.x >> comma >> layer.uvScale.y;
+                            }
+                        }
+
+                        obj.terrain.materialLayers.push_back(layer);
+                        tmlSearchPos = lObjEnd + 1;
+                    }
+                }
+            }
+
+            // Parse Terrain Layer Weights (Continuous per-vertex multi-material blend weights)
+            bool loadedLayerWeights = false;
+            p = actorBlock.find("\"terrainLayerWeights\"");
+            if (p != std::string::npos) {
+                size_t outerLb = actorBlock.find('[', p);
+                if (outerLb != std::string::npos) {
+                    obj.terrain.layerWeights.clear();
+                    size_t wSearchPos = outerLb + 1;
+                    while (true) {
+                        size_t innerLb = actorBlock.find('[', wSearchPos);
+                        size_t outerRb = actorBlock.find(']', wSearchPos);
+                        if (innerLb == std::string::npos || (outerRb != std::string::npos && innerLb > outerRb)) break;
+                        size_t innerRb = actorBlock.find(']', innerLb);
+                        if (innerRb == std::string::npos) break;
+
+                        std::string rowStr = actorBlock.substr(innerLb + 1, innerRb - innerLb - 1);
+                        std::stringstream ss(rowStr);
+                        std::string item;
+                        std::vector<float> rowWeights;
+                        while (std::getline(ss, item, ',')) {
+                            try { rowWeights.push_back(std::stof(item)); } catch (...) {}
+                        }
+                        obj.terrain.layerWeights.push_back(std::move(rowWeights));
+                        wSearchPos = innerRb + 1;
+                    }
+                    if (!obj.terrain.layerWeights.empty()) {
+                        loadedLayerWeights = true;
+                    }
+                }
+            }
+
+            // Backward compatibility: Migrate legacy discrete quadMaterialIndices to continuous layerWeights
+            if (!loadedLayerWeights) {
+                obj.terrain.EnsureLayerWeights();
+                p = actorBlock.find("\"terrainQuadMaterials\"");
+                if (p != std::string::npos) {
+                    size_t lb = actorBlock.find('[', p);
+                    size_t rb = actorBlock.find(']', lb);
+                    if (lb != std::string::npos && rb != std::string::npos) {
+                        std::string qmList = actorBlock.substr(lb + 1, rb - lb - 1);
+                        std::stringstream ss(qmList);
+                        std::string item;
+                        int res = obj.terrain.resolution;
+                        int totalVerts = (res + 1) * (res + 1);
+
+                        int quadIdx = 0;
+                        while (std::getline(ss, item, ',')) {
+                            try {
+                                uint8_t mIdx = (uint8_t)std::stoi(item);
+                                if (mIdx < obj.terrain.layerWeights.size()) {
+                                    int qx = quadIdx % res;
+                                    int qz = quadIdx / res;
+                                    if (qz < res) {
+                                        int v00 = qz * (res + 1) + qx;
+                                        int v10 = qz * (res + 1) + (qx + 1);
+                                        int v01 = (qz + 1) * (res + 1) + qx;
+                                        int v11 = (qz + 1) * (res + 1) + (qx + 1);
+
+                                        obj.terrain.layerWeights[mIdx][v00] += 1.0f;
+                                        obj.terrain.layerWeights[mIdx][v10] += 1.0f;
+                                        obj.terrain.layerWeights[mIdx][v01] += 1.0f;
+                                        obj.terrain.layerWeights[mIdx][v11] += 1.0f;
+                                    }
+                                }
+                            } catch (...) {}
+                            quadIdx++;
+                        }
+
+                        // Normalize weights across layers
+                        for (int v = 0; v < totalVerts; ++v) {
+                            float sumW = 0.0f;
+                            for (size_t l = 0; l < obj.terrain.layerWeights.size(); ++l) {
+                                sumW += obj.terrain.layerWeights[l][v];
+                            }
+                            if (sumW > 0.0001f) {
+                                for (size_t l = 0; l < obj.terrain.layerWeights.size(); ++l) {
+                                    obj.terrain.layerWeights[l][v] /= sumW;
+                                }
+                            } else {
+                                obj.terrain.layerWeights[0][v] = 1.0f;
+                            }
+                        }
+                    }
+                }
+            } else {
+                obj.terrain.EnsureLayerWeights();
+            }
+
+            obj.terrain.RebuildTerrainMesh(obj.mesh);
+        }
 
         // Parse 3D User Interface Properties
         p = actorBlock.find("\"isUserInterface\""); if (p != std::string::npos) obj.isUserInterface = ParseBoolAt(actorBlock, p, false);
@@ -1690,9 +1967,7 @@ public:
                     std::string assetPath = (apPos != std::string::npos) ? ParseStringAt(bBlock, apPos, "") : "";
                     if (!className.empty()) {
                         if (!BehaviourRegistry::Get().Has(className) && !assetPath.empty()) {
-                            if (assetPath.ends_with(".ebehaviour")) {
-                                VisualBehaviuors::RegisterVisualBehaviourAsset(assetPath);
-                            } else if (assetPath.ends_with(".cpp")) {
+                            if (assetPath.ends_with(".cpp")) {
                                 BehaviourRegistry::Get().RegisterScriptFile(className, assetPath);
                             }
                         }
@@ -1882,10 +2157,13 @@ public:
     }
 
     static void FinalizeActors(Scene& scene) {
-        // Reconstruct childIds on all objects from parentId
+        // Reconstruct childIds on all objects from parentId and ensure continuous 20 LOD levels
         for (auto& o : scene.objects) {
             o.childIds.clear();
             o.mesh.CalculateAABB();
+            if (o.mesh.indices.size() >= 48 && o.mesh.lodIndices.empty()) {
+                o.mesh.GenerateLODs();
+            }
         }
         for (const auto& o : scene.objects) {
             if (o.parentId != -1) {
@@ -2000,7 +2278,15 @@ public:
             EngineLogger::Get().LogAction("LEVEL_LOAD_START", filePath, "Asynchronous background level loading initiated");
 
             workerThread = std::thread([this, session, levelPath, binaryPathCopy = binPath]() {
-                std::ifstream file(levelPath);
+                std::string actualPath = levelPath;
+                std::error_code ec;
+                if (!std::filesystem::exists(actualPath, ec) || std::filesystem::file_size(actualPath, ec) == 0) {
+                    std::filesystem::path resolved = AssetManager::Get().ResolvePhysicalOrCookedPath(levelPath);
+                    if (!resolved.empty() && std::filesystem::exists(resolved, ec) && std::filesystem::file_size(resolved, ec) > 0) {
+                        actualPath = resolved.string();
+                    }
+                }
+                std::ifstream file(actualPath);
                 if (!file.is_open()) {
                     if (session != currentSessionId.load() || cancelRequested.load()) return;
                     hasError = true;

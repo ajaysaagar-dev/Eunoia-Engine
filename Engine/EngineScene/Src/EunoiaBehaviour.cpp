@@ -979,14 +979,27 @@ void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ)
         glm::vec3 current = GetValue();
         bool isCamera = false;
         if (parent && parent->gameObject) {
-            isCamera = (parent->gameObject->isCamera || parent->gameObject->type == PrimitiveType::Camera);
+            isCamera = (parent->gameObject->isCamera || parent->gameObject->type == PrimitiveType::Camera ||
+                        parent->gameObject->name.find("Camera") != std::string::npos || parent->gameObject->name.find("Cam") != std::string::npos);
         }
-        if (inX != 0.0f) current.x = inX;
-        if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) current.z = inZ;
+        if (target == TargetType::RelativeRotation) {
+            current.x += inX;
+            current.y += inY;
+            current.z += inZ;
+        } else {
+            if (std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
+                current.y += inY;
+            } else {
+                if (inX != 0.0f) current.x = inX;
+                if (inY != 0.0f) current.y = inY;
+                if (inZ != 0.0f) current.z = inZ;
+            }
+        }
         if (isCamera) {
             current.x = std::clamp(current.x, -89.0f, 89.0f);
         }
+        while (current.y >= 360.0f) current.y -= 360.0f;
+        while (current.y < 0.0f)    current.y += 360.0f;
         SetValue(current);
         return;
     }
@@ -1035,6 +1048,21 @@ void GameObjectTransform::AxisProxy::Z(float val) {
     glm::vec3 v = GetValue();
     v.z = val;
     SetValue(v);
+}
+
+float GameObjectTransform::AxisProxy::GetX() const {
+    float val = GetValue().x;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+}
+
+float GameObjectTransform::AxisProxy::GetY() const {
+    float val = GetValue().y;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+}
+
+float GameObjectTransform::AxisProxy::GetZ() const {
+    float val = GetValue().z;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
 }
 
 TransformState GameObjectTransform::GetWorldTransform() const {
@@ -1144,14 +1172,27 @@ void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) 
         bool isCamera = false;
         if (parent && parent->m_behaviour && parent->m_behaviour->GetOwner()) {
             auto* owner = parent->m_behaviour->GetOwner();
-            isCamera = (owner->isCamera || owner->type == PrimitiveType::Camera);
+            isCamera = (owner->isCamera || owner->type == PrimitiveType::Camera ||
+                        owner->name.find("Camera") != std::string::npos || owner->name.find("Cam") != std::string::npos);
         }
-        if (inX != 0.0f) current.x = inX;
-        if (inY != 0.0f) current.y = inY;
-        if (inZ != 0.0f) current.z = inZ;
+        if (target == TargetType::RelativeRotation) {
+            current.x += inX;
+            current.y += inY;
+            current.z += inZ;
+        } else {
+            if (std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
+                current.y += inY;
+            } else {
+                if (inX != 0.0f) current.x = inX;
+                if (inY != 0.0f) current.y = inY;
+                if (inZ != 0.0f) current.z = inZ;
+            }
+        }
         if (isCamera) {
             current.x = std::clamp(current.x, -89.0f, 89.0f);
         }
+        while (current.y >= 360.0f) current.y -= 360.0f;
+        while (current.y < 0.0f)    current.y += 360.0f;
         SetValue(current);
         return;
     }
@@ -1200,6 +1241,21 @@ void BehaviourTransform::AxisProxy::Z(float val) {
     glm::vec3 v = GetValue();
     v.z = val;
     SetValue(v);
+}
+
+float BehaviourTransform::AxisProxy::GetX() const {
+    float val = GetValue().x;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+}
+
+float BehaviourTransform::AxisProxy::GetY() const {
+    float val = GetValue().y;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+}
+
+float BehaviourTransform::AxisProxy::GetZ() const {
+    float val = GetValue().z;
+    return (std::abs(val) > 1e-5f) ? val : 1.0f;
 }
 
 TransformState BehaviourTransform::GetWorldTransform() const {
@@ -1389,6 +1445,21 @@ void EunoiaBehaviour::ResolveReferences(Scene& scene) {
                         resolvedUI = pair.second.get();
                         break;
                     }
+                }
+            }
+            if (!resolvedUI) {
+                static const std::vector<std::string> searchPrefixes = {
+                    "", "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/", "Data/Content/UI/UI_"
+                };
+                for (const auto& pre : searchPrefixes) {
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + prop.name + ".html");
+                    if (resolvedUI) break;
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + "UI_" + prop.name + ".html");
+                    if (resolvedUI) break;
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + prop.name + ".eui");
+                    if (resolvedUI) break;
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + "UI_" + prop.name + ".eui");
+                    if (resolvedUI) break;
                 }
             }
             *reinterpret_cast<UserInterface**>(prop.dataPtr) = resolvedUI;
@@ -2195,7 +2266,16 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             bool keyMet = false;
             for (const auto& cond : item.requiredKeys) {
                 if (cond.key >= 0) {
-                    bool down = cond.isPressed ? InputSystem::Get().IsKeyPressed(cond.key) : InputSystem::Get().IsKeyDown(cond.key);
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = InputSystem::Get().IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = InputSystem::Get().IsMousePressed(cond.key);
+                        else down = InputSystem::Get().IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = InputSystem::Get().IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = InputSystem::Get().IsKeyPressed(cond.key);
+                        else down = InputSystem::Get().IsKeyDown(cond.key);
+                    }
                     if (cond.isNegated) down = !down;
                     if (down) { keyMet = true; break; }
                 }
@@ -2313,7 +2393,16 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             bool keyMet = false;
             for (const auto& cond : action.requiredKeys) {
                 if (cond.key >= 0) {
-                    bool down = cond.isPressed ? InputSystem::Get().IsKeyPressed(cond.key) : InputSystem::Get().IsKeyDown(cond.key);
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = InputSystem::Get().IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = InputSystem::Get().IsMousePressed(cond.key);
+                        else down = InputSystem::Get().IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = InputSystem::Get().IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = InputSystem::Get().IsKeyPressed(cond.key);
+                        else down = InputSystem::Get().IsKeyDown(cond.key);
+                    }
                     if (cond.isNegated) down = !down;
                     if (down) { keyMet = true; break; }
                 }
@@ -2360,7 +2449,16 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                 } else if (cond.key == -3) {
                     if (input.GetMouseY() != 0.0) { conditionMet = true; break; }
                 } else if (cond.key != -1) {
-                    bool keyState = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    bool keyState = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) keyState = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) keyState = input.IsMousePressed(cond.key);
+                        else keyState = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) keyState = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) keyState = input.IsKeyPressed(cond.key);
+                        else keyState = input.IsKeyDown(cond.key);
+                    }
                     if (cond.isNegated) keyState = !keyState;
                     if (keyState) {
                         conditionMet = true;
@@ -2376,9 +2474,13 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             float val = action.constantDelta[i];
             if (!action.varNames[i].empty()) {
                 if (action.varNames[i] == "$__MouseDeltaX") {
-                    val = (float)input.GetMouseDeltaX() * action.varMultiplier[i];
+                    float d = (float)input.GetMouseDeltaX();
+                    if (std::abs(d) < 1e-5f) d = input.GetMouseAxis().x;
+                    val = d * action.varMultiplier[i];
                 } else if (action.varNames[i] == "$__MouseDeltaY") {
-                    val = (float)input.GetMouseDeltaY() * action.varMultiplier[i];
+                    float d = (float)input.GetMouseDeltaY();
+                    if (std::abs(d) < 1e-5f) d = input.GetMouseAxis().y;
+                    val = d * action.varMultiplier[i];
                 } else if (action.varNames[i] == "$__MouseX") {
                     val = (float)input.GetMouseX() * action.varMultiplier[i];
                 } else if (action.varNames[i] == "$__MouseY") {
@@ -2389,6 +2491,12 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             }
             if (!action.scaleVarNames[i].empty()) {
                 val *= GetFloat(action.scaleVarNames[i], 1.0f);
+            } else if (action.varNames[i] == "$__MouseDeltaX" || action.varNames[i] == "$__MouseDeltaY") {
+                if (m_floatStorage.find("Sensitivity") != m_floatStorage.end()) {
+                    val *= m_floatStorage["Sensitivity"];
+                } else if (m_floatStorage.find("sensitivity") != m_floatStorage.end()) {
+                    val *= m_floatStorage["sensitivity"];
+                }
             }
             if (action.useDeltaTime[i]) {
                 val *= dt;
@@ -2464,6 +2572,49 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         }
     }
 
+    // Execute real-time dynamic Bool assignments inside Update()
+    for (const auto& assign : m_boolAssignments) {
+        bool boolConditionMet = true;
+        for (const auto& bCond : assign.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        if (!assign.requiredKeys.empty()) {
+            bool keyMet = true;
+            for (const auto& cond : assign.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsMousePressed(cond.key);
+                        else down = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsKeyPressed(cond.key);
+                        else down = input.IsKeyDown(cond.key);
+                    }
+                    if (cond.isNegated) down = !down;
+                    if (!down) { keyMet = false; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        m_boolStorage[assign.varName] = assign.targetValue;
+        for (auto& prop : m_properties) {
+            if (prop.name == assign.varName || prop.displayName == assign.varName) {
+                if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
+                    *reinterpret_cast<bool*>(prop.dataPtr) = assign.targetValue;
+                }
+            }
+        }
+    }
+
     // Execute real-time dynamic UI actions inside Update()
     for (const auto& action : m_uiActions) {
         // 1. Check boolean condition variables
@@ -2497,12 +2648,21 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
 
         // 3. Check key conditions if any
         if (!action.requiredKeys.empty()) {
-            bool keyMet = false;
+            bool keyMet = true;
             for (const auto& cond : action.requiredKeys) {
                 if (cond.key >= 0) {
-                    bool down = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsMousePressed(cond.key);
+                        else down = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsKeyPressed(cond.key);
+                        else down = input.IsKeyDown(cond.key);
+                    }
                     if (cond.isNegated) down = !down;
-                    if (down) { keyMet = true; break; }
+                    if (!down) { keyMet = false; break; }
                 }
             }
             if (!keyMet) continue;
@@ -2535,6 +2695,26 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                 }
             }
 
+            if (!uiPtr) {
+                static const std::vector<std::string> searchPrefixes = {
+                    "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/"
+                };
+                for (const auto& pre : searchPrefixes) {
+                    uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + action.targetVar + ".html");
+                    if (uiPtr) break;
+                    uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + "UI_" + action.targetVar + ".html");
+                    if (uiPtr) break;
+                    uiPtr = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + action.targetVar + ".eui");
+                    if (uiPtr) break;
+                }
+            }
+            if (uiPtr) {
+                for (auto& p : m_properties) {
+                    if (p.name == action.targetVar && p.refType == ObjectRefType::UserInterface && p.dataPtr) {
+                        *reinterpret_cast<UserInterface**>(p.dataPtr) = uiPtr;
+                    }
+                }
+            }
             if (uiPtr) {
                 if (action.type == DynamicScriptBehaviour::DynamicUIAction::ActionType::Add) {
                     EunoiaUI::UISystemManager::Get().Add(uiPtr);
@@ -2589,7 +2769,16 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             bool keyMet = false;
             for (const auto& cond : action.requiredKeys) {
                 if (cond.key >= 0) {
-                    bool down = cond.isPressed ? input.IsKeyPressed(cond.key) : input.IsKeyDown(cond.key);
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsMousePressed(cond.key);
+                        else down = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsKeyPressed(cond.key);
+                        else down = input.IsKeyDown(cond.key);
+                    }
                     if (cond.isNegated) down = !down;
                     if (down) { keyMet = true; break; }
                 }
@@ -2751,19 +2940,37 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
 
         // Check for access specifiers at class scope
         if (effectiveDepth == 1 || (effectiveDepth == 0 && inClass && openBracesOnLine > 0)) {
-            if (l == "public:" || l.rfind("public:", 0) == 0) {
+            if (l.rfind("public:", 0) == 0) {
                 inPublic = true;
-                braceDepth += openBracesOnLine - closeBracesOnLine;
-                continue;
-            } else if (l == "private:" || l.rfind("private:", 0) == 0 ||
-                       l == "protected:" || l.rfind("protected:", 0) == 0) {
+                l = l.substr(7);
+                size_t nb = l.find_first_not_of(" \t\r\n");
+                if (nb == std::string::npos) {
+                    braceDepth += openBracesOnLine - closeBracesOnLine;
+                    continue;
+                }
+                l = l.substr(nb);
+            } else if (l.rfind("private:", 0) == 0) {
                 inPublic = false;
-                braceDepth += openBracesOnLine - closeBracesOnLine;
-                continue;
+                l = l.substr(8);
+                size_t nb = l.find_first_not_of(" \t\r\n");
+                if (nb == std::string::npos) {
+                    braceDepth += openBracesOnLine - closeBracesOnLine;
+                    continue;
+                }
+                l = l.substr(nb);
+            } else if (l.rfind("protected:", 0) == 0) {
+                inPublic = false;
+                l = l.substr(10);
+                size_t nb = l.find_first_not_of(" \t\r\n");
+                if (nb == std::string::npos) {
+                    braceDepth += openBracesOnLine - closeBracesOnLine;
+                    continue;
+                }
+                l = l.substr(nb);
             }
         }
 
-        bool isClassPublic = (effectiveDepth == 1 && inClass && inPublic);
+        bool isClassMember = (effectiveDepth == 1 && inClass);
 
         braceDepth += openBracesOnLine - closeBracesOnLine;
         if (classBraceStarted && braceDepth <= 0) {
@@ -2773,7 +2980,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             classBraceStarted = false;
         }
 
-        if (!isClassPublic) continue;
+        if (!isClassMember) continue;
 
         // Skip destructors and methods
         if (l.find('~') != std::string::npos) continue;
@@ -3497,6 +3704,34 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             int actualTargetId = (sv && sv->hasValue) ? sv->targetId : -1;
             std::string actualAssetPath = (sv && sv->hasValue) ? sv->assetPath : "";
 
+            if (refType == ObjectRefType::UserInterface && !actualPtr) {
+                UserInterface* resolvedUI = nullptr;
+                if (!actualAssetPath.empty()) {
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(actualAssetPath);
+                }
+                if (!resolvedUI) {
+                    resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(varName);
+                }
+                if (!resolvedUI) {
+                    static const std::vector<std::string> searchPrefixes = {
+                        "", "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/", "Data/Content/UI/UI_"
+                    };
+                    for (const auto& pre : searchPrefixes) {
+                        resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + varName + ".html");
+                        if (resolvedUI) break;
+                        resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + "UI_" + varName + ".html");
+                        if (resolvedUI) break;
+                        resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + varName + ".eui");
+                        if (resolvedUI) break;
+                        resolvedUI = EunoiaUI::UISystemManager::Get().GetOrLoadUI(pre + "UI_" + varName + ".eui");
+                        if (resolvedUI) break;
+                    }
+                }
+                if (resolvedUI) {
+                    actualPtr = resolvedUI;
+                }
+            }
+
             m_refStorage[varName] = actualPtr;
             RegisterReference(varName, &m_refStorage[varName], refType, "References");
             if (!m_properties.empty()) {
@@ -3567,41 +3802,82 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             outUseDt = true;
         }
 
+        auto hasUnaryMinus = [](const std::string& str) -> bool {
+            for (size_t mi = 0; mi < str.size(); ++mi) {
+                if (str[mi] == '-') {
+                    if (mi + 1 < str.size() && str[mi + 1] == '>') continue; // skip ->
+                    return true;
+                }
+            }
+            return false;
+        };
+
         bool isMouseNegated = false;
         if (lowerS.find("getmousedeltax") != std::string::npos || lowerS.find("getmouseaxisx") != std::string::npos) {
             outVar = "$__MouseDeltaX";
             outActive = true;
-            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || s.find('-') != std::string::npos) {
+            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || hasUnaryMinus(s)) {
                 isMouseNegated = true;
             }
         } else if (lowerS.find("getmousedeltay") != std::string::npos || lowerS.find("getmouseaxisy") != std::string::npos) {
             outVar = "$__MouseDeltaY";
             outActive = true;
-            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || s.find('-') != std::string::npos) {
+            if (lowerS.find("(true)") != std::string::npos || lowerS.find("(1)") != std::string::npos || lowerS.find("-i.getmouse") != std::string::npos || lowerS.find("-input.getmouse") != std::string::npos || hasUnaryMinus(s)) {
                 isMouseNegated = true;
             }
         } else if (lowerS.find("getmousex") != std::string::npos) {
             outVar = "$__MouseX";
             outActive = true;
-            if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos || s.find('-') != std::string::npos) {
+            if (lowerS.find("getmousex(true)") != std::string::npos || lowerS.find("getmousex(1)") != std::string::npos || hasUnaryMinus(s)) {
                 isMouseNegated = true;
             }
         } else if (lowerS.find("getmousey") != std::string::npos) {
             outVar = "$__MouseY";
             outActive = true;
-            if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos || s.find('-') != std::string::npos) {
+            if (lowerS.find("getmousey(true)") != std::string::npos || lowerS.find("getmousey(1)") != std::string::npos || hasUnaryMinus(s)) {
                 isMouseNegated = true;
             }
         }
 
+        auto isNumericType = [](const std::string& t) -> bool {
+            return (t == "float" || t == "double" || t == "int" || t == "int32_t" ||
+                    t == "int64_t" || t == "uint32_t" || t == "size_t" || t == "unsigned int");
+        };
+
+        std::string foundNumericVar;
+        std::string foundSensitivityVar;
         for (const auto& v : declaredVars) {
             std::string vName = v.first;
+            if (!isNumericType(v.second.type)) continue;
+
             if (s.find(vName) != std::string::npos) {
-                if (outVar.empty()) {
-                    outVar = vName;
-                    outActive = true;
-                } else if (outVar != vName && outScaleVar.empty()) {
-                    outScaleVar = vName;
+                std::string vLower = vName;
+                std::transform(vLower.begin(), vLower.end(), vLower.begin(), ::tolower);
+                if (vLower.find("sensi") != std::string::npos) {
+                    foundSensitivityVar = vName;
+                } else if (foundNumericVar.empty()) {
+                    foundNumericVar = vName;
+                }
+            }
+        }
+
+        std::string chosenVar = !foundSensitivityVar.empty() ? foundSensitivityVar : foundNumericVar;
+        if (!chosenVar.empty()) {
+            if (outVar.empty()) {
+                outVar = chosenVar;
+                outActive = true;
+            } else if (outVar != chosenVar && outScaleVar.empty()) {
+                outScaleVar = chosenVar;
+            }
+        }
+
+        if ((outVar == "$__MouseDeltaX" || outVar == "$__MouseDeltaY") && outScaleVar.empty()) {
+            for (const auto& v : declaredVars) {
+                std::string vLower = v.first;
+                std::transform(vLower.begin(), vLower.end(), vLower.begin(), ::tolower);
+                if (vLower.find("sensi") != std::string::npos) {
+                    outScaleVar = v.first;
+                    break;
                 }
             }
         }
@@ -3611,7 +3887,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             size_t varPos = s.find(outVar);
             if (varPos != std::string::npos) {
                 size_t minusPos = s.rfind('-', varPos);
-                if (minusPos != std::string::npos) {
+                if (minusPos != std::string::npos && (minusPos + 1 >= s.size() || s[minusPos + 1] != '>')) {
                     bool onlyWs = true;
                     for (size_t k = minusPos + 1; k < varPos; ++k) {
                         if (!std::isspace(static_cast<unsigned char>(s[k])) && s[k] != '(') {
@@ -3627,7 +3903,25 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         float sign = (isMouseNegated ^ hasMinusBeforeVar) ? -1.0f : 1.0f;
         outMul = sign;
 
-        size_t numStart = s.find_first_of("-+0123456789.");
+        size_t numStart = std::string::npos;
+        for (size_t i = 0; i < s.size(); ++i) {
+            char c = s[i];
+            if (c == '-' || c == '+') {
+                if (i + 1 < s.size() && c == '-' && s[i + 1] == '>') continue; // skip ->
+                if (i + 1 < s.size() && (std::isdigit(static_cast<unsigned char>(s[i + 1])) || s[i + 1] == '.')) {
+                    numStart = i;
+                    break;
+                }
+            } else if (std::isdigit(static_cast<unsigned char>(c))) {
+                numStart = i;
+                break;
+            } else if (c == '.') {
+                if (i + 1 < s.size() && std::isdigit(static_cast<unsigned char>(s[i + 1]))) {
+                    numStart = i;
+                    break;
+                }
+            }
+        }
         if (numStart != std::string::npos) {
             size_t numEnd = numStart;
             if (s[numStart] == '-' || s[numStart] == '+') numEnd++;
@@ -3671,6 +3965,14 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             {"delete", Key::Delete}, {"backspace", Key::Backspace}
         };
 
+        static const std::unordered_map<std::string, int> mouseMap = {
+            {"right", 1}, {"left", 0}, {"middle", 2},
+            {"button_right", 1}, {"button_left", 0}, {"button_middle", 2},
+            {"mousebutton::right", 1}, {"mousebutton::left", 0}, {"mousebutton::middle", 2},
+            {"mouse_button_right", 1}, {"mouse_button_left", 0}, {"mouse_button_middle", 2},
+            {"mouse_button_1", 0}, {"mouse_button_2", 1}, {"mouse_button_3", 2}
+        };
+
         if (str.find("GetMouseX(") != std::string::npos || str.find("GetMouseX()") != std::string::npos) {
             DynamicScriptBehaviour::DynamicKeyCondition cond;
             cond.key = -2;
@@ -3682,14 +3984,38 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             conds.push_back(cond);
         }
 
+        auto findFuncCall = [&](const std::string& name, size_t fromPos) -> size_t {
+            size_t p = str.find(name, fromPos);
+            if (p == std::string::npos) return std::string::npos;
+            size_t after = p + name.length();
+            while (after < str.size() && (str[after] == ' ' || str[after] == '\t')) after++;
+            if (after < str.size() && str[after] == '(') return p;
+            return std::string::npos;
+        };
+
         size_t searchPos = 0;
         while (searchPos < str.size()) {
-            size_t kdPos = str.find("IsKeyDown(", searchPos);
-            size_t kpPos = str.find("IsKeyPressed(", searchPos);
-            size_t nextPos = std::min(kdPos, kpPos);
+            size_t kdPos = findFuncCall("IsKeyDown", searchPos);
+            size_t kpPos = findFuncCall("IsKeyPressed", searchPos);
+            size_t krPos = findFuncCall("IsKeyReleased", searchPos);
+            size_t mdPos = findFuncCall("IsMouseDown", searchPos);
+            size_t mpPos = findFuncCall("IsMousePressed", searchPos);
+            size_t mrPos = findFuncCall("IsMouseReleased", searchPos);
+
+            size_t nextPos = std::string::npos;
+            int matchType = -1; // 0: kd, 1: kp, 2: md, 3: mp, 4: kr, 5: mr
+            if (kdPos != std::string::npos) { nextPos = kdPos; matchType = 0; }
+            if (kpPos != std::string::npos && (nextPos == std::string::npos || kpPos < nextPos)) { nextPos = kpPos; matchType = 1; }
+            if (krPos != std::string::npos && (nextPos == std::string::npos || krPos < nextPos)) { nextPos = krPos; matchType = 4; }
+            if (mdPos != std::string::npos && (nextPos == std::string::npos || mdPos < nextPos)) { nextPos = mdPos; matchType = 2; }
+            if (mpPos != std::string::npos && (nextPos == std::string::npos || mpPos < nextPos)) { nextPos = mpPos; matchType = 3; }
+            if (mrPos != std::string::npos && (nextPos == std::string::npos || mrPos < nextPos)) { nextPos = mrPos; matchType = 5; }
+
             if (nextPos == std::string::npos) break;
 
-            bool isPress = (nextPos == kpPos);
+            bool isMouse = (matchType == 2 || matchType == 3 || matchType == 5);
+            bool isPress = (matchType == 1 || matchType == 3);
+            bool isRelease = (matchType == 4 || matchType == 5);
             bool isNegated = false;
             if (nextPos > 0 && str[nextPos - 1] == '!') isNegated = true;
             else if (nextPos >= 2 && str[nextPos - 2] == '!' && str[nextPos - 1] == ' ') isNegated = true;
@@ -3703,23 +4029,46 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             std::transform(lowerArg.begin(), lowerArg.end(), lowerArg.begin(), ::tolower);
 
             size_t colon = lowerArg.rfind("::");
-            if (colon != std::string::npos) lowerArg = lowerArg.substr(colon + 2);
-            size_t glfwPrefix = lowerArg.find("glfw_key_");
-            if (glfwPrefix != std::string::npos) lowerArg = lowerArg.substr(glfwPrefix + 9);
+            std::string afterColon = (colon != std::string::npos) ? lowerArg.substr(colon + 2) : lowerArg;
 
             size_t b = lowerArg.find_first_not_of(" \t\r\n'\"");
             size_t e = lowerArg.find_last_not_of(" \t\r\n'\"");
             if (b != std::string::npos && e != std::string::npos) {
                 lowerArg = lowerArg.substr(b, e - b + 1);
             }
+            size_t ab = afterColon.find_first_not_of(" \t\r\n'\"");
+            size_t ae = afterColon.find_last_not_of(" \t\r\n'\"");
+            if (ab != std::string::npos && ae != std::string::npos) {
+                afterColon = afterColon.substr(ab, ae - ab + 1);
+            }
 
-            auto it = keyMap.find(lowerArg);
-            if (it != keyMap.end()) {
-                DynamicScriptBehaviour::DynamicKeyCondition cond;
-                cond.key = it->second;
-                cond.isPressed = isPress;
-                cond.isNegated = isNegated;
-                conds.push_back(cond);
+            if (isMouse) {
+                auto itM = mouseMap.find(lowerArg);
+                if (itM == mouseMap.end()) itM = mouseMap.find(afterColon);
+                if (itM != mouseMap.end()) {
+                    DynamicScriptBehaviour::DynamicKeyCondition cond;
+                    cond.key = itM->second;
+                    cond.isMouseButton = true;
+                    cond.isPressed = isPress;
+                    cond.isReleased = isRelease;
+                    cond.isNegated = isNegated;
+                    conds.push_back(cond);
+                }
+            } else {
+                size_t glfwPrefix = afterColon.find("glfw_key_");
+                if (glfwPrefix != std::string::npos) afterColon = afterColon.substr(glfwPrefix + 9);
+
+                auto it = keyMap.find(afterColon);
+                if (it == keyMap.end()) it = keyMap.find(lowerArg);
+                if (it != keyMap.end()) {
+                    DynamicScriptBehaviour::DynamicKeyCondition cond;
+                    cond.key = it->second;
+                    cond.isMouseButton = false;
+                    cond.isPressed = isPress;
+                    cond.isReleased = isRelease;
+                    cond.isNegated = isNegated;
+                    conds.push_back(cond);
+                }
             }
 
             searchPos = closeP + 1;
@@ -3791,6 +4140,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     bool lastIfWasHitCondition = false;
     bool lastIfHitConditionNegated = false;
     std::string lastIfHitTag;
+    std::vector<DynamicScriptBehaviour::DynamicKeyCondition> lastIfKeys;
+    std::vector<DynamicScriptBehaviour::DynamicBoolCondition> lastIfBools;
     int updateMethodBraceDepth = 0;
 
     m_methods.clear();
@@ -4383,6 +4734,8 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 bool isNegatedHit = (lLower.find("!hit.status") != std::string::npos || lLower.find("hit.status == false") != std::string::npos || lLower.find("!hit.gameobject") != std::string::npos);
 
                 if (!lineKeys.empty() || !lineBools.empty() || isHitCheck) {
+                    lastIfKeys = lineKeys;
+                    lastIfBools = lineBools;
                     if (isHitCheck) {
                         lastIfWasHitCondition = true;
                         lastIfHitConditionNegated = isNegatedHit;
@@ -4421,10 +4774,21 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             } else if (lLower.find("else") != std::string::npos && lLower.find("else if") == std::string::npos && lLower.find("else  if") == std::string::npos) {
                 size_t elsePos = lLower.find("else");
                 if (elsePos == 0 || l[elsePos - 1] == ' ' || l[elsePos - 1] == '\t' || l[elsePos - 1] == '}' || l[elsePos - 1] == ';') {
-                    if (lastIfWasHitCondition) {
-                        if (openBracesOnLine > 0) {
-                            ConditionScope scope;
-                            scope.braceDepth = updateMethodBraceDepth;
+                    std::vector<DynamicScriptBehaviour::DynamicKeyCondition> elseKeys = lastIfKeys;
+                    for (auto& k : elseKeys) {
+                        k.isNegated = !k.isNegated;
+                    }
+                    std::vector<DynamicScriptBehaviour::DynamicBoolCondition> elseBools = lastIfBools;
+                    for (auto& b : elseBools) {
+                        b.expectedVal = !b.expectedVal;
+                    }
+
+                    if (openBracesOnLine > 0) {
+                        ConditionScope scope;
+                        scope.braceDepth = updateMethodBraceDepth;
+                        scope.keys = elseKeys;
+                        scope.bools = elseBools;
+                        if (lastIfWasHitCondition) {
                             if (lastIfHitConditionNegated) {
                                 scope.requireHitStatus = true;
                                 scope.requireHitTag = lastIfHitTag;
@@ -4432,8 +4796,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                                 scope.requireNoHit = true;
                                 scope.requireHitTag = lastIfHitTag;
                             }
-                            conditionStack.push_back(scope);
-                        } else {
+                        }
+                        conditionStack.push_back(scope);
+                    } else {
+                        pendingSingleLineKeys.insert(pendingSingleLineKeys.end(), elseKeys.begin(), elseKeys.end());
+                        pendingSingleLineBools.insert(pendingSingleLineBools.end(), elseBools.begin(), elseBools.end());
+                        if (lastIfWasHitCondition) {
                             if (lastIfHitConditionNegated) {
                                 pendingSingleLineRequireHitStatus = true;
                                 pendingSingleLineRequireHitTag = lastIfHitTag;
@@ -4441,12 +4809,20 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                                 pendingSingleLineRequireNoHit = true;
                                 pendingSingleLineRequireHitTag = lastIfHitTag;
                             }
-                            hasPendingSingleLineCondition = true;
                         }
+                        hasPendingSingleLineCondition = true;
                     }
                 }
             }
 
+            auto applyConditionsToBoolAssignment = [&](DynamicScriptBehaviour::DynamicBoolAssignment& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+            };
             auto applyConditionsToAction = [&](DynamicTransformAction& act) {
                 for (const auto& sc : conditionStack) {
                     act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
@@ -4708,6 +5084,39 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 m_destroyActions.push_back(act);
             }
 
+            // Scan for boolean assignments (e.g. bIsCrosshairVisible = true; or false;)
+            size_t boolEqPos = l.find('=');
+            if (boolEqPos != std::string::npos && l.find("==") == std::string::npos &&
+                l.find("!=") == std::string::npos && l.find("<=") == std::string::npos &&
+                l.find(">=") == std::string::npos && l.find("if ") == std::string::npos &&
+                l.find("if(") == std::string::npos) {
+                std::string left = l.substr(0, boolEqPos);
+                std::string right = l.substr(boolEqPos + 1);
+                size_t semi = right.find(';');
+                if (semi != std::string::npos) right = right.substr(0, semi);
+
+                size_t lb = left.find_last_not_of(" \t\r\n");
+                if (lb != std::string::npos) {
+                    size_t la = left.find_last_of(" \t\r\n*", lb);
+                    std::string varName = (la == std::string::npos) ? left.substr(0, lb + 1) : left.substr(la + 1, lb - la);
+                    
+                    std::string rightTrim = right;
+                    size_t rStart = rightTrim.find_first_not_of(" \t\r\n");
+                    size_t rEnd = rightTrim.find_last_not_of(" \t\r\n;");
+                    if (rStart != std::string::npos && rEnd != std::string::npos) rightTrim = rightTrim.substr(rStart, rEnd - rStart + 1);
+                    std::string rightTrimLower = rightTrim;
+                    std::transform(rightTrimLower.begin(), rightTrimLower.end(), rightTrimLower.begin(), ::tolower);
+
+                    if (rightTrimLower == "true" || rightTrimLower == "false" || rightTrimLower == "1" || rightTrimLower == "0") {
+                        DynamicScriptBehaviour::DynamicBoolAssignment bAssign;
+                        bAssign.varName = varName;
+                        bAssign.targetValue = (rightTrimLower == "true" || rightTrimLower == "1");
+                        applyConditionsToBoolAssignment(bAssign);
+                        m_boolAssignments.push_back(bAssign);
+                    }
+                }
+            }
+
             // 2. Scan for Transform.Translate / RelativeTranslate / WorldTranslate
             size_t transPos = l.find("Translate(");
             if (transPos != std::string::npos) {
@@ -4913,9 +5322,18 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             }
 
             // 6. Scan for UISystem.Add / UISystem.Remove / UISystem.RemoveAll
-            size_t uiAddPos = lLower.find("uisystem.add(");
-            if (uiAddPos == std::string::npos) uiAddPos = lLower.find("uisystem::add(");
-            if (uiAddPos == std::string::npos) uiAddPos = lLower.find("addui(");
+            auto findUiWithParen = [](const std::string& haystack, const std::string& pattern) -> size_t {
+                size_t p = haystack.find(pattern);
+                if (p == std::string::npos) return std::string::npos;
+                size_t after = p + pattern.length();
+                while (after < haystack.size() && (haystack[after] == ' ' || haystack[after] == '\t')) after++;
+                if (after < haystack.size() && haystack[after] == '(') return p;
+                return std::string::npos;
+            };
+
+            size_t uiAddPos = findUiWithParen(lLower, "uisystem.add");
+            if (uiAddPos == std::string::npos) uiAddPos = findUiWithParen(lLower, "uisystem::add");
+            if (uiAddPos == std::string::npos) uiAddPos = findUiWithParen(lLower, "addui");
             if (uiAddPos != std::string::npos) {
                 size_t p1 = l.find('(', uiAddPos);
                 size_t p2 = l.find(')', p1);
@@ -4933,9 +5351,9 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             }
 
-            size_t uiRemPos = lLower.find("uisystem.remove(");
-            if (uiRemPos == std::string::npos) uiRemPos = lLower.find("uisystem::remove(");
-            if (uiRemPos == std::string::npos) uiRemPos = lLower.find("removeui(");
+            size_t uiRemPos = findUiWithParen(lLower, "uisystem.remove");
+            if (uiRemPos == std::string::npos) uiRemPos = findUiWithParen(lLower, "uisystem::remove");
+            if (uiRemPos == std::string::npos) uiRemPos = findUiWithParen(lLower, "removeui");
             if (uiRemPos != std::string::npos && lLower.find("removeall") == std::string::npos) {
                 size_t p1 = l.find('(', uiRemPos);
                 size_t p2 = l.find(')', p1);
@@ -4953,13 +5371,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             }
 
-            if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos) {
+            if (lLower.find("uisystem.removeall()") != std::string::npos || lLower.find("removeallui()") != std::string::npos || lLower.find("uisystem.removeall ()") != std::string::npos) {
                 DynamicScriptBehaviour::DynamicUIAction act;
                 act.type = DynamicScriptBehaviour::DynamicUIAction::ActionType::RemoveAll;
                 applyConditionsToUIAction(act);
                 m_uiActions.push_back(act);
             }
-
             // 7. Scan for SaveSystem (SetItem / RemoveItem / RemoveAll)
             if (lLower.find("savesystem.") != std::string::npos || lLower.find("savesystem::") != std::string::npos) {
                 bool isGlobal = (lLower.find(".local") == std::string::npos && lLower.find("::local") == std::string::npos);

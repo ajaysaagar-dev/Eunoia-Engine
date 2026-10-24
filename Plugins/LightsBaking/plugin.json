@@ -1,9 +1,0 @@
-{
-  "name": "LightsBaking",
-  "version": "1.0",
-  "description": "Per-light baked lighting and shadow system for static scene geometry",
-  "author": "Eunoia Engine",
-  "category": "Lighting",
-  "isCore": false,
-  "loadPriority": 100
-}

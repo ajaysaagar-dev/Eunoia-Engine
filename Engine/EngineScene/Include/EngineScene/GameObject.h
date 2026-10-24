@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -9,17 +9,20 @@
 #include <EngineScene/TransformTypes.h>
 #include <EngineScene/EunoiaBehaviour.h>
 #include <EngineScene/BehaviourRegistry.h>
-#include <LightsBaking/LightBakeTypes.h>
 #include <Collisions/CollisionTypes.h>
 #include <Physics/PhysicsTypes.h>
 #include <UISystem/UITypes.h>
+#include <EngineScene/TerrainComponent.h>
 
-enum class LightType {
-    Directional,
-    Point,
-    Spot,
-    Area,
-    Sky
+// Wicked Engine Light System Alignment
+enum class LightType : uint32_t {
+    Directional = 0,
+    Point       = 1,
+    Spot        = 2,
+    Rectangle   = 3,
+    Area        = 3, // alias for Rectangle for backwards compatibility
+    Sky         = 4,
+    Count
 };
 
 inline const char* GetLightTypeName(LightType type) {
@@ -27,7 +30,7 @@ inline const char* GetLightTypeName(LightType type) {
         case LightType::Directional: return "Directional Light";
         case LightType::Point:       return "Point Light";
         case LightType::Spot:        return "Spot Light";
-        case LightType::Area:        return "Area Light";
+        case LightType::Rectangle:   return "Rectangle Light";
         case LightType::Sky:         return "Sky Light";
         default:                     return "Light";
     }
@@ -55,30 +58,39 @@ inline glm::vec3 ColorTemperatureToRGB(float kelvin) {
 }
 
 struct LightComponent {
+    enum FLAGS : uint32_t {
+        EMPTY               = 0,
+        CAST_SHADOW         = 1 << 0,
+        VOLUMETRICS         = 1 << 1,
+        VISUALIZER          = 1 << 2,
+        VOLUMETRICCLOUDS    = 1 << 3,
+    };
+    uint32_t _flags = CAST_SHADOW;
+
     LightType type = LightType::Point;
     bool enabled = true;
-    glm::vec3 color{1.0f, 0.95f, 0.85f};
-    float intensity = 2.0f;
+
+    // Wicked Engine Light properties
+    glm::vec3 color{1.0f, 1.0f, 1.0f};
+    float intensity = 1.0f; // lux (directional) or candela (point/spot/rect)
+    float range = 10.0f;
+    float outerConeAngle = 45.0f; // degrees (Wicked Engine XM_PIDIV4)
+    float innerConeAngle = 0.0f;  // degrees (0 = only outer cone)
+    float radius = 0.025f;        // source radius (for specular softness / sphere)
+    float length = 0.0f;          // point lights: line/capsule length; rect light: width
+    float height = 0.0f;          // rect light only
+    std::vector<float> cascade_distances = { 8.0f, 80.0f, 800.0f };
+    int forced_shadow_resolution = -1; // -1: auto, greater: fixed shadow map resolution
+
+    // Extended / convenient attributes
     float temperature = 6500.0f; // Kelvin (1000K - 12000K)
     bool useTemperature = false;
-    float range = 10.0f;
     float attenuation = 2.0f;
     float rangeSmoothing = 0.2f; // Smooth range dissolve ending (0.01 to 1.0)
-
-    // Direction (Directional, Spot, Hemisphere)
     glm::vec3 direction{0.0f, -1.0f, 0.0f};
-
-    // Spot Light
-    float innerConeAngle = 20.0f; // degrees
-    float outerConeAngle = 45.0f; // degrees
     float coneFalloff = 1.0f;
-
-    // Area / Rect / Disc / Tube
-    int areaShape = 0; // 0 = Rectangle, 1 = Disk, 2 = Sphere, 3 = Tube
+    int areaShape = 0; // 0 = Rectangle, 1 = Disk
     float width = 1.0f;
-    float height = 1.0f;
-    float radius = 0.5f;
-    float length = 1.0f;
     bool twoSided = false;
 
     // Sky / Environment Light
@@ -89,8 +101,6 @@ struct LightComponent {
     float ambientContribution = 0.25f;
     float mipLevel = 0.0f;
     glm::vec3 lowerHemisphereColor{0.15f, 0.12f, 0.10f};
-
-    // Hemisphere Light
     glm::vec3 skyColor{0.4f, 0.6f, 0.9f};
     glm::vec3 groundColor{0.3f, 0.2f, 0.1f};
 
@@ -99,36 +109,95 @@ struct LightComponent {
     float shadowStrength = 0.85f;
     float shadowBias = 0.0012f;
     int shadowResolution = 2048;
-    float shadowDistance = 50.0f;
+    float shadowDistance = 250.0f;
 
-    // Volumetrics
+    // Performance & Distance Culling
+    bool enableDistanceCulling = false; // by default disabled
+    float minVisibleDistance = 50.0f;   // light smoothly fades out starting at this distance
+    float maxVisibleDistance = 100.0f;  // light completely ignored and not rendered beyond this distance
+
+    // Volumetrics & God Rays (Wicked Engine Technique)
     bool volumetric = false;
-    float volumetricScattering = 0.2f;
-    float volumetricIntensity = 1.0f;
+    float volumetric_boost = 1.0f; // boost strength of volumetric fog for this light
+    float volumetricScattering = 0.66f; // Mie Henyey-Greenstein anisotropy g factor
+    float volumetricIntensity = 1.0f; // Overall god rays intensity multiplier
+    int volumetricSteps = 16; // Raymarching sample steps (8, 16, 24, 32)
+    float volumetricMaxDistance = 120.0f; // Max raymarch distance in meters
 
     // Light Channels / Layer
     uint32_t lightLayer = 1;
 
-    // Baking System (dev.md)
-    Eunoia::LightBakeState bakeState = Eunoia::LightBakeState::Realtime;
-    int bakeResolution = 1024;
-    bool isBakeDirty = false;
-    std::string lightGuid = "";
-    std::string bakedLightmapPath = "";
-    std::string bakedShadowmapPath = "";
-    uint64_t bakeSignature = 0;
+    // Non-serialized transform cache:
+    glm::vec3 position{0.0f, 0.0f, 0.0f};
 
-    // Stored properties at bake time for dirty detection
-    glm::vec3 bakedPosition{0.0f};
-    glm::vec3 bakedRotation{0.0f};
-    float bakedIntensity = 2.0f;
-    glm::vec3 bakedColor{1.0f, 1.0f, 1.0f};
-    float bakedRange = 10.0f;
-    float bakedRangeSmoothing = 0.2f;
-    float bakedInnerCone = 20.0f;
-    float bakedOuterCone = 45.0f;
-    float bakedShadowBias = 0.0012f;
-    int bakedResolution = 1024;
+    // Wicked Engine helper methods
+    void SetCastShadow(bool value) {
+        if (value) _flags |= CAST_SHADOW; else _flags &= ~CAST_SHADOW;
+        castShadows = value;
+    }
+    bool IsCastingShadow() const { return (_flags & CAST_SHADOW) != 0 || castShadows; }
+
+    void SetVolumetricsEnabled(bool value) {
+        if (value) _flags |= VOLUMETRICS; else _flags &= ~VOLUMETRICS;
+        volumetric = value;
+    }
+    bool IsVolumetricsEnabled() const { return (_flags & VOLUMETRICS) != 0 || volumetric; }
+
+    void SetVisualizerEnabled(bool value) {
+        if (value) _flags |= VISUALIZER; else _flags &= ~VISUALIZER;
+    }
+    bool IsVisualizerEnabled() const { return (_flags & VISUALIZER) != 0; }
+
+    void SetVolumetricCloudsEnabled(bool value) {
+        if (value) _flags |= VOLUMETRICCLOUDS; else _flags &= ~VOLUMETRICCLOUDS;
+    }
+    bool IsVolumetricCloudsEnabled() const { return (_flags & VOLUMETRICCLOUDS) != 0; }
+
+    bool IsInactive() const { return intensity < 0.0001f || range < 0.0001f; }
+
+    float GetRange() const {
+        float r = range;
+        r = std::max(0.001f, r);
+        r = std::min(r, 65504.0f);
+        return r;
+    }
+
+    void SetType(LightType val) { type = val; }
+    LightType GetType() const { return type; }
+
+    struct LightSphere {
+        glm::vec3 center{0.0f};
+        float radius = 0.0f;
+    };
+
+    LightSphere GetSphere() const {
+        LightSphere ret;
+        switch (type) {
+            case LightType::Directional:
+                ret.center = glm::vec3(0.0f);
+                ret.radius = 1e9f;
+                break;
+            case LightType::Point:
+            case LightType::Rectangle:
+                ret.center = position;
+                ret.radius = GetRange();
+                break;
+            case LightType::Spot: {
+                const float rad = glm::radians(outerConeAngle);
+                const float outerCos = std::cos(rad);
+                const float sRadius = GetRange() * 0.5f / std::max(0.0001f, (outerCos * outerCos));
+                glm::vec3 dir = glm::length(direction) > 1e-4f ? glm::normalize(direction) : glm::vec3(0.0f, -1.0f, 0.0f);
+                ret.center = position - dir * sRadius;
+                ret.radius = sRadius;
+                break;
+            }
+            default:
+                ret.center = position;
+                ret.radius = GetRange();
+                break;
+        }
+        return ret;
+    }
 };
 
 struct PrimitiveParams {
@@ -178,7 +247,8 @@ enum class PrimitiveType {
     SkyLight,
     Camera,
     WaterBody,
-    UserInterface
+    UserInterface,
+    Terrain
 };
 
 inline const char* GetPrimitiveTypeName(PrimitiveType type) {
@@ -209,6 +279,7 @@ inline const char* GetPrimitiveTypeName(PrimitiveType type) {
         case PrimitiveType::Camera:           return "Camera";
         case PrimitiveType::WaterBody:        return "Water Body";
         case PrimitiveType::UserInterface:    return "User Interface";
+        case PrimitiveType::Terrain:          return "Terrain";
         default:                              return "Object";
     }
 }
@@ -409,6 +480,17 @@ struct GameObjectTransform {
         operator glm::vec3() const { return GetValue(); }
         operator TransformVector3() const { return TransformVector3(GetValue()); }
 
+        TransformVector3 operator+(const TransformVector3& v) const { return TransformVector3(GetValue()) + v; }
+        TransformVector3 operator-(const TransformVector3& v) const { return TransformVector3(GetValue()) - v; }
+        TransformVector3 operator+(const glm::vec3& v) const { return TransformVector3(GetValue()) + TransformVector3(v); }
+        TransformVector3 operator-(const glm::vec3& v) const { return TransformVector3(GetValue()) - TransformVector3(v); }
+        TransformVector3 operator*(float s) const { return TransformVector3(GetValue()) * s; }
+        TransformVector3 operator*(double s) const { return TransformVector3(GetValue()) * (float)s; }
+        TransformVector3 operator*(int s) const { return TransformVector3(GetValue()) * (float)s; }
+        TransformVector3 operator/(float s) const { return TransformVector3(GetValue()) / s; }
+        TransformVector3 operator/(double s) const { return TransformVector3(GetValue()) / (float)s; }
+        TransformVector3 operator/(int s) const { return TransformVector3(GetValue()) / (float)s; }
+
         void X(float val);
         void Y(float val);
         void Z(float val);
@@ -605,12 +687,19 @@ struct GameObject {
     bool castShadows = true;
     bool receiveShadows = true;
     bool meshClusterCulling = false; // dev.md: Mesh Cluster Culling (OFF by default)
+    bool enableLOD = false;          // Wicked Engine Mesh LOD: disabled by default (full quality)
+    int forcedLOD = -1;              // -1 = Auto (distance & screen coverage), 0 = LOD0 .. 20 = LOD20
+    float lodBias = 0.0f;            // Wicked Engine lod_bias (-20.0f to +20.0f)
+    int minLOD = 0;                  // Minimum LOD clamp (0 to 20)
+    int maxLOD = 20;                 // Maximum LOD clamp (0 to 20)
+    int currentLOD = 0;              // Active runtime LOD selected for rendering (telemetry/debug)
     glm::vec2 uvScale{1.0f, 1.0f};
     bool normalMapYFlip = false;     // Invert normal green/Y channel (OpenGL/Blender convention)
     int metallicChannel = 0;         // 0=R, 1=G, 2=B, 3=A
     int roughnessChannel = 1;        // 0=R, 1=G, 2=B, 3=A
     int aoChannel = 0;               // 0=R, 1=G, 2=B, 3=A
     int materialDebugMode = 0;       // 0=Final PBR, 1..10 diagnostic modes
+    bool disableStreaming = false;   // Wicked Engine: Disable texture streaming for this object
 
     bool visible = true;
     bool autoRotate = false;
@@ -639,6 +728,8 @@ struct GameObject {
     CameraComponent camera;
     bool isWaterBody = false;
     WaterBodyComponent water;
+    bool isTerrain = false;
+    Eunoia::TerrainComponent terrain;
     bool isUserInterface = false;
     EunoiaUI::UserInterface3DComponent ui3d;
     PrimitiveParams params;
@@ -865,12 +956,19 @@ struct GameObject {
         castShadows = other.castShadows;
         receiveShadows = other.receiveShadows;
         meshClusterCulling = other.meshClusterCulling;
+        enableLOD = other.enableLOD;
+        forcedLOD = other.forcedLOD;
+        lodBias = other.lodBias;
+        minLOD = other.minLOD;
+        maxLOD = other.maxLOD;
+        currentLOD = other.currentLOD;
         uvScale = other.uvScale;
         normalMapYFlip = other.normalMapYFlip;
         metallicChannel = other.metallicChannel;
         roughnessChannel = other.roughnessChannel;
         aoChannel = other.aoChannel;
         materialDebugMode = other.materialDebugMode;
+        disableStreaming = other.disableStreaming;
         visible = other.visible;
         autoRotate = other.autoRotate;
         autoRotateSpeed = other.autoRotateSpeed;
@@ -886,6 +984,8 @@ struct GameObject {
         camera = other.camera;
         isWaterBody = other.isWaterBody;
         water = other.water;
+        isTerrain = other.isTerrain;
+        terrain = other.terrain;
         isUserInterface = other.isUserInterface;
         ui3d = std::move(other.ui3d);
         params = other.params;
@@ -935,12 +1035,19 @@ struct GameObject {
         castShadows = other.castShadows;
         receiveShadows = other.receiveShadows;
         meshClusterCulling = other.meshClusterCulling;
+        enableLOD = other.enableLOD;
+        forcedLOD = other.forcedLOD;
+        lodBias = other.lodBias;
+        minLOD = other.minLOD;
+        maxLOD = other.maxLOD;
+        currentLOD = other.currentLOD;
         uvScale = other.uvScale;
         normalMapYFlip = other.normalMapYFlip;
         metallicChannel = other.metallicChannel;
         roughnessChannel = other.roughnessChannel;
         aoChannel = other.aoChannel;
         materialDebugMode = other.materialDebugMode;
+        disableStreaming = other.disableStreaming;
         visible = other.visible;
         autoRotate = other.autoRotate;
         autoRotateSpeed = other.autoRotateSpeed;
@@ -956,6 +1063,8 @@ struct GameObject {
         camera = other.camera;
         isWaterBody = other.isWaterBody;
         water = other.water;
+        isTerrain = other.isTerrain;
+        terrain = other.terrain;
         isUserInterface = other.isUserInterface;
         ui3d = other.ui3d;
         params = other.params;
@@ -1154,6 +1263,9 @@ struct GameObject {
                 break;
             case PrimitiveType::Prism:
                 mesh = GeometryBuilder::CreatePrism(params.radius, params.height, params.sides);
+                break;
+            case PrimitiveType::Terrain:
+                terrain.RebuildTerrainMesh(mesh);
                 break;
             case PrimitiveType::UserInterface:
             case PrimitiveType::ImportedMesh:

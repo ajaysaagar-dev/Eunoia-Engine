@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <EngineScene/EunoiaBehaviour.h>
 #include <string>
 #include <unordered_map>
@@ -84,6 +84,9 @@ public:
         clone->m_startUIAddTargets = m_startUIAddTargets;
         clone->m_startUIRemoveTargets = m_startUIRemoveTargets;
         clone->m_startUIRemoveAll = m_startUIRemoveAll;
+        clone->m_uiActions = m_uiActions;
+        clone->m_lineTraceActions = m_lineTraceActions;
+        clone->m_boolAssignments = m_boolAssignments;
         clone->m_methods = m_methods;
         clone->m_properties = m_properties;
         for (auto& p : clone->m_properties) {
@@ -234,7 +237,9 @@ public:
     struct DynamicKeyCondition {
         int key = -1;
         bool isPressed = false; // true: IsKeyPressed, false: IsKeyDown
+        bool isReleased = false; // true: IsKeyReleased / IsMouseReleased, false: IsKeyDown / IsKeyPressed
         bool isNegated = false; // true: !IsKeyDown
+        bool isMouseButton = false; // true: MouseButton, false: Keyboard Key
     };
 
     struct DynamicBoolCondition {
@@ -348,6 +353,14 @@ public:
     };
     std::vector<DynamicSaveAction> m_startSaveActions;
     std::vector<DynamicSaveAction> m_updateSaveActions;
+
+    struct DynamicBoolAssignment {
+        std::string varName;
+        bool targetValue = true;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+    };
+    std::vector<DynamicBoolAssignment> m_boolAssignments;
 
     std::string m_sourceCppPath;
     std::filesystem::file_time_type m_sourceTimestamp{};

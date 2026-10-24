@@ -14,7 +14,8 @@ enum class CollisionShapeType {
     Cone = 5,
     Plane = 6,
     Mesh = 7,
-    Character = 8
+    Character = 8,
+    Terrain = 9
 };
 
 inline const char* GetCollisionShapeTypeName(CollisionShapeType shape) {
@@ -28,6 +29,7 @@ inline const char* GetCollisionShapeTypeName(CollisionShapeType shape) {
         case CollisionShapeType::Plane:     return "Plane Collision";
         case CollisionShapeType::Mesh:      return "Mesh Collision";
         case CollisionShapeType::Character: return "Character Collision";
+        case CollisionShapeType::Terrain:   return "Terrain Collision";
         default:                            return "Custom Collision";
     }
 }
@@ -42,6 +44,7 @@ inline CollisionShapeType StringToCollisionShapeType(const std::string& str) {
     if (str == "Plane" || str == "Plane Collision") return CollisionShapeType::Plane;
     if (str == "Mesh" || str == "Mesh Collision") return CollisionShapeType::Mesh;
     if (str == "Character" || str == "Character Collision") return CollisionShapeType::Character;
+    if (str == "Terrain" || str == "Terrain Collision") return CollisionShapeType::Terrain;
     return CollisionShapeType::Box;
 }
 
@@ -82,6 +85,11 @@ struct CollisionModifier {
     bool preventSideFall = true;            // Upright lock: prevents falling/tipping sideways in physics simulation (enabled by default)
     bool sideFall = false;                  // When true (or preventSideFall is false), character can fall sideways
 
+    // Terrain Collision dynamic adaptation (bend and tilt dynamically based on terrain)
+    float terrainOffsetHeight = 0.0f;       // Vertical height offset relative to terrain surface
+    float terrainFollowTilt = 1.0f;         // Tilt adaptation blend (0.0 = flat/world upright, 1.0 = match terrain normal)
+    bool terrainStickToSurface = true;      // Snap/bind actor position and rotation to terrain slope dynamically
+
     // Physical Material properties
     float friction = 0.5f;                  // Surface friction (0.0 = ice, 1.0 = rubber)
     float restitution = 0.0f;               // Bounciness (0.0 = inelastic, 1.0 = elastic)
@@ -102,6 +110,11 @@ struct CollisionModifier {
             centerOffset = glm::vec3(0.0f, 0.9f, 0.0f);
             preventSideFall = true;
             sideFall = false;
+        } else if (shape == CollisionShapeType::Terrain) {
+            boxExtents = glm::vec3(0.5f, 0.2f, 0.5f);
+            terrainOffsetHeight = 0.0f;
+            terrainFollowTilt = 1.0f;
+            terrainStickToSurface = true;
         }
     }
 

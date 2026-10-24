@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -246,6 +246,17 @@ struct BehaviourTransform {
 
         operator glm::vec3() const { return GetValue(); }
         operator TransformVector3() const { return TransformVector3(GetValue()); }
+
+        TransformVector3 operator+(const TransformVector3& v) const { return TransformVector3(GetValue()) + v; }
+        TransformVector3 operator-(const TransformVector3& v) const { return TransformVector3(GetValue()) - v; }
+        TransformVector3 operator+(const glm::vec3& v) const { return TransformVector3(GetValue()) + TransformVector3(v); }
+        TransformVector3 operator-(const glm::vec3& v) const { return TransformVector3(GetValue()) - TransformVector3(v); }
+        TransformVector3 operator*(float s) const { return TransformVector3(GetValue()) * s; }
+        TransformVector3 operator*(double s) const { return TransformVector3(GetValue()) * (float)s; }
+        TransformVector3 operator*(int s) const { return TransformVector3(GetValue()) * (float)s; }
+        TransformVector3 operator/(float s) const { return TransformVector3(GetValue()) / s; }
+        TransformVector3 operator/(double s) const { return TransformVector3(GetValue()) / (float)s; }
+        TransformVector3 operator/(int s) const { return TransformVector3(GetValue()) / (float)s; }
 
         void X(float val);
         void Y(float val);

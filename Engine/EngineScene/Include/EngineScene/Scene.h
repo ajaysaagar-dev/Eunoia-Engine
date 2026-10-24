@@ -16,9 +16,9 @@
 #include <filesystem>
 #include <EngineScene/BehaviourRegistry.h>
 #include <EnginePlatform/InputSystem.h>
-#include <LightsBaking/LightBakeManager.h>
 #include <Collisions/CollisionSystem.h>
 #include <Physics/PhysicsSystem.h>
+#include <EngineCore/JobSystem.h>
 #ifdef GetClassName
 #undef GetClassName
 #endif
@@ -32,7 +32,7 @@ struct PointLight {
     glm::vec3 position{0.0f, 2.5f, 0.0f};
     glm::vec3 direction{0.0f, -1.0f, 0.0f};
     glm::vec3 color{1.0f, 0.95f, 0.85f};
-    float intensity = 2.0f;
+    float intensity = 1.0f;
     float range = 10.0f;
     float attenuation = 2.0f;
     float rangeSmoothing = 0.2f;
@@ -41,23 +41,34 @@ struct PointLight {
     float shadowStrength = 0.85f;
     float shadowBias = 0.0012f;
     int shadowResolution = 1024;
-    float shadowDistance = 50.0f;
+    float shadowDistance = 250.0f;
+
+    // Performance & Distance Culling
+    bool enableDistanceCulling = false;
+    float minVisibleDistance = 50.0f;
+    float maxVisibleDistance = 100.0f;
 
     // Spot Light
-    float innerConeAngle = 20.0f;
+    float innerConeAngle = 0.0f;
     float outerConeAngle = 45.0f;
     float coneFalloff = 1.0f;
 
-    // Area Light
+    // Area / Rect Light
     int areaShape = 0;
     float width = 1.0f;
     float height = 1.0f;
-    float radius = 0.5f;
+    float radius = 0.025f;
+    float length = 0.0f;
     bool twoSided = false;
 
-    // Baking System (dev.md)
-    Eunoia::LightBakeState bakeState = Eunoia::LightBakeState::Realtime;
-    int bakeResolution = 1024;
+    // Wicked Engine attributes
+    bool volumetric = false;
+    float volumetric_boost = 1.0f;
+    float volumetricScattering = 0.66f;
+    float volumetricIntensity = 1.0f;
+    int volumetricSteps = 16;
+    float volumetricMaxDistance = 120.0f;
+    int forced_shadow_resolution = -1;
 };
 
 class Scene {
@@ -83,6 +94,8 @@ public:
     std::string skyboxTexturePath = "";
     float skyboxExposure = 1.0f;
     float skyboxRotation = 0.0f; // degrees 0..360
+    bool skyboxAutoRotate = false;
+    float skyboxAutoRotateSpeed = 1.0f; // degrees per second
     glm::vec3 skyboxTint{1.0f, 1.0f, 1.0f};
     float skyboxAmbientContribution = 0.5f;
 
@@ -109,8 +122,9 @@ public:
     float postDenoiserAmount = 0.0f;  // 0.0 = Disabled/Off, 0.0..1.0 edge-preserving bilateral denoiser intensity
 
     // Screen Space Ambient Occlusion (SSAO / HBAO / MSAO / RTAO - WickedEngine Reference)
-    bool enableAO = true;
-    int aoType = 1;                   // 0=Disabled, 1=SSAO, 2=HBAO, 3=MSAO, 4=RTAO
+    // Disabled by default for new levels as requested
+    bool enableAO = false;
+    int aoType = 0;                   // 0=Disabled, 1=SSAO, 2=HBAO, 3=MSAO, 4=RTAO
     float aoPower = 1.0f;             // Intensity exponent (WickedEngine default 1.0, range 0.25 - 8.0)
     float aoRange = 1.0f;             // Sample distance / Ray length (WickedEngine default 1.0, range 0.1 - 20.0 m)
     int aoSampleCount = 16;           // Sample count (WickedEngine default 16, range 1 - 32)
@@ -120,12 +134,29 @@ public:
     bool aoTemporal = true;           // Temporal accumulation filter
     float aoTemporalBlend = 0.85f;
 
+    // Volumetric Height Fog (Wicked Engine fogHF.hlsli reference)
+    // Disabled by default for new levels as requested
+    bool enableFog = false;
+    float fogStart = 10.0f;           // Distance where fog begins
+    float fogDensity = 0.005f;        // Global exponential fog density
+    float fogHeightStart = 0.0f;      // Bottom altitude
+    float fogHeightEnd = 50.0f;       // Top altitude
+    glm::vec3 fogColor{0.7f, 0.75f, 0.85f}; // Fog scattering color
+
+    // Directional Light Volumetric God Rays (Wicked Engine Technique)
+    bool directionalVolumetric = false;
+    float directionalVolumetricBoost = 1.0f;
+    float directionalVolumetricScattering = 0.66f;
+    float directionalVolumetricIntensity = 1.0f;
+    int directionalVolumetricSteps = 16;
+    float directionalVolumetricMaxDistance = 120.0f;
+
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
     bool enableShadows = true;
     float shadowStrength = 0.85f;
     float shadowBias = 0.0012f;
     int shadowResolution = 2048;
-    float shadowDistance = 60.0f;
+    float shadowDistance = 250.0f;
     float pcfRadius = 1.2f;
     bool showLightFrustum = false;
     bool hasLightFrustumCorners = false;
@@ -212,6 +243,62 @@ public:
 
     GameObject* FindWithTag(const std::string& tag) { return FindObjectWithTag(tag); }
     const GameObject* FindWithTag(const std::string& tag) const { return FindObjectWithTag(tag); }
+
+    GameObject* FindObjectByName(const std::string& name) {
+        for (auto& obj : objects) {
+            if (obj.name == name) return &obj;
+        }
+        return nullptr;
+    }
+
+    const GameObject* FindObjectByName(const std::string& name) const {
+        for (const auto& obj : objects) {
+            if (obj.name == name) return &obj;
+        }
+        return nullptr;
+    }
+
+    std::string GetUniqueObjectName(const std::string& baseName, int excludeId = -1) const {
+        std::unordered_set<std::string> existingNames;
+        for (const auto& obj : objects) {
+            if (obj.id != excludeId) {
+                existingNames.insert(obj.name);
+            }
+        }
+
+        // Clean base name: trim trailing numbers or " (Copy)", "(1)", etc.
+        std::string root = baseName;
+        // Strip " (Copy)" if present
+        const std::string copySuffix = " (Copy)";
+        while (root.size() >= copySuffix.size() &&
+               root.compare(root.size() - copySuffix.size(), copySuffix.size(), copySuffix) == 0) {
+            root = root.substr(0, root.size() - copySuffix.size());
+        }
+
+        // Strip trailing digits and whitespace: e.g. "Cube 1" -> "Cube"
+        size_t endIdx = root.find_last_not_of("0123456789");
+        if (endIdx != std::string::npos && endIdx + 1 < root.size()) {
+            if (root[endIdx] == ' ' || root[endIdx] == '_') {
+                root = root.substr(0, endIdx);
+            }
+        }
+
+        // If root is empty, fallback to "Actor"
+        if (root.empty()) root = "Actor";
+
+        if (!existingNames.count(root)) {
+            return root;
+        }
+
+        int suffix = 1;
+        while (true) {
+            std::string candidate = root + " " + std::to_string(suffix);
+            if (!existingNames.count(candidate)) {
+                return candidate;
+            }
+            suffix++;
+        }
+    }
 
     glm::mat4 GetWorldMatrix(const GameObject& obj, int depth = 0) const {
         glm::mat4 local = obj.GetLocalMatrix();
@@ -774,6 +861,36 @@ public:
         return obj;
     }
 
+    GameObject& AddTerrain(glm::vec3 pos = {0.0f, 0.0f, 0.0f}, float width = 64.0f, float length = 64.0f, int resolution = 128, int parentId = -1) {
+        if (onPreChange) onPreChange("Add Terrain");
+        int id = nextId++;
+        std::string finalName = "Terrain " + std::to_string(id);
+        objects.emplace_back(id, finalName, PrimitiveType::Terrain, pos);
+        GameObject& obj = objects.back();
+
+        obj.isTerrain = true;
+        obj.terrain.InitializeGrid(width, length, resolution);
+        obj.terrain.RebuildTerrainMesh(obj.mesh);
+
+        // Natural landscape base color & PBR defaults
+        obj.color = glm::vec3(0.35f, 0.55f, 0.30f); // Default terrain meadow green
+        obj.roughness = 0.85f;
+        obj.metallic = 0.0f;
+        obj.specular = 0.25f;
+        obj.twoSided = false;
+        obj.castShadows = true;
+        obj.receiveShadows = true;
+
+        obj.parentId = parentId;
+        if (parentId != -1) {
+            GameObject* parent = FindObject(parentId);
+            if (parent) parent->childIds.push_back(id);
+        }
+
+        selectedId = id;
+        return obj;
+    }
+
     GameObject& AddUserInterface(glm::vec3 pos = {0.0f, 1.5f, 0.0f}, const std::string& assetPath = "", int parentId = -1) {
         if (onPreChange) onPreChange("Add User Interface");
         int id = nextId++;
@@ -841,6 +958,9 @@ public:
             pl.shadowBias = obj.light.shadowBias;
             pl.shadowResolution = obj.light.shadowResolution;
             pl.shadowDistance = obj.light.shadowDistance;
+            pl.enableDistanceCulling = obj.light.enableDistanceCulling;
+            pl.minVisibleDistance = obj.light.minVisibleDistance;
+            pl.maxVisibleDistance = obj.light.maxVisibleDistance;
             pl.innerConeAngle = obj.light.innerConeAngle;
             pl.outerConeAngle = obj.light.outerConeAngle;
             pl.coneFalloff = obj.light.coneFalloff;
@@ -890,21 +1010,21 @@ public:
                 }
 
                 if (obj.light.type == LightType::Directional && obj.light.enabled) {
-                    if (obj.light.bakeState == Eunoia::LightBakeState::Baked) {
-                        hasDirectional = false;
-                        lightIntensity = 0.0f;
-                        enableShadows = false;
-                    } else {
-                        lightDirection = -obj.light.direction;
-                        lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
-                        lightIntensity = obj.light.intensity;
-                        enableShadows = obj.light.castShadows;
-                        shadowStrength = obj.light.shadowStrength;
-                        shadowBias = obj.light.shadowBias;
-                        shadowResolution = obj.light.shadowResolution;
-                        shadowDistance = obj.light.shadowDistance;
-                        hasDirectional = true;
-                    }
+                    lightDirection = -obj.light.direction;
+                    lightColor = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
+                    lightIntensity = obj.light.intensity;
+                    enableShadows = obj.light.castShadows;
+                    shadowStrength = obj.light.shadowStrength;
+                    shadowBias = obj.light.shadowBias;
+                    shadowResolution = obj.light.shadowResolution;
+                    shadowDistance = obj.light.shadowDistance;
+                    directionalVolumetric = obj.light.IsVolumetricsEnabled();
+                    directionalVolumetricBoost = obj.light.volumetric_boost;
+                    directionalVolumetricScattering = obj.light.volumetricScattering;
+                    directionalVolumetricIntensity = obj.light.volumetricIntensity;
+                    directionalVolumetricSteps = obj.light.volumetricSteps;
+                    directionalVolumetricMaxDistance = obj.light.volumetricMaxDistance;
+                    hasDirectional = true;
                 }
                 else if (obj.light.type == LightType::Sky && obj.light.enabled) {
                     glm::vec3 sCol = obj.light.useTemperature ? (obj.light.color * ColorTemperatureToRGB(obj.light.temperature)) : obj.light.color;
@@ -914,7 +1034,7 @@ public:
                 }
                 else if (obj.light.type == LightType::Point || obj.type == PrimitiveType::PointLight ||
                     obj.light.type == LightType::Spot || obj.type == PrimitiveType::SpotLight ||
-                    obj.light.type == LightType::Area || obj.type == PrimitiveType::AreaLight) {
+                    obj.light.type == LightType::Rectangle || obj.type == PrimitiveType::AreaLight) {
                     if (obj.light.enabled) {
                         PointLight pl;
                         pl.id = obj.id;
@@ -933,6 +1053,9 @@ public:
                         pl.shadowBias = obj.light.shadowBias;
                         pl.shadowResolution = obj.light.shadowResolution;
                         pl.shadowDistance = obj.light.shadowDistance;
+                        pl.enableDistanceCulling = obj.light.enableDistanceCulling;
+                        pl.minVisibleDistance = obj.light.minVisibleDistance;
+                        pl.maxVisibleDistance = obj.light.maxVisibleDistance;
                         pl.innerConeAngle = obj.light.innerConeAngle;
                         pl.outerConeAngle = obj.light.outerConeAngle;
                         pl.coneFalloff = obj.light.coneFalloff;
@@ -940,9 +1063,15 @@ public:
                         pl.width = obj.light.width;
                         pl.height = obj.light.height;
                         pl.radius = obj.light.radius;
+                        pl.length = obj.light.length;
                         pl.twoSided = obj.light.twoSided;
-                        pl.bakeState = obj.light.bakeState;
-                        pl.bakeResolution = obj.light.bakeResolution;
+                        pl.volumetric = obj.light.IsVolumetricsEnabled();
+                        pl.volumetric_boost = obj.light.volumetric_boost;
+                        pl.volumetricScattering = obj.light.volumetricScattering;
+                        pl.volumetricIntensity = obj.light.volumetricIntensity;
+                        pl.volumetricSteps = obj.light.volumetricSteps;
+                        pl.volumetricMaxDistance = obj.light.volumetricMaxDistance;
+                        pl.forced_shadow_resolution = obj.light.forced_shadow_resolution;
                         pointLights.push_back(pl);
                         obj.lightId = (int)pointLights.size() - 1;
                     }
@@ -969,11 +1098,30 @@ public:
 
         // If model has multiple meshes (hierarchy), spawn them as children of a root actor
         if (model.valid && model.meshes.size() > 1) {
-            // Root actor (no geometry, just a transform pivot)
+            // Compute overall bounding box of the entire composite model
+            glm::vec3 modelMin(1e9f);
+            glm::vec3 modelMax(-1e9f);
+            bool anyValidV = false;
+            for (const auto& im : model.meshes) {
+                for (const auto& v : im.vertices) {
+                    if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
+                        !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
+                        modelMin = glm::min(modelMin, v.pos);
+                        modelMax = glm::max(modelMax, v.pos);
+                        anyValidV = true;
+                    }
+                }
+            }
+            // Model base origin: align X and Z to center, Y to bottom
+            glm::vec3 modelBaseOffset = anyValidV 
+                ? glm::vec3((modelMin.x + modelMax.x) * 0.5f, modelMin.y, (modelMin.z + modelMax.z) * 0.5f)
+                : glm::vec3(0.0f);
+
+            // Root actor (pivot point at pos)
             int rootId = nextId++;
             std::filesystem::path p(filePath);
             std::string rootName = p.stem().string();
-            objects.emplace_back(rootId, rootName, PrimitiveType::ImportedMesh, pos, glm::vec3{0.55f});
+            objects.emplace_back(rootId, rootName, PrimitiveType::ImportedMesh, pos, glm::vec3{1.0f});
             GameObject& root = objects.back();
             root.meshFilePath = filePath;
             root.isImportedMesh = true;
@@ -991,19 +1139,8 @@ public:
                 int childId = nextId++;
                 std::string childName = im.name.empty() ? (rootName + "_" + std::to_string(subIdx)) : im.name;
 
-                // Compute bounding-box center / pivot point of the sub-mesh
-                glm::vec3 minBound(1e9f);
-                glm::vec3 maxBound(-1e9f);
-                for (const auto& v : im.vertices) {
-                    if (!std::isnan(v.pos.x) && !std::isnan(v.pos.y) && !std::isnan(v.pos.z) &&
-                        !std::isinf(v.pos.x) && !std::isinf(v.pos.y) && !std::isinf(v.pos.z)) {
-                        minBound = glm::min(minBound, v.pos);
-                        maxBound = glm::max(maxBound, v.pos);
-                    }
-                }
-                glm::vec3 pivot = (minBound + maxBound) * 0.5f;
-
-                objects.emplace_back(childId, childName, PrimitiveType::ImportedMesh, pivot, glm::vec3{0.55f});
+                // Child is located at local origin (0, 0, 0) relative to root, vertices are in unified model space
+                objects.emplace_back(childId, childName, PrimitiveType::ImportedMesh, glm::vec3{0.0f, 0.0f, 0.0f}, glm::vec3{1.0f});
                 GameObject& child = objects.back();
                 child.meshFilePath = filePath;
                 child.isImportedMesh = true;
@@ -1042,19 +1179,25 @@ public:
                         (im.material.baseColorTexture.empty() ? " (no base color texture found)" : ""), 0);
                 }
 
-                // Center mesh vertices relative to its pivot point
+                // Adjust vertices by model base offset so root position 'pos' aligns to model bottom-center
                 child.mesh.vertices = im.vertices;
                 child.mesh.indices  = im.indices;
-                uint32_t vCount = (uint32_t)child.mesh.vertices.size();
-                for (uint32_t& idx : child.mesh.indices) { if (idx >= vCount) idx = 0; }
+                child.mesh.lodIndices = im.lodIndices;
                 for (auto& v : child.mesh.vertices) {
                     if (std::isnan(v.pos.x)||std::isnan(v.pos.y)||std::isnan(v.pos.z)||
                         std::isinf(v.pos.x)||std::isinf(v.pos.y)||std::isinf(v.pos.z)) {
                         v.pos = glm::vec3(0.0f);
                     } else {
-                        v.pos -= pivot;
+                        v.pos -= modelBaseOffset;
                     }
                 }
+                child.mesh.CalculateAABB();
+                if (child.mesh.lodIndices.empty()) {
+                    child.mesh.GenerateLODs();
+                }
+                uint32_t vCount = (uint32_t)child.mesh.vertices.size();
+                for (uint32_t& idx : child.mesh.indices) { if (idx >= vCount) idx = 0; }
+
                 // Register child with root
                 if (GameObject* rootPtr = FindObject(rootId)) rootPtr->childIds.push_back(childId);
             }
@@ -1132,6 +1275,8 @@ public:
                         v.pos -= pivot;
                     }
                 }
+                obj.mesh.CalculateAABB();
+                obj.mesh.GenerateLODs();
             }
         } else {
             obj.mesh = GeometryBuilder::CreateCube(1.0f, 18);
@@ -1203,6 +1348,15 @@ public:
         obj->meshClusterCulling = enabled;
         for (int childId : obj->childIds) {
             SetMeshClusterCullingRecursive(childId, enabled);
+        }
+    }
+
+    void SetMeshLODRecursive(int objId, bool enabled) {
+        GameObject* obj = FindObject(objId);
+        if (!obj) return;
+        obj->enableLOD = enabled;
+        for (int childId : obj->childIds) {
+            SetMeshLODRecursive(childId, enabled);
         }
     }
 
@@ -1306,7 +1460,7 @@ public:
             copy.id = oldToNewId[oldId];
 
             if (oldId == id) {
-                copy.name = srcObj->name + " (Copy)";
+                copy.name = GetUniqueObjectName(srcObj->name);
                 // Duplicated object is positioned exactly at the main object (no offset)
                 copy.position = srcObj->position;
                 copy.parentId = originalParentId;
@@ -1318,6 +1472,7 @@ public:
                 } else {
                     copy.parentId = -1;
                 }
+                copy.name = GetUniqueObjectName(srcObj->name);
                 // Keep the exact same local position
                 copy.position = srcObj->position;
             }
@@ -1382,6 +1537,8 @@ public:
         skyboxTexturePath = "";
         skyboxExposure = 1.0f;
         skyboxRotation = 0.0f;
+        skyboxAutoRotate = false;
+        skyboxAutoRotateSpeed = 1.0f;
         skyboxTint = glm::vec3(1.0f, 1.0f, 1.0f);
         skyboxAmbientContribution = 0.5f;
         enableSkyboxLighting = false;
@@ -1401,8 +1558,8 @@ public:
         postColorTint = 0.0f;
         postSharpenAmount = 0.0f;
         postDenoiserAmount = 0.0f;
-        enableAO = true;
-        aoType = 1;
+        enableAO = false;
+        aoType = 0;
         aoPower = 1.0f;
         aoRange = 1.0f;
         aoSampleCount = 16;
@@ -1540,6 +1697,12 @@ public:
     void Update(float dt) {
         SyncLightPositionsFromActors();
 
+        // Skybox automatic rotation (smooth continuous moving sky)
+        if (enableSkybox && skyboxAutoRotate) {
+            skyboxRotation = std::fmod(skyboxRotation + skyboxAutoRotateSpeed * dt, 360.0f);
+            if (skyboxRotation < 0.0f) skyboxRotation += 360.0f;
+        }
+
         if (isPlayMode) {
             // Update global World Delta Seconds (dev.md: "the global var called 'World Delta Seconds' use as a DeltaTime")
             WorldDeltaSeconds = dt;
@@ -1636,7 +1799,12 @@ struct RenderBatch {
     int roughnessChannel = 1;
     int aoChannel = 0;
     int materialDebugMode = 0;
+    bool twoSided = false;
     bool isVisible = true;
+    bool isShadowVisible = true; // Wicked Engine: Directional Light frustum visibility flag
+    int activeLOD = 0;           // Wicked Engine: Level of detail used for this batch
+    bool disableStreaming = false; // Wicked Engine: Disable texture streaming / retain full resolution
+    float useVertexAlpha = 0.0f;   // Continuous multi-layer terrain material alpha blending
 };
 
     void BuildSceneMesh(
@@ -1660,6 +1828,7 @@ struct RenderBatch {
                 b.startIndex = gridStart;
                 b.indexCount = gridCount;
                 b.isUnlit = true;
+                b.twoSided = true;
                 b.castShadows = false;
                 b.receiveShadows = true;
                 b.baseColor = {1.0f, 1.0f, 1.0f};
@@ -1673,10 +1842,14 @@ struct RenderBatch {
         // Keep all geometry in deterministic vertex/index buffer positions (preventing buffer shuffling & TAA ghosting).
         // Frustum culling marks each batch's isVisible flag so the GPU draw call can be skipped during viewport rasterization.
         struct CandidateEntry {
-            const GameObject* obj;
+            GameObject* obj;
             glm::mat4 model;
             float distSq;
-            bool isVisible;
+            bool isVisible = true;
+            bool isShadowVisible = true;
+            bool isTrans = false;
+            bool isValid = false;
+            uint32_t selectedLOD = 0;
         };
 
         // Extract 6 frustum planes (Gribb & Hartmann) if viewProj is available
@@ -1697,42 +1870,158 @@ struct RenderBatch {
             }
         }
 
-        std::vector<CandidateEntry> opaqueEntries;
-        std::vector<CandidateEntry> transparentEntries;
-        opaqueEntries.reserve(objects.size());
+        // Wicked Engine Exact 8-Corner OBB Frustum Test Helper
+        auto TestOBBFrustum = [](const glm::vec3& bMin, const glm::vec3& bMax, const glm::mat4& model, const glm::vec4 planes[6]) -> bool {
+            glm::vec3 corners[8] = {
+                glm::vec3(model * glm::vec4(bMin.x, bMin.y, bMin.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMax.x, bMin.y, bMin.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMin.x, bMax.y, bMin.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMax.x, bMax.y, bMin.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMin.x, bMin.y, bMax.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMax.x, bMin.y, bMax.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMin.x, bMax.y, bMax.z, 1.0f)),
+                glm::vec3(model * glm::vec4(bMax.x, bMax.y, bMax.z, 1.0f))
+            };
 
-        for (const auto& obj : objects) {
-            if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
-            if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
-
-            glm::mat4 model = GetWorldMatrix(obj);
-            glm::vec3 objPos = glm::vec3(model[3]);
-            glm::vec3 diff = cameraPos - objPos;
-            float distSq = glm::dot(diff, diff);
-
-            bool isBatchVisible = true;
-            if (hasFrustum) {
-                // Hierarchical bounding sphere test
-                glm::vec3 bCenter = obj.mesh.aabbValid ? (obj.mesh.aabbMin + obj.mesh.aabbMax) * 0.5f : glm::vec3(0.0f);
-                float localRadius = obj.mesh.aabbValid ? glm::length(obj.mesh.aabbMax - bCenter) : 1.0f;
-                glm::vec3 worldCenter = glm::vec3(model * glm::vec4(bCenter, 1.0f));
-                float maxScale = std::max({ glm::length(glm::vec3(model[0])), glm::length(glm::vec3(model[1])), glm::length(glm::vec3(model[2])) });
-                float worldRadius = localRadius * maxScale;
-
-                for (int p = 0; p < 6; ++p) {
-                    float dist = glm::dot(glm::vec3(frustumPlanes[p]), worldCenter) + frustumPlanes[p].w;
-                    if (dist < -worldRadius) {
-                        isBatchVisible = false;
-                        break;
+            for (int p = 0; p < 6; ++p) {
+                const glm::vec3 normal = glm::vec3(planes[p]);
+                const float d = planes[p].w;
+                int outsideCount = 0;
+                for (int c = 0; c < 8; ++c) {
+                    if (glm::dot(normal, corners[c]) + d < 0.0f) {
+                        outsideCount++;
                     }
                 }
+                if (outsideCount == 8) {
+                    return false; // All 8 corners are outside this plane
+                }
+            }
+            return true;
+        };
+
+        // Wicked Engine Perspective-Safe Screen-Space Coverage LOD Evaluation (wiScene.cpp:8975)
+        auto ComputeObjectLOD = [](const GameObject& obj, const glm::mat4& model, const glm::mat4* viewProj) -> uint32_t {
+            if (!obj.enableLOD) return 0;
+            uint32_t lodCount = obj.mesh.GetLODCount();
+            if (lodCount <= 1) return 0;
+            if (obj.forcedLOD >= 0) {
+                return (uint32_t)glm::clamp(obj.forcedLOD, obj.minLOD, std::min(obj.maxLOD, (int)lodCount - 1));
+            }
+            if (!viewProj) return (uint32_t)glm::clamp(0, obj.minLOD, std::min(obj.maxLOD, (int)lodCount - 1));
+
+            const glm::vec3& bMin = obj.mesh.aabbValid ? obj.mesh.aabbMin : glm::vec3(-0.5f);
+            const glm::vec3& bMax = obj.mesh.aabbValid ? obj.mesh.aabbMax : glm::vec3(0.5f);
+            glm::vec3 corners[8] = {
+                glm::vec3(bMin.x, bMin.y, bMin.z), glm::vec3(bMax.x, bMin.y, bMin.z),
+                glm::vec3(bMin.x, bMax.y, bMin.z), glm::vec3(bMax.x, bMax.y, bMin.z),
+                glm::vec3(bMin.x, bMin.y, bMax.z), glm::vec3(bMax.x, bMin.y, bMax.z),
+                glm::vec3(bMin.x, bMax.y, bMax.z), glm::vec3(bMax.x, bMax.y, bMax.z)
+            };
+
+            glm::vec2 screenMin(1e7f), screenMax(-1e7f);
+            const glm::mat4 mvp = (*viewProj) * model;
+            for (int i = 0; i < 8; ++i) {
+                glm::vec4 clip = mvp * glm::vec4(corners[i], 1.0f);
+                float w = std::max(clip.w, 1e-4f);
+                glm::vec2 ndc = glm::vec2(clip.x / w, clip.y / w);
+                glm::vec2 uv = ndc * glm::vec2(0.5f, -0.5f) + glm::vec2(0.5f, 0.5f);
+                uv = glm::clamp(uv, glm::vec2(-1.0f), glm::vec2(2.0f)); // Bound near-plane explosion
+                screenMin = glm::min(screenMin, uv);
+                screenMax = glm::max(screenMax, uv);
             }
 
-            bool isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
-            if (isTrans) {
-                transparentEntries.push_back({ &obj, model, distSq, isBatchVisible });
+            float maxdim = std::max(screenMax.x - screenMin.x, screenMax.y - screenMin.y);
+            maxdim = std::max(maxdim, 1e-5f);
+
+            // Wicked Engine continuous screen-space coverage LOD scaling
+            // Maps screen coverage smoothly across the available LOD range [0 .. lodCount - 1]
+            float maxLodIdx = (float)(lodCount - 1);
+            float coverageLod = (std::log2(1.0f / maxdim) + obj.lodBias) * (maxLodIdx / 6.0f);
+            int selectedLod = (int)std::floor(coverageLod);
+            selectedLod = glm::clamp(selectedLod, obj.minLOD, std::min(obj.maxLOD, (int)lodCount - 1));
+            return (uint32_t)selectedLod;
+        };
+
+        std::vector<CandidateEntry> opaqueEntries;
+        std::vector<CandidateEntry> transparentEntries;
+        const size_t numObjects = objects.size();
+        std::vector<CandidateEntry> candidateList(numObjects);
+
+        if (numObjects >= 16) {
+            EngineCore::JobContext jobCtx;
+            uint32_t groupSize = std::max(8u, (uint32_t)(numObjects / (EngineCore::JobSystem::Get().WorkerCount() * 2 + 1)));
+            EngineCore::JobSystem::Get().Dispatch(jobCtx, (uint32_t)numObjects, groupSize, [&](EngineCore::JobArgs args) {
+                uint32_t i = args.jobIndex;
+                auto& obj = objects[i];
+                if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) return;
+                if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) return;
+
+                glm::mat4 model = GetWorldMatrix(obj);
+                glm::vec3 objPos = glm::vec3(model[3]);
+                glm::vec3 diff = cameraPos - objPos;
+                float distSq = glm::dot(diff, diff);
+
+                bool isBatchVisible = true;
+                if (hasFrustum) {
+                    const glm::vec3& bMin = obj.mesh.aabbValid ? obj.mesh.aabbMin : glm::vec3(-0.5f);
+                    const glm::vec3& bMax = obj.mesh.aabbValid ? obj.mesh.aabbMax : glm::vec3(0.5f);
+                    isBatchVisible = TestOBBFrustum(bMin, bMax, model, frustumPlanes);
+                }
+
+                uint32_t lod = ComputeObjectLOD(obj, model, pViewProj);
+                obj.currentLOD = (int)lod;
+
+                CandidateEntry& c = candidateList[i];
+                c.obj = &obj;
+                c.model = model;
+                c.distSq = distSq;
+                c.isVisible = isBatchVisible;
+                c.isShadowVisible = true;
+                c.selectedLOD = lod;
+                c.isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
+                c.isValid = true;
+            });
+            EngineCore::JobSystem::Get().Wait(jobCtx);
+        } else {
+            for (size_t i = 0; i < numObjects; ++i) {
+                auto& obj = objects[i];
+                if (!obj.visible || obj.isCamera || IsCameraPrimitive(obj.type) || obj.isWaterBody || obj.type == PrimitiveType::WaterBody) continue;
+                if (obj.mesh.vertices.empty() || obj.mesh.indices.empty()) continue;
+
+                glm::mat4 model = GetWorldMatrix(obj);
+                glm::vec3 objPos = glm::vec3(model[3]);
+                glm::vec3 diff = cameraPos - objPos;
+                float distSq = glm::dot(diff, diff);
+
+                bool isBatchVisible = true;
+                if (hasFrustum) {
+                    const glm::vec3& bMin = obj.mesh.aabbValid ? obj.mesh.aabbMin : glm::vec3(-0.5f);
+                    const glm::vec3& bMax = obj.mesh.aabbValid ? obj.mesh.aabbMax : glm::vec3(0.5f);
+                    isBatchVisible = TestOBBFrustum(bMin, bMax, model, frustumPlanes);
+                }
+
+                uint32_t lod = ComputeObjectLOD(obj, model, pViewProj);
+                obj.currentLOD = (int)lod;
+
+                CandidateEntry& c = candidateList[i];
+                c.obj = &obj;
+                c.model = model;
+                c.distSq = distSq;
+                c.isVisible = isBatchVisible;
+                c.isShadowVisible = true;
+                c.selectedLOD = lod;
+                c.isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
+                c.isValid = true;
+            }
+        }
+
+        opaqueEntries.reserve(numObjects);
+        for (const auto& c : candidateList) {
+            if (!c.isValid) continue;
+            if (c.isTrans) {
+                transparentEntries.push_back(c);
             } else {
-                opaqueEntries.push_back({ &obj, model, distSq, isBatchVisible });
+                opaqueEntries.push_back(c);
             }
         }
 
@@ -1788,18 +2077,13 @@ struct RenderBatch {
                 glm::vec3 worldTangent = (tLen > 1e-6f && !std::isnan(tLen)) ? (t / tLen) : glm::vec3(1.0f, 0.0f, 0.0f);
                 glm::vec4 outTangent = glm::vec4(worldTangent, mv.tangent.w);
 
-                glm::vec3 vColor{0.0f, 0.0f, 0.0f};
-                if (Eunoia::LightBakeManager::Get().HasMeshLightmapUV(obj.id)) {
-                    glm::vec2 lmUv = Eunoia::LightBakeManager::Get().GetMeshLightmapUV(obj.id, vi);
-                    vColor = glm::vec3(lmUv.x, lmUv.y, 1.0f);
-                } else if (obj.mobility == Mobility::Static || Eunoia::LightBakeManager::Get().HasStaticBakedLighting(obj.id)) {
-                    vColor = Eunoia::LightBakeManager::Get().GetStaticVertexBakedLight(obj.id, vi);
-                }
+                glm::vec3 vColor{1.0f, 1.0f, 1.0f};
 
                 outVertices.push_back({ glm::vec3(worldPos), worldNormal, mv.uv, vColor, outTangent });
             }
 
-            for (uint32_t idx : obj.mesh.indices) {
+            const auto& lodIndices = obj.mesh.GetIndicesForLOD(entry.selectedLOD);
+            for (uint32_t idx : lodIndices) {
                 if (idx < (uint32_t)obj.mesh.vertices.size()) {
                     outIndices.push_back(vertexOffset + idx);
                 } else {
@@ -1807,55 +2091,218 @@ struct RenderBatch {
                 }
             }
 
-            RenderBatch b;
-            b.startIndex = indexStart;
-            b.indexCount = (uint32_t)obj.mesh.indices.size();
-            b.distSq = distSq;
-            b.isVisible = entry.isVisible;
-            b.albedoTex = obj.baseColorTexture;
-            b.normalTex = obj.normalTexture;
-            b.roughTex = obj.roughnessTexture;
-            b.metalTex = obj.metallicTexture;
-            b.aoTex = obj.aoTexture;
-            b.opacityTex = obj.opacityTexture;
-            b.emissionTex = obj.emissionTexture;
-            b.baseColor = obj.color;
-            b.metallic = obj.metallic;
-            b.roughness = obj.roughness;
-            b.normalStrength = obj.normalStrength;
-            b.specular = obj.specular;
-            b.emissiveColor = obj.emissiveColor;
-            b.emissiveIntensity = obj.emissiveIntensity;
-            b.opacity = obj.opacity;
-            b.opacityMaskClipValue = obj.opacityMaskClipValue;
-            b.blendMode = obj.blendMode;
-            b.shadingModel = obj.shadingModel;
-            b.isUnlit = (obj.shadingModel == 1);
-            b.castShadows = obj.castShadows;
-            b.receiveShadows = obj.receiveShadows;
-            b.meshClusterCulling = obj.meshClusterCulling;
-            b.objectId = obj.id;
-            b.vertexOffset = vertexOffset;
-            b.uvScale = obj.uvScale;
-            b.normalMapYFlip = obj.normalMapYFlip;
-            b.metallicChannel = obj.metallicChannel;
-            b.roughnessChannel = obj.roughnessChannel;
-            b.aoChannel = obj.aoChannel;
-            b.materialDebugMode = obj.materialDebugMode;
-            outBatches.push_back(b);
+            if (obj.isTerrain || obj.type == PrimitiveType::Terrain) {
+                // Ensure base layer properties are initialized
+                const auto* baseLayer = !obj.terrain.materialLayers.empty() ? &obj.terrain.materialLayers[0] : nullptr;
+
+                // Base Batch: Layer 0 (Opaque terrain base)
+                RenderBatch b0;
+                b0.startIndex = indexStart;
+                b0.indexCount = (uint32_t)lodIndices.size();
+                b0.distSq = distSq;
+                b0.isVisible = entry.isVisible;
+                b0.isShadowVisible = entry.isShadowVisible;
+                b0.activeLOD = (int)entry.selectedLOD;
+                b0.albedoTex = (baseLayer && !baseLayer->baseColorTexture.empty()) ? baseLayer->baseColorTexture : obj.baseColorTexture;
+                b0.normalTex = (baseLayer && !baseLayer->normalTexture.empty()) ? baseLayer->normalTexture : obj.normalTexture;
+                b0.roughTex = (baseLayer && !baseLayer->roughnessTexture.empty()) ? baseLayer->roughnessTexture : obj.roughnessTexture;
+                b0.metalTex = (baseLayer && !baseLayer->metallicTexture.empty()) ? baseLayer->metallicTexture : obj.metallicTexture;
+                b0.aoTex = (baseLayer && !baseLayer->aoTexture.empty()) ? baseLayer->aoTexture : obj.aoTexture;
+                b0.opacityTex = "";
+                b0.emissionTex = obj.emissionTexture;
+                b0.baseColor = baseLayer ? baseLayer->baseColor : obj.color;
+                b0.metallic = baseLayer ? baseLayer->metallic : obj.metallic;
+                b0.roughness = baseLayer ? baseLayer->roughness : obj.roughness;
+                b0.normalStrength = baseLayer ? baseLayer->normalStrength : obj.normalStrength;
+                b0.specular = baseLayer ? baseLayer->specular : obj.specular;
+                b0.emissiveColor = obj.emissiveColor;
+                b0.emissiveIntensity = obj.emissiveIntensity;
+                b0.opacity = obj.opacity;
+                b0.opacityMaskClipValue = obj.opacityMaskClipValue;
+                b0.blendMode = 0; // Opaque base
+                b0.shadingModel = obj.shadingModel;
+                b0.isUnlit = (obj.shadingModel == 1);
+                b0.castShadows = obj.castShadows;
+                b0.receiveShadows = obj.receiveShadows;
+                b0.meshClusterCulling = false;
+                b0.objectId = obj.id;
+                b0.vertexOffset = vertexOffset;
+                b0.uvScale = baseLayer ? baseLayer->uvScale : obj.uvScale;
+                b0.normalMapYFlip = obj.normalMapYFlip;
+                b0.metallicChannel = obj.metallicChannel;
+                b0.roughnessChannel = obj.roughnessChannel;
+                b0.aoChannel = obj.aoChannel;
+                b0.materialDebugMode = obj.materialDebugMode;
+                b0.twoSided = obj.twoSided;
+                b0.disableStreaming = obj.disableStreaming;
+                b0.useVertexAlpha = 0.0f;
+                outBatches.push_back(b0);
+
+                // Overlay Batches: Layer 1..N-1 with continuous vertex alpha blending
+                if (obj.terrain.materialLayers.size() > 1 && !obj.terrain.layerWeights.empty()) {
+                    int res = obj.terrain.resolution;
+                    int totalVerts = (res + 1) * (res + 1);
+
+                    for (size_t m = 1; m < obj.terrain.materialLayers.size(); ++m) {
+                        if (m >= obj.terrain.layerWeights.size() || obj.terrain.layerWeights[m].empty()) continue;
+
+                        const auto& curLayerWeights = obj.terrain.layerWeights[m];
+                        bool hasAnyWeight = false;
+                        for (float w : curLayerWeights) {
+                            if (w > 0.001f) {
+                                hasAnyWeight = true;
+                                break;
+                            }
+                        }
+                        if (!hasAnyWeight) continue;
+
+                        uint32_t overlayVertOffset = (uint32_t)outVertices.size();
+
+                        // Duplicate transformed vertices for layer m with relative vertex alpha in color.r
+                        for (int v = 0; v < totalVerts; ++v) {
+                            float sumW = 0.0f;
+                            for (size_t k = 0; k <= m; ++k) {
+                                if (k < obj.terrain.layerWeights.size() && v < (int)obj.terrain.layerWeights[k].size()) {
+                                    sumW += obj.terrain.layerWeights[k][v];
+                                }
+                            }
+                            float wm = (v < (int)curLayerWeights.size()) ? curLayerWeights[v] : 0.0f;
+                            float alphaM = (sumW > 0.0001f) ? glm::clamp(wm / sumW, 0.0f, 1.0f) : 0.0f;
+
+                            Vertex ov = outVertices[vertexOffset + v];
+                            ov.color = glm::vec4(alphaM, 0.0f, 0.0f, 1.0f);
+                            outVertices.push_back(ov);
+                        }
+
+                        uint32_t overlayIndexStart = (uint32_t)outIndices.size();
+
+                        // Add triangles only for quads where at least one vertex has weight > 0
+                        for (int z = 0; z < res; ++z) {
+                            for (int x = 0; x < res; ++x) {
+                                int v00 = z * (res + 1) + x;
+                                int v10 = z * (res + 1) + (x + 1);
+                                int v01 = (z + 1) * (res + 1) + x;
+                                int v11 = (z + 1) * (res + 1) + (x + 1);
+
+                                float w00 = (v00 < (int)curLayerWeights.size()) ? curLayerWeights[v00] : 0.0f;
+                                float w10 = (v10 < (int)curLayerWeights.size()) ? curLayerWeights[v10] : 0.0f;
+                                float w01 = (v01 < (int)curLayerWeights.size()) ? curLayerWeights[v01] : 0.0f;
+                                float w11 = (v11 < (int)curLayerWeights.size()) ? curLayerWeights[v11] : 0.0f;
+
+                                if (w00 > 0.0005f || w10 > 0.0005f || w01 > 0.0005f || w11 > 0.0005f) {
+                                    outIndices.push_back(overlayVertOffset + v00);
+                                    outIndices.push_back(overlayVertOffset + v01);
+                                    outIndices.push_back(overlayVertOffset + v10);
+
+                                    outIndices.push_back(overlayVertOffset + v10);
+                                    outIndices.push_back(overlayVertOffset + v01);
+                                    outIndices.push_back(overlayVertOffset + v11);
+                                }
+                            }
+                        }
+
+                        uint32_t overlayIndexCount = (uint32_t)outIndices.size() - overlayIndexStart;
+                        if (overlayIndexCount == 0) {
+                            outVertices.resize(overlayVertOffset);
+                            continue;
+                        }
+
+                        const auto& layer = obj.terrain.materialLayers[m];
+                        RenderBatch ob;
+                        ob.startIndex = overlayIndexStart;
+                        ob.indexCount = overlayIndexCount;
+                        ob.distSq = distSq;
+                        ob.isVisible = entry.isVisible;
+                        ob.isShadowVisible = false;
+                        ob.activeLOD = (int)entry.selectedLOD;
+                        ob.albedoTex = !layer.baseColorTexture.empty() ? layer.baseColorTexture : obj.baseColorTexture;
+                        ob.normalTex = !layer.normalTexture.empty() ? layer.normalTexture : obj.normalTexture;
+                        ob.roughTex = !layer.roughnessTexture.empty() ? layer.roughnessTexture : obj.roughnessTexture;
+                        ob.metalTex = !layer.metallicTexture.empty() ? layer.metallicTexture : obj.metallicTexture;
+                        ob.aoTex = !layer.aoTexture.empty() ? layer.aoTexture : obj.aoTexture;
+                        ob.opacityTex = "";
+                        ob.emissionTex = obj.emissionTexture;
+                        ob.baseColor = layer.baseColor;
+                        ob.metallic = layer.metallic;
+                        ob.roughness = layer.roughness;
+                        ob.normalStrength = layer.normalStrength;
+                        ob.specular = layer.specular;
+                        ob.emissiveColor = obj.emissiveColor;
+                        ob.emissiveIntensity = obj.emissiveIntensity;
+                        ob.opacity = 1.0f;
+                        ob.opacityMaskClipValue = 0.333f;
+                        ob.blendMode = 2; // Translucent hardware alpha blend
+                        ob.shadingModel = obj.shadingModel;
+                        ob.isUnlit = (obj.shadingModel == 1);
+                        ob.castShadows = false;
+                        ob.receiveShadows = obj.receiveShadows;
+                        ob.meshClusterCulling = false;
+                        ob.objectId = obj.id;
+                        ob.vertexOffset = overlayVertOffset;
+                        ob.uvScale = layer.uvScale;
+                        ob.normalMapYFlip = obj.normalMapYFlip;
+                        ob.metallicChannel = obj.metallicChannel;
+                        ob.roughnessChannel = obj.roughnessChannel;
+                        ob.aoChannel = obj.aoChannel;
+                        ob.materialDebugMode = obj.materialDebugMode;
+                        ob.twoSided = obj.twoSided;
+                        ob.disableStreaming = obj.disableStreaming;
+                        ob.useVertexAlpha = 1.0f;
+                        outBatches.push_back(ob);
+                    }
+                }
+            } else {
+                RenderBatch b;
+                b.startIndex = indexStart;
+                b.indexCount = (uint32_t)lodIndices.size();
+                b.distSq = distSq;
+                b.isVisible = entry.isVisible;
+                b.isShadowVisible = entry.isShadowVisible;
+                b.activeLOD = (int)entry.selectedLOD;
+                b.albedoTex = obj.baseColorTexture;
+                b.normalTex = obj.normalTexture;
+                b.roughTex = obj.roughnessTexture;
+                b.metalTex = obj.metallicTexture;
+                b.aoTex = obj.aoTexture;
+                b.opacityTex = obj.opacityTexture;
+                b.emissionTex = obj.emissionTexture;
+                b.baseColor = obj.color;
+                b.metallic = obj.metallic;
+                b.roughness = obj.roughness;
+                b.normalStrength = obj.normalStrength;
+                b.specular = obj.specular;
+                b.emissiveColor = obj.emissiveColor;
+                b.emissiveIntensity = obj.emissiveIntensity;
+                b.opacity = obj.opacity;
+                b.opacityMaskClipValue = obj.opacityMaskClipValue;
+                b.blendMode = obj.blendMode;
+                b.shadingModel = obj.shadingModel;
+                b.isUnlit = (obj.shadingModel == 1);
+                b.castShadows = obj.castShadows;
+                b.receiveShadows = obj.receiveShadows;
+                b.meshClusterCulling = obj.meshClusterCulling;
+                b.objectId = obj.id;
+                b.vertexOffset = vertexOffset;
+                b.uvScale = obj.uvScale;
+                b.normalMapYFlip = obj.normalMapYFlip;
+                b.metallicChannel = obj.metallicChannel;
+                b.roughnessChannel = obj.roughnessChannel;
+                b.aoChannel = obj.aoChannel;
+                b.materialDebugMode = obj.materialDebugMode;
+                b.twoSided = obj.twoSided;
+                b.disableStreaming = obj.disableStreaming;
+                outBatches.push_back(b);
+            }
         }
 
-        // 3. Highlight Selected Object: Outline + Collision Wireframe
-        if (selectedId != -1) {
+        // 3. Highlight Selected Object: Unity-Style Viewport Silhouette Outline (Only in Editor Mode)
+        if (selectedId != -1 && !isPlayMode) {
             GameObject* selObj = FindObject(selectedId);
             if (selObj && selObj->visible) {
                 uint32_t outlineStart = (uint32_t)outIndices.size();
-                glm::vec3 greenOutlineColor{0.0f, 1.0f, 0.25f};
-                AppendObjectEdgeOutline(outVertices, outIndices, *selObj, cameraPos, greenOutlineColor);
-
-                if (!showAllCollisions && !selObj->modifiers.empty()) {
-                    Collisions::CollisionSystem::Get().AppendCollisionWireframe(outVertices, outIndices, *selObj, cameraPos, GetWorldMatrix(*selObj));
-                }
+                // Unity vibrant selection outline orange
+                glm::vec3 unitySelectionColor{1.0f, 0.58f, 0.08f};
+                AppendObjectEdgeOutline(outVertices, outIndices, *selObj, cameraPos, unitySelectionColor);
 
                 uint32_t outlineCount = (uint32_t)outIndices.size() - outlineStart;
                 if (outlineCount > 0) {
@@ -1863,6 +2310,7 @@ struct RenderBatch {
                     b.startIndex = outlineStart;
                     b.indexCount = outlineCount;
                     b.isUnlit = true;
+                    b.twoSided = true;
                     b.baseColor = {1.0f, 1.0f, 1.0f};
                     outBatches.push_back(b);
                 }
@@ -1889,6 +2337,7 @@ struct RenderBatch {
                 b.startIndex = colStart;
                 b.indexCount = colCount;
                 b.isUnlit = true;
+                b.twoSided = true;
                 b.baseColor = {1.0f, 1.0f, 1.0f};
                 outBatches.push_back(b);
             }
@@ -1924,6 +2373,7 @@ struct RenderBatch {
                 b.startIndex = boundsStart;
                 b.indexCount = boundsCount;
                 b.isUnlit = true;
+                b.twoSided = true;
                 b.baseColor = {1.0f, 1.0f, 1.0f};
                 outBatches.push_back(b);
             }
@@ -1979,6 +2429,7 @@ struct RenderBatch {
                 b.startIndex = frustumStart;
                 b.indexCount = frustumCount;
                 b.isUnlit = true;
+                b.twoSided = true;
                 b.castShadows = false;
                 b.receiveShadows = false;
                 b.baseColor = {1.0f, 1.0f, 1.0f};
@@ -2003,25 +2454,49 @@ struct RenderBatch {
             return;
         }
         glm::mat4 model = GetWorldMatrix(obj);
+        glm::mat4 invModel = glm::inverse(model);
+        glm::vec3 localCam = glm::vec3(invModel * glm::vec4(cameraPos, 1.0f));
         std::vector<std::pair<glm::vec3, glm::vec3>> edges;
 
         switch (obj.type) {
             case PrimitiveType::Cube: {
+                // 6 faces: +X (0), -X (1), +Y (2), -Y (3), +Z (4), -Z (5)
+                const glm::vec3 normals[6] = {
+                    { 1, 0, 0 }, { -1, 0, 0 },
+                    { 0, 1, 0 }, { 0, -1, 0 },
+                    { 0, 0, 1 }, { 0, 0, -1 }
+                };
+                const glm::vec3 centers[6] = {
+                    { 0.5f, 0, 0 }, { -0.5f, 0, 0 },
+                    { 0, 0.5f, 0 }, { 0, -0.5f, 0 },
+                    { 0, 0, 0.5f }, { 0, 0, -0.5f }
+                };
+                bool faceVisible[6];
+                for (int f = 0; f < 6; ++f) {
+                    faceVisible[f] = glm::dot(localCam - centers[f], normals[f]) > 0.0f;
+                }
+
                 float s = 0.5f;
-                glm::vec3 c[8] = {
+                const glm::vec3 c[8] = {
                     {-s, -s, -s}, { s, -s, -s}, { s, -s,  s}, {-s, -s,  s},
                     {-s,  s, -s}, { s,  s, -s}, { s,  s,  s}, {-s,  s,  s}
                 };
-                // 12 edges of cube
-                edges.push_back({c[0], c[1]}); edges.push_back({c[1], c[2]});
-                edges.push_back({c[2], c[3]}); edges.push_back({c[3], c[0]});
-                edges.push_back({c[4], c[5]}); edges.push_back({c[5], c[6]});
-                edges.push_back({c[6], c[7]}); edges.push_back({c[7], c[4]});
-                edges.push_back({c[0], c[4]}); edges.push_back({c[1], c[5]});
-                edges.push_back({c[2], c[6]}); edges.push_back({c[3], c[7]});
+                // 12 edges and their two adjacent faces
+                struct CubeEdge { int v0, v1, f0, f1; };
+                const CubeEdge cubeEdges[12] = {
+                    { 0, 1, 3, 5 }, { 1, 2, 3, 0 }, { 2, 3, 3, 4 }, { 3, 0, 3, 1 }, // bottom
+                    { 4, 5, 2, 5 }, { 5, 6, 2, 0 }, { 6, 7, 2, 4 }, { 7, 4, 2, 1 }, // top
+                    { 0, 4, 1, 5 }, { 1, 5, 0, 5 }, { 2, 6, 0, 4 }, { 3, 7, 1, 4 }  // verticals
+                };
+                for (const auto& ce : cubeEdges) {
+                    if (faceVisible[ce.f0] != faceVisible[ce.f1]) {
+                        edges.push_back({ c[ce.v0], c[ce.v1] });
+                    }
+                }
                 break;
             }
             case PrimitiveType::Plane: {
+                // Plane silhouette is exclusively the 4 outer perimeter boundary edges (no internal grid lines)
                 float hx = 1.25f, hz = 1.25f;
                 glm::vec3 p0(-hx, 0.0f, -hz);
                 glm::vec3 p1( hx, 0.0f, -hz);
@@ -2029,120 +2504,104 @@ struct RenderBatch {
                 glm::vec3 p3(-hx, 0.0f,  hz);
                 edges.push_back({p0, p1}); edges.push_back({p1, p2});
                 edges.push_back({p2, p3}); edges.push_back({p3, p0});
-                int subX = 6, subZ = 6;
-                for (int z = 1; z < subZ; ++z) {
-                    float tz = (float)z / (float)subZ;
-                    float posZ = -hz + tz * 2.5f;
-                    edges.push_back({ {-hx, 0.0f, posZ}, {hx, 0.0f, posZ} });
-                }
-                for (int x = 1; x < subX; ++x) {
-                    float tx = (float)x / (float)subX;
-                    float posX = -hx + tx * 2.5f;
-                    edges.push_back({ {posX, 0.0f, -hz}, {posX, 0.0f, hz} });
-                }
                 break;
             }
             case PrimitiveType::Pyramid: {
                 float s = 0.5f, h = 1.2f;
                 glm::vec3 apex(0.0f, h, 0.0f);
                 glm::vec3 c[4] = {
-                    {-s, 0.0f,  s},
-                    { s, 0.0f,  s},
-                    { s, 0.0f, -s},
-                    {-s, 0.0f, -s}
+                    {-s, 0.0f,  s}, { s, 0.0f,  s}, { s, 0.0f, -s}, {-s, 0.0f, -s}
                 };
-                edges.push_back({c[0], c[1]}); edges.push_back({c[1], c[2]});
-                edges.push_back({c[2], c[3]}); edges.push_back({c[3], c[0]});
-                edges.push_back({c[0], apex}); edges.push_back({c[1], apex});
-                edges.push_back({c[2], apex}); edges.push_back({c[3], apex});
-                break;
-            }
-            case PrimitiveType::Cylinder: {
-                float r = 0.5f, halfH = 0.6f;
-                const int segs = 32;
-                for (int i = 0; i < segs; ++i) {
-                    float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
-                    float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
-                    edges.push_back({ {r * std::cos(a0),  halfH, r * std::sin(a0)},
-                                      {r * std::cos(a1),  halfH, r * std::sin(a1)} });
-                    edges.push_back({ {r * std::cos(a0), -halfH, r * std::sin(a0)},
-                                      {r * std::cos(a1), -halfH, r * std::sin(a1)} });
-                }
+                // Base face (face 0)
+                bool baseVisible = (localCam.y < 0.0f);
+                // 4 side faces
+                bool sideVisible[4];
                 for (int i = 0; i < 4; ++i) {
-                    float a = (float)M_PI * 0.5f * (float)i;
-                    edges.push_back({ {r * std::cos(a), -halfH, r * std::sin(a)},
-                                      {r * std::cos(a),  halfH, r * std::sin(a)} });
+                    glm::vec3 v0 = c[i];
+                    glm::vec3 v1 = c[(i + 1) % 4];
+                    glm::vec3 fn = glm::normalize(glm::cross(v1 - v0, apex - v0));
+                    sideVisible[i] = glm::dot(localCam - v0, fn) > 0.0f;
                 }
-                break;
-            }
-            case PrimitiveType::Sphere: {
-                float r = 0.6f;
-                const int segs = 36;
-                // Equator (XZ plane)
-                for (int i = 0; i < segs; ++i) {
-                    float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
-                    float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
-                    edges.push_back({ {r * std::cos(a0), 0.0f, r * std::sin(a0)},
-                                      {r * std::cos(a1), 0.0f, r * std::sin(a1)} });
+                // Base perimeter edges
+                for (int i = 0; i < 4; ++i) {
+                    if (baseVisible != sideVisible[i]) {
+                        edges.push_back({ c[i], c[(i + 1) % 4] });
+                    }
                 }
-                // Meridian 1 (XY plane)
-                for (int i = 0; i < segs; ++i) {
-                    float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
-                    float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
-                    edges.push_back({ {r * std::cos(a0), r * std::sin(a0), 0.0f},
-                                      {r * std::cos(a1), r * std::sin(a1), 0.0f} });
-                }
-                // Meridian 2 (YZ plane)
-                for (int i = 0; i < segs; ++i) {
-                    float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
-                    float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
-                    edges.push_back({ {0.0f, r * std::sin(a0), r * std::cos(a0)},
-                                      {0.0f, r * std::sin(a1), r * std::cos(a1)} });
-                }
-                for (float ySign : {-0.3f, 0.3f}) {
-                    float rLat = std::sqrt(std::max(0.0f, r * r - ySign * ySign));
-                    for (int i = 0; i < segs; ++i) {
-                        float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
-                        float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
-                        edges.push_back({ {rLat * std::cos(a0), ySign, rLat * std::sin(a0)},
-                                          {rLat * std::cos(a1), ySign, rLat * std::sin(a1)} });
+                // Sloped edges
+                for (int i = 0; i < 4; ++i) {
+                    int prevSide = (i + 3) % 4;
+                    if (sideVisible[i] != sideVisible[prevSide]) {
+                        edges.push_back({ c[i], apex });
                     }
                 }
                 break;
             }
-            case PrimitiveType::Torus: {
-                float rMain = 0.6f, rTube = 0.22f;
-                const int mainSegs = 36;
-                const int tubeSegs = 16;
-                for (int i = 0; i < mainSegs; ++i) {
-                    float a0 = 2.0f * (float)M_PI * (float)i / (float)mainSegs;
-                    float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)mainSegs;
-                    float c0 = std::cos(a0), s0 = std::sin(a0);
-                    float c1 = std::cos(a1), s1 = std::sin(a1);
-                    edges.push_back({ {(rMain + rTube) * c0, 0.0f, (rMain + rTube) * s0},
-                                      {(rMain + rTube) * c1, 0.0f, (rMain + rTube) * s1} });
-                    edges.push_back({ {(rMain - rTube) * c0, 0.0f, (rMain - rTube) * s0},
-                                      {(rMain - rTube) * c1, 0.0f, (rMain - rTube) * s1} });
-                    edges.push_back({ {rMain * c0,  rTube, rMain * s0},
-                                      {rMain * c1,  rTube, rMain * s1} });
-                    edges.push_back({ {rMain * c0, -rTube, rMain * s0},
-                                      {rMain * c1, -rTube, rMain * s1} });
+            case PrimitiveType::Sphere: {
+                // Exact camera horizon silhouette circle in screen space
+                float r = 0.6f;
+                float d = glm::length(localCam);
+                if (d > r + 0.01f) {
+                    glm::vec3 toCamDir = localCam / d;
+                    float h = r * r / d;
+                    float rSil = r * std::sqrt(std::max(0.0f, 1.0f - (r * r) / (d * d)));
+                    glm::vec3 center = toCamDir * h;
+
+                    glm::vec3 up = (std::abs(toCamDir.y) < 0.99f) ? glm::vec3(0, 1, 0) : glm::vec3(1, 0, 0);
+                    glm::vec3 right = glm::normalize(glm::cross(toCamDir, up));
+                    up = glm::cross(right, toCamDir);
+
+                    const int segs = 48;
+                    for (int i = 0; i < segs; ++i) {
+                        float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
+                        float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
+                        glm::vec3 p0 = center + (right * std::cos(a0) + up * std::sin(a0)) * rSil;
+                        glm::vec3 p1 = center + (right * std::cos(a1) + up * std::sin(a1)) * rSil;
+                        edges.push_back({ p0, p1 });
+                    }
                 }
-                for (int k = 0; k < 8; ++k) {
-                    float u = 2.0f * (float)M_PI * (float)k / 8.0f;
-                    float cosU = std::cos(u);
-                    float sinU = std::sin(u);
-                    for (int j = 0; j < tubeSegs; ++j) {
-                        float v0 = 2.0f * (float)M_PI * (float)j / (float)tubeSegs;
-                        float v1 = 2.0f * (float)M_PI * (float)(j + 1) / (float)tubeSegs;
-                        glm::vec3 pA((rMain + rTube * std::cos(v0)) * cosU, rTube * std::sin(v0), (rMain + rTube * std::cos(v0)) * sinU);
-                        glm::vec3 pB((rMain + rTube * std::cos(v1)) * cosU, rTube * std::sin(v1), (rMain + rTube * std::cos(v1)) * sinU);
-                        edges.push_back({pA, pB});
+                break;
+            }
+            case PrimitiveType::Cylinder: {
+                float r = 0.5f, halfH = 0.6f;
+                bool topVisible = (localCam.y > halfH);
+                bool bottomVisible = (localCam.y < -halfH);
+
+                const int segs = 36;
+                // Side silhouette generator lines
+                float camDistXZ = std::sqrt(localCam.x * localCam.x + localCam.z * localCam.z);
+                if (camDistXZ > r + 0.01f) {
+                    float phi = std::atan2(localCam.z, localCam.x);
+                    float alpha = std::asin(std::clamp(r / camDistXZ, -1.0f, 1.0f));
+                    for (float sgn : { -1.0f, 1.0f }) {
+                        float ang = phi + sgn * (float(M_PI) * 0.5f - alpha);
+                        glm::vec3 pBot(r * std::cos(ang), -halfH, r * std::sin(ang));
+                        glm::vec3 pTop(r * std::cos(ang),  halfH, r * std::sin(ang));
+                        edges.push_back({ pBot, pTop });
+                    }
+                }
+                // Cap rims if visible
+                if (topVisible) {
+                    for (int i = 0; i < segs; ++i) {
+                        float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
+                        float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
+                        edges.push_back({ {r * std::cos(a0), halfH, r * std::sin(a0)},
+                                          {r * std::cos(a1), halfH, r * std::sin(a1)} });
+                    }
+                }
+                if (bottomVisible) {
+                    for (int i = 0; i < segs; ++i) {
+                        float a0 = 2.0f * (float)M_PI * (float)i / (float)segs;
+                        float a1 = 2.0f * (float)M_PI * (float)(i + 1) / (float)segs;
+                        edges.push_back({ {r * std::cos(a0), -halfH, r * std::sin(a0)},
+                                          {r * std::cos(a1), -halfH, r * std::sin(a1)} });
                     }
                 }
                 break;
             }
             default: {
+                // Arbitrary 3D Mesh / Model: True Screen-Space Silhouette Extraction
+                // An edge is a silhouette edge iff (dot1 > 0) != (dot2 > 0) or it is a boundary edge facing camera.
                 struct EdgeKey {
                     uint32_t a, b;
                     bool operator==(const EdgeKey& o) const { return a == o.a && b == o.b; }
@@ -2179,9 +2638,23 @@ struct RenderBatch {
                     }
                 }
                 for (const auto& kv : edgeMap) {
-                    if (kv.second.count == 1 || glm::dot(kv.second.n1, kv.second.n2) < 0.96f) {
-                        if (kv.first.a < vList.size() && kv.first.b < vList.size()) {
-                            edges.push_back({ vList[kv.first.a].pos, vList[kv.first.b].pos });
+                    if (kv.first.a >= vList.size() || kv.first.b >= vList.size()) continue;
+                    glm::vec3 vA = vList[kv.first.a].pos;
+                    glm::vec3 vB = vList[kv.first.b].pos;
+                    glm::vec3 mid = (vA + vB) * 0.5f;
+                    glm::vec3 toCam = localCam - mid;
+
+                    float dot1 = glm::dot(kv.second.n1, toCam);
+                    if (kv.second.count == 1) {
+                        // Boundary open edge is a silhouette if front-facing
+                        if (dot1 > 0.0f) {
+                            edges.push_back({ vA, vB });
+                        }
+                    } else if (kv.second.count >= 2) {
+                        float dot2 = glm::dot(kv.second.n2, toCam);
+                        // True silhouette: one face faces camera, one face faces away
+                        if ((dot1 > 0.0f && dot2 <= 0.0f) || (dot1 <= 0.0f && dot2 > 0.0f)) {
+                            edges.push_back({ vA, vB });
                         }
                     }
                 }
@@ -2189,11 +2662,11 @@ struct RenderBatch {
             }
         }
 
-        // Draw camera-facing ribbons along every edge transformed to world space
+        // Draw camera-facing ribbons along strictly silhouette outline edges
         for (const auto& e : edges) {
             glm::vec3 wA = glm::vec3(model * glm::vec4(e.first, 1.0f));
             glm::vec3 wB = glm::vec3(model * glm::vec4(e.second, 1.0f));
-            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 0.125f, outlineColor);
+            GeometryBuilder::AppendCameraFacingLine(outVertices, outIndices, wA, wB, cameraPos, 0.85f, outlineColor);
         }
     }
 
