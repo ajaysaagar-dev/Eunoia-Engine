@@ -316,13 +316,13 @@ public:
     // UI layout dimensions (scaled for friendly visibility and comfort)
     float uiMargin = 0.0f;
     float uiGap = 0.0f;
-    float topBarHeight = 56.0f;
+    float topBarHeight = 36.0f;        // Sleek single-row header (dev.md h-9 = 36px)
     float leftSidebarWidth = 250.0f;
-    float rightSidebarWidth = 320.0f;
-    float outlinerHeightRatio = 0.38f; // Ratio of right sidebar height dedicated to Outliner (above Details)
-    float bottomBarHeight = 24.0f;     // Full-width horizontal bottom progress & status bar
-    float bottomDockHeight = 190.0f;
-    float contentBrowserFolderTreeWidth = 180.0f;
+    float rightSidebarWidth = 320.0f;  // dev.md w-80 = 320px
+    float outlinerHeightRatio = 0.50f; // dev.md h-1/2 = 50%
+    float bottomBarHeight = 26.0f;     // Full-width horizontal bottom status bar
+    float bottomDockHeight = 256.0f;   // dev.md h-64 = 256px
+    float contentBrowserFolderTreeWidth = 256.0f; // dev.md w-64 = 256px
     float uiScale = 1.0f; // UI Scale factor (0.25f to 2.50f, 1.0f = 100%)
 
     struct BottomProgressState {
