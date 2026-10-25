@@ -1,0 +1,11 @@
+{
+    "name": "Node-Behaviour",
+    "version": "1.0.0",
+    "description": "Unreal Engine-style visual scripting plugin with interactive node canvas, events, print functions, and variable management.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "scripting",
+    "core": true,
+    "dependencies": ["engine", "scene"],
+    "provides": ["INodeBehaviourPlugin"]
+}
