@@ -8259,7 +8259,53 @@ void EngineUI::RenderDetails(Scene& scene) {
                 obj->sflodCustomTexture = texBuf;
             }
             if (obj->sflodCustomTexture.empty()) {
-                ImGui::TextDisabled("  (Empty = Automatically uses object Base Color Material)");
+                ImGui::TextDisabled("  (Empty = Click 'Capture & Bake' below or uses base material)");
+            }
+
+            // Imposter Mathematical Baking Section
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "IMPOSTER PROJECTION BAKING");
+            ImGui::Separator();
+
+            static int s_imposterResolution = 512;
+            const char* resOptions[] = { "256 x 256", "512 x 512 (Recommended)", "1024 x 1024" };
+            int curResOpt = (s_imposterResolution == 256) ? 0 : (s_imposterResolution == 1024 ? 2 : 1);
+            if (ImGui::Combo("Bake Resolution", &curResOpt, resOptions, 3)) {
+                if (curResOpt == 0) s_imposterResolution = 256;
+                else if (curResOpt == 2) s_imposterResolution = 1024;
+                else s_imposterResolution = 512;
+            }
+
+            std::filesystem::path contentDir = contentRootPath;
+            if (contentDir.empty() && !activeProjectRoot.empty()) {
+                contentDir = activeProjectRoot / "Content";
+            }
+            if (contentDir.empty()) {
+                contentDir = "Projects/GameTest/Content";
+            }
+
+            glm::mat4 modelMat = scene.GetWorldMatrix(*obj);
+            glm::vec3 camEye = currentCamera ? currentCamera->GetPosition() : glm::vec3(0.0f, 2.0f, 5.0f);
+
+            if (ImGui::Button("Capture & Bake Current View Texture", ImVec2(ImGui::GetContentRegionAvail().x, 28.0f))) {
+                std::string bakedPath = SFLOD::SFLODSystem::Get().BakeAndSaveImposterTexture(
+                    *obj, modelMat, camEye, contentDir, -1, s_imposterResolution);
+                if (!bakedPath.empty()) {
+                    AddLog("LogSFLOD", "Successfully baked view-dependent imposter texture: " + bakedPath, 0);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Mathematically projects the 3D model from the current camera view angle onto an RGBA card map with transparency for holes and cutouts.");
+            }
+
+            if (ImGui::Button("Bake 8-Directional View Atlas", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                bool ok = SFLOD::SFLODSystem::Get().BakeAll8Angles(*obj, modelMat, contentDir, s_imposterResolution);
+                if (ok) {
+                    AddLog("LogSFLOD", "Successfully baked 8-directional imposter series into Content/Imposters/", 0);
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Bakes 8 azimuthal viewing angles (0, 45, 90, 135, 180, 225, 270, 315 deg) around the object so the single card updates as you circle around it.");
             }
 
             // Real-Time Telemetry & Status
