@@ -82,16 +82,13 @@ void NodeBehaviourEditor::Render(const ImVec2& position, const ImVec2& size) {
         // 1. Top Toolbar
         RenderTopToolbar();
 
-        // 2. Center: Canvas
+        // 2. Center: Canvas (handles nodes, links, background context menu & search popup)
         ImGui::SetCursorPos(ImVec2(0.0f, toolbarHeight));
         RenderCanvas(ImVec2(canvasWidth, canvasHeight));
 
         // 3. Right Sidebar
         ImGui::SetCursorPos(ImVec2(canvasWidth, toolbarHeight));
         RenderRightSidebar(ImVec2(sidebarWidth, canvasHeight));
-
-        // Search Popup for adding nodes
-        RenderSearchPopup();
     }
     ImGui::End();
 
@@ -126,6 +123,19 @@ void NodeBehaviourEditor::RenderTopToolbar() {
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save and compile node graph to disk");
         ImGui::PopStyleColor(2);
+
+        ImGui::SameLine(0.0f, 6.0f);
+
+        // Add Node Button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.16f, 0.38f, 0.65f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.48f, 0.78f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        if (ImGui::Button("+ Add Node", ImVec2(90.0f, 24.0f))) {
+            m_openSearchPopup = true;
+            m_searchPopupPos = ImVec2(ImGui::GetWindowPos().x + 20.0f, ImGui::GetWindowPos().y + 40.0f);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open node creation menu (or Right-Click on canvas background)");
+        ImGui::PopStyleColor(3);
 
         ImGui::SameLine(0.0f, 12.0f);
         ImGui::AlignTextToFramePadding();
@@ -213,13 +223,34 @@ void NodeBehaviourEditor::RenderCanvas(const ImVec2& size) {
     ed::EndDelete();
 
     // Right-Click Context Menu Trigger on Canvas
-    ed::Suspend();
+    bool openContextMenu = false;
     if (ed::ShowBackgroundContextMenu()) {
-        m_openSearchPopup = true;
+        openContextMenu = true;
+    }
+
+    // Fallback right-click release directly on the canvas background
+    if (!openContextMenu &&
+        ImGui::IsWindowHovered(ImGuiHoveredFlags_RootAndChildWindows) &&
+        ImGui::IsMouseReleased(ImGuiMouseButton_Right) &&
+        !ImGui::IsMouseDragging(ImGuiMouseButton_Right, 4.0f))
+    {
+        if (!ed::GetHoveredNode().Get() && !ed::GetHoveredPin().Get() && !ed::GetHoveredLink().Get()) {
+            openContextMenu = true;
+        }
+    }
+
+    if (openContextMenu || m_openSearchPopup) {
         m_searchPopupPos = ImGui::GetMousePos();
         m_searchFilterBuf[0] = '\0';
         m_focusSearchInput = true;
+        m_openSearchPopup = false;
+        ed::Suspend();
+        ImGui::OpenPopup("NodeActionSearchPopup");
+        ed::Resume();
     }
+
+    ed::Suspend();
+    RenderSearchPopup();
     ed::Resume();
 
     ed::End();
@@ -572,26 +603,29 @@ void NodeBehaviourEditor::RenderVariableDetails(float height) {
 }
 
 void NodeBehaviourEditor::RenderSearchPopup() {
-    if (m_openSearchPopup) {
-        ImGui::OpenPopup("NodeActionSearchPopup");
-        m_openSearchPopup = false;
-    }
-
     ImGui::SetNextWindowPos(m_searchPopupPos, ImGuiCond_Appearing);
-    ImGui::SetNextWindowSize(ImVec2(280.0f, 320.0f), ImGuiCond_Appearing);
+    ImGui::SetNextWindowSize(ImVec2(300.0f, 380.0f), ImGuiCond_Appearing);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_PopupRounding, 6.0f);
+    ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.12f, 0.12f, 0.14f, 0.98f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.24f, 0.24f, 0.28f, 1.0f));
 
     if (ImGui::BeginPopup("NodeActionSearchPopup")) {
-        ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.0f, 1.0f), "Add Node / Action");
+        ImGui::TextColored(ImVec4(0.20f, 0.75f, 1.0f, 1.0f), "Add Node / Action");
         ImGui::Separator();
+        ImGui::Spacing();
 
         if (m_focusSearchInput) {
             ImGui::SetKeyboardFocusHere();
             m_focusSearchInput = false;
         }
 
-        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
-        ImGui::InputTextWithHint("##NodeSearchFilter", "Search...", m_searchFilterBuf, sizeof(m_searchFilterBuf));
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##NodeSearchFilter", "Search nodes (e.g. Print, Event)...", m_searchFilterBuf, sizeof(m_searchFilterBuf));
+        ImGui::Spacing();
         ImGui::Separator();
+        ImGui::Spacing();
 
         std::string filter = m_searchFilterBuf;
         std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
@@ -605,42 +639,53 @@ void NodeBehaviourEditor::RenderSearchPopup() {
 
         ImVec2 canvasSpawnPos = ed::ScreenToCanvas(m_searchPopupPos);
 
-        // Category: Events
-        if (Matches("event") || Matches("start") || Matches("update") || Matches("fixed")) {
-            if (ImGui::TreeNodeEx("Events", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (Matches("Event Start") && ImGui::Selectable("Event Start")) {
-                    m_graph->CreateEventStartNode(canvasSpawnPos);
-                    m_isDirty = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (Matches("Event Update") && ImGui::Selectable("Event Update")) {
-                    m_graph->CreateEventUpdateNode(canvasSpawnPos);
-                    m_isDirty = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                if (Matches("Event FixedUpdate") && ImGui::Selectable("Event FixedUpdate")) {
-                    m_graph->CreateEventFixedUpdateNode(canvasSpawnPos);
-                    m_isDirty = true;
-                    ImGui::CloseCurrentPopup();
-                }
-                ImGui::TreePop();
-            }
-        }
-
-        // Category: Functions / Utilities
-        if (Matches("print") || Matches("string") || Matches("log") || Matches("function")) {
-            if (ImGui::TreeNodeEx("Utilities", ImGuiTreeNodeFlags_DefaultOpen)) {
-                if (Matches("Print String") && ImGui::Selectable("Print String")) {
+        // Category 1: Utilities / Actions (Prominently displaying Print Node)
+        bool showPrint = Matches("print") || Matches("string") || Matches("log") || Matches("dev") || Matches("util") || Matches("action");
+        if (showPrint) {
+            if (ImGui::TreeNodeEx("Utilities / Actions", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if (ImGui::Selectable("Print String (Print)")) {
                     m_graph->CreatePrintNode(canvasSpawnPos);
                     m_isDirty = true;
                     ImGui::CloseCurrentPopup();
                 }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Prints a message to the screen HUD and engine output log.");
+                }
                 ImGui::TreePop();
             }
         }
 
-        // Category: Variables
-        if (!m_graph->variables.empty() && (Matches("var") || Matches("get") || Matches("set"))) {
+        // Category 2: Events
+        bool showEvents = Matches("event") || Matches("start") || Matches("update") || Matches("fixed");
+        if (showEvents) {
+            if (ImGui::TreeNodeEx("Events", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if ((Matches("Event Start") || Matches("start")) && ImGui::Selectable("Event Start")) {
+                    m_graph->CreateEventStartNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Called once when the game starts.");
+
+                if ((Matches("Event Update") || Matches("update")) && ImGui::Selectable("Event Update")) {
+                    m_graph->CreateEventUpdateNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Called every frame with Delta Seconds.");
+
+                if ((Matches("Event FixedUpdate") || Matches("fixed")) && ImGui::Selectable("Event FixedUpdate")) {
+                    m_graph->CreateEventFixedUpdateNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Called at fixed physics timesteps.");
+
+                ImGui::TreePop();
+            }
+        }
+
+        // Category 3: Variables
+        if (!m_graph->variables.empty() && (Matches("var") || Matches("get") || Matches("set") || Matches("variable"))) {
             if (ImGui::TreeNodeEx("Variables", ImGuiTreeNodeFlags_DefaultOpen)) {
                 for (const auto& v : m_graph->variables) {
                     std::string getLabel = "Get " + v.name;
@@ -662,6 +707,9 @@ void NodeBehaviourEditor::RenderSearchPopup() {
 
         ImGui::EndPopup();
     }
+
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(2);
 }
 
 } // namespace NodeBehaviour
