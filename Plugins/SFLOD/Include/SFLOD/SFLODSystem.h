@@ -6,6 +6,7 @@
 #include <string>
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -33,6 +34,43 @@ public:
         outHeight = geom.halfHeight * 2.0f;
         outOffset = geom.center;
     }
+
+    // Mathematical software rasterizer: projects 3D mesh triangles onto the card plane
+    // with Z-buffering and alpha cutouts, generating a high-quality RGBA texture map.
+    bool RasterizeImposterTexture(
+        const GameObject& obj,
+        const glm::mat4& model,
+        const glm::vec3& cameraPos,
+        int resolution,
+        std::vector<uint8_t>& outRgbaBuffer,
+        float& outWidth,
+        float& outHeight);
+
+    // Writes an uncompressed 32-bit TGA image with full 8-bit alpha channel to disk
+    static bool SaveTGA32(const std::string& filePath, int width, int height, const uint8_t* rgbaPixels);
+
+    // Bakes and saves the imposter texture map to disk (Content/Imposters/) and registers it
+    std::string BakeAndSaveImposterTexture(
+        GameObject& obj,
+        const glm::mat4& model,
+        const glm::vec3& cameraPos,
+        const std::filesystem::path& contentDir,
+        int viewAngleIndex = -1,
+        int resolution = 512);
+
+    // Bakes all 8 surrounding horizontal angles (0..7) for multi-angle view rendering
+    bool BakeAll8Angles(
+        GameObject& obj,
+        const glm::mat4& model,
+        const std::filesystem::path& contentDir,
+        int resolution = 512);
+
+    // Calculates the discrete azimuthal view angle index (0..numAngles-1)
+    int GetViewAngleIndex(
+        const GameObject& obj,
+        const glm::mat4& model,
+        const glm::vec3& cameraPos,
+        int numAngles = 8) const;
 
     template<typename BatchType>
     void AppendImposterCard(
@@ -81,6 +119,27 @@ public:
         outIndices.push_back(vOffset + 2);
         outIndices.push_back(vOffset + 3);
 
+        // Determine active imposter texture: check if multi-angle series exists
+        std::string activeTexture = obj.sflodCustomTexture;
+        if (!activeTexture.empty()) {
+            size_t anglePos = activeTexture.find("_angle");
+            if (anglePos != std::string::npos) {
+                int angleIdx = GetViewAngleIndex(obj, model, cameraPos, 8);
+                std::string basePrefix = activeTexture.substr(0, anglePos);
+                std::string ext = std::filesystem::path(activeTexture).extension().string();
+                std::string candidateAngleTex = basePrefix + "_angle" + std::to_string(angleIdx) + ext;
+                std::error_code ec;
+                if (std::filesystem::exists(candidateAngleTex, ec)) {
+                    activeTexture = candidateAngleTex;
+                }
+            }
+        }
+
+        // If no custom imposter texture set, fallback to object baseColorTexture
+        if (activeTexture.empty()) {
+            activeTexture = obj.baseColorTexture;
+        }
+
         // RenderBatch for Imposter Card
         BatchType b;
         b.startIndex = iStart;
@@ -89,7 +148,7 @@ public:
         b.isVisible = isVisible;
         b.isShadowVisible = isShadowVisible;
         b.activeLOD = (int)selectedLod;
-        b.albedoTex = !obj.sflodCustomTexture.empty() ? obj.sflodCustomTexture : obj.baseColorTexture;
+        b.albedoTex = activeTexture;
         b.normalTex = obj.normalTexture;
         b.roughTex = obj.roughnessTexture;
         b.metalTex = obj.metallicTexture;
@@ -104,8 +163,8 @@ public:
         b.emissiveColor = obj.emissiveColor;
         b.emissiveIntensity = obj.emissiveIntensity;
         b.opacity = obj.opacity;
-        b.opacityMaskClipValue = 0.333f;
-        b.blendMode = obj.sflodCutout ? 1 : obj.blendMode; // Masked (cutout) for cards or user blendMode
+        b.opacityMaskClipValue = (obj.opacityMaskClipValue > 0.0f) ? obj.opacityMaskClipValue : 0.333f;
+        b.blendMode = 1; // Always use Masked alpha cutout for imposter cards
         b.shadingModel = obj.shadingModel;
         b.isUnlit = (obj.shadingModel == 1);
         b.castShadows = obj.castShadows;
@@ -113,7 +172,7 @@ public:
         b.meshClusterCulling = false;
         b.objectId = obj.id;
         b.vertexOffset = vOffset;
-        b.uvScale = obj.uvScale;
+        b.uvScale = glm::vec2(1.0f, 1.0f);
         b.normalMapYFlip = obj.normalMapYFlip;
         b.metallicChannel = obj.metallicChannel;
         b.roughnessChannel = obj.roughnessChannel;

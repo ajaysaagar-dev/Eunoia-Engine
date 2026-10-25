@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <string>
+#include <vector>
 #include <glm/glm.hpp>
 
 namespace SFLOD {
@@ -18,6 +19,12 @@ struct SFLODCardGeometry {
     glm::vec3 up{0.0f, 1.0f, 0.0f};
     float halfWidth = 1.0f;
     float halfHeight = 1.0f;
+};
+
+struct SFLODBakeSettings {
+    int resolution = 512;          // 256, 512, 1024
+    int numAngles = 8;             // 1 for single view, 8 for 8-directional surrounding atlas
+    bool autoBakeOnActivate = true;
 };
 
 struct SFLODTelemetry {
