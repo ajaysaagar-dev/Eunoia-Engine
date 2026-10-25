@@ -1,6 +1,8 @@
 #include <Node-Behaviour/NodeBehaviourEditor.h>
 #include <Node-Behaviour/NodeBehaviourManager.h>
 #include <EngineScene/ScreenPrint.h>
+#include <EngineScene/Scene.h>
+#include <EngineScene/GameObject.h>
 #include <imgui_node_editor.h>
 #include <drawing.h>
 #include <imgui.h>
@@ -36,6 +38,18 @@ NodeBehaviourEditor::~NodeBehaviourEditor() {
 
 void NodeBehaviourEditor::Save() {
     if (m_graph && !m_graph->filePath.empty()) {
+        // Save current canvas node positions to graph before serializing
+        if (m_context) {
+            ed::SetCurrentEditor(m_context);
+            for (auto& node : m_graph->nodes) {
+                ImVec2 pos = ed::GetNodePosition(node.id);
+                if (std::isfinite(pos.x) && std::isfinite(pos.y)) {
+                    node.position = pos;
+                }
+            }
+            ed::SetCurrentEditor(nullptr);
+        }
+
         if (m_graph->SaveToFile(m_graph->filePath)) {
             m_isDirty = false;
             // Compile & Synchronize to Scene instances immediately
@@ -251,6 +265,18 @@ void NodeBehaviourEditor::RenderCanvas(const ImVec2& size) {
 
     ed::Suspend();
     RenderSearchPopup();
+
+    // Variable Drag & Drop onto Canvas
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("NODE_VAR_NAME")) {
+            std::string varName = (const char*)payload->Data;
+            ImVec2 mousePos = ImGui::GetMousePos();
+            ImVec2 canvasPos = ed::ScreenToCanvas(mousePos);
+            m_graph->CreateVariableGetNode(varName, canvasPos);
+            m_isDirty = true;
+        }
+        ImGui::EndDragDropTarget();
+    }
     ed::Resume();
 
     ed::End();
@@ -359,6 +385,12 @@ void NodeBehaviourEditor::RenderNode(NodeItem& node) {
                     pin.stringValue = strBuf;
                     m_isDirty = true;
                 }
+            } else if (pin.type == NodePinType::Vector3) {
+                if (ImGui::DragFloat3(inputId.c_str(), &pin.vectorValue.x, 0.1f)) {
+                    m_isDirty = true;
+                }
+            } else if (pin.type == NodePinType::GameObject) {
+                ImGui::TextDisabled("(Self)");
             }
             ImGui::PopItemWidth();
         }
@@ -507,9 +539,11 @@ void NodeBehaviourEditor::RenderVariablesList(float height) {
                     m_graph->CreateVariableGetNode(var.name, ImVec2(200.0f, 200.0f));
                     m_isDirty = true;
                 }
-                if (ImGui::MenuItem(("Add 'Set " + var.name + "' to Canvas").c_str())) {
-                    m_graph->CreateVariableSetNode(var.name, ImVec2(200.0f, 200.0f));
-                    m_isDirty = true;
+                if (var.type != NodePinType::GameObject) {
+                    if (ImGui::MenuItem(("Add 'Set " + var.name + "' to Canvas").c_str())) {
+                        m_graph->CreateVariableSetNode(var.name, ImVec2(200.0f, 200.0f));
+                        m_isDirty = true;
+                    }
                 }
                 ImGui::Separator();
                 if (ImGui::MenuItem("Delete Variable")) {
@@ -555,10 +589,10 @@ void NodeBehaviourEditor::RenderVariableDetails(float height) {
 
     // 2. Variable Type Combo
     ImGui::Text("Type:");
-    const char* types[] = { "Float", "Integer", "Boolean", "String", "Vector3" };
-    NodePinType typeEnums[] = { NodePinType::Float, NodePinType::Int, NodePinType::Bool, NodePinType::String, NodePinType::Vector3 };
+    const char* types[] = { "Float", "Integer", "Boolean", "String", "Vector3", "GameObject" };
+    NodePinType typeEnums[] = { NodePinType::Float, NodePinType::Int, NodePinType::Bool, NodePinType::String, NodePinType::Vector3, NodePinType::GameObject };
     int currentTypeIdx = 0;
-    for (int i = 0; i < 5; ++i) {
+    for (int i = 0; i < 6; ++i) {
         if (selVar->type == typeEnums[i]) { currentTypeIdx = i; break; }
     }
 
@@ -589,6 +623,31 @@ void NodeBehaviourEditor::RenderVariableDetails(float height) {
         }
     } else if (selVar->type == NodePinType::Vector3) {
         if (ImGui::DragFloat3("##VarDefVec3", &selVar->vectorValue.x, 0.1f)) m_isDirty = true;
+    } else if (selVar->type == NodePinType::GameObject) {
+        std::string preview = "(Self / None)";
+        if (m_scene && selVar->targetObjectId != -1) {
+            GameObject* target = m_scene->FindObject(selVar->targetObjectId);
+            if (target) preview = target->name + " (ID: " + std::to_string(target->id) + ")";
+            else preview = "Missing Object (ID: " + std::to_string(selVar->targetObjectId) + ")";
+        }
+        if (ImGui::BeginCombo("##VarDefObj", preview.c_str())) {
+            if (ImGui::Selectable("(Self / None)", selVar->targetObjectId == -1)) {
+                selVar->targetObjectId = -1;
+                m_isDirty = true;
+            }
+            if (m_scene) {
+                ImGui::Separator();
+                for (const auto& sceneObj : m_scene->objects) {
+                    bool isSel = (selVar->targetObjectId == sceneObj.id);
+                    std::string itemLabel = sceneObj.name + " (ID: " + std::to_string(sceneObj.id) + ")";
+                    if (ImGui::Selectable(itemLabel.c_str(), isSel)) {
+                        selVar->targetObjectId = sceneObj.id;
+                        m_isDirty = true;
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
     }
 
     ImGui::Spacing();
@@ -655,7 +714,57 @@ void NodeBehaviourEditor::RenderSearchPopup() {
             }
         }
 
-        // Category 2: Events
+        // Category 2: Transform (GameObject Properties)
+        bool showTransform = Matches("transform") || Matches("location") || Matches("rotation") || Matches("scale") || Matches("relative") || Matches("relativelocation") || Matches("getrelativelocation") || Matches("setrelativelocation");
+        if (showTransform) {
+            if (ImGui::TreeNodeEx("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if ((Matches("Get Relative Location") || Matches("location")) && ImGui::Selectable("Get Relative Location")) {
+                    m_graph->CreateGetRelativeLocationNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gets the Relative Location of target GameObject (or Self).");
+
+                if ((Matches("Set Relative Location") || Matches("location")) && ImGui::Selectable("Set Relative Location")) {
+                    m_graph->CreateSetRelativeLocationNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the Relative Location of target GameObject (or Self).");
+
+                if ((Matches("Get Relative Rotation") || Matches("rotation")) && ImGui::Selectable("Get Relative Rotation")) {
+                    m_graph->CreateGetRelativeRotationNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gets the Relative Rotation of target GameObject (or Self).");
+
+                if ((Matches("Set Relative Rotation") || Matches("rotation")) && ImGui::Selectable("Set Relative Rotation")) {
+                    m_graph->CreateSetRelativeRotationNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the Relative Rotation of target GameObject (or Self).");
+
+                if ((Matches("Get Relative Scale") || Matches("scale")) && ImGui::Selectable("Get Relative Scale")) {
+                    m_graph->CreateGetRelativeScaleNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Gets the Relative Scale of target GameObject (or Self).");
+
+                if ((Matches("Set Relative Scale") || Matches("scale")) && ImGui::Selectable("Set Relative Scale")) {
+                    m_graph->CreateSetRelativeScaleNode(canvasSpawnPos);
+                    m_isDirty = true;
+                    ImGui::CloseCurrentPopup();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Sets the Relative Scale of target GameObject (or Self).");
+
+                ImGui::TreePop();
+            }
+        }
+
+        // Category 3: Events
         bool showEvents = Matches("event") || Matches("start") || Matches("update") || Matches("fixed");
         if (showEvents) {
             if (ImGui::TreeNodeEx("Events", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -695,10 +804,12 @@ void NodeBehaviourEditor::RenderSearchPopup() {
                         m_isDirty = true;
                         ImGui::CloseCurrentPopup();
                     }
-                    if (Matches(setLabel) && ImGui::Selectable(setLabel.c_str())) {
-                        m_graph->CreateVariableSetNode(v.name, canvasSpawnPos);
-                        m_isDirty = true;
-                        ImGui::CloseCurrentPopup();
+                    if (v.type != NodePinType::GameObject) {
+                        if (Matches(setLabel) && ImGui::Selectable(setLabel.c_str())) {
+                            m_graph->CreateVariableSetNode(v.name, canvasSpawnPos);
+                            m_isDirty = true;
+                            ImGui::CloseCurrentPopup();
+                        }
                     }
                 }
                 ImGui::TreePop();

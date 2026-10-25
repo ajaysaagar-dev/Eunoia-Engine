@@ -69,6 +69,7 @@ void NodeBehaviourInstance::SyncVariablesFromGraph() {
             v.boolValue = it->second.boolValue;
             v.stringValue = it->second.stringValue;
             v.vectorValue = it->second.vectorValue;
+            v.targetObjectId = it->second.targetObjectId;
             updatedVars[gv.name] = v;
         } else {
             updatedVars[gv.name] = gv;
@@ -111,6 +112,12 @@ void NodeBehaviourInstance::SetupExposedProperties() {
                 prop.type = BehaviourPropertyType::Vec3;
                 prop.dataPtr = &v.vectorValue;
                 break;
+            case NodePinType::GameObject:
+                prop.type = BehaviourPropertyType::ObjectRef;
+                prop.refType = ObjectRefType::Actor;
+                prop.targetId = v.targetObjectId;
+                prop.dataPtr = nullptr;
+                break;
             default:
                 continue;
         }
@@ -127,6 +134,18 @@ std::unique_ptr<EunoiaBehaviour> NodeBehaviourInstance::Clone() const {
     return clone;
 }
 
+void NodeBehaviourInstance::ResolveReferences(Scene& scene) {
+    EunoiaBehaviour::ResolveReferences(scene);
+    for (auto& prop : m_properties) {
+        if (prop.type == BehaviourPropertyType::ObjectRef) {
+            auto it = m_instanceVars.find(prop.name);
+            if (it != m_instanceVars.end()) {
+                it->second.targetObjectId = prop.targetId;
+            }
+        }
+    }
+}
+
 void NodeBehaviourInstance::OnCreate() {
     if (!m_graph && !m_scriptAssetPath.empty()) {
         SetScriptAssetPath(m_scriptAssetPath);
@@ -135,6 +154,14 @@ void NodeBehaviourInstance::OnCreate() {
 
 void NodeBehaviourInstance::Start() {
     if (m_graph) {
+        for (const auto& prop : m_properties) {
+            if (prop.type == BehaviourPropertyType::ObjectRef) {
+                auto it = m_instanceVars.find(prop.name);
+                if (it != m_instanceVars.end()) {
+                    it->second.targetObjectId = prop.targetId;
+                }
+            }
+        }
         m_graph->ExecuteEvent("Event Start", 0.0f, GetOwner(), GetScene(), m_instanceVars);
     }
 }

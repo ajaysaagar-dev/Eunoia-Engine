@@ -62,6 +62,7 @@ struct NodePin {
     bool boolValue = false;
     std::string stringValue = "";
     glm::vec3 vectorValue{0.0f, 0.0f, 0.0f};
+    int targetObjectId = -1;
 
     NodePin() = default;
     NodePin(uint32_t inId, uint32_t inNodeId, const std::string& inName, NodePinKind inKind, NodePinType inType)
@@ -116,6 +117,7 @@ struct NodeVariable {
     bool boolValue = false;
     std::string stringValue = "";
     glm::vec3 vectorValue{0.0f, 0.0f, 0.0f};
+    int targetObjectId = -1;
 
     std::string tooltip = "";
     bool isPublic = true; // Instance editable on Actor in Details panel

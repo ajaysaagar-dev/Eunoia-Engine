@@ -38,6 +38,14 @@ public:
     NodeItem* CreateVariableGetNode(const std::string& varName, const ImVec2& pos = ImVec2(350, 250));
     NodeItem* CreateVariableSetNode(const std::string& varName, const ImVec2& pos = ImVec2(350, 350));
 
+    // Transform Node Factories
+    NodeItem* CreateGetRelativeLocationNode(const ImVec2& pos = ImVec2(350, 150));
+    NodeItem* CreateSetRelativeLocationNode(const ImVec2& pos = ImVec2(350, 250));
+    NodeItem* CreateGetRelativeRotationNode(const ImVec2& pos = ImVec2(350, 350));
+    NodeItem* CreateSetRelativeRotationNode(const ImVec2& pos = ImVec2(350, 450));
+    NodeItem* CreateGetRelativeScaleNode(const ImVec2& pos = ImVec2(350, 550));
+    NodeItem* CreateSetRelativeScaleNode(const ImVec2& pos = ImVec2(350, 650));
+
     // Element Lookups
     NodeItem* FindNode(uint32_t nodeId);
     const NodeItem* FindNode(uint32_t nodeId) const;
@@ -88,7 +96,18 @@ private:
     float EvaluateFloatPin(uint32_t pinId, std::unordered_map<std::string, NodeVariable>& runtimeVars);
     int EvaluateIntPin(uint32_t pinId, std::unordered_map<std::string, NodeVariable>& runtimeVars);
     bool EvaluateBoolPin(uint32_t pinId, std::unordered_map<std::string, NodeVariable>& runtimeVars);
-    glm::vec3 EvaluateVector3Pin(uint32_t pinId, std::unordered_map<std::string, NodeVariable>& runtimeVars);
+    glm::vec3 EvaluateVector3Pin(
+        uint32_t pinId,
+        std::unordered_map<std::string, NodeVariable>& runtimeVars,
+        GameObject* owner = nullptr,
+        Scene* scene = nullptr
+    );
+    GameObject* EvaluateGameObjectPin(
+        uint32_t pinId,
+        GameObject* owner,
+        Scene* scene,
+        std::unordered_map<std::string, NodeVariable>& runtimeVars
+    );
 };
 
 } // namespace NodeBehaviour

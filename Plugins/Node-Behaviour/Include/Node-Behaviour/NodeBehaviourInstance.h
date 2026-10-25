@@ -33,6 +33,7 @@ public:
     void RefreshPropertiesFromSource() override;
     void ReloadGraph(std::shared_ptr<NodeBehaviourGraph> newGraph = nullptr);
     void SyncVariablesFromGraph();
+    void ResolveReferences(Scene& scene) override;
 
     // Variable Accessors
     std::unordered_map<std::string, NodeVariable>& GetInstanceVars() { return m_instanceVars; }

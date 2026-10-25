@@ -162,6 +162,120 @@ NodeItem* NodeBehaviourGraph::CreateVariableSetNode(const std::string& varName, 
     return &nodes.back();
 }
 
+NodeItem* NodeBehaviourGraph::CreateGetRelativeLocationNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Get Relative Location";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "GetRelativeLocation";
+    node.headerColor = ImVec4(0.08f, 0.45f, 0.55f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.outputs.emplace_back(GetNextId(), node.id, "Relative Location", NodePinKind::Output, NodePinType::Vector3);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
+NodeItem* NodeBehaviourGraph::CreateSetRelativeLocationNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Set Relative Location";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "SetRelativeLocation";
+    node.headerColor = ImVec4(0.12f, 0.45f, 0.88f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Input, NodePinType::Exec);
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.inputs.emplace_back(GetNextId(), node.id, "New Location", NodePinKind::Input, NodePinType::Vector3);
+    node.outputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Output, NodePinType::Exec);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
+NodeItem* NodeBehaviourGraph::CreateGetRelativeRotationNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Get Relative Rotation";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "GetRelativeRotation";
+    node.headerColor = ImVec4(0.08f, 0.45f, 0.55f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.outputs.emplace_back(GetNextId(), node.id, "Relative Rotation", NodePinKind::Output, NodePinType::Vector3);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
+NodeItem* NodeBehaviourGraph::CreateSetRelativeRotationNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Set Relative Rotation";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "SetRelativeRotation";
+    node.headerColor = ImVec4(0.12f, 0.45f, 0.88f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Input, NodePinType::Exec);
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.inputs.emplace_back(GetNextId(), node.id, "New Rotation", NodePinKind::Input, NodePinType::Vector3);
+    node.outputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Output, NodePinType::Exec);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
+NodeItem* NodeBehaviourGraph::CreateGetRelativeScaleNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Get Relative Scale";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "GetRelativeScale";
+    node.headerColor = ImVec4(0.08f, 0.45f, 0.55f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.outputs.emplace_back(GetNextId(), node.id, "Relative Scale", NodePinKind::Output, NodePinType::Vector3);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
+NodeItem* NodeBehaviourGraph::CreateSetRelativeScaleNode(const ImVec2& pos) {
+    NodeItem node;
+    node.id = GetNextId();
+    node.name = "Set Relative Scale";
+    node.subtitle = "Transform";
+    node.category = NodeCategory::Function;
+    node.functionName = "SetRelativeScale";
+    node.headerColor = ImVec4(0.12f, 0.45f, 0.88f, 1.0f);
+    node.position = pos;
+    node.hasInitializedPos = false;
+
+    node.inputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Input, NodePinType::Exec);
+    node.inputs.emplace_back(GetNextId(), node.id, "Target", NodePinKind::Input, NodePinType::GameObject);
+    node.inputs.emplace_back(GetNextId(), node.id, "New Scale", NodePinKind::Input, NodePinType::Vector3);
+    node.outputs.emplace_back(GetNextId(), node.id, "Exec", NodePinKind::Output, NodePinType::Exec);
+
+    nodes.push_back(node);
+    return &nodes.back();
+}
+
 NodeItem* NodeBehaviourGraph::FindNode(uint32_t nodeId) {
     for (auto& n : nodes) if (n.id == nodeId) return &n;
     return nullptr;
@@ -328,6 +442,7 @@ bool NodeBehaviourGraph::SaveToFile(const std::string& path) {
         vj["vectorValue"] = { v.vectorValue.x, v.vectorValue.y, v.vectorValue.z };
         vj["tooltip"] = v.tooltip;
         vj["isPublic"] = v.isPublic;
+        vj["targetObjectId"] = v.targetObjectId;
         varsJson.push_back(vj);
     }
     j["variables"] = varsJson;
@@ -357,6 +472,7 @@ bool NodeBehaviourGraph::SaveToFile(const std::string& path) {
             pj["boolValue"] = p.boolValue;
             pj["stringValue"] = p.stringValue;
             pj["vectorValue"] = { p.vectorValue.x, p.vectorValue.y, p.vectorValue.z };
+            pj["targetObjectId"] = p.targetObjectId;
             inPins.push_back(pj);
         }
         nj["inputs"] = inPins;
@@ -429,6 +545,7 @@ bool NodeBehaviourGraph::LoadFromFile(const std::string& path) {
             }
             v.tooltip = vj.value("tooltip", "");
             v.isPublic = vj.value("isPublic", true);
+            v.targetObjectId = vj.value("targetObjectId", -1);
             UpdateNextId(v.id);
             variables.push_back(v);
         }
@@ -447,8 +564,8 @@ bool NodeBehaviourGraph::LoadFromFile(const std::string& path) {
             }
             if (nj.contains("position") && nj["position"].is_array() && nj["position"].size() == 2) {
                 n.position = ImVec2(nj["position"][0], nj["position"][1]);
-                n.hasInitializedPos = true;
             }
+            n.hasInitializedPos = false; // Always allow canvas to position at loaded coordinates!
             n.functionName = nj.value("functionName", "");
             n.variableName = nj.value("variableName", "");
             UpdateNextId(n.id);
@@ -469,6 +586,7 @@ bool NodeBehaviourGraph::LoadFromFile(const std::string& path) {
                     if (pj.contains("vectorValue") && pj["vectorValue"].is_array() && pj["vectorValue"].size() == 3) {
                         p.vectorValue = glm::vec3(pj["vectorValue"][0], pj["vectorValue"][1], pj["vectorValue"][2]);
                     }
+                    p.targetObjectId = pj.value("targetObjectId", -1);
                     UpdateNextId(p.id);
                     n.inputs.push_back(p);
                 }
@@ -600,6 +718,66 @@ void NodeBehaviourGraph::ExecuteChain(
                         break;
                     }
                 }
+            } else if (targetNode->functionName == "SetRelativeLocation") {
+                GameObject* target = nullptr;
+                glm::vec3 newLoc(0.0f);
+                for (const auto& pin : targetNode->inputs) {
+                    if (pin.name == "Target") {
+                        target = EvaluateGameObjectPin(pin.id, owner, scene, runtimeVars);
+                    } else if (pin.name == "New Location") {
+                        newLoc = EvaluateVector3Pin(pin.id, runtimeVars, owner, scene);
+                    }
+                }
+                if (target) {
+                    target->position = newLoc;
+                    target->transform.RelativeLocation.SetValue(newLoc);
+                }
+                for (const auto& p : targetNode->outputs) {
+                    if (p.type == NodePinType::Exec) {
+                        curExecPin = p.id;
+                        break;
+                    }
+                }
+            } else if (targetNode->functionName == "SetRelativeRotation") {
+                GameObject* target = nullptr;
+                glm::vec3 newRot(0.0f);
+                for (const auto& pin : targetNode->inputs) {
+                    if (pin.name == "Target") {
+                        target = EvaluateGameObjectPin(pin.id, owner, scene, runtimeVars);
+                    } else if (pin.name == "New Rotation") {
+                        newRot = EvaluateVector3Pin(pin.id, runtimeVars, owner, scene);
+                    }
+                }
+                if (target) {
+                    target->rotation = newRot;
+                    target->transform.RelativeRotation.SetValue(newRot);
+                }
+                for (const auto& p : targetNode->outputs) {
+                    if (p.type == NodePinType::Exec) {
+                        curExecPin = p.id;
+                        break;
+                    }
+                }
+            } else if (targetNode->functionName == "SetRelativeScale") {
+                GameObject* target = nullptr;
+                glm::vec3 newScale(1.0f);
+                for (const auto& pin : targetNode->inputs) {
+                    if (pin.name == "Target") {
+                        target = EvaluateGameObjectPin(pin.id, owner, scene, runtimeVars);
+                    } else if (pin.name == "New Scale") {
+                        newScale = EvaluateVector3Pin(pin.id, runtimeVars, owner, scene);
+                    }
+                }
+                if (target) {
+                    target->scale = newScale;
+                    target->transform.RelativeScale.SetValue(newScale);
+                }
+                for (const auto& p : targetNode->outputs) {
+                    if (p.type == NodePinType::Exec) {
+                        curExecPin = p.id;
+                        break;
+                    }
+                }
             }
         } else if (targetNode->category == NodeCategory::VariableSet) {
             std::string varName = targetNode->variableName;
@@ -711,7 +889,12 @@ bool NodeBehaviourGraph::EvaluateBoolPin(uint32_t pinId, std::unordered_map<std:
     return pin->boolValue;
 }
 
-glm::vec3 NodeBehaviourGraph::EvaluateVector3Pin(uint32_t pinId, std::unordered_map<std::string, NodeVariable>& runtimeVars) {
+glm::vec3 NodeBehaviourGraph::EvaluateVector3Pin(
+    uint32_t pinId,
+    std::unordered_map<std::string, NodeVariable>& runtimeVars,
+    GameObject* owner,
+    Scene* scene)
+{
     const NodePin* pin = FindPin(pinId);
     if (!pin) return glm::vec3(0.0f);
 
@@ -720,15 +903,80 @@ glm::vec3 NodeBehaviourGraph::EvaluateVector3Pin(uint32_t pinId, std::unordered_
             const NodePin* srcPin = FindPin(l.startPinId);
             if (srcPin) {
                 const NodeItem* srcNode = FindNode(srcPin->nodeId);
-                if (srcNode && srcNode->category == NodeCategory::VariableGet) {
-                    auto it = runtimeVars.find(srcNode->variableName);
-                    if (it != runtimeVars.end()) return it->second.vectorValue;
+                if (srcNode) {
+                    if (srcNode->category == NodeCategory::VariableGet) {
+                        auto it = runtimeVars.find(srcNode->variableName);
+                        if (it != runtimeVars.end()) return it->second.vectorValue;
+                    } else if (srcNode->category == NodeCategory::Function) {
+                        if (srcNode->functionName == "GetRelativeLocation") {
+                            GameObject* target = nullptr;
+                            for (const auto& inp : srcNode->inputs) {
+                                if (inp.name == "Target") {
+                                    target = EvaluateGameObjectPin(inp.id, owner, scene, runtimeVars);
+                                    break;
+                                }
+                            }
+                            return target ? target->position : (owner ? owner->position : glm::vec3(0.0f));
+                        } else if (srcNode->functionName == "GetRelativeRotation") {
+                            GameObject* target = nullptr;
+                            for (const auto& inp : srcNode->inputs) {
+                                if (inp.name == "Target") {
+                                    target = EvaluateGameObjectPin(inp.id, owner, scene, runtimeVars);
+                                    break;
+                                }
+                            }
+                            return target ? target->rotation : (owner ? owner->rotation : glm::vec3(0.0f));
+                        } else if (srcNode->functionName == "GetRelativeScale") {
+                            GameObject* target = nullptr;
+                            for (const auto& inp : srcNode->inputs) {
+                                if (inp.name == "Target") {
+                                    target = EvaluateGameObjectPin(inp.id, owner, scene, runtimeVars);
+                                    break;
+                                }
+                            }
+                            return target ? target->scale : (owner ? owner->scale : glm::vec3(1.0f));
+                        }
+                    }
                 }
                 return srcPin->vectorValue;
             }
         }
     }
     return pin->vectorValue;
+}
+
+GameObject* NodeBehaviourGraph::EvaluateGameObjectPin(
+    uint32_t pinId,
+    GameObject* owner,
+    Scene* scene,
+    std::unordered_map<std::string, NodeVariable>& runtimeVars)
+{
+    const NodePin* pin = FindPin(pinId);
+    if (!pin) return owner;
+
+    for (const auto& l : links) {
+        if (l.endPinId == pinId) {
+            const NodePin* srcPin = FindPin(l.startPinId);
+            if (srcPin) {
+                const NodeItem* srcNode = FindNode(srcPin->nodeId);
+                if (srcNode && srcNode->category == NodeCategory::VariableGet) {
+                    auto it = runtimeVars.find(srcNode->variableName);
+                    if (it != runtimeVars.end() && it->second.targetObjectId != -1 && scene) {
+                        return scene->FindObject(it->second.targetObjectId);
+                    }
+                }
+                if (srcPin->targetObjectId != -1 && scene) {
+                    return scene->FindObject(srcPin->targetObjectId);
+                }
+            }
+        }
+    }
+
+    if (pin->targetObjectId != -1 && scene) {
+        return scene->FindObject(pin->targetObjectId);
+    }
+
+    return owner; // Defaults to Self / owner
 }
 
 } // namespace NodeBehaviour
