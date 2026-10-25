@@ -650,7 +650,7 @@ public:
     const std::vector<BehaviourProperty>& GetProperties() const { return m_properties; }
 
     // Scene object reference resolution (dev.md Section 9, 14, 16)
-    void ResolveReferences(Scene& scene);
+    virtual void ResolveReferences(Scene& scene);
 
     // Helpers to register primitive and vector properties
     void RegisterProperty(const std::string& name, bool* val, const std::string& category = "General");
