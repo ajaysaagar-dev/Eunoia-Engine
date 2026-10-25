@@ -225,6 +225,14 @@ public:
             file << "        \"lodBias\": " << obj.lodBias << ",\n";
             file << "        \"minLOD\": " << obj.minLOD << ",\n";
             file << "        \"maxLOD\": " << obj.maxLOD << ",\n";
+            file << "        \"enableSFLOD\": " << BoolStr(obj.enableSFLOD) << ",\n";
+            file << "        \"sflodMinLOD\": " << obj.sflodMinLOD << ",\n";
+            file << "        \"sflodBillboardMode\": " << obj.sflodBillboardMode << ",\n";
+            file << "        \"sflodPlaneWidth\": " << obj.sflodPlaneWidth << ",\n";
+            file << "        \"sflodPlaneHeight\": " << obj.sflodPlaneHeight << ",\n";
+            file << "        \"sflodPlaneOffset\": [" << obj.sflodPlaneOffset.x << ", " << obj.sflodPlaneOffset.y << "],\n";
+            file << "        \"sflodCustomTexture\": " << QuoteStr(obj.sflodCustomTexture) << ",\n";
+            file << "        \"sflodCutout\": " << BoolStr(obj.sflodCutout) << ",\n";
             file << "        \"opacity\": " << obj.opacity << ",\n";
             file << "        \"opacityMaskClipValue\": " << obj.opacityMaskClipValue << ",\n";
             file << "        \"normalMapYFlip\": " << BoolStr(obj.normalMapYFlip) << ",\n";
@@ -1425,6 +1433,24 @@ public:
             p = matBlock.find("\"lodBias\""); if (p != std::string::npos) obj.lodBias = ParseFloatAt(matBlock, p, 0.0f);
             p = matBlock.find("\"minLOD\""); if (p != std::string::npos) obj.minLOD = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"maxLOD\""); if (p != std::string::npos) obj.maxLOD = ParseIntAt(matBlock, p, 20);
+            p = matBlock.find("\"enableSFLOD\""); if (p != std::string::npos) obj.enableSFLOD = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"sflodMinLOD\""); if (p != std::string::npos) obj.sflodMinLOD = ParseIntAt(matBlock, p, 3);
+            p = matBlock.find("\"sflodBillboardMode\""); if (p != std::string::npos) obj.sflodBillboardMode = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"sflodPlaneWidth\""); if (p != std::string::npos) obj.sflodPlaneWidth = ParseFloatAt(matBlock, p, 0.0f);
+            p = matBlock.find("\"sflodPlaneHeight\""); if (p != std::string::npos) obj.sflodPlaneHeight = ParseFloatAt(matBlock, p, 0.0f);
+            p = matBlock.find("\"sflodPlaneOffset\"");
+            if (p != std::string::npos) {
+                size_t lb = matBlock.find('[', p);
+                size_t rb = matBlock.find(']', lb);
+                if (lb != std::string::npos && rb != std::string::npos) {
+                    std::string arr = matBlock.substr(lb + 1, rb - lb - 1);
+                    std::stringstream ss(arr);
+                    char comma;
+                    ss >> obj.sflodPlaneOffset.x >> comma >> obj.sflodPlaneOffset.y;
+                }
+            }
+            p = matBlock.find("\"sflodCustomTexture\""); if (p != std::string::npos) obj.sflodCustomTexture = ParseStringAt(matBlock, p, "");
+            p = matBlock.find("\"sflodCutout\""); if (p != std::string::npos) obj.sflodCutout = ParseBoolAt(matBlock, p, true);
             p = matBlock.find("\"opacity\""); if (p != std::string::npos) obj.opacity = ParseFloatAt(matBlock, p, 1.0f);
             p = matBlock.find("\"opacityMaskClipValue\""); if (p != std::string::npos) obj.opacityMaskClipValue = ParseFloatAt(matBlock, p, 0.333f);
             p = matBlock.find("\"normalMapYFlip\""); if (p != std::string::npos) obj.normalMapYFlip = ParseBoolAt(matBlock, p, false);

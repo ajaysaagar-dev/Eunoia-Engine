@@ -693,6 +693,15 @@ struct GameObject {
     int minLOD = 0;                  // Minimum LOD clamp (0 to 20)
     int maxLOD = 20;                 // Maximum LOD clamp (0 to 20)
     int currentLOD = 0;              // Active runtime LOD selected for rendering (telemetry/debug)
+    // SFLOD (Single Face LOD / Imposter Cards System)
+    bool enableSFLOD = false;        // Master toggle for SFLOD
+    int sflodMinLOD = 3;             // Trigger threshold: LOD >= sflodMinLOD renders as single-face card
+    int sflodBillboardMode = 0;      // 0 = Camera-facing (spherical), 1 = Locked Y-axis (axial/Nacho Time), 2 = Fixed
+    float sflodPlaneWidth = 0.0f;    // 0 = Auto-calculate from mesh AABB
+    float sflodPlaneHeight = 0.0f;   // 0 = Auto-calculate from mesh AABB
+    glm::vec2 sflodPlaneOffset{0.0f, 0.0f}; // Fine-tuning card center offset
+    std::string sflodCustomTexture = "";    // Optional custom imposter texture; empty uses baseColorTexture
+    bool sflodCutout = true;         // Alpha cutout masking for foliage / cards
     glm::vec2 uvScale{1.0f, 1.0f};
     bool normalMapYFlip = false;     // Invert normal green/Y channel (OpenGL/Blender convention)
     int metallicChannel = 0;         // 0=R, 1=G, 2=B, 3=A
@@ -962,6 +971,14 @@ struct GameObject {
         minLOD = other.minLOD;
         maxLOD = other.maxLOD;
         currentLOD = other.currentLOD;
+        enableSFLOD = other.enableSFLOD;
+        sflodMinLOD = other.sflodMinLOD;
+        sflodBillboardMode = other.sflodBillboardMode;
+        sflodPlaneWidth = other.sflodPlaneWidth;
+        sflodPlaneHeight = other.sflodPlaneHeight;
+        sflodPlaneOffset = other.sflodPlaneOffset;
+        sflodCustomTexture = other.sflodCustomTexture;
+        sflodCutout = other.sflodCutout;
         uvScale = other.uvScale;
         normalMapYFlip = other.normalMapYFlip;
         metallicChannel = other.metallicChannel;
@@ -1041,6 +1058,14 @@ struct GameObject {
         minLOD = other.minLOD;
         maxLOD = other.maxLOD;
         currentLOD = other.currentLOD;
+        enableSFLOD = other.enableSFLOD;
+        sflodMinLOD = other.sflodMinLOD;
+        sflodBillboardMode = other.sflodBillboardMode;
+        sflodPlaneWidth = other.sflodPlaneWidth;
+        sflodPlaneHeight = other.sflodPlaneHeight;
+        sflodPlaneOffset = other.sflodPlaneOffset;
+        sflodCustomTexture = other.sflodCustomTexture;
+        sflodCutout = other.sflodCutout;
         uvScale = other.uvScale;
         normalMapYFlip = other.normalMapYFlip;
         metallicChannel = other.metallicChannel;

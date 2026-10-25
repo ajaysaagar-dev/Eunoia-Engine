@@ -17,6 +17,7 @@
 #include <EngineScene/BehaviourRegistry.h>
 #include <EnginePlatform/InputSystem.h>
 #include <Collisions/CollisionSystem.h>
+#include <SFLOD/SFLODSystem.h>
 #include <Physics/PhysicsSystem.h>
 #include <EngineCore/JobSystem.h>
 #ifdef GetClassName
@@ -1817,6 +1818,7 @@ struct RenderBatch {
         outVertices.clear();
         outIndices.clear();
         outBatches.clear();
+        SFLOD::SFLODSystem::Get().ResetFrameStats();
 
         // 1. Optional Grid
         if (showGrid) {
@@ -2042,6 +2044,17 @@ struct RenderBatch {
             const auto& obj = *entry.obj;
             const glm::mat4& model = entry.model;
             float distSq = entry.distSq;
+
+            // SFLOD (Single Face LOD / Imposter Cards) replacement
+            if (obj.enableSFLOD && !obj.mesh.vertices.empty() && 
+                ((int)entry.selectedLOD >= obj.sflodMinLOD || (obj.forcedLOD >= obj.sflodMinLOD))) 
+            {
+                SFLOD::SFLODSystem::Get().AppendImposterCard(
+                    obj, model, cameraPos, entry.selectedLOD, distSq,
+                    entry.isVisible, entry.isShadowVisible,
+                    outVertices, outIndices, outBatches);
+                continue;
+            }
 
             glm::mat3 m3(model);
             glm::mat3 normalMatrix(1.0f);
