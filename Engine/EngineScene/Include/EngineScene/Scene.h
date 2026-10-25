@@ -1852,6 +1852,7 @@ struct RenderBatch {
             bool isTrans = false;
             bool isValid = false;
             uint32_t selectedLOD = 0;
+            int sflodLOD = 0;
         };
 
         // Extract 6 frustum planes (Gribb & Hartmann) if viewProj is available
@@ -1944,6 +1945,46 @@ struct RenderBatch {
             return (uint32_t)selectedLod;
         };
 
+        // SFLOD Continuous 20-Level Screen-Space Coverage LOD Evaluation
+        // Evaluates dynamically across 20 virtual LOD levels, completely independent of mesh LOD!
+        auto ComputeSFLOD = [](const GameObject& obj, const glm::mat4& model, const glm::mat4* viewProj) -> int {
+            if (!obj.enableSFLOD) return 0;
+            if (obj.forcedLOD >= 0) {
+                return glm::clamp(obj.forcedLOD, 0, 20);
+            }
+            if (!viewProj) return 0;
+
+            const glm::vec3& bMin = obj.mesh.aabbValid ? obj.mesh.aabbMin : glm::vec3(-0.5f);
+            const glm::vec3& bMax = obj.mesh.aabbValid ? obj.mesh.aabbMax : glm::vec3(0.5f);
+            glm::vec3 corners[8] = {
+                glm::vec3(bMin.x, bMin.y, bMin.z), glm::vec3(bMax.x, bMin.y, bMin.z),
+                glm::vec3(bMin.x, bMax.y, bMin.z), glm::vec3(bMax.x, bMax.y, bMin.z),
+                glm::vec3(bMin.x, bMin.y, bMax.z), glm::vec3(bMax.x, bMin.y, bMax.z),
+                glm::vec3(bMin.x, bMax.y, bMax.z), glm::vec3(bMax.x, bMax.y, bMax.z)
+            };
+
+            glm::vec2 screenMin(1e7f), screenMax(-1e7f);
+            const glm::mat4 mvp = (*viewProj) * model;
+            for (int i = 0; i < 8; ++i) {
+                glm::vec4 clip = mvp * glm::vec4(corners[i], 1.0f);
+                float w = std::max(clip.w, 1e-4f);
+                glm::vec2 ndc = glm::vec2(clip.x / w, clip.y / w);
+                glm::vec2 uv = ndc * glm::vec2(0.5f, -0.5f) + glm::vec2(0.5f, 0.5f);
+                uv = glm::clamp(uv, glm::vec2(-1.0f), glm::vec2(2.0f));
+                screenMin = glm::min(screenMin, uv);
+                screenMax = glm::max(screenMax, uv);
+            }
+
+            float maxdim = std::max(screenMax.x - screenMin.x, screenMax.y - screenMin.y);
+            maxdim = std::max(maxdim, 1e-5f);
+
+            // Continuous 20 LOD levels: log2(1.0 / maxdim) produces 0 at full screen, scaling smoothly up to 20
+            float coverageLod = (std::log2(1.0f / maxdim) + obj.sflodLODBias) * (20.0f / 6.0f);
+            int selectedLod = (int)std::floor(coverageLod);
+            selectedLod = glm::clamp(selectedLod, 0, obj.sflodMaxLOD);
+            return selectedLod;
+        };
+
         std::vector<CandidateEntry> opaqueEntries;
         std::vector<CandidateEntry> transparentEntries;
         const size_t numObjects = objects.size();
@@ -1972,6 +2013,8 @@ struct RenderBatch {
 
                 uint32_t lod = ComputeObjectLOD(obj, model, pViewProj);
                 obj.currentLOD = (int)lod;
+                int sflodLod = ComputeSFLOD(obj, model, pViewProj);
+                obj.sflodCurrentLOD = sflodLod;
 
                 CandidateEntry& c = candidateList[i];
                 c.obj = &obj;
@@ -1980,6 +2023,7 @@ struct RenderBatch {
                 c.isVisible = isBatchVisible;
                 c.isShadowVisible = true;
                 c.selectedLOD = lod;
+                c.sflodLOD = sflodLod;
                 c.isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
                 c.isValid = true;
             });
@@ -2004,6 +2048,8 @@ struct RenderBatch {
 
                 uint32_t lod = ComputeObjectLOD(obj, model, pViewProj);
                 obj.currentLOD = (int)lod;
+                int sflodLod = ComputeSFLOD(obj, model, pViewProj);
+                obj.sflodCurrentLOD = sflodLod;
 
                 CandidateEntry& c = candidateList[i];
                 c.obj = &obj;
@@ -2012,6 +2058,7 @@ struct RenderBatch {
                 c.isVisible = isBatchVisible;
                 c.isShadowVisible = true;
                 c.selectedLOD = lod;
+                c.sflodLOD = sflodLod;
                 c.isTrans = (obj.blendMode != 0) || (obj.opacity < 0.999f);
                 c.isValid = true;
             }
@@ -2046,16 +2093,17 @@ struct RenderBatch {
             float distSq = entry.distSq;
 
             // SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
+            // Works independently of whether mesh LOD is enabled or disabled!
             bool distanceTrigger = (obj.sflodDistanceThreshold > 0.0f) && 
                 (distSq >= obj.sflodDistanceThreshold * obj.sflodDistanceThreshold);
-            bool lodTrigger = ((int)entry.selectedLOD >= obj.sflodMinLOD);
+            bool lodTrigger = (entry.sflodLOD >= obj.sflodMinLOD);
             bool previewTrigger = (obj.forcedLOD >= obj.sflodMinLOD);
 
             if (obj.enableSFLOD && !obj.mesh.vertices.empty() && 
                 (distanceTrigger || lodTrigger || previewTrigger)) 
             {
                 SFLOD::SFLODSystem::Get().AppendImposterCard(
-                    obj, model, cameraPos, entry.selectedLOD, distSq,
+                    obj, model, cameraPos, (uint32_t)entry.sflodLOD, distSq,
                     entry.isVisible, entry.isShadowVisible,
                     outVertices, outIndices, outBatches);
                 continue;

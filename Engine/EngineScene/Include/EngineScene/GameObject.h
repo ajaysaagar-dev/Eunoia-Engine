@@ -695,7 +695,10 @@ struct GameObject {
     int currentLOD = 0;              // Active runtime LOD selected for rendering (telemetry/debug)
     // SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
     bool enableSFLOD = false;        // Master toggle for SFLOD
-    int sflodMinLOD = 3;             // Trigger threshold: LOD >= sflodMinLOD renders as single-face card
+    int sflodMinLOD = 3;             // Trigger threshold: SFLOD LOD >= sflodMinLOD renders as imposter card (0 to 20)
+    int sflodMaxLOD = 20;            // SFLOD maximum LOD clamp (0 to 20)
+    float sflodLODBias = 0.0f;       // SFLOD continuous screen-space LOD bias (-20.0f to +20.0f, independent of mesh LOD)
+    int sflodCurrentLOD = 0;         // Runtime calculated SFLOD LOD level (0 to 20, works even if mesh LOD is disabled)
     int sflodBillboardMode = 0;      // 0 = Camera-facing (spherical), 1 = Locked Y-axis (axial/Nacho Time), 2 = Fixed
     int sflodGeometryMode = 0;       // 0 = Single Plane (2 Tris), 1 = Tri-Planar Nacho Mode (6 Tris)
     int sflodShaderComplexity = 0;   // 0 = Low (Diffuse+Alpha), 1 = Medium (+Normal), 2 = High (+RMA)
@@ -977,6 +980,9 @@ struct GameObject {
         currentLOD = other.currentLOD;
         enableSFLOD = other.enableSFLOD;
         sflodMinLOD = other.sflodMinLOD;
+        sflodMaxLOD = other.sflodMaxLOD;
+        sflodLODBias = other.sflodLODBias;
+        sflodCurrentLOD = other.sflodCurrentLOD;
         sflodBillboardMode = other.sflodBillboardMode;
         sflodGeometryMode = other.sflodGeometryMode;
         sflodShaderComplexity = other.sflodShaderComplexity;
@@ -1068,6 +1074,9 @@ struct GameObject {
         currentLOD = other.currentLOD;
         enableSFLOD = other.enableSFLOD;
         sflodMinLOD = other.sflodMinLOD;
+        sflodMaxLOD = other.sflodMaxLOD;
+        sflodLODBias = other.sflodLODBias;
+        sflodCurrentLOD = other.sflodCurrentLOD;
         sflodBillboardMode = other.sflodBillboardMode;
         sflodGeometryMode = other.sflodGeometryMode;
         sflodShaderComplexity = other.sflodShaderComplexity;

@@ -227,6 +227,8 @@ public:
             file << "        \"maxLOD\": " << obj.maxLOD << ",\n";
             file << "        \"enableSFLOD\": " << BoolStr(obj.enableSFLOD) << ",\n";
             file << "        \"sflodMinLOD\": " << obj.sflodMinLOD << ",\n";
+            file << "        \"sflodMaxLOD\": " << obj.sflodMaxLOD << ",\n";
+            file << "        \"sflodLODBias\": " << obj.sflodLODBias << ",\n";
             file << "        \"sflodBillboardMode\": " << obj.sflodBillboardMode << ",\n";
             file << "        \"sflodGeometryMode\": " << obj.sflodGeometryMode << ",\n";
             file << "        \"sflodShaderComplexity\": " << obj.sflodShaderComplexity << ",\n";
@@ -1439,6 +1441,8 @@ public:
             p = matBlock.find("\"maxLOD\""); if (p != std::string::npos) obj.maxLOD = ParseIntAt(matBlock, p, 20);
             p = matBlock.find("\"enableSFLOD\""); if (p != std::string::npos) obj.enableSFLOD = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"sflodMinLOD\""); if (p != std::string::npos) obj.sflodMinLOD = ParseIntAt(matBlock, p, 3);
+            p = matBlock.find("\"sflodMaxLOD\""); if (p != std::string::npos) obj.sflodMaxLOD = ParseIntAt(matBlock, p, 20);
+            p = matBlock.find("\"sflodLODBias\""); if (p != std::string::npos) obj.sflodLODBias = ParseFloatAt(matBlock, p, 0.0f);
             p = matBlock.find("\"sflodBillboardMode\""); if (p != std::string::npos) obj.sflodBillboardMode = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"sflodGeometryMode\""); if (p != std::string::npos) obj.sflodGeometryMode = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"sflodShaderComplexity\""); if (p != std::string::npos) obj.sflodShaderComplexity = ParseIntAt(matBlock, p, 0);
