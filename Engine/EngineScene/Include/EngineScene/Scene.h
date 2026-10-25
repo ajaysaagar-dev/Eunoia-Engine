@@ -2117,10 +2117,6 @@ struct RenderBatch {
                 b0.specular = baseLayer ? baseLayer->specular : obj.specular;
                 b0.emissiveColor = obj.emissiveColor;
                 b0.emissiveIntensity = obj.emissiveIntensity;
-                if (obj.id == selectedId && !isPlayMode) {
-                    b0.emissiveColor = glm::max(b0.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
-                    b0.emissiveIntensity = std::max(b0.emissiveIntensity, 1.5f);
-                }
                 b0.opacity = obj.opacity;
                 b0.opacityMaskClipValue = obj.opacityMaskClipValue;
                 b0.blendMode = 0; // Opaque base
@@ -2233,10 +2229,6 @@ struct RenderBatch {
                         ob.specular = layer.specular;
                         ob.emissiveColor = obj.emissiveColor;
                         ob.emissiveIntensity = obj.emissiveIntensity;
-                        if (obj.id == selectedId && !isPlayMode) {
-                            ob.emissiveColor = glm::max(ob.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
-                            ob.emissiveIntensity = std::max(ob.emissiveIntensity, 1.5f);
-                        }
                         ob.opacity = 1.0f;
                         ob.opacityMaskClipValue = 0.333f;
                         ob.blendMode = 2; // Translucent hardware alpha blend
@@ -2281,10 +2273,6 @@ struct RenderBatch {
                 b.specular = obj.specular;
                 b.emissiveColor = obj.emissiveColor;
                 b.emissiveIntensity = obj.emissiveIntensity;
-                if (obj.id == selectedId && !isPlayMode) {
-                    b.emissiveColor = glm::max(b.emissiveColor, glm::vec3(0.40f, 0.25f, 0.06f));
-                    b.emissiveIntensity = std::max(b.emissiveIntensity, 1.5f);
-                }
                 b.opacity = obj.opacity;
                 b.opacityMaskClipValue = obj.opacityMaskClipValue;
                 b.blendMode = obj.blendMode;
