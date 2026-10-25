@@ -2295,8 +2295,36 @@ struct RenderBatch {
             }
         }
 
-        // 3. Highlight Selected Object: Clean surface emissive highlight (Only in Editor Mode)
-        // Highlighted on mesh surfaces directly without drawing noisy edge lines across the mesh geometry.
+        // 3. Highlight Selected Object / Collider (Only in Editor Mode when clicked in viewport for testing)
+        if (selectedId != -1 && !isPlayMode && !showAllCollisions) {
+            GameObject* selObj = FindObject(selectedId);
+            if (selObj && (selObj->visible || !selObj->modifiers.empty()) &&
+                !selObj->isCamera && !IsCameraPrimitive(selObj->type) &&
+                !selObj->isLight && !IsLightPrimitive(selObj->type) &&
+                !selObj->isUserInterface && selObj->type != PrimitiveType::UserInterface)
+            {
+                if (selObj->modifiers.empty()) {
+                    Collisions::CollisionSystem::Get().SetupDefaultModifiers(*selObj);
+                }
+                if (!selObj->modifiers.empty()) {
+                    for (auto& mod : selObj->modifiers) {
+                        mod.showWireframe = true;
+                    }
+                    uint32_t colStart = (uint32_t)outIndices.size();
+                    Collisions::CollisionSystem::Get().AppendCollisionWireframe(outVertices, outIndices, *selObj, cameraPos, GetWorldMatrix(*selObj));
+                    uint32_t colCount = (uint32_t)outIndices.size() - colStart;
+                    if (colCount > 0) {
+                        RenderBatch b;
+                        b.startIndex = colStart;
+                        b.indexCount = colCount;
+                        b.isUnlit = true;
+                        b.twoSided = true;
+                        b.baseColor = {1.0f, 1.0f, 1.0f};
+                        outBatches.push_back(b);
+                    }
+                }
+            }
+        }
 
         // 3b. Visualize All Scene Collisions (when selected in Viewport Visualize menu)
         if (showAllCollisions) {
