@@ -1,4 +1,4 @@
-#include <Editor/EngineUI.h>
+﻿#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
@@ -8172,41 +8172,112 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
-        // 4.6 SFLOD (Single Face LOD / Imposter Cards System)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("SFLOD (Single Face LOD)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        // 4.6 SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("SFLOD (Single Face LOD - Nacho Time!)", ImGuiTreeNodeFlags_DefaultOpen)) {
             bool sflodEnabled = obj->enableSFLOD;
             if (ImGui::Checkbox("Enable SFLOD", &sflodEnabled)) {
                 obj->enableSFLOD = sflodEnabled;
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("When enabled, this object automatically transitions to an ultra-efficient\nsingle-face imposter card (2 triangles) once the specified LOD level is reached.");
+                ImGui::SetTooltip("When enabled, this object automatically transitions to an ultra-efficient\nimposter card proxy (2 to 6 triangles) with dynamic orthogonal atlas sampling.");
             }
 
             if (!obj->enableSFLOD) {
                 ImGui::BeginDisabled(true);
             }
 
+            // 1-Click Nacho Time Generation Button (Prominent)
+            std::filesystem::path contentDir = contentRootPath;
+            if (contentDir.empty() && !activeProjectRoot.empty()) {
+                contentDir = activeProjectRoot / "Content";
+            }
+            if (contentDir.empty()) {
+                contentDir = "Projects/GameTest/Content";
+            }
+
+            glm::mat4 modelMat = scene.GetWorldMatrix(*obj);
+            glm::vec3 camEye = currentCamera ? currentCamera->GetPosition() : glm::vec3(0.0f, 2.0f, 5.0f);
+
+            static int s_imposterResolution = 512;
+
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.18f, 0.45f, 0.75f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.90f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.35f, 0.65f, 1.0f));
+            if (ImGui::Button("Generate Imposter Cards (Nacho Time!)", ImVec2(ImGui::GetContentRegionAvail().x, 32.0f))) {
+                std::string bakedAtlas = SFLOD::SFLODSystem::Get().BakeNachoTimeAtlas(
+                    *obj, modelMat, contentDir, s_imposterResolution, 
+                    static_cast<SFLOD::SFLODShaderComplexity>(obj->sflodShaderComplexity));
+                if (!bakedAtlas.empty()) {
+                    AddLog("LogSFLOD", "Successfully baked 6-directional Nacho Time atlas: " + bakedAtlas, 0);
+                }
+            }
+            ImGui::PopStyleColor(3);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("1-Click Generator: Captures 6 orthogonal shots (+X, -X, +Y, -Y, +Z, -Z) into a unified\n3x2 texture atlas in Content/Imposters/ and sets up dynamic view vector tracking.");
+            }
+
+            // Geometry Mode (Single Plane vs Tri-Planar Nacho Mode)
+            const char* geomModes[] = {
+                "Single Plane (2 Tris - Parallax View Vector)",
+                "Tri-Planar Nacho Mode (6 Tris - 3 Intersecting Planes)"
+            };
+            int curGeomMode = glm::clamp(obj->sflodGeometryMode, 0, 1);
+            if (ImGui::Combo("Geometry Mode", &curGeomMode, geomModes, 2)) {
+                obj->sflodGeometryMode = curGeomMode;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Imposter Card Geometry Mode:\n"
+                                  "- Single Plane: 1 quad (2 triangles) that dynamically samples dominant atlas tile based on view vector.\n"
+                                  "- Tri-Planar Nacho Mode: 3 physical intersecting orthogonal planes (6 triangles) providing full 360 volume,\n"
+                                  "  real self-shadowing, and zero billboard rotation popping.");
+            }
+
+            // Shader Complexity
+            const char* complexityOptions[] = {
+                "Low (Diffuse + Alpha Cutout)",
+                "Medium (+Normal Atlas)",
+                "High (+Normal + RMA Atlas)"
+            };
+            int curComplexity = glm::clamp(obj->sflodShaderComplexity, 0, 2);
+            if (ImGui::Combo("Shader Complexity", &curComplexity, complexityOptions, 3)) {
+                obj->sflodShaderComplexity = curComplexity;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Material channel complexity:\n- Low: 1 Atlas (Base Color + Alpha Mask)\n- Medium: 2 Atlases (+Normal Map Atlas)\n- High: 3 Atlases (+Roughness, Metallic, AO Atlas)");
+            }
+
+            // Dynamic LOD Swapping: Distance Threshold (imp_threshold)
+            ImGui::DragFloat("Distance Threshold (m)", &obj->sflodDistanceThreshold, 0.5f, 0.0f, 500.0f, "%.1f m");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Nacho Time Distance Threshold (imp_threshold) in meters:\n"
+                                  "When camera distance is >= this threshold, the 3D mesh is automatically swapped with the imposter proxy.\n"
+                                  "(Set to 0 to disable distance trigger and rely solely on LOD level).");
+            }
+
             // LOD Trigger Threshold
             ImGui::SliderInt("Trigger LOD Level", &obj->sflodMinLOD, 1, 20);
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("The LOD level threshold (>=) at which the 3D mesh is replaced with the Imposter Card.\nExample: 3 means LOD 3, 4, 5... will render as a 1-face card.");
+                ImGui::SetTooltip("The LOD level threshold (>=) at which the 3D mesh is replaced with the Imposter Card.\nExample: 3 means LOD 3, 4, 5... will render as an imposter.");
             }
 
-            // Billboard Mode
-            const char* bbModes[] = {
-                "Camera Facing (Spherical)",
-                "Locked Y-Axis (Axial / Nacho Time)",
-                "Fixed Plane (Object Local)"
-            };
-            int curBbMode = glm::clamp(obj->sflodBillboardMode, 0, 2);
-            if (ImGui::Combo("Billboard Mode", &curBbMode, bbModes, 3)) {
-                obj->sflodBillboardMode = curBbMode;
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Orientation mode of the single-plane card:\n"
-                                  "- Camera Facing (Spherical): rotates in all directions towards camera.\n"
-                                  "- Locked Y-Axis (Axial / Nacho Time): classic tree/foliage mode that stays vertically upright.\n"
-                                  "- Fixed Plane: fixed local orientation of the object.");
+            // Billboard Mode (only relevant for Single Plane)
+            if (obj->sflodGeometryMode == 0) {
+                const char* bbModes[] = {
+                    "Camera Facing (Spherical)",
+                    "Locked Y-Axis (Axial / Nacho Time)",
+                    "Fixed Plane (Object Local)"
+                };
+                int curBbMode = glm::clamp(obj->sflodBillboardMode, 0, 2);
+                if (ImGui::Combo("Billboard Mode", &curBbMode, bbModes, 3)) {
+                    obj->sflodBillboardMode = curBbMode;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Orientation mode of the single-plane card:\n"
+                                      "- Camera Facing (Spherical): rotates in all directions towards camera.\n"
+                                      "- Locked Y-Axis (Axial / Nacho Time): classic foliage mode that stays vertically upright.\n"
+                                      "- Fixed Plane: fixed local orientation of the object.");
+                }
             }
 
             // Card Dimensions
@@ -8251,81 +8322,82 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::SetTooltip("Uses hardware alpha masking (blendMode = Masked) so transparent card regions are clipped out.");
             }
 
-            // Custom Texture Path
+            // Atlas Status & Custom Texture Path
+            if (obj->sflodIsAtlas || obj->sflodCustomTexture.find("_Atlas") != std::string::npos) {
+                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "[6-WAY ORTHOGONAL ATLAS ACTIVE]");
+            }
             char texBuf[256];
             memset(texBuf, 0, sizeof(texBuf));
             strncpy_s(texBuf, obj->sflodCustomTexture.c_str(), sizeof(texBuf) - 1);
-            if (ImGui::InputText("Custom Card Texture", texBuf, sizeof(texBuf))) {
+            if (ImGui::InputText("Card Texture", texBuf, sizeof(texBuf))) {
                 obj->sflodCustomTexture = texBuf;
+                obj->sflodIsAtlas = (obj->sflodCustomTexture.find("_Atlas") != std::string::npos);
             }
             if (obj->sflodCustomTexture.empty()) {
-                ImGui::TextDisabled("  (Empty = Click 'Capture & Bake' below or uses base material)");
+                ImGui::TextDisabled("  (Empty = Click 'Generate Imposter Cards' above or uses base material)");
             }
 
-            // Imposter Mathematical Baking Section
-            ImGui::Spacing();
-            ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "IMPOSTER PROJECTION BAKING");
-            ImGui::Separator();
-
-            static int s_imposterResolution = 512;
-            const char* resOptions[] = { "256 x 256", "512 x 512 (Recommended)", "1024 x 1024" };
-            int curResOpt = (s_imposterResolution == 256) ? 0 : (s_imposterResolution == 1024 ? 2 : 1);
-            if (ImGui::Combo("Bake Resolution", &curResOpt, resOptions, 3)) {
-                if (curResOpt == 0) s_imposterResolution = 256;
-                else if (curResOpt == 2) s_imposterResolution = 1024;
-                else s_imposterResolution = 512;
-            }
-
-            std::filesystem::path contentDir = contentRootPath;
-            if (contentDir.empty() && !activeProjectRoot.empty()) {
-                contentDir = activeProjectRoot / "Content";
-            }
-            if (contentDir.empty()) {
-                contentDir = "Projects/GameTest/Content";
-            }
-
-            glm::mat4 modelMat = scene.GetWorldMatrix(*obj);
-            glm::vec3 camEye = currentCamera ? currentCamera->GetPosition() : glm::vec3(0.0f, 2.0f, 5.0f);
-
-            if (ImGui::Button("Capture & Bake Current View Texture", ImVec2(ImGui::GetContentRegionAvail().x, 28.0f))) {
-                std::string bakedPath = SFLOD::SFLODSystem::Get().BakeAndSaveImposterTexture(
-                    *obj, modelMat, camEye, contentDir, -1, s_imposterResolution);
-                if (!bakedPath.empty()) {
-                    AddLog("LogSFLOD", "Successfully baked view-dependent imposter texture: " + bakedPath, 0);
+            // Advanced Baking Options
+            if (ImGui::TreeNode("Advanced Projection Baking Options")) {
+                const char* resOptions[] = { "256 x 256", "512 x 512 (Recommended)", "1024 x 1024" };
+                int curResOpt = (s_imposterResolution == 256) ? 0 : (s_imposterResolution == 1024 ? 2 : 1);
+                if (ImGui::Combo("Atlas Tile Resolution", &curResOpt, resOptions, 3)) {
+                    if (curResOpt == 0) s_imposterResolution = 256;
+                    else if (curResOpt == 2) s_imposterResolution = 1024;
+                    else s_imposterResolution = 512;
                 }
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Mathematically projects the 3D model from the current camera view angle onto an RGBA card map with transparency for holes and cutouts.");
-            }
 
-            if (ImGui::Button("Bake 8-Directional View Atlas", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
-                bool ok = SFLOD::SFLODSystem::Get().BakeAll8Angles(*obj, modelMat, contentDir, s_imposterResolution);
-                if (ok) {
-                    AddLog("LogSFLOD", "Successfully baked 8-directional imposter series into Content/Imposters/", 0);
+                if (ImGui::Button("Capture Single View Texture", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                    std::string bakedPath = SFLOD::SFLODSystem::Get().BakeAndSaveImposterTexture(
+                        *obj, modelMat, camEye, contentDir, -1, s_imposterResolution);
+                    if (!bakedPath.empty()) {
+                        AddLog("LogSFLOD", "Successfully baked view-dependent imposter texture: " + bakedPath, 0);
+                    }
                 }
-            }
-            if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Bakes 8 azimuthal viewing angles (0, 45, 90, 135, 180, 225, 270, 315 deg) around the object so the single card updates as you circle around it.");
+
+                if (ImGui::Button("Bake 8-Directional View Atlas", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                    bool ok = SFLOD::SFLODSystem::Get().BakeAll8Angles(*obj, modelMat, contentDir, s_imposterResolution);
+                    if (ok) {
+                        AddLog("LogSFLOD", "Successfully baked 8-directional imposter series into Content/Imposters/", 0);
+                    }
+                }
+                ImGui::TreePop();
             }
 
             // Real-Time Telemetry & Status
             ImGui::Spacing();
             ImGui::Separator();
-            bool isCardActive = SFLOD::SFLODSystem::Get().IsSFLODActive(*obj, obj->currentLOD);
+            glm::vec3 worldPos = glm::vec3(modelMat[3]);
+            float camDist = glm::length(camEye - worldPos);
+            bool distTriggered = (obj->sflodDistanceThreshold > 0.0f && camDist >= obj->sflodDistanceThreshold);
+            bool lodTriggered = (obj->currentLOD >= obj->sflodMinLOD);
+            bool previewTriggered = (obj->forcedLOD >= obj->sflodMinLOD);
+            bool isCardActive = obj->enableSFLOD && (distTriggered || lodTriggered || previewTriggered);
+
             uint32_t meshTris = (uint32_t)obj->mesh.indices.size() / 3;
-            float reduction = meshTris > 2 ? ((1.0f - 2.0f / (float)meshTris) * 100.0f) : 0.0f;
+            uint32_t cardTris = (obj->sflodGeometryMode == 1) ? 6 : 2;
+            float reduction = meshTris > cardTris ? ((1.0f - (float)cardTris / (float)meshTris) * 100.0f) : 0.0f;
 
             if (isCardActive) {
-                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ACTIVE: Rendering 1-Face Imposter Card]");
-                ImGui::Text("Saved Triangles: %u Tris (Card: 2 Tris, -%.1f%%)", meshTris > 2 ? meshTris - 2 : 0, reduction);
+                const char* geomName = (obj->sflodGeometryMode == 1) ? "Tri-Planar Nacho Mode" : "1-Face Parallax Card";
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ACTIVE: %s (%u Tris)]", geomName, cardTris);
+                ImGui::Text("Saved Triangles: %u Tris (-%.2f%% reduction)", meshTris > cardTris ? meshTris - cardTris : 0, reduction);
+                if (distTriggered) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Triggered by Distance: %.1fm >= %.1fm", camDist, obj->sflodDistanceThreshold);
+                } else if (lodTriggered) {
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Triggered by LOD: %d >= %d", obj->currentLOD, obj->sflodMinLOD);
+                } else if (previewTriggered) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Triggered by Viewport Preview Lock");
+                }
             } else {
-                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[INACTIVE: Rendering 3D Mesh]");
-                ImGui::TextDisabled("Object is currently below SFLOD trigger threshold (LOD %d < %d)", obj->currentLOD, obj->sflodMinLOD);
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[INACTIVE: Rendering 3D Mesh (%u Tris)]", meshTris);
+                ImGui::TextDisabled("Camera Distance: %.1fm (Threshold: %.1fm) | LOD: %d (Threshold: %d)",
+                    camDist, obj->sflodDistanceThreshold, obj->currentLOD, obj->sflodMinLOD);
             }
 
             // Quick Preview Button
             bool isPreviewing = (obj->forcedLOD == obj->sflodMinLOD);
-            if (ImGui::Button(isPreviewing ? "Exit Imposter Preview" : "Preview Imposter Card in Viewport", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+            if (ImGui::Button(isPreviewing ? "Exit Imposter Preview" : "Preview Imposter in Viewport", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                 if (isPreviewing) {
                     obj->forcedLOD = -1;
                 } else {
@@ -8333,7 +8405,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                 }
             }
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Temporarily locks this object to its SFLOD level so you can preview the card quad directly in the viewport.");
+                ImGui::SetTooltip("Temporarily locks this object to its SFLOD proxy so you can preview it directly in the viewport.");
             }
 
             if (!obj->enableSFLOD) {
