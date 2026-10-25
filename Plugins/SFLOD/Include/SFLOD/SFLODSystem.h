@@ -96,6 +96,18 @@ public:
     // Returns the UV bounds (minUV, maxUV) for a given orthogonal face in the 3x2 atlas grid
     static SFLODAtlasTileRect GetAtlasTileUV(SFLODOrthogonalFace face);
 
+    // Sanitizes object name into a safe file path identifier
+    static std::string CleanFilename(const std::string& name) {
+        std::string clean = name;
+        for (char& c : clean) {
+            if (!isalnum((unsigned char)c) && c != '_' && c != '-') {
+                c = '_';
+            }
+        }
+        if (clean.empty()) clean = "Object";
+        return clean;
+    }
+
     // Calculates the discrete azimuthal view angle index (0..numAngles-1)
     int GetViewAngleIndex(
         const GameObject& obj,
@@ -122,8 +134,30 @@ public:
         uint32_t vOffset = static_cast<uint32_t>(outVertices.size());
         uint32_t iStart = static_cast<uint32_t>(outIndices.size());
 
-        // Check if object is using 6-directional Nacho Time atlas
-        bool isAtlas = obj.sflodIsAtlas || (obj.sflodCustomTexture.find("_Atlas") != std::string::npos);
+        // 1. Determine active imposter texture & 6-directional Nacho Time atlas status
+        std::string activeTexture = obj.sflodCustomTexture;
+        bool isAtlas = obj.sflodIsAtlas || (activeTexture.find("_Atlas") != std::string::npos);
+
+        // Auto-discover baked atlas if custom texture is empty or not yet marked as atlas
+        if (!isAtlas || activeTexture.empty()) {
+            std::string safeName = CleanFilename(obj.name);
+            std::vector<std::string> candidateAtlasPaths = {
+                activeTexture,
+                "Content/Imposters/SFLOD_" + safeName + "_Atlas.tga",
+                "Projects/TestGameMake/Content/Imposters/SFLOD_" + safeName + "_Atlas.tga",
+                "Projects/GameTest/Content/Imposters/SFLOD_" + safeName + "_Atlas.tga"
+            };
+            for (const auto& cp : candidateAtlasPaths) {
+                if (cp.empty()) continue;
+                std::error_code ec;
+                if (std::filesystem::exists(cp, ec)) {
+                    activeTexture = cp;
+                    isAtlas = true;
+                    break;
+                }
+            }
+        }
+
         glm::vec3 localDir(0.0f);
         SFLODOrthogonalFace domFace = GetDominantFace(obj, model, cameraPos, &localDir);
 
@@ -132,7 +166,7 @@ public:
 
         if (isTriPlanar) {
             // =========================================================================
-            // Mode B: Tri-Planar Nacho Mode (3 Intersecting Orthogonal Planes, 6 Tris)
+            // Mode B: Tri-Planar Nacho Mode (3 Intersecting Orthogonal Planes, 12 Tris Double-Sided)
             // =========================================================================
             // Extract orthonormal axes from model matrix
             float scaleX = glm::length(glm::vec3(model[0]));
@@ -166,8 +200,11 @@ public:
             outVertices.push_back({ xy2, normXY, glm::vec2(tileXY.maxUV.x, tileXY.minUV.y), vColor, glm::vec4(rightXY, 1.0f) });
             outVertices.push_back({ xy3, normXY, glm::vec2(tileXY.minUV.x, tileXY.minUV.y), vColor, glm::vec4(rightXY, 1.0f) });
 
+            // Double-sided XY Quad
             outIndices.push_back(idxXY + 0); outIndices.push_back(idxXY + 1); outIndices.push_back(idxXY + 2);
             outIndices.push_back(idxXY + 0); outIndices.push_back(idxXY + 2); outIndices.push_back(idxXY + 3);
+            outIndices.push_back(idxXY + 0); outIndices.push_back(idxXY + 2); outIndices.push_back(idxXY + 1);
+            outIndices.push_back(idxXY + 0); outIndices.push_back(idxXY + 3); outIndices.push_back(idxXY + 2);
 
             // Plane 2: YZ Quad (Sides: Right/Left)
             SFLODOrthogonalFace faceYZ = (localDir.x >= 0.0f) ? SFLODOrthogonalFace::Right : SFLODOrthogonalFace::Left;
@@ -187,8 +224,11 @@ public:
             outVertices.push_back({ yz2, normYZ, glm::vec2(tileYZ.maxUV.x, tileYZ.minUV.y), vColor, glm::vec4(rightYZ, 1.0f) });
             outVertices.push_back({ yz3, normYZ, glm::vec2(tileYZ.minUV.x, tileYZ.minUV.y), vColor, glm::vec4(rightYZ, 1.0f) });
 
+            // Double-sided YZ Quad
             outIndices.push_back(idxYZ + 0); outIndices.push_back(idxYZ + 1); outIndices.push_back(idxYZ + 2);
             outIndices.push_back(idxYZ + 0); outIndices.push_back(idxYZ + 2); outIndices.push_back(idxYZ + 3);
+            outIndices.push_back(idxYZ + 0); outIndices.push_back(idxYZ + 2); outIndices.push_back(idxYZ + 1);
+            outIndices.push_back(idxYZ + 0); outIndices.push_back(idxYZ + 3); outIndices.push_back(idxYZ + 2);
 
             // Plane 3: XZ Quad (Top/Bottom)
             SFLODOrthogonalFace faceXZ = (localDir.y >= 0.0f) ? SFLODOrthogonalFace::Top : SFLODOrthogonalFace::Bottom;
@@ -208,13 +248,16 @@ public:
             outVertices.push_back({ xz2, normXZ, glm::vec2(tileXZ.maxUV.x, tileXZ.minUV.y), vColor, glm::vec4(rightXZ, 1.0f) });
             outVertices.push_back({ xz3, normXZ, glm::vec2(tileXZ.minUV.x, tileXZ.minUV.y), vColor, glm::vec4(rightXZ, 1.0f) });
 
+            // Double-sided XZ Quad
             outIndices.push_back(idxXZ + 0); outIndices.push_back(idxXZ + 1); outIndices.push_back(idxXZ + 2);
             outIndices.push_back(idxXZ + 0); outIndices.push_back(idxXZ + 2); outIndices.push_back(idxXZ + 3);
+            outIndices.push_back(idxXZ + 0); outIndices.push_back(idxXZ + 2); outIndices.push_back(idxXZ + 1);
+            outIndices.push_back(idxXZ + 0); outIndices.push_back(idxXZ + 3); outIndices.push_back(idxXZ + 2);
 
-            numIndicesGenerated = 18;
+            numIndicesGenerated = 36;
         } else {
             // =========================================================================
-            // Mode A: Single Plane (1 Quad Billboard, 2 Tris)
+            // Mode A: Single Plane (1 Quad Billboard, 4 Tris Double-Sided)
             // =========================================================================
             glm::vec3 p0 = geom.center - geom.right * geom.halfWidth - geom.up * geom.halfHeight; // bottom-left
             glm::vec3 p1 = geom.center + geom.right * geom.halfWidth - geom.up * geom.halfHeight; // bottom-right
@@ -243,7 +286,7 @@ public:
             outVertices.push_back({ p2, geom.normal, uv2, vColor, tangent });
             outVertices.push_back({ p3, geom.normal, uv3, vColor, tangent });
 
-            // 2 Triangles (6 indices)
+            // 2 Triangles Front (CCW)
             outIndices.push_back(vOffset + 0);
             outIndices.push_back(vOffset + 1);
             outIndices.push_back(vOffset + 2);
@@ -252,11 +295,19 @@ public:
             outIndices.push_back(vOffset + 2);
             outIndices.push_back(vOffset + 3);
 
-            numIndicesGenerated = 6;
+            // 2 Triangles Back (CW) for full double-sided visibility
+            outIndices.push_back(vOffset + 0);
+            outIndices.push_back(vOffset + 2);
+            outIndices.push_back(vOffset + 1);
+
+            outIndices.push_back(vOffset + 0);
+            outIndices.push_back(vOffset + 3);
+            outIndices.push_back(vOffset + 2);
+
+            numIndicesGenerated = 12;
         }
 
         // Determine active imposter texture: check if multi-angle series exists
-        std::string activeTexture = obj.sflodCustomTexture;
         if (!activeTexture.empty() && !isAtlas) {
             size_t anglePos = activeTexture.find("_angle");
             if (anglePos != std::string::npos) {
@@ -288,6 +339,10 @@ public:
 
         // Normal map detection for Medium and High shader complexity
         std::string normalTex = obj.normalTexture;
+        std::string roughTex = obj.roughnessTexture;
+        std::string metalTex = obj.metallicTexture;
+        std::string aoTex = obj.aoTexture;
+
         if (isAtlas) {
             size_t atlasPos = activeTexture.find("_Atlas.tga");
             if (atlasPos != std::string::npos) {
@@ -296,13 +351,20 @@ public:
                 if (std::filesystem::exists(candidateNormalAtlas, ec)) {
                     normalTex = candidateNormalAtlas;
                 }
+                if (obj.sflodShaderComplexity >= 2) {
+                    std::string candidateRMA = activeTexture.substr(0, atlasPos) + "_RMAAtlas.tga";
+                    if (std::filesystem::exists(candidateRMA, ec)) {
+                        roughTex = candidateRMA;
+                        metalTex = candidateRMA;
+                        aoTex = candidateRMA;
+                    }
+                }
             }
         }
         b.normalTex = normalTex;
-
-        b.roughTex = obj.roughnessTexture;
-        b.metalTex = obj.metallicTexture;
-        b.aoTex = obj.aoTexture;
+        b.roughTex = roughTex;
+        b.metalTex = metalTex;
+        b.aoTex = aoTex;
         b.opacityTex = obj.opacityTexture;
         b.emissionTex = obj.emissionTexture;
         b.baseColor = obj.color;

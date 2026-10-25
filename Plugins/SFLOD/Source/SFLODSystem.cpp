@@ -7,17 +7,6 @@
 
 namespace SFLOD {
 
-static std::string CleanFilename(const std::string& name) {
-    std::string clean = name;
-    for (char& c : clean) {
-        if (!isalnum((unsigned char)c) && c != '_' && c != '-') {
-            c = '_';
-        }
-    }
-    if (clean.empty()) clean = "Object";
-    return clean;
-}
-
 bool SFLODSystem::IsSFLODActive(const GameObject& obj, uint32_t currentLod) const {
     if (!obj.enableSFLOD) return false;
     if (obj.mesh.vertices.empty()) return false;
