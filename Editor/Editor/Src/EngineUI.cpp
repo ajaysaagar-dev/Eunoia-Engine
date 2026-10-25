@@ -3733,7 +3733,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
                 RenderContentBrowser(scene);
             }
         } else if (Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive()) {
-            Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
+            Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y), &scene);
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
         }
