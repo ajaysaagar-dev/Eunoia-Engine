@@ -39,6 +39,7 @@
 #include <TextureStreaming/TextureStreamingSystem.h>
 #include <Node-Behaviour/NodeBehaviourManager.h>
 #include <Node-Behaviour/NodeBehaviourInstance.h>
+#include <SFLOD/SFLODSystem.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -551,7 +552,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
 
     // 1b. Copy Plugins Include headers (UI-System, Collisions, Physics, RayTrace, Save-System, etc.)
     std::vector<std::string> pluginModules = {
-        "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water", "Node-Behaviour"
+        "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water", "Node-Behaviour", "SFLOD"
     };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
@@ -8168,6 +8169,129 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "LOD 0 / %u (Disabled - Full Quality)", lodCount);
                 ImGui::SameLine();
                 ImGui::TextDisabled("(%u Tris)", lod0Triangles);
+            }
+        }
+
+        // 4.6 SFLOD (Single Face LOD / Imposter Cards System)
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("SFLOD (Single Face LOD)", ImGuiTreeNodeFlags_DefaultOpen)) {
+            bool sflodEnabled = obj->enableSFLOD;
+            if (ImGui::Checkbox("Enable SFLOD", &sflodEnabled)) {
+                obj->enableSFLOD = sflodEnabled;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("When enabled, this object automatically transitions to an ultra-efficient\nsingle-face imposter card (2 triangles) once the specified LOD level is reached.");
+            }
+
+            if (!obj->enableSFLOD) {
+                ImGui::BeginDisabled(true);
+            }
+
+            // LOD Trigger Threshold
+            ImGui::SliderInt("Trigger LOD Level", &obj->sflodMinLOD, 1, 20);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("The LOD level threshold (>=) at which the 3D mesh is replaced with the Imposter Card.\nExample: 3 means LOD 3, 4, 5... will render as a 1-face card.");
+            }
+
+            // Billboard Mode
+            const char* bbModes[] = {
+                "Camera Facing (Spherical)",
+                "Locked Y-Axis (Axial / Nacho Time)",
+                "Fixed Plane (Object Local)"
+            };
+            int curBbMode = glm::clamp(obj->sflodBillboardMode, 0, 2);
+            if (ImGui::Combo("Billboard Mode", &curBbMode, bbModes, 3)) {
+                obj->sflodBillboardMode = curBbMode;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Orientation mode of the single-plane card:\n"
+                                  "- Camera Facing (Spherical): rotates in all directions towards camera.\n"
+                                  "- Locked Y-Axis (Axial / Nacho Time): classic tree/foliage mode that stays vertically upright.\n"
+                                  "- Fixed Plane: fixed local orientation of the object.");
+            }
+
+            // Card Dimensions
+            bool isAutoDim = (obj->sflodPlaneWidth <= 0.001f && obj->sflodPlaneHeight <= 0.001f);
+            if (ImGui::Checkbox("Auto Dimensions (Mesh Bounds)", &isAutoDim)) {
+                if (isAutoDim) {
+                    obj->sflodPlaneWidth = 0.0f;
+                    obj->sflodPlaneHeight = 0.0f;
+                } else {
+                    float w = 1.0f, h = 1.0f;
+                    glm::vec3 off{0.0f};
+                    SFLOD::SFLODSystem::Get().ComputeCardBounds(*obj, w, h, off);
+                    obj->sflodPlaneWidth = w;
+                    obj->sflodPlaneHeight = h;
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Automatically calculates card width and height from the mesh bounding box.");
+            }
+
+            if (isAutoDim) {
+                ImGui::BeginDisabled(true);
+            }
+            float dims[2] = { obj->sflodPlaneWidth, obj->sflodPlaneHeight };
+            if (ImGui::DragFloat2("Custom Size (W x H)", dims, 0.05f, 0.0f, 100.0f, "%.2f")) {
+                obj->sflodPlaneWidth = dims[0];
+                obj->sflodPlaneHeight = dims[1];
+            }
+            if (isAutoDim) {
+                ImGui::EndDisabled();
+            }
+
+            // Center Offset
+            ImGui::DragFloat2("Center Offset (X, Y)", &obj->sflodPlaneOffset.x, 0.05f, -50.0f, 50.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Fine-tunes the horizontal and vertical center positioning of the imposter card.");
+            }
+
+            // Texture & Cutout
+            ImGui::Checkbox("Alpha Cutout Mask", &obj->sflodCutout);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Uses hardware alpha masking (blendMode = Masked) so transparent card regions are clipped out.");
+            }
+
+            // Custom Texture Path
+            char texBuf[256];
+            memset(texBuf, 0, sizeof(texBuf));
+            strncpy_s(texBuf, obj->sflodCustomTexture.c_str(), sizeof(texBuf) - 1);
+            if (ImGui::InputText("Custom Card Texture", texBuf, sizeof(texBuf))) {
+                obj->sflodCustomTexture = texBuf;
+            }
+            if (obj->sflodCustomTexture.empty()) {
+                ImGui::TextDisabled("  (Empty = Automatically uses object Base Color Material)");
+            }
+
+            // Real-Time Telemetry & Status
+            ImGui::Spacing();
+            ImGui::Separator();
+            bool isCardActive = SFLOD::SFLODSystem::Get().IsSFLODActive(*obj, obj->currentLOD);
+            uint32_t meshTris = (uint32_t)obj->mesh.indices.size() / 3;
+            float reduction = meshTris > 2 ? ((1.0f - 2.0f / (float)meshTris) * 100.0f) : 0.0f;
+
+            if (isCardActive) {
+                ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ACTIVE: Rendering 1-Face Imposter Card]");
+                ImGui::Text("Saved Triangles: %u Tris (Card: 2 Tris, -%.1f%%)", meshTris > 2 ? meshTris - 2 : 0, reduction);
+            } else {
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[INACTIVE: Rendering 3D Mesh]");
+                ImGui::TextDisabled("Object is currently below SFLOD trigger threshold (LOD %d < %d)", obj->currentLOD, obj->sflodMinLOD);
+            }
+
+            // Quick Preview Button
+            bool isPreviewing = (obj->forcedLOD == obj->sflodMinLOD);
+            if (ImGui::Button(isPreviewing ? "Exit Imposter Preview" : "Preview Imposter Card in Viewport", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                if (isPreviewing) {
+                    obj->forcedLOD = -1;
+                } else {
+                    obj->forcedLOD = obj->sflodMinLOD;
+                }
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Temporarily locks this object to its SFLOD level so you can preview the card quad directly in the viewport.");
+            }
+
+            if (!obj->enableSFLOD) {
+                ImGui::EndDisabled();
             }
         }
         // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
