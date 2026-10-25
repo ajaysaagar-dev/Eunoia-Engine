@@ -1,4 +1,4 @@
-﻿#include <Editor/EngineUI.h>
+#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
@@ -8195,6 +8195,26 @@ void EngineUI::RenderDetails(Scene& scene) {
                 contentDir = "Projects/GameTest/Content";
             }
 
+            // Auto-discover baked 6-directional atlas on disk if not yet assigned
+            if (obj->sflodCustomTexture.empty() || !obj->sflodIsAtlas) {
+                std::string safeName = SFLOD::SFLODSystem::CleanFilename(obj->name);
+                std::vector<std::filesystem::path> searchDirs = {
+                    contentDir / "Imposters",
+                    "Content/Imposters",
+                    "Projects/TestGameMake/Content/Imposters",
+                    "Projects/GameTest/Content/Imposters"
+                };
+                for (const auto& sDir : searchDirs) {
+                    std::filesystem::path candidate = sDir / ("SFLOD_" + safeName + "_Atlas.tga");
+                    std::error_code ec;
+                    if (std::filesystem::exists(candidate, ec)) {
+                        obj->sflodCustomTexture = candidate.generic_string();
+                        obj->sflodIsAtlas = true;
+                        break;
+                    }
+                }
+            }
+
             glm::mat4 modelMat = scene.GetWorldMatrix(*obj);
             glm::vec3 camEye = currentCamera ? currentCamera->GetPosition() : glm::vec3(0.0f, 2.0f, 5.0f);
 
@@ -8248,17 +8268,33 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
 
             // Dynamic LOD Swapping: Distance Threshold (imp_threshold)
-            ImGui::DragFloat("Distance Threshold (m)", &obj->sflodDistanceThreshold, 0.5f, 0.0f, 500.0f, "%.1f m");
+            ImGui::DragFloat("Distance Threshold (imp_threshold)", &obj->sflodDistanceThreshold, 0.5f, 0.0f, 500.0f, "%.1f m");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("Nacho Time Distance Threshold (imp_threshold) in meters:\n"
+                ImGui::SetTooltip("Superhive / Nacho Time Distance Threshold (imp_threshold) in meters:\n"
                                   "When camera distance is >= this threshold, the 3D mesh is automatically swapped with the imposter proxy.\n"
-                                  "(Set to 0 to disable distance trigger and rely solely on LOD level).");
+                                  "(Set to 0 to disable distance trigger and rely solely on the independent 20-level SFLOD system).");
             }
 
-            // LOD Trigger Threshold
-            ImGui::SliderInt("Trigger LOD Level", &obj->sflodMinLOD, 1, 20);
+            // Independent 20-Level SFLOD Controls (Completely separate from Mesh LOD)
+            ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "Independent SFLOD System (20 LOD Levels)");
             if (ImGui::IsItemHovered()) {
-                ImGui::SetTooltip("The LOD level threshold (>=) at which the 3D mesh is replaced with the Imposter Card.\nExample: 3 means LOD 3, 4, 5... will render as an imposter.");
+                ImGui::SetTooltip("SFLOD operates completely independently of Mesh LOD.\nEven if Mesh LOD is disabled or the mesh only has LOD 0, SFLOD evaluates\ncontinuous screen-space coverage across 20 virtual LOD levels.");
+            }
+
+            ImGui::SliderInt("Trigger SFLOD Level", &obj->sflodMinLOD, 0, 20);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("The SFLOD level threshold (>=) at which the 3D mesh transitions to the Imposter Card (0 to 20).\nExample: 3 means SFLOD LOD 3 through 20 will render as an imposter card.\nSetting 0 triggers imposter card immediately at all distances.");
+            }
+
+            ImGui::SliderInt("Max SFLOD Level", &obj->sflodMaxLOD, 1, 20);
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Maximum SFLOD LOD level ceiling (1 to 20).");
+            }
+
+            ImGui::SliderFloat("SFLOD LOD Bias", &obj->sflodLODBias, -20.0f, 20.0f, "%.2f");
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Independent LOD Bias for SFLOD (-20.0 to +20.0).\nPositive values increase SFLOD level sooner (earlier transition to imposter).\nNegative values decrease SFLOD level (delays transition).");
             }
 
             // Billboard Mode (only relevant for Single Plane)
@@ -8370,8 +8406,8 @@ void EngineUI::RenderDetails(Scene& scene) {
             glm::vec3 worldPos = glm::vec3(modelMat[3]);
             float camDist = glm::length(camEye - worldPos);
             bool distTriggered = (obj->sflodDistanceThreshold > 0.0f && camDist >= obj->sflodDistanceThreshold);
-            bool lodTriggered = (obj->currentLOD >= obj->sflodMinLOD);
-            bool previewTriggered = (obj->forcedLOD >= obj->sflodMinLOD);
+            bool lodTriggered = (obj->sflodCurrentLOD >= obj->sflodMinLOD);
+            bool previewTriggered = (obj->forcedLOD >= 0 && obj->forcedLOD >= obj->sflodMinLOD);
             bool isCardActive = obj->enableSFLOD && (distTriggered || lodTriggered || previewTriggered);
 
             uint32_t meshTris = (uint32_t)obj->mesh.indices.size() / 3;
@@ -8382,21 +8418,22 @@ void EngineUI::RenderDetails(Scene& scene) {
                 const char* geomName = (obj->sflodGeometryMode == 1) ? "Tri-Planar Nacho Mode" : "1-Face Parallax Card";
                 ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ACTIVE: %s (%u Tris)]", geomName, cardTris);
                 ImGui::Text("Saved Triangles: %u Tris (-%.2f%% reduction)", meshTris > cardTris ? meshTris - cardTris : 0, reduction);
-                if (distTriggered) {
+                if (previewTriggered) {
+                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Triggered by Viewport Preview Lock (Forced SFLOD: %d)", obj->forcedLOD);
+                } else if (distTriggered) {
                     ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Triggered by Distance: %.1fm >= %.1fm", camDist, obj->sflodDistanceThreshold);
                 } else if (lodTriggered) {
-                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Triggered by LOD: %d >= %d", obj->currentLOD, obj->sflodMinLOD);
-                } else if (previewTriggered) {
-                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Triggered by Viewport Preview Lock");
+                    ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Triggered by SFLOD Level: LOD %d >= %d", obj->sflodCurrentLOD, obj->sflodMinLOD);
                 }
             } else {
                 ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "[INACTIVE: Rendering 3D Mesh (%u Tris)]", meshTris);
-                ImGui::TextDisabled("Camera Distance: %.1fm (Threshold: %.1fm) | LOD: %d (Threshold: %d)",
-                    camDist, obj->sflodDistanceThreshold, obj->currentLOD, obj->sflodMinLOD);
+                ImGui::TextDisabled("Distance: %.1fm (Thresh: %.1fm) | SFLOD: LOD %d/20 (Trigger: %d) | Mesh LOD: %s",
+                    camDist, obj->sflodDistanceThreshold, obj->sflodCurrentLOD, obj->sflodMinLOD,
+                    obj->enableLOD ? "Active" : "Disabled");
             }
 
             // Quick Preview Button
-            bool isPreviewing = (obj->forcedLOD == obj->sflodMinLOD);
+            bool isPreviewing = (obj->forcedLOD >= 0 && obj->forcedLOD >= obj->sflodMinLOD);
             if (ImGui::Button(isPreviewing ? "Exit Imposter Preview" : "Preview Imposter in Viewport", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                 if (isPreviewing) {
                     obj->forcedLOD = -1;
