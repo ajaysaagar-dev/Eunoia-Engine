@@ -1973,6 +1973,9 @@ public:
                         }
                         auto bInst = BehaviourRegistry::Get().Create(className);
                         if (bInst) {
+                            if (!assetPath.empty()) {
+                                bInst->SetSourceCppPath(assetPath);
+                            }
                             size_t enPos = bBlock.find("\"enabled\"");
                             if (enPos != std::string::npos) {
                                 bInst->SetEnabled(ParseBoolAt(bBlock, enPos, true));

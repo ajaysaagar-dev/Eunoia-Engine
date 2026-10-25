@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -644,6 +644,7 @@ public:
     virtual void RefreshPropertiesFromSource() {}
     virtual void ResetToDefaults();
     virtual std::string GetSourceCppPath() const { return ""; }
+    virtual void SetSourceCppPath(const std::string& path) {}
     virtual void InvokeFunction(const std::string& functionName) {}
     std::vector<BehaviourProperty>& GetProperties() { return m_properties; }
     const std::vector<BehaviourProperty>& GetProperties() const { return m_properties; }

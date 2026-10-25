@@ -19,6 +19,7 @@ enum class AssetType {
     Script,
     Behaviour,
     VisualBehaviour,
+    NodeBehaviour,
     Skybox,
     Water,
     UserInterface,
@@ -45,6 +46,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Script:          return "Script";
         case AssetType::Behaviour:       return "Behavior Script";
         case AssetType::VisualBehaviour: return "Visual Behaviour";
+        case AssetType::NodeBehaviour:   return "Node Behaviour";
         case AssetType::Skybox:          return "Skybox";
         case AssetType::Water:           return "Water Body";
         case AssetType::UserInterface:   return "User Interface";
@@ -71,6 +73,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "particle")     return AssetType::Particle;
     if (s == "script")       return AssetType::Script;
     if (s == "visualbehaviour" || s == "visual-behaviour" || s == "visual behaviour" || s == "ebehaviour") return AssetType::VisualBehaviour;
+    if (s == "nodebehaviour" || s == "node-behaviour" || s == "node behaviour" || s == "enb") return AssetType::NodeBehaviour;
     if (s == "behaviour" || s == "behaviorscript" || s == "behavior script") return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "water")        return AssetType::Water;
@@ -126,6 +129,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     if (e == "ttf" || e == "otf") {
         return AssetType::Font;
     }
+    if (e == "enb" || e == "nodebehaviour") {
+        return AssetType::NodeBehaviour;
+    }
     if (e == "ebehaviour" || e == "visualbehaviour") {
         return AssetType::VisualBehaviour;
     }
@@ -154,6 +160,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::Script:          return "📜";
         case AssetType::Behaviour:       return "🧩";
         case AssetType::VisualBehaviour: return "🎮";
+        case AssetType::NodeBehaviour:   return "⚡";
         case AssetType::Skybox:          return "🌌";
         case AssetType::Water:           return "🌊";
         case AssetType::UserInterface:   return "🖥";
