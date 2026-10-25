@@ -1,10 +1,13 @@
 #include <Node-Behaviour/NodeBehaviourEditor.h>
+#include <Node-Behaviour/NodeBehaviourManager.h>
+#include <EngineScene/ScreenPrint.h>
 #include <imgui_node_editor.h>
 #include <drawing.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <algorithm>
 #include <cmath>
+#include <iostream>
 
 namespace ed = ax::NodeEditor;
 
@@ -35,7 +38,17 @@ void NodeBehaviourEditor::Save() {
     if (m_graph && !m_graph->filePath.empty()) {
         if (m_graph->SaveToFile(m_graph->filePath)) {
             m_isDirty = false;
+            // Compile & Synchronize to Scene instances immediately
+            NodeBehaviourManager::Get().NotifyGraphSaved(m_graph->filePath, m_graph, m_scene);
         }
+    }
+}
+
+void NodeBehaviourEditor::Compile() {
+    Save();
+    if (m_graph) {
+        ScreenPrint::System::Get().AddMessage("Compiled " + m_graph->name + " successfully", 3.0f, glm::vec4(0.2f, 0.95f, 0.4f, 1.0f));
+        std::cout << "[Node-Behaviour] Compiled and synchronized '" << m_graph->name << "' to scene.\n";
     }
 }
 
@@ -55,6 +68,12 @@ void NodeBehaviourEditor::Render(const ImVec2& position, const ImVec2& size) {
 
     std::string winId = "###NodeBehaviourEditor_" + std::to_string((uintptr_t)this);
     if (ImGui::Begin(winId.c_str(), nullptr, flags)) {
+        // Ctrl+S hotkey to save and compile
+        if (ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows) &&
+            ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
+            Compile();
+        }
+
         float toolbarHeight = 36.0f;
         float sidebarWidth = 280.0f;
         float canvasWidth = std::max(size.x - sidebarWidth, 200.0f);
@@ -87,12 +106,25 @@ void NodeBehaviourEditor::RenderTopToolbar() {
         ImGui::SetCursorPosY(6.0f);
         ImGui::SetCursorPosX(12.0f);
 
+        // Compile Button (Unreal Engine Blueprint style)
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.52f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.16f, 0.65f, 0.35f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
+        if (ImGui::Button("⚡ Compile", ImVec2(80.0f, 24.0f))) {
+            Compile();
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile graph and synchronize exposed variables and logic to scene (Ctrl+S)");
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine(0.0f, 6.0f);
+
         // Save Button
         ImGui::PushStyleColor(ImGuiCol_Button, m_isDirty ? ImVec4(0.063f, 0.725f, 0.506f, 1.0f) : ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, 1.0f));
         if (ImGui::Button(m_isDirty ? " Save * " : " Saved ", ImVec2(75.0f, 24.0f))) {
-            Save();
+            Compile();
         }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save and compile node graph to disk");
         ImGui::PopStyleColor(2);
 
         ImGui::SameLine(0.0f, 12.0f);
@@ -195,6 +227,36 @@ void NodeBehaviourEditor::RenderCanvas(const ImVec2& size) {
 }
 
 void NodeBehaviourEditor::RenderNode(NodeItem& node) {
+    // 1. Calculate proportional layout widths
+    float titleW = ImGui::CalcTextSize(node.name.c_str()).x;
+    float subW = node.subtitle.empty() ? 0.0f : ImGui::CalcTextSize(node.subtitle.c_str()).x;
+    float headerNeededW = std::max(titleW, subW) + 28.0f;
+
+    float maxInputW = 0.0f;
+    for (const auto& pin : node.inputs) {
+        float w = 14.0f + 6.0f + ImGui::CalcTextSize(pin.name.c_str()).x;
+        if (pin.type != NodePinType::Exec) {
+            w += 90.0f; // Space for inline editor if disconnected
+        }
+        if (w > maxInputW) maxInputW = w;
+    }
+
+    float maxOutputW = 0.0f;
+    for (const auto& pin : node.outputs) {
+        float w = ImGui::CalcTextSize(pin.name.c_str()).x + 6.0f + 14.0f;
+        if (w > maxOutputW) maxOutputW = w;
+    }
+
+    float minNodeWidth = (node.category == NodeCategory::Event) ? 210.0f : 180.0f;
+    if (node.category == NodeCategory::VariableGet) minNodeWidth = 140.0f;
+
+    float targetWidth = std::max({ minNodeWidth, headerNeededW, maxInputW + maxOutputW + 36.0f });
+
+    // Node Styling (Unreal Engine Blueprint aesthetics)
+    ed::PushStyleVar(ed::StyleVar_NodePadding, ImVec4(8.0f, 6.0f, 8.0f, 8.0f));
+    ed::PushStyleVar(ed::StyleVar_NodeRounding, 5.0f);
+    ed::PushStyleVar(ed::StyleVar_NodeBorderWidth, 1.0f);
+
     ed::BeginNode(node.id);
 
     // Node Header
@@ -206,14 +268,17 @@ void NodeBehaviourEditor::RenderNode(NodeItem& node) {
     ImGui::PopStyleColor();
 
     if (!node.subtitle.empty()) {
-        ImGui::TextDisabled("%s", node.subtitle.c_str());
+        ImGui::TextColored(ImVec4(0.88f, 0.88f, 0.88f, 0.75f), "%s", node.subtitle.c_str());
     }
 
-    ImVec2 headerEnd = ImVec2(headerStart.x + ImGui::GetItemRectSize().x, ImGui::GetCursorScreenPos().y);
+    // Force node to targeted width
+    ImGui::Dummy(ImVec2(targetWidth - 16.0f, 0.0f));
 
-    ImGui::Spacing();
-    ImGui::Separator();
-    ImGui::Spacing();
+    float headerEndPosY = ImGui::GetCursorScreenPos().y;
+    float headerContentH = headerEndPosY - headerStart.y;
+
+    // Spacing between header and body (NO ImGui::Separator!)
+    ImGui::Dummy(ImVec2(targetWidth - 16.0f, 6.0f));
 
     // Body: Inputs on left, Outputs on right
     ImGui::BeginGroup(); // Inputs
@@ -241,7 +306,7 @@ void NodeBehaviourEditor::RenderNode(NodeItem& node) {
         // Inline default value editor for data pins when disconnected
         if (!isConnected && pin.type != NodePinType::Exec) {
             ImGui::SameLine();
-            ImGui::PushItemWidth(100.0f);
+            ImGui::PushItemWidth(80.0f);
             std::string inputId = "##PinVal_" + std::to_string(pin.id);
             if (pin.type == NodePinType::Float) {
                 if (ImGui::DragFloat(inputId.c_str(), &pin.floatValue, 0.1f, 0.0f, 0.0f, "%.2f")) {
@@ -270,35 +335,42 @@ void NodeBehaviourEditor::RenderNode(NodeItem& node) {
         ed::EndPin();
     }
     ImGui::EndGroup(); // Inputs
+    float inputsActualW = ImGui::GetItemRectSize().x;
 
-    ImGui::SameLine(0.0f, 24.0f);
+    // Outputs Group (Flush to Right)
+    if (!node.outputs.empty()) {
+        float spaceBetween = targetWidth - 16.0f - inputsActualW - maxOutputW;
+        if (spaceBetween < 16.0f) spaceBetween = 16.0f;
+        ImGui::SameLine(0.0f, spaceBetween);
 
-    ImGui::BeginGroup(); // Outputs
-    for (auto& pin : node.outputs) {
-        ed::BeginPin(pin.id, ed::PinKind::Output);
+        ImGui::BeginGroup(); // Outputs
+        for (auto& pin : node.outputs) {
+            ed::BeginPin(pin.id, ed::PinKind::Output);
 
-        bool isConnected = false;
-        for (const auto& l : m_graph->links) {
-            if (l.startPinId == pin.id) { isConnected = true; break; }
+            bool isConnected = false;
+            for (const auto& l : m_graph->links) {
+                if (l.startPinId == pin.id) { isConnected = true; break; }
+            }
+
+            ImGui::TextUnformatted(pin.name.c_str());
+            ImGui::SameLine();
+
+            ImVec2 iconPos = ImGui::GetCursorScreenPos();
+            float iconSize = 14.0f;
+            ImVec2 iconMin = ImVec2(iconPos.x, iconPos.y + 2.0f);
+            ImVec2 iconMax = ImVec2(iconPos.x + iconSize, iconPos.y + 2.0f + iconSize);
+
+            ax::Drawing::IconType iconType = (pin.type == NodePinType::Exec) ? ax::Drawing::IconType::Flow : ax::Drawing::IconType::Circle;
+            ax::Drawing::DrawIcon(drawList, iconMin, iconMax, iconType, isConnected, GetPinColor(pin.type), 0);
+            ImGui::Dummy(ImVec2(iconSize, iconSize));
+
+            ed::EndPin();
         }
-
-        ImGui::TextUnformatted(pin.name.c_str());
-        ImGui::SameLine();
-
-        ImVec2 iconPos = ImGui::GetCursorScreenPos();
-        float iconSize = 14.0f;
-        ImVec2 iconMin = ImVec2(iconPos.x, iconPos.y + 2.0f);
-        ImVec2 iconMax = ImVec2(iconPos.x + iconSize, iconPos.y + 2.0f + iconSize);
-
-        ax::Drawing::IconType iconType = (pin.type == NodePinType::Exec) ? ax::Drawing::IconType::Flow : ax::Drawing::IconType::Circle;
-        ax::Drawing::DrawIcon(drawList, iconMin, iconMax, iconType, isConnected, GetPinColor(pin.type), 0);
-        ImGui::Dummy(ImVec2(iconSize, iconSize));
-
-        ed::EndPin();
+        ImGui::EndGroup(); // Outputs
     }
-    ImGui::EndGroup(); // Outputs
 
     ed::EndNode();
+    ed::PopStyleVar(3);
 
     // Draw header background banner on the node background draw list
     ImDrawList* bgDrawList = ed::GetNodeBackgroundDrawList(node.id);
@@ -306,14 +378,21 @@ void NodeBehaviourEditor::RenderNode(NodeItem& node) {
         ImVec2 nodePos = ed::GetNodePosition(node.id);
         ImVec2 nodeSize = ed::GetNodeSize(node.id);
         if (nodeSize.x > 0 && nodeSize.y > 0) {
-            float headerH = 32.0f;
+            float bannerH = headerContentH + 12.0f;
             ImU32 headCol = ImColor(node.headerColor);
             bgDrawList->AddRectFilled(
                 nodePos,
-                ImVec2(nodePos.x + nodeSize.x, nodePos.y + headerH),
+                ImVec2(nodePos.x + nodeSize.x, nodePos.y + bannerH),
                 headCol,
-                4.0f,
+                5.0f,
                 ImDrawFlags_RoundCornersTop
+            );
+            // Subtle crisp divider line separating header banner from node body
+            bgDrawList->AddLine(
+                ImVec2(nodePos.x, nodePos.y + bannerH),
+                ImVec2(nodePos.x + nodeSize.x, nodePos.y + bannerH),
+                IM_COL32(20, 20, 24, 230),
+                1.0f
             );
         }
     }

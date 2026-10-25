@@ -30,6 +30,8 @@ public:
 
     std::shared_ptr<NodeBehaviourGraph> GetGraph() const { return m_graph; }
 
+    void RefreshPropertiesFromSource() override;
+    void ReloadGraph(std::shared_ptr<NodeBehaviourGraph> newGraph = nullptr);
     void SyncVariablesFromGraph();
 
     // Variable Accessors

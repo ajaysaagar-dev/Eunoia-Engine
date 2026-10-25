@@ -1,5 +1,8 @@
 #include <Node-Behaviour/NodeBehaviourManager.h>
+#include <Node-Behaviour/NodeBehaviourInstance.h>
+#include <EngineScene/Scene.h>
 #include <filesystem>
+#include <iostream>
 
 namespace Eunoia {
 namespace NodeBehaviour {
@@ -65,9 +68,37 @@ std::shared_ptr<NodeBehaviourEditor> NodeBehaviourManager::GetActiveEditor() {
     return nullptr;
 }
 
-void NodeBehaviourManager::RenderActiveTabWorkspace(const ImVec2& pos, const ImVec2& size) {
+void NodeBehaviourManager::RenderActiveTabWorkspace(const ImVec2& pos, const ImVec2& size, Scene* scene) {
     if (IsActive()) {
+        m_editors[activeTabIndex]->SetScene(scene);
         m_editors[activeTabIndex]->Render(pos, size);
+    }
+}
+
+void NodeBehaviourManager::NotifyGraphSaved(const std::string& filePath, std::shared_ptr<NodeBehaviourGraph> graph, Scene* scene) {
+    if (!scene) return;
+
+    std::error_code ec;
+    std::filesystem::path savedPath(filePath);
+    std::string savedStem = savedPath.stem().string();
+
+    int updatedCount = 0;
+    for (auto& obj : scene->objects) {
+        for (auto& b : obj.behaviours) {
+            auto nb = dynamic_cast<NodeBehaviourInstance*>(b.get());
+            if (nb) {
+                std::filesystem::path nbPath(nb->GetScriptAssetPath());
+                if (nb->GetScriptAssetPath() == filePath || nbPath.stem().string() == savedStem) {
+                    nb->ReloadGraph(graph);
+                    nb->ResolveReferences(*scene);
+                    updatedCount++;
+                }
+            }
+        }
+    }
+
+    if (updatedCount > 0) {
+        std::cout << "[Node-Behaviour] Compiled and synchronized " << updatedCount << " instance(s) in active scene.\n";
     }
 }
 

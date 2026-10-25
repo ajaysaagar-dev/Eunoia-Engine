@@ -36,14 +36,45 @@ void NodeBehaviourInstance::SetScriptAssetPath(const std::string& path) {
     }
 }
 
+void NodeBehaviourInstance::RefreshPropertiesFromSource() {
+    if (!m_scriptAssetPath.empty()) {
+        if (!m_graph) {
+            m_graph = std::make_shared<NodeBehaviourGraph>();
+            m_graph->LoadFromFile(m_scriptAssetPath);
+        }
+        SyncVariablesFromGraph();
+    }
+}
+
+void NodeBehaviourInstance::ReloadGraph(std::shared_ptr<NodeBehaviourGraph> newGraph) {
+    if (newGraph) {
+        m_graph = newGraph;
+    } else if (!m_scriptAssetPath.empty()) {
+        m_graph = std::make_shared<NodeBehaviourGraph>();
+        m_graph->LoadFromFile(m_scriptAssetPath);
+    }
+    SyncVariablesFromGraph();
+}
+
 void NodeBehaviourInstance::SyncVariablesFromGraph() {
     if (!m_graph) return;
 
+    std::unordered_map<std::string, NodeVariable> updatedVars;
     for (const auto& gv : m_graph->variables) {
-        if (m_instanceVars.find(gv.name) == m_instanceVars.end()) {
-            m_instanceVars[gv.name] = gv;
+        auto it = m_instanceVars.find(gv.name);
+        if (it != m_instanceVars.end() && it->second.type == gv.type) {
+            NodeVariable v = gv;
+            v.floatValue = it->second.floatValue;
+            v.intValue = it->second.intValue;
+            v.boolValue = it->second.boolValue;
+            v.stringValue = it->second.stringValue;
+            v.vectorValue = it->second.vectorValue;
+            updatedVars[gv.name] = v;
+        } else {
+            updatedVars[gv.name] = gv;
         }
     }
+    m_instanceVars = std::move(updatedVars);
     SetupExposedProperties();
 }
 

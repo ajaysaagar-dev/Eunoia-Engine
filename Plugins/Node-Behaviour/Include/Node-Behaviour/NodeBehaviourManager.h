@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 
+class Scene;
+
 namespace Eunoia {
 namespace NodeBehaviour {
 
@@ -24,7 +26,8 @@ public:
 
     const std::vector<std::shared_ptr<NodeBehaviourEditor>>& GetEditors() const { return m_editors; }
 
-    void RenderActiveTabWorkspace(const ImVec2& pos, const ImVec2& size);
+    void RenderActiveTabWorkspace(const ImVec2& pos, const ImVec2& size, Scene* scene = nullptr);
+    void NotifyGraphSaved(const std::string& filePath, std::shared_ptr<NodeBehaviourGraph> graph, Scene* scene);
 
     // Creates a new .enb file on disk with default events and opens it
     std::string CreateNewNodeBehaviour(const std::string& folderPath, const std::string& name);

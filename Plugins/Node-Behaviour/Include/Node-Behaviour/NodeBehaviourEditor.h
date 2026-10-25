@@ -2,6 +2,8 @@
 #include <Node-Behaviour/NodeBehaviourGraph.h>
 #include <imgui.h>
 
+class Scene;
+
 namespace ax {
 namespace NodeEditor {
     struct EditorContext;
@@ -17,6 +19,7 @@ public:
     ~NodeBehaviourEditor();
 
     void Render(const ImVec2& position, const ImVec2& size);
+    void SetScene(Scene* scene) { m_scene = scene; }
 
     bool IsDirty() const { return m_isDirty; }
     void SetDirty(bool dirty) { m_isDirty = dirty; }
@@ -26,9 +29,11 @@ public:
     const std::string& GetFilePath() const { return m_graph ? m_graph->filePath : m_defaultPath; }
 
     void Save();
+    void Compile();
 
 private:
     std::shared_ptr<NodeBehaviourGraph> m_graph;
+    Scene* m_scene = nullptr;
     ax::NodeEditor::EditorContext* m_context = nullptr;
     bool m_isDirty = false;
     std::string m_defaultName = "Node Behaviour";
