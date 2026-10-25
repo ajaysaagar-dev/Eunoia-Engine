@@ -693,10 +693,14 @@ struct GameObject {
     int minLOD = 0;                  // Minimum LOD clamp (0 to 20)
     int maxLOD = 20;                 // Maximum LOD clamp (0 to 20)
     int currentLOD = 0;              // Active runtime LOD selected for rendering (telemetry/debug)
-    // SFLOD (Single Face LOD / Imposter Cards System)
+    // SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
     bool enableSFLOD = false;        // Master toggle for SFLOD
     int sflodMinLOD = 3;             // Trigger threshold: LOD >= sflodMinLOD renders as single-face card
     int sflodBillboardMode = 0;      // 0 = Camera-facing (spherical), 1 = Locked Y-axis (axial/Nacho Time), 2 = Fixed
+    int sflodGeometryMode = 0;       // 0 = Single Plane (2 Tris), 1 = Tri-Planar Nacho Mode (6 Tris)
+    int sflodShaderComplexity = 0;   // 0 = Low (Diffuse+Alpha), 1 = Medium (+Normal), 2 = High (+RMA)
+    float sflodDistanceThreshold = 25.0f; // Distance threshold (imp_threshold) in meters (0 = disable distance trigger)
+    bool sflodIsAtlas = false;       // True if current imposter texture is a 6-directional Nacho Time atlas
     float sflodPlaneWidth = 0.0f;    // 0 = Auto-calculate from mesh AABB
     float sflodPlaneHeight = 0.0f;   // 0 = Auto-calculate from mesh AABB
     glm::vec2 sflodPlaneOffset{0.0f, 0.0f}; // Fine-tuning card center offset
@@ -974,6 +978,10 @@ struct GameObject {
         enableSFLOD = other.enableSFLOD;
         sflodMinLOD = other.sflodMinLOD;
         sflodBillboardMode = other.sflodBillboardMode;
+        sflodGeometryMode = other.sflodGeometryMode;
+        sflodShaderComplexity = other.sflodShaderComplexity;
+        sflodDistanceThreshold = other.sflodDistanceThreshold;
+        sflodIsAtlas = other.sflodIsAtlas;
         sflodPlaneWidth = other.sflodPlaneWidth;
         sflodPlaneHeight = other.sflodPlaneHeight;
         sflodPlaneOffset = other.sflodPlaneOffset;
@@ -1061,6 +1069,10 @@ struct GameObject {
         enableSFLOD = other.enableSFLOD;
         sflodMinLOD = other.sflodMinLOD;
         sflodBillboardMode = other.sflodBillboardMode;
+        sflodGeometryMode = other.sflodGeometryMode;
+        sflodShaderComplexity = other.sflodShaderComplexity;
+        sflodDistanceThreshold = other.sflodDistanceThreshold;
+        sflodIsAtlas = other.sflodIsAtlas;
         sflodPlaneWidth = other.sflodPlaneWidth;
         sflodPlaneHeight = other.sflodPlaneHeight;
         sflodPlaneOffset = other.sflodPlaneOffset;

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <SaveSystem/SaveSystem.h>
@@ -228,6 +228,10 @@ public:
             file << "        \"enableSFLOD\": " << BoolStr(obj.enableSFLOD) << ",\n";
             file << "        \"sflodMinLOD\": " << obj.sflodMinLOD << ",\n";
             file << "        \"sflodBillboardMode\": " << obj.sflodBillboardMode << ",\n";
+            file << "        \"sflodGeometryMode\": " << obj.sflodGeometryMode << ",\n";
+            file << "        \"sflodShaderComplexity\": " << obj.sflodShaderComplexity << ",\n";
+            file << "        \"sflodDistanceThreshold\": " << obj.sflodDistanceThreshold << ",\n";
+            file << "        \"sflodIsAtlas\": " << BoolStr(obj.sflodIsAtlas) << ",\n";
             file << "        \"sflodPlaneWidth\": " << obj.sflodPlaneWidth << ",\n";
             file << "        \"sflodPlaneHeight\": " << obj.sflodPlaneHeight << ",\n";
             file << "        \"sflodPlaneOffset\": [" << obj.sflodPlaneOffset.x << ", " << obj.sflodPlaneOffset.y << "],\n";
@@ -1436,6 +1440,10 @@ public:
             p = matBlock.find("\"enableSFLOD\""); if (p != std::string::npos) obj.enableSFLOD = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"sflodMinLOD\""); if (p != std::string::npos) obj.sflodMinLOD = ParseIntAt(matBlock, p, 3);
             p = matBlock.find("\"sflodBillboardMode\""); if (p != std::string::npos) obj.sflodBillboardMode = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"sflodGeometryMode\""); if (p != std::string::npos) obj.sflodGeometryMode = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"sflodShaderComplexity\""); if (p != std::string::npos) obj.sflodShaderComplexity = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"sflodDistanceThreshold\""); if (p != std::string::npos) obj.sflodDistanceThreshold = ParseFloatAt(matBlock, p, 25.0f);
+            p = matBlock.find("\"sflodIsAtlas\""); if (p != std::string::npos) obj.sflodIsAtlas = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"sflodPlaneWidth\""); if (p != std::string::npos) obj.sflodPlaneWidth = ParseFloatAt(matBlock, p, 0.0f);
             p = matBlock.find("\"sflodPlaneHeight\""); if (p != std::string::npos) obj.sflodPlaneHeight = ParseFloatAt(matBlock, p, 0.0f);
             p = matBlock.find("\"sflodPlaneOffset\"");

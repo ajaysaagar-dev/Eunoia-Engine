@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -2045,9 +2045,14 @@ struct RenderBatch {
             const glm::mat4& model = entry.model;
             float distSq = entry.distSq;
 
-            // SFLOD (Single Face LOD / Imposter Cards) replacement
+            // SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
+            bool distanceTrigger = (obj.sflodDistanceThreshold > 0.0f) && 
+                (distSq >= obj.sflodDistanceThreshold * obj.sflodDistanceThreshold);
+            bool lodTrigger = ((int)entry.selectedLOD >= obj.sflodMinLOD);
+            bool previewTrigger = (obj.forcedLOD >= obj.sflodMinLOD);
+
             if (obj.enableSFLOD && !obj.mesh.vertices.empty() && 
-                ((int)entry.selectedLOD >= obj.sflodMinLOD || (obj.forcedLOD >= obj.sflodMinLOD))) 
+                (distanceTrigger || lodTrigger || previewTrigger)) 
             {
                 SFLOD::SFLODSystem::Get().AppendImposterCard(
                     obj, model, cameraPos, entry.selectedLOD, distSq,
