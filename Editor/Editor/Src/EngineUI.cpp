@@ -37,6 +37,8 @@
 #include <Collisions/CollisionSystem.h>
 #include <PostProcess/PostProcessSystem.h>
 #include <TextureStreaming/TextureStreamingSystem.h>
+#include <Node-Behaviour/NodeBehaviourManager.h>
+#include <Node-Behaviour/NodeBehaviourInstance.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -549,7 +551,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
 
     // 1b. Copy Plugins Include headers (UI-System, Collisions, Physics, RayTrace, Save-System, etc.)
     std::vector<std::string> pluginModules = {
-        "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water"
+        "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water", "Node-Behaviour"
     };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
@@ -559,6 +561,11 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
         std::filesystem::path dstInc = depPluginsDir / plug / "Include";
         if (std::filesystem::exists(srcInc, ec)) {
             CopyHeadersRecursive(srcInc, dstInc);
+        }
+        std::filesystem::path srcTp = engineRoot / "Plugins" / plug / "ThirdParty";
+        std::filesystem::path dstTp = depPluginsDir / plug / "ThirdParty";
+        if (std::filesystem::exists(srcTp, ec)) {
+            CopyHeadersRecursive(srcTp, dstTp);
         }
     }
 
@@ -3651,7 +3658,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     ImGuiViewport* vp = ImGui::GetMainViewport();
     matPreviewPipRect.active = false;
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
-                        !(showMaterialEditor && materialWorkspaceActive);
+                        !(showMaterialEditor && materialWorkspaceActive) &&
+                        !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive();
 
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
@@ -3724,6 +3732,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             if (showBottomDrawer) {
                 RenderContentBrowser(scene);
             }
+        } else if (Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive()) {
+            Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
         }
@@ -4812,13 +4822,14 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
-        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive());
+        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive());
         std::string levelTabName = "Level Editor";
         if (levelUnsaved) levelTabName += "*";
         levelTabName += "##Tab_Level";
 
         if (RenderTabWithSaveProgress(levelTabName.c_str(), isLevelActive, m_levelSaveState, tabBtnH)) {
             materialWorkspaceActive = false;
+            Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             uiMgr.SwitchToMainEditor();
             if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
                 PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
@@ -4835,6 +4846,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             matLabel += "##MatTab_" + std::to_string(i);
 
             if (RenderTabWithSaveProgress(matLabel.c_str(), isMatActive, openMaterialDocs[i].saveState, tabBtnH)) {
+                Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
                 SwitchToMaterialEditor((int)i);
             }
 
@@ -4874,10 +4886,11 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
 
             if (RenderTabWithSaveProgress(uiLabel.c_str(), isUiActive, m_uiSaveState, tabBtnH)) {
                 materialWorkspaceActive = false;
+                Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
                 uiMgr.SwitchToEditor(tabIdx);
             }
 
-            // Close button âœ•
+            // Close button ✕
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -4886,7 +4899,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "âœ•##CloseUiTab_" + std::to_string(i);
+            std::string closeBtnId = "✕##CloseUiTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 uiToClose = (int)i;
             }
@@ -4900,6 +4913,47 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             uiMgr.Close((size_t)uiToClose);
         }
 
+        // 3.5 Node Behaviour Tabs (Multiple open Node Behaviour visual scripting editors)
+        auto& nbMgr = Eunoia::NodeBehaviour::NodeBehaviourManager::Get();
+        const auto& nbEditors = nbMgr.GetEditors();
+        int nbToClose = -1;
+        for (size_t i = 0; i < nbEditors.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isNbActive = (nbMgr.IsActive() && nbMgr.GetActiveEditorIndex() == (int)i);
+            std::string nbLabel = "[NB] " + nbEditors[i]->GetName();
+            if (nbEditors[i]->IsDirty()) nbLabel += "*";
+            nbLabel += "##NbTab_" + std::to_string(i);
+
+            TabSaveProgressState dummyNbSaveState;
+            if (RenderTabWithSaveProgress(nbLabel.c_str(), isNbActive, dummyNbSaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToMainEditor();
+                nbMgr.SwitchToEditor((int)i);
+            }
+
+            // Close button ✕
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "✕##CloseNbTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                nbToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", nbEditors[i]->GetName().c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (nbToClose >= 0) {
+            nbMgr.Close((size_t)nbToClose);
+        }
+
         // 4. "+" Quick Add New Document Switch
         ImGui::SameLine(0.0f, 6.0f * uiScale);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.071f, 0.071f, 0.078f, 1.0f)); // #121214
@@ -4908,7 +4962,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         if (ImGui::Button("+##AddNewTabDocBtn", ImVec2(22.0f * uiScale, tabBtnH))) {
             ImGui::OpenPopup("QuickAddTabDocPopup");
         }
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open or create Material or UI Editor");
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Open or create Material, UI, or Node Behaviour");
         ImGui::PopStyleColor(3);
 
         if (ImGui::BeginPopup("QuickAddTabDocPopup")) {
@@ -4916,11 +4970,30 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 showNewMaterialPopup = true;
                 snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
             }
+            if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                showNewNodeBehaviourPopup = true;
+                snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
+            }
             if (ImGui::MenuItem("New User Interface (.eui)...")) {
                 showNewUIPopup = true;
                 snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewScreen");
             }
             ImGui::Separator();
+            // List project Node Behaviours to quickly open
+            if (ImGui::BeginMenu("Open Existing Node Behaviour...")) {
+                std::error_code nbec;
+                if (std::filesystem::exists(contentRootPath, nbec)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, nbec)) {
+                        if (entry.path().extension() == ".enb") {
+                            std::string stemName = entry.path().stem().string();
+                            if (ImGui::MenuItem(stemName.c_str())) {
+                                OpenNodeBehaviourEditor(entry.path().string());
+                            }
+                        }
+                    }
+                }
+                ImGui::EndMenu();
+            }
             // List project materials to quickly open
             if (ImGui::BeginMenu("Open Existing Material...")) {
                 std::error_code mec;
@@ -10081,6 +10154,13 @@ void EngineUI::OpenUIEditor(const std::string& path) {
     AddLog("LogContent", "Opened UI Editor for: " + path, 0);
 }
 
+void EngineUI::OpenNodeBehaviourEditor(const std::string& path) {
+    materialWorkspaceActive = false;
+    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    Eunoia::NodeBehaviour::NodeBehaviourManager::Get().Open(path);
+    AddLog("LogContent", "Opened Node Behaviour Editor for: " + path, 0);
+}
+
 void EngineUI::ApplySkyboxToScene(Scene& scene, const SkyboxAsset& skybox) {
     scene.enableSkybox = skybox.enableSkybox;
     scene.skyboxAssetPath = skybox.filePath;
@@ -11507,6 +11587,83 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
+                // Node Behaviour asset creation modal
+                if (showNewNodeBehaviourPopup) {
+                    ImGui::OpenPopup("Create Node Behaviour##NBModal");
+                    showNewNodeBehaviourPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Node Behaviour##NBModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Node Behaviour Name (.enb):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##NBNameInput", newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf));
+
+                    std::string inputName = newNodeBehaviourNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "Will create: %s.enb in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path nbDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(nbDir, bec);
+
+                        std::string createdPath = Eunoia::NodeBehaviour::NodeBehaviourManager::Get().CreateNewNodeBehaviour(nbDir.string(), inputName);
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path enbPath(createdPath);
+                        std::filesystem::path metaPath = nbDir / (inputName + ".enb.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Node Behaviour\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        // Register in AssetRegistry immediately
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::NodeBehaviour;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(enbPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".enb") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenNodeBehaviourEditor(createdPath);
+                        AddLog("LogContent", "Created Node Behaviour: " + inputName + ".enb in " + targetDir, 2);
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Two-Pane Content Browser Layout (Left: Folders, Right: Assets)
                 float maxTreeW = ImGui::GetWindowWidth() - 200.0f;
                 if (maxTreeW < 140.0f) maxTreeW = 140.0f;
@@ -11631,6 +11788,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             popupTargetVirtualDir = vDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                        }
+                        if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewNodeBehaviourPopup = true;
+                            snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
                         }
                         ImGui::Separator();
                         if (ImGui::MenuItem("Import Model...")) {
@@ -12011,6 +12173,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (item.meta.type == AssetType::Water) {
                                     std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
                                     OpenWaterEditor(fullWater.string());
+                                } else if (item.meta.type == AssetType::NodeBehaviour || item.meta.sourcePath.find(".enb") != std::string::npos) {
+                                    std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
+                                    OpenNodeBehaviourEditor(fullNb.string());
+                                    AddLog("LogContent", "Opened Node Behaviour: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::UserInterface || item.meta.type == AssetType::UserInterface3D) {
                                     std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
                                     OpenUIEditor(fullUI.string());
@@ -12149,6 +12315,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewUIPopup = true;
                                     snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                                 }
+                                if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewNodeBehaviourPopup = true;
+                                    snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
+                                }
                                 ImGui::Separator();
                                 if (ImGui::MenuItem("Import Model...")) {
                                     popupTargetVirtualDir = item.subDir;
@@ -12230,6 +12401,13 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open in Water Editor")) {
                                         std::filesystem::path fullWater = contentRootPath / item.meta.sourcePath;
                                         OpenWaterEditor(fullWater.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::NodeBehaviour || item.meta.sourcePath.find(".enb") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Node Behaviour Editor")) {
+                                        std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
+                                        OpenNodeBehaviourEditor(fullNb.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -12424,6 +12602,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 case AssetType::Water:           iconTag = "WATER"; accentCol = IM_COL32(0, 160, 255, 255);   break;
                                 case AssetType::Texture:         iconTag = "TEX";   accentCol = IM_COL32(51, 217, 128, 255);  break; // Emerald
                                 case AssetType::VisualBehaviour: iconTag = "VBEH";  accentCol = IM_COL32(230, 89, 153, 255);  break; // Magenta
+                                case AssetType::NodeBehaviour:   iconTag = "NB";    accentCol = IM_COL32(0, 210, 255, 255);   break; // Blueprint Cyan
                                 case AssetType::Behaviour:
                                 case AssetType::Script:          iconTag = "BEH";   accentCol = IM_COL32(217, 102, 242, 255); break; // Purple
                                 case AssetType::Level:           iconTag = "LEVEL"; accentCol = IM_COL32(51, 217, 242, 255);  break; // Cyan
@@ -12502,7 +12681,17 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewUIPopup = true;
                         snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                     }
+                    if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewNodeBehaviourPopup = true;
+                        snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
+                    }
                     if (ImGui::BeginMenu("Create")) {
+                        if (ImGui::MenuItem("Node Behaviour (.enb)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewNodeBehaviourPopup = true;
+                            snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
+                        }
                         if (ImGui::MenuItem("User Interface (.eui)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewUIPopup = true;
@@ -15189,6 +15378,39 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             }
 
             ImGui::Separator();
+            ImGui::TextColored(ImVec4(0.0f, 0.82f, 1.0f, 1.0f), "Node Behaviours (.enb):");
+            std::error_code nbEc;
+            if (std::filesystem::exists(contentRootPath, nbEc)) {
+                for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, nbEc);
+                     !nbEc && it != std::filesystem::recursive_directory_iterator();
+                     it.increment(nbEc)) {
+                    if (!it->is_directory(nbEc) && it->path().extension() == ".enb") {
+                        std::string stem = it->path().stem().string();
+                        std::string stemLower = stem;
+                        std::transform(stemLower.begin(), stemLower.end(), stemLower.begin(), ::tolower);
+                        if (!searchLower.empty() && stemLower.find(searchLower) == std::string::npos) continue;
+
+                        std::string label = "[NB] " + stem;
+                        if (ImGui::Selectable(label.c_str(), false)) {
+                            UndoManager::Get().RecordSnapshot(scene, "Add Node Behaviour: " + stem);
+                            auto nbInstance = std::make_unique<Eunoia::NodeBehaviour::NodeBehaviourInstance>(it->path().string());
+                            nbInstance->SetScene(&scene);
+                            obj->AddBehaviour(std::move(nbInstance));
+                            obj->behaviours.back()->ResolveReferences(scene);
+                            AddLog("LogBehaviour", "Attached Node Behaviour " + stem + " to " + obj->name, 2);
+                            ImGui::CloseCurrentPopup();
+                        }
+                    }
+                }
+            }
+
+            ImGui::Separator();
+            if (ImGui::Button("Create New Node Behaviour (.enb)...", ImVec2(240, 0))) {
+                showNewNodeBehaviourPopup = true;
+                snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
+                popupTargetVirtualDir = currentVirtualDir;
+                ImGui::CloseCurrentPopup();
+            }
             if (ImGui::Button("Create New Behaviour Script...", ImVec2(240, 0))) {
                 showNewBehaviourPopup = true;
                 std::string defName = "NewBehaviour";
@@ -15273,6 +15495,20 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Open script in VS Code: %s", regIt->second.sourceCpp.c_str());
+                }
+            }
+
+            auto nbInst = dynamic_cast<Eunoia::NodeBehaviour::NodeBehaviourInstance*>(b.get());
+            if (nbInst) {
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.45f, 0.75f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.0f, 0.55f, 0.90f, 1.0f));
+                if (ImGui::SmallButton("Edit Graph")) {
+                    OpenNodeBehaviourEditor(nbInst->GetAssetPath());
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Open Node Behaviour visual scripting graph: %s", nbInst->GetAssetPath().c_str());
                 }
             }
 

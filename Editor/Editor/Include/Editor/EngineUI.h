@@ -622,6 +622,11 @@ public:
     char newUINameBuf[64] = "UI_NewInterface";
     void OpenUIEditor(const std::string& path);
 
+    // Node Behaviour Visual Scripting Editor
+    bool showNewNodeBehaviourPopup = false;
+    char newNodeBehaviourNameBuf[64] = "NB_NewBehaviour";
+    void OpenNodeBehaviourEditor(const std::string& path);
+
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;
