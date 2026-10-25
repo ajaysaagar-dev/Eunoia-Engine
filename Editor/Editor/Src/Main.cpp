@@ -1,4 +1,4 @@
-#define GLFW_EXPOSE_NATIVE_WIN32
+﻿#define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
@@ -3289,6 +3289,12 @@ int createShadersAndPipeline()
 		{
 			float2 uv = input.uv * uvScale;
 
+			float4 albedoSample = float4(baseColor, 1.0f);
+			if (hasAlbedoTex > 0.5f)
+			{
+				albedoSample = g_albedoTex.Sample(g_sampler, uv);
+			}
+
 			float currentOpacity = opacity;
 			if (pad0 > 0.5f)
 			{
@@ -3297,6 +3303,10 @@ int createShadersAndPipeline()
 			if (hasOpacityTex > 0.5f)
 			{
 				currentOpacity *= g_opacityTex.Sample(g_sampler, uv).r;
+			}
+			else if (hasAlbedoTex > 0.5f)
+			{
+				currentOpacity *= albedoSample.a;
 			}
 
 			if (blendMode > 0.5f && blendMode < 1.5f)
@@ -3330,12 +3340,7 @@ int createShadersAndPipeline()
 				N = normalize(mul(nSample, TBN));
 			}
 
-			float3 albedo = baseColor;
-			if (hasAlbedoTex > 0.5f)
-			{
-				float4 albedoSample = g_albedoTex.Sample(g_sampler, uv);
-				albedo = albedoSample.rgb * baseColor;
-			}
+			float3 albedo = (hasAlbedoTex > 0.5f) ? (albedoSample.rgb * baseColor) : baseColor;
 
 			float rough = roughness;
 			if (hasRoughTex > 0.5f)
