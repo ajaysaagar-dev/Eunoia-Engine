@@ -1,0 +1,11 @@
+{
+    "name": "SFLOD",
+    "version": "1.0.0",
+    "description": "Single Face LOD (SFLOD) / Imposter Cards system for extreme performance distant mesh replacement.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "rendering",
+    "core": true,
+    "dependencies": ["engine", "scene"],
+    "provides": ["ISFLODService"]
+}
