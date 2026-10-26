@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -700,7 +700,9 @@ struct GameObject {
     float sflodLODBias = 0.0f;       // SFLOD continuous screen-space LOD bias (-20.0f to +20.0f, independent of mesh LOD)
     int sflodCurrentLOD = 0;         // Runtime calculated SFLOD LOD level (0 to 20, works even if mesh LOD is disabled)
     int sflodBillboardMode = 0;      // 0 = Camera-facing (spherical), 1 = Locked Y-axis (axial/Nacho Time), 2 = Fixed
-    int sflodGeometryMode = 0;       // 0 = Single Plane (2 Tris), 1 = Tri-Planar Nacho Mode (6 Tris)
+    int sflodGeometryMode = 0;       // 0 = Single Plane (2 Tris), 1 = Tri-Planar Nacho Mode (6 Tris), 2 = 5-Face Box (10 Tris), 3 = 6-Face Cube (12 Tris), 4 = Custom Box
+    int sflodOpenFace = 4;           // 0=Front, 1=Back, 2=Right, 3=Left, 4=Top (+Y, open crate), 5=Bottom
+    uint8_t sflodFaceMask = 0x2F;    // Active faces bitmask (bits 0..5 = Front, Back, Right, Left, Top, Bottom; default 0x2F = 5 faces open top)
     int sflodShaderComplexity = 0;   // 0 = Low (Diffuse+Alpha), 1 = Medium (+Normal), 2 = High (+RMA)
     float sflodDistanceThreshold = 25.0f; // Distance threshold (imp_threshold) in meters (0 = disable distance trigger)
     bool sflodIsAtlas = false;       // True if current imposter texture is a 6-directional Nacho Time atlas
@@ -985,6 +987,8 @@ struct GameObject {
         sflodCurrentLOD = other.sflodCurrentLOD;
         sflodBillboardMode = other.sflodBillboardMode;
         sflodGeometryMode = other.sflodGeometryMode;
+        sflodOpenFace = other.sflodOpenFace;
+        sflodFaceMask = other.sflodFaceMask;
         sflodShaderComplexity = other.sflodShaderComplexity;
         sflodDistanceThreshold = other.sflodDistanceThreshold;
         sflodIsAtlas = other.sflodIsAtlas;
@@ -1079,6 +1083,8 @@ struct GameObject {
         sflodCurrentLOD = other.sflodCurrentLOD;
         sflodBillboardMode = other.sflodBillboardMode;
         sflodGeometryMode = other.sflodGeometryMode;
+        sflodOpenFace = other.sflodOpenFace;
+        sflodFaceMask = other.sflodFaceMask;
         sflodShaderComplexity = other.sflodShaderComplexity;
         sflodDistanceThreshold = other.sflodDistanceThreshold;
         sflodIsAtlas = other.sflodIsAtlas;

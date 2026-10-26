@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <SaveSystem/SaveSystem.h>
@@ -231,6 +231,8 @@ public:
             file << "        \"sflodLODBias\": " << obj.sflodLODBias << ",\n";
             file << "        \"sflodBillboardMode\": " << obj.sflodBillboardMode << ",\n";
             file << "        \"sflodGeometryMode\": " << obj.sflodGeometryMode << ",\n";
+            file << "        \"sflodOpenFace\": " << obj.sflodOpenFace << ",\n";
+            file << "        \"sflodFaceMask\": " << (int)obj.sflodFaceMask << ",\n";
             file << "        \"sflodShaderComplexity\": " << obj.sflodShaderComplexity << ",\n";
             file << "        \"sflodDistanceThreshold\": " << obj.sflodDistanceThreshold << ",\n";
             file << "        \"sflodIsAtlas\": " << BoolStr(obj.sflodIsAtlas) << ",\n";
@@ -1445,6 +1447,8 @@ public:
             p = matBlock.find("\"sflodLODBias\""); if (p != std::string::npos) obj.sflodLODBias = ParseFloatAt(matBlock, p, 0.0f);
             p = matBlock.find("\"sflodBillboardMode\""); if (p != std::string::npos) obj.sflodBillboardMode = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"sflodGeometryMode\""); if (p != std::string::npos) obj.sflodGeometryMode = ParseIntAt(matBlock, p, 0);
+            p = matBlock.find("\"sflodOpenFace\""); if (p != std::string::npos) obj.sflodOpenFace = ParseIntAt(matBlock, p, 4);
+            p = matBlock.find("\"sflodFaceMask\""); if (p != std::string::npos) obj.sflodFaceMask = (uint8_t)ParseIntAt(matBlock, p, 0x2F);
             p = matBlock.find("\"sflodShaderComplexity\""); if (p != std::string::npos) obj.sflodShaderComplexity = ParseIntAt(matBlock, p, 0);
             p = matBlock.find("\"sflodDistanceThreshold\""); if (p != std::string::npos) obj.sflodDistanceThreshold = ParseFloatAt(matBlock, p, 25.0f);
             p = matBlock.find("\"sflodIsAtlas\""); if (p != std::string::npos) obj.sflodIsAtlas = ParseBoolAt(matBlock, p, false);
