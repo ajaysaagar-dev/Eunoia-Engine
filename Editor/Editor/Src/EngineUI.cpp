@@ -8237,20 +8237,61 @@ void EngineUI::RenderDetails(Scene& scene) {
                 ImGui::SetTooltip("1-Click Generator: Captures 6 orthogonal shots (+X, -X, +Y, -Y, +Z, -Z) into a unified\n3x2 texture atlas in Content/Imposters/ and sets up dynamic view vector tracking.");
             }
 
-            // Geometry Mode (Single Plane vs Tri-Planar Nacho Mode)
+            // Geometry Mode (Single Plane, Tri-Planar, 5-Face Box, 6-Face Cube, Custom Multi-Face)
             const char* geomModes[] = {
                 "Single Plane (2 Tris - Parallax View Vector)",
-                "Tri-Planar Nacho Mode (6 Tris - 3 Intersecting Planes)"
+                "Tri-Planar Nacho Mode (6 Tris - 3 Intersecting Planes)",
+                "5-Face Box (10 Tris - Open Container / 5 Directions)",
+                "6-Face Cube (12 Tris - Solid Box / 6 Directions)",
+                "Custom Multi-Face Box (Varying Faces)"
             };
-            int curGeomMode = glm::clamp(obj->sflodGeometryMode, 0, 1);
-            if (ImGui::Combo("Geometry Mode", &curGeomMode, geomModes, 2)) {
+            int curGeomMode = glm::clamp(obj->sflodGeometryMode, 0, 4);
+            if (ImGui::Combo("Geometry Mode", &curGeomMode, geomModes, 5)) {
                 obj->sflodGeometryMode = curGeomMode;
             }
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("Imposter Card Geometry Mode:\n"
                                   "- Single Plane: 1 quad (2 triangles) that dynamically samples dominant atlas tile based on view vector.\n"
-                                  "- Tri-Planar Nacho Mode: 3 physical intersecting orthogonal planes (6 triangles) providing full 360 volume,\n"
-                                  "  real self-shadowing, and zero billboard rotation popping.");
+                                  "- Tri-Planar Nacho Mode: 3 physical intersecting orthogonal planes (6 triangles) providing full 360 volume.\n"
+                                  "- 5-Face Box: 5 physical boundary planes (10 triangles) for open-top containers, crates, bins, and boxes.\n"
+                                  "- 6-Face Cube: 6 physical boundary planes (12 triangles) for closed boxes and solid polyhedral geometry.\n"
+                                  "- Custom Multi-Face: Fully configurable active face mask (1 to 6 faces).");
+            }
+
+            // Open Face Selector (when 5-Face Box is selected)
+            if (obj->sflodGeometryMode == 2) {
+                const char* faceNames[] = {
+                    "Front (+Z)", "Back (-Z)", "Right (+X)", "Left (-X)", "Top (+Y, Open Crate / Box)", "Bottom (-Y, Open Base)"
+                };
+                int curOpenFace = glm::clamp(obj->sflodOpenFace, 0, 5);
+                if (ImGui::Combo("Open / Omitted Face", &curOpenFace, faceNames, 6)) {
+                    obj->sflodOpenFace = curOpenFace;
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Selects which face of the box is left open (unrendered).\nFor open crates, baskets, and bins (like in image.png), select Top (+Y).");
+                }
+            }
+
+            // Active Faces Checkboxes (when Custom Multi-Face is selected, or collapsible fine-tuning)
+            if (obj->sflodGeometryMode == 4 || ImGui::TreeNode("Active Face Masks (Fine-Tuning)")) {
+                bool fFront = (obj->sflodFaceMask & (1 << 0)) != 0;
+                bool fBack  = (obj->sflodFaceMask & (1 << 1)) != 0;
+                bool fRight = (obj->sflodFaceMask & (1 << 2)) != 0;
+                bool fLeft  = (obj->sflodFaceMask & (1 << 3)) != 0;
+                bool fTop   = (obj->sflodFaceMask & (1 << 4)) != 0;
+                bool fBot   = (obj->sflodFaceMask & (1 << 5)) != 0;
+
+                ImGui::TextDisabled("Toggle which orthogonal face directions are active:");
+                if (ImGui::Checkbox("Front (+Z)", &fFront)) { obj->sflodFaceMask ^= (1 << 0); } ImGui::SameLine();
+                if (ImGui::Checkbox("Back (-Z)", &fBack))   { obj->sflodFaceMask ^= (1 << 1); } ImGui::SameLine();
+                if (ImGui::Checkbox("Right (+X)", &fRight)) { obj->sflodFaceMask ^= (1 << 2); }
+                if (ImGui::Checkbox("Left (-X)", &fLeft))   { obj->sflodFaceMask ^= (1 << 3); } ImGui::SameLine();
+                if (ImGui::Checkbox("Top (+Y)", &fTop))     { obj->sflodFaceMask ^= (1 << 4); } ImGui::SameLine();
+                if (ImGui::Checkbox("Bottom (-Y)", &fBot))  { obj->sflodFaceMask ^= (1 << 5); }
+
+                if (obj->sflodGeometryMode != 4) {
+                    ImGui::TreePop();
+                }
             }
 
             // Shader Complexity
@@ -8411,11 +8452,26 @@ void EngineUI::RenderDetails(Scene& scene) {
             bool isCardActive = obj->enableSFLOD && (distTriggered || lodTriggered || previewTriggered);
 
             uint32_t meshTris = (uint32_t)obj->mesh.indices.size() / 3;
-            uint32_t cardTris = (obj->sflodGeometryMode == 1) ? 6 : 2;
+            uint32_t cardTris = 2;
+            const char* geomName = "1-Face Parallax Card";
+            if (obj->sflodGeometryMode == 1) {
+                cardTris = 6;
+                geomName = "Tri-Planar Nacho Mode";
+            } else if (obj->sflodGeometryMode == 2) {
+                cardTris = 10;
+                geomName = "5-Face Open Box";
+            } else if (obj->sflodGeometryMode == 3) {
+                cardTris = 12;
+                geomName = "6-Face Closed Cube";
+            } else if (obj->sflodGeometryMode == 4) {
+                int activeCount = 0;
+                for (int b = 0; b < 6; ++b) { if (obj->sflodFaceMask & (1 << b)) activeCount++; }
+                cardTris = activeCount * 2;
+                geomName = "Custom Multi-Face Box";
+            }
             float reduction = meshTris > cardTris ? ((1.0f - (float)cardTris / (float)meshTris) * 100.0f) : 0.0f;
 
             if (isCardActive) {
-                const char* geomName = (obj->sflodGeometryMode == 1) ? "Tri-Planar Nacho Mode" : "1-Face Parallax Card";
                 ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[ACTIVE: %s (%u Tris)]", geomName, cardTris);
                 ImGui::Text("Saved Triangles: %u Tris (-%.2f%% reduction)", meshTris > cardTris ? meshTris - cardTris : 0, reduction);
                 if (previewTriggered) {
