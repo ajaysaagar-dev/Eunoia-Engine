@@ -205,6 +205,10 @@ bool SFLODSystem::RasterizeFace(
     glm::vec3 axisY = (scaleY > 1e-4f) ? (glm::vec3(model[1]) / scaleY) : glm::vec3(0.0f, 1.0f, 0.0f);
     glm::vec3 axisZ = (scaleZ > 1e-4f) ? (glm::vec3(model[2]) / scaleZ) : glm::vec3(0.0f, 0.0f, 1.0f);
 
+    float extentX = (bMax.x - bMin.x) * (scaleX > 1e-4f ? scaleX : 1.0f);
+    float extentY = (bMax.y - bMin.y) * (scaleY > 1e-4f ? scaleY : 1.0f);
+    float extentZ = (bMax.z - bMin.z) * (scaleZ > 1e-4f ? scaleZ : 1.0f);
+
     glm::vec3 norm(0.0f), right(0.0f), up(0.0f);
     float fWidth = cardW;
     float fHeight = cardH;
@@ -212,27 +216,33 @@ bool SFLODSystem::RasterizeFace(
     switch (face) {
     case SFLODOrthogonalFace::Front: // +Z
         norm = axisZ; right = axisX; up = axisY;
-        fWidth = cardW; fHeight = cardH;
+        fWidth = (extentX > 0.01f) ? extentX : cardW;
+        fHeight = (extentY > 0.01f) ? extentY : cardH;
         break;
     case SFLODOrthogonalFace::Back: // -Z
         norm = -axisZ; right = -axisX; up = axisY;
-        fWidth = cardW; fHeight = cardH;
+        fWidth = (extentX > 0.01f) ? extentX : cardW;
+        fHeight = (extentY > 0.01f) ? extentY : cardH;
         break;
     case SFLODOrthogonalFace::Right: // +X
         norm = axisX; right = -axisZ; up = axisY;
-        fWidth = cardW; fHeight = cardH;
+        fWidth = (extentZ > 0.01f) ? extentZ : cardW;
+        fHeight = (extentY > 0.01f) ? extentY : cardH;
         break;
     case SFLODOrthogonalFace::Left: // -X
         norm = -axisX; right = axisZ; up = axisY;
-        fWidth = cardW; fHeight = cardH;
+        fWidth = (extentZ > 0.01f) ? extentZ : cardW;
+        fHeight = (extentY > 0.01f) ? extentY : cardH;
         break;
     case SFLODOrthogonalFace::Top: // +Y
         norm = axisY; right = axisX; up = -axisZ;
-        fWidth = cardW; fHeight = cardW;
+        fWidth = (extentX > 0.01f) ? extentX : cardW;
+        fHeight = (extentZ > 0.01f) ? extentZ : cardW;
         break;
     case SFLODOrthogonalFace::Bottom: // -Y
         norm = -axisY; right = axisX; up = axisZ;
-        fWidth = cardW; fHeight = cardW;
+        fWidth = (extentX > 0.01f) ? extentX : cardW;
+        fHeight = (extentZ > 0.01f) ? extentZ : cardW;
         break;
     }
 

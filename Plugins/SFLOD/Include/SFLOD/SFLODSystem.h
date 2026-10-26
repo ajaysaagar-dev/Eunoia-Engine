@@ -162,9 +162,125 @@ public:
         SFLODOrthogonalFace domFace = GetDominantFace(obj, model, cameraPos, &localDir);
 
         bool isTriPlanar = (obj.sflodGeometryMode == 1); // 1 = TriPlanarNacho
+        bool isBoxMode = (obj.sflodGeometryMode >= 2);   // 2 = FiveFaceBox, 3 = SixFaceCube, 4 = CustomBox
         uint32_t numIndicesGenerated = 0;
 
-        if (isTriPlanar) {
+        if (isBoxMode) {
+            // =========================================================================
+            // Mode C: Box / Multi-Face Imposter (1 to 6 Active Orthogonal Boundary Faces)
+            // =========================================================================
+            float scaleX = glm::length(glm::vec3(model[0]));
+            float scaleY = glm::length(glm::vec3(model[1]));
+            float scaleZ = glm::length(glm::vec3(model[2]));
+            glm::vec3 axisX = (scaleX > 1e-4f) ? (glm::vec3(model[0]) / scaleX) : glm::vec3(1.0f, 0.0f, 0.0f);
+            glm::vec3 axisY = (scaleY > 1e-4f) ? (glm::vec3(model[1]) / scaleY) : glm::vec3(0.0f, 1.0f, 0.0f);
+            glm::vec3 axisZ = (scaleZ > 1e-4f) ? (glm::vec3(model[2]) / scaleZ) : glm::vec3(0.0f, 0.0f, 1.0f);
+
+            glm::vec3 bMin = obj.mesh.aabbValid ? obj.mesh.aabbMin : glm::vec3(-0.5f);
+            glm::vec3 bMax = obj.mesh.aabbValid ? obj.mesh.aabbMax : glm::vec3(0.5f);
+            glm::vec3 localCenter = (bMin + bMax) * 0.5f;
+            glm::vec3 worldCenter = glm::vec3(model * glm::vec4(localCenter, 1.0f));
+            worldCenter += axisX * obj.sflodPlaneOffset.x + axisY * obj.sflodPlaneOffset.y;
+
+            float extentX = (bMax.x - bMin.x) * (scaleX > 1e-4f ? scaleX : 1.0f);
+            float extentY = (bMax.y - bMin.y) * (scaleY > 1e-4f ? scaleY : 1.0f);
+            float extentZ = (bMax.z - bMin.z) * (scaleZ > 1e-4f ? scaleZ : 1.0f);
+
+            if (obj.sflodPlaneWidth > 0.001f) extentX = obj.sflodPlaneWidth;
+            if (obj.sflodPlaneHeight > 0.001f) extentY = obj.sflodPlaneHeight;
+
+            float hx = extentX * 0.5f;
+            float hy = extentY * 0.5f;
+            float hz = extentZ * 0.5f;
+
+            // Determine active faces bitmask (bits 0..5: Front, Back, Right, Left, Top, Bottom)
+            uint8_t activeMask = 0x3F;
+            if (obj.sflodGeometryMode == 2) {
+                // 5-Face Box: omit selected open face (default Top +Y, bit 4)
+                int openFaceIdx = glm::clamp(obj.sflodOpenFace, 0, 5);
+                activeMask = 0x3F & ~(1 << openFaceIdx);
+            } else if (obj.sflodGeometryMode == 3) {
+                // 6-Face Cube: all 6 faces active
+                activeMask = 0x3F;
+            } else if (obj.sflodGeometryMode == 4) {
+                // Custom Multi-Face Box: user-specified face mask (1 to 6 faces)
+                activeMask = obj.sflodFaceMask;
+            }
+
+            glm::vec3 vColor(1.0f, 1.0f, 1.0f);
+
+            auto AppendFaceQuad = [&](SFLODOrthogonalFace face,
+                                      const glm::vec3& faceCenter,
+                                      const glm::vec3& fRight,
+                                      const glm::vec3& fUp,
+                                      const glm::vec3& fNorm,
+                                      float hw, float hh)
+            {
+                SFLODAtlasTileRect tile = isAtlas ? GetAtlasTileUV(face) : SFLODAtlasTileRect{ glm::vec2(0.0f, 0.0f), glm::vec2(1.0f, 1.0f) };
+
+                glm::vec3 p0 = faceCenter - fRight * hw - fUp * hh;
+                glm::vec3 p1 = faceCenter + fRight * hw - fUp * hh;
+                glm::vec3 p2 = faceCenter + fRight * hw + fUp * hh;
+                glm::vec3 p3 = faceCenter - fRight * hw + fUp * hh;
+
+                glm::vec2 uv0 = glm::vec2(tile.minUV.x, tile.maxUV.y);
+                glm::vec2 uv1 = glm::vec2(tile.maxUV.x, tile.maxUV.y);
+                glm::vec2 uv2 = glm::vec2(tile.maxUV.x, tile.minUV.y);
+                glm::vec2 uv3 = glm::vec2(tile.minUV.x, tile.minUV.y);
+
+                uint32_t idx = static_cast<uint32_t>(outVertices.size());
+                outVertices.push_back({ p0, fNorm, uv0, vColor, glm::vec4(fRight, 1.0f) });
+                outVertices.push_back({ p1, fNorm, uv1, vColor, glm::vec4(fRight, 1.0f) });
+                outVertices.push_back({ p2, fNorm, uv2, vColor, glm::vec4(fRight, 1.0f) });
+                outVertices.push_back({ p3, fNorm, uv3, vColor, glm::vec4(fRight, 1.0f) });
+
+                // CCW (front exterior)
+                outIndices.push_back(idx + 0); outIndices.push_back(idx + 1); outIndices.push_back(idx + 2);
+                outIndices.push_back(idx + 0); outIndices.push_back(idx + 2); outIndices.push_back(idx + 3);
+                // CW (back interior for open boxes/cavities)
+                outIndices.push_back(idx + 0); outIndices.push_back(idx + 2); outIndices.push_back(idx + 1);
+                outIndices.push_back(idx + 0); outIndices.push_back(idx + 3); outIndices.push_back(idx + 2);
+
+                numIndicesGenerated += 12;
+            };
+
+            // 1. Front (+Z): bit 0
+            if (activeMask & (1 << 0)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Front,
+                    worldCenter + axisZ * hz,
+                    axisX, axisY, axisZ, hx, hy);
+            }
+            // 2. Back (-Z): bit 1
+            if (activeMask & (1 << 1)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Back,
+                    worldCenter - axisZ * hz,
+                    -axisX, axisY, -axisZ, hx, hy);
+            }
+            // 3. Right (+X): bit 2
+            if (activeMask & (1 << 2)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Right,
+                    worldCenter + axisX * hx,
+                    -axisZ, axisY, axisX, hz, hy);
+            }
+            // 4. Left (-X): bit 3
+            if (activeMask & (1 << 3)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Left,
+                    worldCenter - axisX * hx,
+                    axisZ, axisY, -axisX, hz, hy);
+            }
+            // 5. Top (+Y): bit 4
+            if (activeMask & (1 << 4)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Top,
+                    worldCenter + axisY * hy,
+                    axisX, -axisZ, axisY, hx, hz);
+            }
+            // 6. Bottom (-Y): bit 5
+            if (activeMask & (1 << 5)) {
+                AppendFaceQuad(SFLODOrthogonalFace::Bottom,
+                    worldCenter - axisY * hy,
+                    axisX, axisZ, -axisY, hx, hz);
+            }
+        } else if (isTriPlanar) {
             // =========================================================================
             // Mode B: Tri-Planar Nacho Mode (3 Intersecting Orthogonal Planes, 12 Tris Double-Sided)
             // =========================================================================

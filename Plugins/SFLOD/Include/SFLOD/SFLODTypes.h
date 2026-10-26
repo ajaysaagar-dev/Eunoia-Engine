@@ -14,7 +14,10 @@ enum class SFLODBillboardMode : int {
 
 enum class SFLODGeometryMode : int {
     SinglePlane = 0,      // 1 quad / 2 triangles (dynamically samples dominant atlas tile)
-    TriPlanarNacho = 1    // 3 intersecting orthogonal quads / 6 triangles (XY, YZ, XZ quads)
+    TriPlanarNacho = 1,   // 3 intersecting orthogonal quads / 6 triangles (XY, YZ, XZ quads)
+    FiveFaceBox = 2,      // 5-face box / 10 triangles (open box: Front, Back, Left, Right, Bottom)
+    SixFaceCube = 3,      // 6-face closed cube / 12 triangles (all 6 bounding box faces)
+    CustomBox = 4         // Multi-face box / dynamic 2 to 12 triangles (varying active face mask)
 };
 
 enum class SFLODShaderComplexity : int {
