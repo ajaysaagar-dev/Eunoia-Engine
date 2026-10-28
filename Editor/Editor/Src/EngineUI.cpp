@@ -8647,7 +8647,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
         if (!obj->isLight && !obj->isCamera && !IsLightPrimitive(obj->type) && !IsCameraPrimitive(obj->type)) {
             char modHeaderTitle[64];
-            int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0);
+            int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0) + (obj->hasAnimator ? 1 : 0);
             snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", totalMods);
             if (ImGui::CollapsingHeader(modHeaderTitle, ImGuiTreeNodeFlags_DefaultOpen)) {
                 // Add Modifier button and popup
@@ -8711,10 +8711,22 @@ void EngineUI::RenderDetails(Scene& scene) {
                         ImGui::TextDisabled("Physics Modifier already added");
                     }
 
+                    ImGui::Spacing();
+                    ImGui::TextColored(ImVec4(0.6f, 0.4f, 1.0f, 1.0f), "ANIMATION MODIFIERS");
+                    ImGui::Separator();
+                    if (!obj->hasAnimator) {
+                        if (ImGui::MenuItem("Animation Graph")) {
+                            obj->AddAnimatorModifier();
+                            AddLog("LogAnimation", "Added Animation Graph modifier to " + obj->name, 0);
+                        }
+                    } else {
+                        ImGui::TextDisabled("Animation Graph already added");
+                    }
+
                     ImGui::EndPopup();
                 }
 
-                if (obj->modifiers.empty() && !obj->hasPhysics) {
+                if (obj->modifiers.empty() && !obj->hasPhysics && !obj->hasAnimator) {
                     ImGui::Spacing();
                     ImGui::TextDisabled("No modifiers attached to this object.");
                     ImGui::TextDisabled("Click '+ Add Modifier' to add collision or physics modifiers.");
@@ -8997,6 +9009,121 @@ void EngineUI::RenderDetails(Scene& scene) {
                             ImGui::TreePop();
                         }
 
+                        ImGui::PopID();
+                    }
+
+                    // 3. Render Animation Graph Modifier (if attached)
+                    if (obj->hasAnimator) {
+                        ImGui::PushID("AnimationGraphModifierCard");
+                        ImGui::Spacing();
+                        ImGui::Separator();
+
+                        ImGui::Checkbox("##AnimModEnabled", &obj->animator.enabled);
+                        ImGui::SameLine();
+
+                        bool isAnimOpen = ImGui::TreeNodeEx("Animation Graph##AnimHeader", ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap | ImGuiTreeNodeFlags_SpanAvailWidth);
+
+                        ImGui::SameLine(ImGui::GetContentRegionAvail().x + 20.0f);
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.15f, 0.15f, 0.8f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.9f, 0.2f, 0.2f, 1.0f));
+                        if (ImGui::SmallButton("X##RemoveAnimMod")) {
+                            obj->RemoveAnimatorModifier();
+                            AddLog("LogAnimation", "Removed Animation Graph modifier from " + obj->name, 0);
+                        }
+                        ImGui::PopStyleColor(2);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Remove Animation Graph modifier");
+                        }
+
+                        if (isAnimOpen) {
+                            ImGui::Indent(8.0f);
+
+                            // Project .eanimator file picker dropdown
+                            std::string previewGraphName = obj->animator.graphPath.empty() ? "(None - Select Animation Graph)" : std::filesystem::path(obj->animator.graphPath).filename().string();
+                            if (ImGui::BeginCombo("Graph##AnimGraphSelector", previewGraphName.c_str())) {
+                                if (ImGui::Selectable("(None)", obj->animator.graphPath.empty())) {
+                                    obj->animator.LoadGraph("");
+                                }
+                                ImGui::Separator();
+
+                                std::vector<std::string> animGraphs;
+                                std::error_code ec;
+                                std::filesystem::path contentDir = contentRootPath;
+                                if (std::filesystem::exists(contentDir, ec)) {
+                                    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentDir, ec)) {
+                                        if (entry.is_regular_file()) {
+                                            std::string ext = entry.path().extension().string();
+                                            std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                                            if (ext == ".eanimator" || ext == ".animator") {
+                                                std::string rel = std::filesystem::relative(entry.path(), contentDir, ec).string();
+                                                animGraphs.push_back(rel);
+                                            }
+                                        }
+                                    }
+                                }
+
+                                for (const auto& gPath : animGraphs) {
+                                    bool isSel = (obj->animator.graphPath == gPath || obj->animator.graphPath.find(gPath) != std::string::npos);
+                                    if (ImGui::Selectable(gPath.c_str(), isSel)) {
+                                        std::filesystem::path fullP = contentRootPath / gPath;
+                                        obj->animator.LoadGraph(fullP.string());
+                                        AddLog("LogAnimation", "Assigned Animation Graph: " + gPath + " to " + obj->name, 0);
+                                    }
+                                }
+                                ImGui::EndCombo();
+                            }
+
+                            if (ImGui::BeginDragDropTarget()) {
+                                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                                    std::string droppedPath((const char*)payload->Data);
+                                    if (droppedPath.find(".eanimator") != std::string::npos || droppedPath.find(".animator") != std::string::npos) {
+                                        std::filesystem::path fullP = contentRootPath / droppedPath;
+                                        obj->animator.LoadGraph(fullP.string());
+                                        AddLog("LogAnimation", "Dropped Animation Graph: " + droppedPath + " onto " + obj->name, 0);
+                                    }
+                                }
+                                ImGui::EndDragDropTarget();
+                            }
+
+                            // State & telemetry
+                            if (obj->animator.instance && obj->animator.graph) {
+                                std::string curState = obj->animator.GetCurrentStateName();
+                                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.5f, 1.0f), "Active State: %s", curState.c_str());
+                                if (obj->animator.IsTransitioning()) {
+                                    ImGui::SameLine();
+                                    ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "[Transitioning...]");
+                                }
+
+                                if (!obj->animator.instance->runtimeParams.empty()) {
+                                    if (ImGui::TreeNodeEx("Live Parameters##AnimLiveParams", ImGuiTreeNodeFlags_None)) {
+                                        for (auto& pair : obj->animator.instance->runtimeParams) {
+                                            auto& p = pair.second;
+                                            if (p.type == Eunoia::AnimatorParamType::Boolean) {
+                                                ImGui::Checkbox(p.name.c_str(), &p.boolValue);
+                                            } else if (p.type == Eunoia::AnimatorParamType::Float) {
+                                                ImGui::DragFloat(p.name.c_str(), &p.floatValue, 0.1f);
+                                            } else if (p.type == Eunoia::AnimatorParamType::Int) {
+                                                ImGui::DragInt(p.name.c_str(), &p.intValue);
+                                            } else if (p.type == Eunoia::AnimatorParamType::String) {
+                                                char sbuf[128];
+                                                strncpy_s(sbuf, sizeof(sbuf), p.stringValue.c_str(), sizeof(sbuf) - 1);
+                                                if (ImGui::InputText(p.name.c_str(), sbuf, sizeof(sbuf))) {
+                                                    p.stringValue = sbuf;
+                                                }
+                                            }
+                                        }
+                                        ImGui::TreePop();
+                                    }
+                                }
+                            } else if (!obj->animator.graphPath.empty()) {
+                                ImGui::TextDisabled("Graph assigned: %s", obj->animator.graphPath.c_str());
+                            } else {
+                                ImGui::TextDisabled("Select an Animation Graph from dropdown or drag from Content Browser.");
+                            }
+
+                            ImGui::Unindent(8.0f);
+                            ImGui::TreePop();
+                        }
                         ImGui::PopID();
                     }
                 }
@@ -13013,18 +13140,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                     OpenNodeBehaviourEditor(fullNb.string());
                                     AddLog("LogContent", "Opened Node Behaviour: " + item.meta.objectName, 2);
-                                } else if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
-                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
-                                    OpenAnimationBlendEditor(fullBlend.string());
-                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
-                                } else if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
-                                    if (ImGui::MenuItem("Open in Animation Blend Editor")) {
-                                        std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
-                                        OpenAnimationBlendEditor(fullBlend.string());
-                                    }
-                                    ImGui::Separator();
-                                }
-                                if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                } else if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
                                     std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
                                     OpenAnimationBlendEditor(fullBlend.string());
                                     AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
@@ -13271,18 +13387,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
                                     if (ImGui::MenuItem("Open in Animation Blend Editor")) {
                                         std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
                                         OpenAnimationBlendEditor(fullBlend.string());
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
-                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
-                                    OpenAnimationBlendEditor(fullBlend.string());
-                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
-                                } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     if (ImGui::MenuItem("Open in Animator Graph Editor")) {
                                         std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
                                         OpenAnimatorGraphEditor(fullAg.string());
@@ -16638,6 +16750,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                 if (prop.refType == ObjectRefType::Light && !sceneObj.isLight) continue;
                                 if (prop.refType == ObjectRefType::Mesh && sceneObj.mesh.indices.empty()) continue;
                                 if (prop.refType == ObjectRefType::Camera && !sceneObj.isCamera && sceneObj.type != PrimitiveType::Camera) continue;
+                                if (prop.refType == ObjectRefType::AnimationGraph && !sceneObj.hasAnimator) continue;
 
                                 bool isSelected = (prop.targetId == sceneObj.id);
                                 std::string itemLabel = sceneObj.name + " (ID: " + std::to_string(sceneObj.id) + ")";
@@ -16664,6 +16777,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                     if (prop.refType == ObjectRefType::Light && !draggedObj->isLight) compatible = false;
                                     if (prop.refType == ObjectRefType::Mesh && draggedObj->mesh.indices.empty()) compatible = false;
                                     if (prop.refType == ObjectRefType::Camera && !draggedObj->isCamera && draggedObj->type != PrimitiveType::Camera) compatible = false;
+                                    if (prop.refType == ObjectRefType::AnimationGraph && !draggedObj->hasAnimator) compatible = false;
 
                                     if (compatible) {
                                         UndoManager::Get().RecordSnapshot(scene, "Drop Reference: " + prop.name);
