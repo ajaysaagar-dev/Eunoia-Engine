@@ -627,6 +627,16 @@ public:
     char newNodeBehaviourNameBuf[64] = "NB_NewBehaviour";
     void OpenNodeBehaviourEditor(const std::string& path);
 
+    // Animator Graph Visual State Machine Editor & Skeletal Animation
+    bool showNewAnimatorGraphPopup = false;
+    char newAnimatorGraphNameBuf[64] = "AG_NewAnimator";
+    void OpenAnimatorGraphEditor(const std::string& path);
+
+    // Batch Animation Import Skeleton Selector Dialog
+    bool showBatchSkeletonImportPopup = false;
+    std::vector<std::string> pendingBatchImportAnimFiles;
+    std::string selectedBatchImportSkeletonMesh = "";
+
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;

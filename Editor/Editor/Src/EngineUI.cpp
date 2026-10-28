@@ -40,6 +40,8 @@
 #include <Node-Behaviour/NodeBehaviourManager.h>
 #include <Node-Behaviour/NodeBehaviourInstance.h>
 #include <SFLOD/SFLODSystem.h>
+#include <EngineAssets/AnimatorGraphEditor.h>
+#include <EngineAssets/SkeletalAnimation.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -3143,6 +3145,12 @@ void EngineUI::HandleFileDrop(const char** paths, int count) {
         // Queue models for import after registry and textures are synced
         for (const auto& modelPath : modelsToQueue) {
             QueueModelImport(modelPath);
+            std::string mExt = std::filesystem::path(modelPath).extension().string();
+            std::transform(mExt.begin(), mExt.end(), mExt.begin(), ::tolower);
+            if (mExt == ".fbx" || mExt == ".anim" || mExt == ".eanim") {
+                pendingBatchImportAnimFiles.push_back(modelPath);
+                showBatchSkeletonImportPopup = true;
+            }
         }
 
         AddLog("LogContent", "Successfully imported " + std::to_string(importedCount) + " file(s)/folder(s) into Content Browser.", 2);
@@ -3660,7 +3668,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     matPreviewPipRect.active = false;
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
                         !(showMaterialEditor && materialWorkspaceActive) &&
-                        !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive();
+                        !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() &&
+                        !Eunoia::AnimatorGraphManager::Get().IsActive();
 
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
@@ -3733,6 +3742,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             if (showBottomDrawer) {
                 RenderContentBrowser(scene);
             }
+        } else if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
+            Eunoia::AnimatorGraphManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
         } else if (Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive()) {
             Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y), &scene);
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
@@ -4823,7 +4834,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
-        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive());
+        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive());
         std::string levelTabName = "Level Editor";
         if (levelUnsaved) levelTabName += "*";
         levelTabName += "##Tab_Level";
@@ -4831,6 +4842,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         if (RenderTabWithSaveProgress(levelTabName.c_str(), isLevelActive, m_levelSaveState, tabBtnH)) {
             materialWorkspaceActive = false;
             Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+            Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             uiMgr.SwitchToMainEditor();
             if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
                 PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
@@ -4848,6 +4860,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
 
             if (RenderTabWithSaveProgress(matLabel.c_str(), isMatActive, openMaterialDocs[i].saveState, tabBtnH)) {
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+            Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
                 SwitchToMaterialEditor((int)i);
             }
 
@@ -4888,6 +4901,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             if (RenderTabWithSaveProgress(uiLabel.c_str(), isUiActive, m_uiSaveState, tabBtnH)) {
                 materialWorkspaceActive = false;
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+            Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
                 uiMgr.SwitchToEditor(tabIdx);
             }
 
@@ -4929,6 +4943,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             if (RenderTabWithSaveProgress(nbLabel.c_str(), isNbActive, dummyNbSaveState, tabBtnH)) {
                 materialWorkspaceActive = false;
                 uiMgr.SwitchToMainEditor();
+                Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
                 nbMgr.SwitchToEditor((int)i);
             }
 
@@ -4955,6 +4970,48 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             nbMgr.Close((size_t)nbToClose);
         }
 
+        // 3.6 Animator Graph Tabs (Multiple open Animator Graph state machine editors)
+        auto& agMgr = Eunoia::AnimatorGraphManager::Get();
+        const auto& agEditors = agMgr.GetEditors();
+        int agToClose = -1;
+        for (size_t i = 0; i < agEditors.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isAgActive = (agMgr.IsActive() && agMgr.GetActiveEditorIndex() == (int)i);
+            std::string agLabel = "[AG] " + agEditors[i]->GetName();
+            if (agEditors[i]->IsDirty()) agLabel += "*";
+            agLabel += "##AgTab_" + std::to_string(i);
+
+            TabSaveProgressState dummyAgSaveState;
+            if (RenderTabWithSaveProgress(agLabel.c_str(), isAgActive, dummyAgSaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToMainEditor();
+                nbMgr.SwitchToMainEditor();
+                agMgr.SwitchToEditor((int)i);
+            }
+
+            // Close button ✕
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "✕##CloseAgTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                agToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", agEditors[i]->GetName().c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (agToClose >= 0) {
+            agMgr.Close((size_t)agToClose);
+        }
+
         // 4. "+" Quick Add New Document Switch
         ImGui::SameLine(0.0f, 6.0f * uiScale);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.071f, 0.071f, 0.078f, 1.0f)); // #121214
@@ -4971,7 +5028,11 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 showNewMaterialPopup = true;
                 snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
             }
-            if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+            if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
+                showNewAnimatorGraphPopup = true;
+                snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+                        if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                 showNewNodeBehaviourPopup = true;
                 snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
             }
@@ -10489,6 +10550,14 @@ void EngineUI::OpenUIEditor(const std::string& path) {
     AddLog("LogContent", "Opened UI Editor for: " + path, 0);
 }
 
+void EngineUI::OpenAnimatorGraphEditor(const std::string& path) {
+    materialWorkspaceActive = false;
+    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+    Eunoia::AnimatorGraphManager::Get().Open(path);
+    AddLog("LogContent", "Opened Animator Graph Editor for: " + path, 0);
+}
+
 void EngineUI::OpenNodeBehaviourEditor(const std::string& path) {
     materialWorkspaceActive = false;
     EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
@@ -11999,6 +12068,143 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
+                // Animator Graph asset creation modal
+                if (showNewAnimatorGraphPopup) {
+                    ImGui::OpenPopup("Create Animator Graph##AGModal");
+                    showNewAnimatorGraphPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Animator Graph##AGModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Animator Graph Name (.eanimator):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##AGNameInput", newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf));
+
+                    std::string inputName = newAnimatorGraphNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "Will create: %s.eanimator in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path agDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(agDir, bec);
+
+                        std::string createdPath = Eunoia::AnimatorGraphManager::Get().CreateNewAnimatorGraph(agDir.string(), inputName);
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path agPath(createdPath);
+                        std::filesystem::path metaPath = agDir / (inputName + ".eanimator.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Animator Graph\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        // Register in AssetRegistry immediately
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::AnimatorGraph;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(agPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".eanimator") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenAnimatorGraphEditor(createdPath);
+                        AddLog("LogContent", "Created Animator Graph: " + inputName + ".eanimator in " + targetDir, 2);
+
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                // Batch Animation Import Dialog: asks user to select skeleton for all currently importing animation files
+                if (showBatchSkeletonImportPopup) {
+                    ImGui::OpenPopup("Select Skeleton for Animation Batch##AnimBatchModal");
+                    showBatchSkeletonImportPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Select Skeleton for Animation Batch##AnimBatchModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "Importing %zu Animation File(s)", pendingBatchImportAnimFiles.size());
+                    ImGui::Text("Select the target Skeleton Mesh for all currently importing animations:");
+                    ImGui::Spacing();
+
+                    std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes("Content");
+                    std::string comboLabel = selectedBatchImportSkeletonMesh.empty() 
+                        ? "[Choose Target Skeleton Mesh...]" 
+                        : std::filesystem::path(selectedBatchImportSkeletonMesh).filename().string();
+
+                    ImGui::SetNextItemWidth(360.0f);
+                    if (ImGui::BeginCombo("##BatchSkelCombo", comboLabel.c_str())) {
+                        if (skelMeshes.empty()) {
+                            ImGui::Selectable("No 3D Models in Content/", false, ImGuiSelectableFlags_Disabled);
+                        }
+                        for (const auto& sm : skelMeshes) {
+                            std::string smName = std::filesystem::path(sm).filename().string();
+                            bool isSel = (sm == selectedBatchImportSkeletonMesh);
+                            if (ImGui::Selectable(smName.c_str(), isSel)) {
+                                selectedBatchImportSkeletonMesh = sm;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    bool hasSelected = !selectedBatchImportSkeletonMesh.empty();
+                    if (!hasSelected) ImGui::BeginDisabled();
+                    if (ImGui::Button("Apply Skeleton & Import", ImVec2(200, 0))) {
+                        // Apply selected skeleton to all importing animations
+                        for (const auto& animPath : pendingBatchImportAnimFiles) {
+                            std::string metaPath = animPath + ".assetmeta";
+                            std::ofstream mf(metaPath, std::ios::app);
+                            if (mf.is_open()) {
+                                mf << "targetSkeleton: " << selectedBatchImportSkeletonMesh << "\n";
+                            }
+                            AddLog("LogContent", "Imported Animation " + std::filesystem::path(animPath).filename().string() + " linked to skeleton: " + std::filesystem::path(selectedBatchImportSkeletonMesh).filename().string(), 0);
+                        }
+                        pendingBatchImportAnimFiles.clear();
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    if (!hasSelected) ImGui::EndDisabled();
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel Batch", ImVec2(120, 0))) {
+                        pendingBatchImportAnimFiles.clear();
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 // Two-Pane Content Browser Layout (Left: Folders, Right: Assets)
                 float maxTreeW = ImGui::GetWindowWidth() - 200.0f;
                 if (maxTreeW < 140.0f) maxTreeW = 140.0f;
@@ -12123,6 +12329,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             popupTargetVirtualDir = vDir;
                             showNewUIPopup = true;
                             snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
+                        }
+                        if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewAnimatorGraphPopup = true;
+                            snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
                         }
                         if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                             popupTargetVirtualDir = vDir;
@@ -12512,6 +12723,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                     OpenNodeBehaviourEditor(fullNb.string());
                                     AddLog("LogContent", "Opened Node Behaviour: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                    std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
+                                    OpenAnimatorGraphEditor(fullAg.string());
+                                    AddLog("LogContent", "Opened Animator Graph: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::UserInterface || item.meta.type == AssetType::UserInterface3D) {
                                     std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
                                     OpenUIEditor(fullUI.string());
@@ -12650,7 +12865,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewUIPopup = true;
                                     snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                                 }
-                                if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                                if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewAnimatorGraphPopup = true;
+                                    snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+                                }
+                        if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewNodeBehaviourPopup = true;
                                     snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
@@ -12743,6 +12963,13 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open in Node Behaviour Editor")) {
                                         std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                         OpenNodeBehaviourEditor(fullNb.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Animator Graph Editor")) {
+                                        std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
+                                        OpenAnimatorGraphEditor(fullAg.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -13016,12 +13243,21 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         showNewUIPopup = true;
                         snprintf(newUINameBuf, sizeof(newUINameBuf), "UI_NewInterface");
                     }
-                    if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                    if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
+                showNewAnimatorGraphPopup = true;
+                snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+                        if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewNodeBehaviourPopup = true;
                         snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
                     }
                     if (ImGui::BeginMenu("Create")) {
+                        if (ImGui::MenuItem("Animator Graph (.eanimator)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewAnimatorGraphPopup = true;
+                            snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+                        }
                         if (ImGui::MenuItem("Node Behaviour (.enb)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewNodeBehaviourPopup = true;
