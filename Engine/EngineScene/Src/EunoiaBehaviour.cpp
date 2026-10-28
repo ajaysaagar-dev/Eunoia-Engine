@@ -1513,6 +1513,15 @@ void EunoiaBehaviour::ResolveReferences(Scene& scene) {
                     prop.isMissing = true;
                 }
                 break;
+            case ObjectRefType::AnimationGraph:
+                if (targetObj && targetObj->hasAnimator) {
+                    *reinterpret_cast<AnimationGraphModifier**>(prop.dataPtr) = &targetObj->animator;
+                    prop.isMissing = false;
+                } else {
+                    *reinterpret_cast<void**>(prop.dataPtr) = nullptr;
+                    prop.isMissing = true;
+                }
+                break;
             default:
                 *reinterpret_cast<void**>(prop.dataPtr) = targetObj;
                 break;
@@ -2826,6 +2835,71 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             store.RemoveAll();
         }
     }
+
+    // Execute real-time dynamic Animator actions
+    for (const auto& action : m_animatorActions) {
+        bool boolConditionMet = true;
+        for (const auto& bCond : action.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        if (!action.requiredKeys.empty()) {
+            bool keyMet = false;
+            for (const auto& cond : action.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsMousePressed(cond.key);
+                        else down = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsKeyPressed(cond.key);
+                        else down = input.IsKeyDown(cond.key);
+                    }
+                    if (cond.isNegated) down = !down;
+                    if (down) { keyMet = true; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        AnimationGraphModifier* animMod = nullptr;
+        for (auto& p : m_properties) {
+            if (p.name == action.targetVar && p.refType == ObjectRefType::AnimationGraph && p.dataPtr) {
+                animMod = *reinterpret_cast<AnimationGraphModifier**>(p.dataPtr);
+                break;
+            }
+        }
+        if (!animMod && m_owner && m_owner->hasAnimator) {
+            animMod = &m_owner->animator;
+        }
+
+        if (animMod) {
+            if (action.type == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetBoolean) {
+                bool val = action.boolVal;
+                if (!action.sourceVar.empty()) val = GetBool(action.sourceVar, val);
+                animMod->SetBoolean(action.paramName, val);
+            } else if (action.type == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetFloat) {
+                float val = action.floatVal;
+                if (!action.sourceVar.empty()) val = GetFloat(action.sourceVar, val);
+                animMod->SetFloat(action.paramName, val);
+            } else if (action.type == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetInteger) {
+                int val = action.intVal;
+                if (!action.sourceVar.empty()) val = GetInt(action.sourceVar, val);
+                animMod->SetInteger(action.paramName, val);
+            } else if (action.type == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetString) {
+                std::string val = action.strVal;
+                if (!action.sourceVar.empty()) val = GetString(action.sourceVar, val);
+                animMod->SetString(action.paramName, val);
+            }
+        }
+    }
 }
 
 void DynamicScriptBehaviour::RegisterProperties() {
@@ -3004,7 +3078,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             { "Light", "LightComponent*" },
             { "PrimitiveMesh", "PrimitiveMesh*" },
             { "Mesh", "PrimitiveMesh*" },
-            { "UserInterface", "UserInterface*" }
+            { "UserInterface", "UserInterface*" },
+            { "AnimationGraph", "AnimationGraph*" },
+            { "AnimatorGraph", "AnimationGraph*" },
+            { "AnimatorComponent", "AnimationGraph*" }
         };
 
         bool matchedPtr = false;
@@ -3687,12 +3764,13 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
             RegisterProperty(varName, &m_vec4Storage[varName], "General");
         } else if (type == "Camera*" || type == "LightComponent*" || type == "Light*" ||
                    type == "PrimitiveMesh*" || type == "Mesh*" || type == "GameObject*" || type == "Actor*" ||
-                   type == "UserInterface*") {
+                   type == "UserInterface*" || type == "AnimationGraph*" || type == "AnimatorGraph*" || type == "AnimatorComponent*") {
             ObjectRefType refType = ObjectRefType::Actor;
             if (type == "Camera*") refType = ObjectRefType::Camera;
             else if (type == "LightComponent*" || type == "Light*") refType = ObjectRefType::Light;
             else if (type == "PrimitiveMesh*" || type == "Mesh*") refType = ObjectRefType::Mesh;
             else if (type == "UserInterface*") refType = ObjectRefType::UserInterface;
+            else if (type == "AnimationGraph*" || type == "AnimatorGraph*" || type == "AnimatorComponent*") refType = ObjectRefType::AnimationGraph;
 
             PropertyDefaultValue def;
             def.type = BehaviourPropertyType::ObjectRef;
@@ -3751,6 +3829,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     m_updateSaveActions.clear();
     m_destroyActions.clear();
     m_transformActions.clear();
+    m_animatorActions.clear();
     m_lineTraceActions.clear();
     m_uiActions.clear();
     m_hasRotation = false;
@@ -4909,6 +4988,15 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 }
             };
 
+            auto applyConditionsToAnimatorAction = [&](DynamicScriptBehaviour::DynamicAnimatorAction& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+            };
+
             auto applyConditionsToSaveAction = [&](DynamicSaveAction& act) {
                 for (const auto& sc : conditionStack) {
                     act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
@@ -5463,6 +5551,101 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             saveAct.type = DynamicScriptBehaviour::DynamicSaveAction::ActionType::SetItem;
                             applyConditionsToSaveAction(saveAct);
                             m_updateSaveActions.push_back(saveAct);
+                        }
+                    }
+                }
+            }
+
+            // Scan for Animator Graph calls (SetBoolean / SetFloat / SetInteger / SetString)
+            size_t setBoolPos = lLower.find(".setboolean(");
+            if (setBoolPos == std::string::npos) setBoolPos = lLower.find("->setboolean(");
+            if (setBoolPos == std::string::npos) setBoolPos = lLower.find(".setbool(");
+            if (setBoolPos == std::string::npos) setBoolPos = lLower.find("->setbool(");
+
+            size_t setFloatPos = lLower.find(".setfloat(");
+            if (setFloatPos == std::string::npos) setFloatPos = lLower.find("->setfloat(");
+
+            size_t setIntPos = lLower.find(".setinteger(");
+            if (setIntPos == std::string::npos) setIntPos = lLower.find("->setinteger(");
+            if (setIntPos == std::string::npos) setIntPos = lLower.find(".setint(");
+            if (setIntPos == std::string::npos) setIntPos = lLower.find("->setint(");
+
+            size_t setStrPos = lLower.find(".setstring(");
+            if (setStrPos == std::string::npos) setStrPos = lLower.find("->setstring(");
+
+            if (setBoolPos != std::string::npos || setFloatPos != std::string::npos || setIntPos != std::string::npos || setStrPos != std::string::npos) {
+                size_t actionPos = std::string::npos;
+                DynamicScriptBehaviour::DynamicAnimatorAction::ActionType aType = DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetBoolean;
+                if (setBoolPos != std::string::npos) { actionPos = setBoolPos; aType = DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetBoolean; }
+                else if (setFloatPos != std::string::npos) { actionPos = setFloatPos; aType = DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetFloat; }
+                else if (setIntPos != std::string::npos) { actionPos = setIntPos; aType = DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetInteger; }
+                else if (setStrPos != std::string::npos) { actionPos = setStrPos; aType = DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetString; }
+
+                std::string targetVar;
+                size_t arrowPos = l.rfind("->", actionPos);
+                size_t dotPos = l.rfind('.', actionPos);
+                size_t delimPos = (arrowPos != std::string::npos && (dotPos == std::string::npos || arrowPos > dotPos)) ? arrowPos : dotPos;
+                if (delimPos != std::string::npos) {
+                    size_t vEnd = delimPos;
+                    while (vEnd > 0 && (l[vEnd - 1] == ' ' || l[vEnd - 1] == '\t')) vEnd--;
+                    size_t vStart = vEnd;
+                    while (vStart > 0 && (isalnum((unsigned char)l[vStart - 1]) || l[vStart - 1] == '_')) vStart--;
+                    if (vEnd > vStart) targetVar = l.substr(vStart, vEnd - vStart);
+                }
+
+                size_t pOpen = l.find('(', actionPos);
+                size_t pClose = l.rfind(')');
+                if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen + 1) {
+                    std::string argsStr = l.substr(pOpen + 1, pClose - pOpen - 1);
+                    size_t comma = argsStr.find(',');
+                    if (comma != std::string::npos) {
+                        std::string arg1 = argsStr.substr(0, comma);
+                        std::string arg2 = argsStr.substr(comma + 1);
+
+                        std::string pName;
+                        size_t q1 = arg1.find('"');
+                        if (q1 != std::string::npos) {
+                            size_t q2 = arg1.find('"', q1 + 1);
+                            if (q2 != std::string::npos) pName = arg1.substr(q1 + 1, q2 - q1 - 1);
+                        } else {
+                            size_t a1 = arg1.find_first_not_of(" \t");
+                            size_t a2 = arg1.find_last_not_of(" \t");
+                            if (a1 != std::string::npos && a2 != std::string::npos) pName = arg1.substr(a1, a2 - a1 + 1);
+                        }
+
+                        std::string valStr;
+                        size_t b1 = arg2.find_first_not_of(" \t");
+                        size_t b2 = arg2.find_last_not_of(" \t");
+                        if (b1 != std::string::npos && b2 != std::string::npos) valStr = arg2.substr(b1, b2 - b1 + 1);
+
+                        if (!pName.empty() && !valStr.empty()) {
+                            DynamicScriptBehaviour::DynamicAnimatorAction aAct;
+                            aAct.type = aType;
+                            aAct.targetVar = targetVar;
+                            aAct.paramName = pName;
+
+                            std::string valStrLower = valStr;
+                            std::transform(valStrLower.begin(), valStrLower.end(), valStrLower.begin(), ::tolower);
+                            if (aType == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetBoolean) {
+                                if (valStrLower == "true" || valStrLower == "1") aAct.boolVal = true;
+                                else if (valStrLower == "false" || valStrLower == "0") aAct.boolVal = false;
+                                else aAct.sourceVar = valStr;
+                            } else if (aType == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetFloat) {
+                                try { aAct.floatVal = std::stof(valStr); } catch (...) { aAct.sourceVar = valStr; }
+                            } else if (aType == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetInteger) {
+                                try { aAct.intVal = std::stoi(valStr); } catch (...) { aAct.sourceVar = valStr; }
+                            } else if (aType == DynamicScriptBehaviour::DynamicAnimatorAction::ActionType::SetString) {
+                                size_t sq1 = valStr.find('"');
+                                if (sq1 != std::string::npos) {
+                                    size_t sq2 = valStr.find('"', sq1 + 1);
+                                    if (sq2 != std::string::npos) aAct.strVal = valStr.substr(sq1 + 1, sq2 - sq1 - 1);
+                                } else {
+                                    aAct.sourceVar = valStr;
+                                }
+                            }
+
+                            applyConditionsToAnimatorAction(aAct);
+                            m_animatorActions.push_back(aAct);
                         }
                     }
                 }

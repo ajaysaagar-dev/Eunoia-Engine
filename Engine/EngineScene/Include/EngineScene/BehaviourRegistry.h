@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <EngineScene/EunoiaBehaviour.h>
 #include <string>
 #include <unordered_map>
@@ -361,6 +361,21 @@ public:
         std::vector<DynamicBoolCondition> requiredBools;
     };
     std::vector<DynamicBoolAssignment> m_boolAssignments;
+
+    struct DynamicAnimatorAction {
+        enum class ActionType { SetBoolean, SetFloat, SetInteger, SetString };
+        ActionType type = ActionType::SetBoolean;
+        std::string targetVar;
+        std::string paramName;
+        bool boolVal = false;
+        float floatVal = 0.0f;
+        int intVal = 0;
+        std::string strVal;
+        std::string sourceVar;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+    };
+    std::vector<DynamicAnimatorAction> m_animatorActions;
 
     std::string m_sourceCppPath;
     std::filesystem::file_time_type m_sourceTimestamp{};

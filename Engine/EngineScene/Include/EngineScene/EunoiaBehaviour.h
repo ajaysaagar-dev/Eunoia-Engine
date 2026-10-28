@@ -13,6 +13,7 @@
 #include <UISystem/UISystem.h>
 #include <RayTrace/RayTrace.h>
 #include <SaveSystem/SaveSystem.h>
+#include <EngineScene/AnimationGraphModifier.h>
 
 // Forward declarations
 struct GameObject;
@@ -72,7 +73,8 @@ enum class ObjectRefType {
     Light,
     Mesh,
     Camera,
-    UserInterface
+    UserInterface,
+    AnimationGraph
 };
 
 inline const char* ObjectRefTypeToString(ObjectRefType type) {
@@ -81,8 +83,9 @@ inline const char* ObjectRefTypeToString(ObjectRefType type) {
         case ObjectRefType::Light:         return "Light";
         case ObjectRefType::Mesh:          return "Mesh";
         case ObjectRefType::Camera:        return "Camera";
-        case ObjectRefType::UserInterface: return "User Interface";
-        default:                           return "GameObject";
+        case ObjectRefType::UserInterface:  return "User Interface";
+        case ObjectRefType::AnimationGraph: return "Animation Graph";
+        default:                            return "GameObject";
     }
 }
 
