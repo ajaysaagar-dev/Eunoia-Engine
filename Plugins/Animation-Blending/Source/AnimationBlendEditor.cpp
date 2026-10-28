@@ -552,8 +552,11 @@ void AnimationBlendEditor::RenderRightSidebar(const ImVec2& pos, const ImVec2& s
 
         ImGui::Spacing();
 
-        // Bottom: Properties Panel
-        RenderProperties(ImVec2(pos.x, pos.y + m_previewHeight + 10.0f), ImVec2(size.x, propHeight));
+        // Bottom: Properties Panel in a scrollable child region
+        if (ImGui::BeginChild("BlendPropertiesChild", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None)) {
+            RenderProperties(ImVec2(pos.x, pos.y + m_previewHeight + 10.0f), ImVec2(size.x, propHeight));
+        }
+        ImGui::EndChild();
     }
     ImGui::EndChild();
 
@@ -796,6 +799,9 @@ void AnimationBlendEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& si
     dl->AddText(ImVec2(previewPos.x + 8.0f, previewPos.y + 8.0f), IM_COL32(0, 255, 180, 255), statusBuf);
 
     dl->PopClipRect();
+
+    // Advance layout cursor past the 3D preview viewport
+    ImGui::Dummy(previewSize);
 }
 
 void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& size) {

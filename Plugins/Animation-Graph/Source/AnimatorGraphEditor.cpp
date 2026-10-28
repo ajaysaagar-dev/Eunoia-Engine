@@ -928,8 +928,11 @@ void AnimatorGraphEditor::RenderRightSidebar(const ImVec2& pos, const ImVec2& si
 
         ImGui::Spacing();
 
-        // Bottom: Properties
-        RenderProperties(ImVec2(pos.x, pos.y + m_previewHeight + 10.0f), ImVec2(size.x, propHeight));
+        // Bottom: Properties Panel in a scrollable child region
+        if (ImGui::BeginChild("AGPropertiesChild", ImVec2(0.0f, 0.0f), false, ImGuiWindowFlags_None)) {
+            RenderProperties(ImVec2(pos.x, pos.y + m_previewHeight + 10.0f), ImVec2(size.x, propHeight));
+        }
+        ImGui::EndChild();
     }
     ImGui::EndChild();
 
@@ -1193,7 +1196,9 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
     dl->AddText(ImVec2(previewPos.x + 8.0f, previewPos.y + 8.0f), IM_COL32(0, 255, 180, 255), statusText.c_str());
 
     dl->PopClipRect();
-    ImGui::SetCursorScreenPos(ImVec2(previewPos.x, previewPos.y + previewSize.y));
+
+    // Advance layout cursor past the 3D preview viewport
+    ImGui::Dummy(previewSize);
 }
 
 void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size) {
