@@ -235,6 +235,9 @@ public:
     std::shared_ptr<SkeletalMesh> LoadSkeletalMesh(const std::string& filePath);
     std::shared_ptr<AnimationClip> LoadAnimationClip(const std::string& filePath, const Skeleton* targetSkeleton = nullptr);
     
+    // Check whether a 3D model file contains skeleton bones / animation
+    static bool FileHasBones(const std::string& filePath, bool* outHasAnimation = nullptr);
+
     // Discover all skeletal meshes and animation clips in project Content directory
     std::vector<std::string> FindProjectSkeletalMeshes(const std::string& contentDir);
     std::vector<std::string> FindProjectAnimations(const std::string& contentDir, const std::string& targetSkeletonMesh = "");

@@ -350,8 +350,44 @@ std::shared_ptr<AnimationClip> SkeletalAnimationManager::LoadAnimationClip(const
     return clip;
 }
 
+bool SkeletalAnimationManager::FileHasBones(const std::string& filePath, bool* outHasAnimation) {
+    if (outHasAnimation) *outHasAnimation = false;
+
+    std::string ext = std::filesystem::path(filePath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext != ".fbx") return false;
+
+    ufbx_load_opts opts = { 0 };
+    opts.ignore_geometry = true;
+    opts.ignore_embedded = true;
+
+    ufbx_error error;
+    ufbx_scene* scene = ufbx_load_file(filePath.c_str(), &opts, &error);
+    if (!scene) return false;
+
+    bool hasBones = false;
+    if (scene->skin_clusters.count > 0) {
+        hasBones = true;
+    } else {
+        for (size_t i = 0; i < scene->nodes.count; ++i) {
+            if (scene->nodes.data[i]->bone != nullptr) {
+                hasBones = true;
+                break;
+            }
+        }
+    }
+
+    if (outHasAnimation && scene->anim_stacks.count > 0) {
+        *outHasAnimation = true;
+    }
+
+    ufbx_free_scene(scene);
+    return hasBones;
+}
+
 std::vector<std::string> SkeletalAnimationManager::FindProjectSkeletalMeshes(const std::string& contentDir) {
     std::vector<std::string> results;
+    std::vector<std::string> fallbackMeshes;
     std::error_code ec;
     if (!std::filesystem::exists(contentDir, ec)) return results;
 
@@ -362,8 +398,42 @@ std::vector<std::string> SkeletalAnimationManager::FindProjectSkeletalMeshes(con
         if (ext == ".fbx" || ext == ".gltf" || ext == ".glb" || ext == ".obj") {
             std::string p = entry.path().string();
             std::replace(p.begin(), p.end(), '\\', '/');
-            results.push_back(p);
+
+            // Check if explicitly marked as Skeletal Mesh in metadata
+            std::string metaPath = p + ".assetmeta";
+            bool isExplicitSkeletalMesh = false;
+            bool isExplicitAnimation = false;
+            if (std::filesystem::exists(metaPath, ec)) {
+                std::ifstream mf(metaPath);
+                if (mf.is_open()) {
+                    std::string mContent((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
+                    if (mContent.find("Skeletal Mesh") != std::string::npos ||
+                        mContent.find("SkeletalMesh") != std::string::npos ||
+                        mContent.find("hasSkeleton: true") != std::string::npos ||
+                        mContent.find("isSkeletalMesh: true") != std::string::npos) {
+                        isExplicitSkeletalMesh = true;
+                    }
+                    if (mContent.find("type: Animation") != std::string::npos ||
+                        mContent.find("isAnimation: true") != std::string::npos) {
+                        isExplicitAnimation = true;
+                    }
+                }
+            }
+
+            if (isExplicitAnimation) {
+                continue;
+            }
+
+            if (isExplicitSkeletalMesh || FileHasBones(p)) {
+                results.push_back(p);
+            } else {
+                fallbackMeshes.push_back(p);
+            }
         }
+    }
+
+    if (results.empty()) {
+        return fallbackMeshes;
     }
     return results;
 }
@@ -383,16 +453,35 @@ std::vector<std::string> SkeletalAnimationManager::FindProjectAnimations(const s
 
             // If metadata sidecar exists, check target skeleton match
             std::string metaPath = p + ".assetmeta";
-            if (!targetSkeletonMesh.empty() && std::filesystem::exists(metaPath, ec)) {
-                // If meta has skeleton, check if matches
+            std::string linkedSkeleton = "";
+            bool isExplicitMeshOnly = false;
+            if (std::filesystem::exists(metaPath, ec)) {
                 std::ifstream mf(metaPath);
                 if (mf.is_open()) {
                     std::string mContent((std::istreambuf_iterator<char>(mf)), std::istreambuf_iterator<char>());
-                    if (mContent.find("targetSkeleton") != std::string::npos) {
-                        if (mContent.find(targetSkeletonMesh) == std::string::npos) {
-                            continue; // Associated with different skeleton
-                        }
+                    if ((mContent.find("type: Skeletal Mesh") != std::string::npos || mContent.find("isSkeletalMesh: true") != std::string::npos) &&
+                        mContent.find("type: Animation") == std::string::npos && mContent.find("isAnimation: true") == std::string::npos) {
+                        isExplicitMeshOnly = true;
                     }
+                    size_t tsPos = mContent.find("targetSkeleton:");
+                    if (tsPos != std::string::npos) {
+                        size_t colon = mContent.find(':', tsPos);
+                        size_t nl = mContent.find('\n', colon);
+                        linkedSkeleton = mContent.substr(colon + 1, nl == std::string::npos ? std::string::npos : nl - (colon + 1));
+                        while (!linkedSkeleton.empty() && isspace((unsigned char)linkedSkeleton.front())) linkedSkeleton.erase(linkedSkeleton.begin());
+                        while (!linkedSkeleton.empty() && isspace((unsigned char)linkedSkeleton.back())) linkedSkeleton.pop_back();
+                    }
+                }
+            }
+
+            if (isExplicitMeshOnly) {
+                continue;
+            }
+
+            if (!targetSkeletonMesh.empty() && !linkedSkeleton.empty()) {
+                std::string targetStem = std::filesystem::path(targetSkeletonMesh).stem().string();
+                if (linkedSkeleton.find(targetStem) == std::string::npos && targetSkeletonMesh.find(linkedSkeleton) == std::string::npos) {
+                    continue; // Associated with different skeleton
                 }
             }
 
