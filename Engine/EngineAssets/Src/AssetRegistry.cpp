@@ -1,5 +1,6 @@
 #include <EngineAssets/AssetRegistry.h>
 #include <EngineAssets/AssetEvents.h>
+#include <EngineAssets/SkeletalAnimation.h>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -497,6 +498,18 @@ void AssetRegistry::ReadOrGenerateSidecar(const std::filesystem::path& diskFileP
                         meta.type = parsedType;
                     }
                 }
+            }
+        }
+    }
+
+    // If it's an FBX mesh and has bones, automatically promote to Skeletal Mesh
+    if (meta.type == AssetType::Mesh) {
+        std::string ext = diskFilePath.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        if (ext == ".fbx") {
+            bool hasAnim = false;
+            if (Eunoia::SkeletalAnimationManager::FileHasBones(diskFilePath.string(), &hasAnim)) {
+                meta.type = AssetType::SkeletalMesh;
             }
         }
     }
