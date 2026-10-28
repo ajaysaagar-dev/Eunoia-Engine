@@ -4,7 +4,12 @@
 #include <vector>
 #include <memory>
 #include <iostream>
+#include <unordered_map>
 #include <Animation-Graph/AnimatorGraph.h>
+#include <Animation-Graph/SkeletalAnimation.h>
+#include <Animation-Blending/AnimationBlend.h>
+
+struct GameObject;
 
 namespace Eunoia {
 
@@ -15,6 +20,12 @@ struct AnimationGraphModifier {
     std::shared_ptr<AnimatorGraph> graph;
     std::unique_ptr<AnimatorInstance> instance;
 
+    // Runtime loaded assets and caches
+    std::unordered_map<std::string, std::shared_ptr<AnimationClip>> loadedClips;
+    std::unordered_map<std::string, std::shared_ptr<AnimationBlend>> loadedBlends;
+    std::shared_ptr<SkeletalMesh> skeletalMesh;
+    std::string cachedMeshPath = "";
+
     AnimationGraphModifier() = default;
 
     // Copy constructor: clones graph pointer and creates a new runtime instance
@@ -23,6 +34,10 @@ struct AnimationGraphModifier {
         name = other.name;
         graphPath = other.graphPath;
         graph = other.graph;
+        cachedMeshPath = other.cachedMeshPath;
+        skeletalMesh = other.skeletalMesh;
+        loadedClips = other.loadedClips;
+        loadedBlends = other.loadedBlends;
         if (!graphPath.empty()) {
             LoadGraph(graphPath);
         }
@@ -35,6 +50,10 @@ struct AnimationGraphModifier {
             name = other.name;
             graphPath = other.graphPath;
             graph = other.graph;
+            cachedMeshPath = other.cachedMeshPath;
+            skeletalMesh = other.skeletalMesh;
+            loadedClips = other.loadedClips;
+            loadedBlends = other.loadedBlends;
             if (!graphPath.empty()) {
                 LoadGraph(graphPath);
             } else {
@@ -78,15 +97,8 @@ struct AnimationGraphModifier {
         }
     }
 
-    void Update(float dt) {
-        if (!enabled) return;
-        if (!instance && !graphPath.empty()) {
-            LoadGraph(graphPath);
-        }
-        if (instance) {
-            instance->Update(dt);
-        }
-    }
+    // Forward declaration of Update; defined inline in Scene.h after GameObject and Scene are complete
+    void Update(float dt, ::GameObject* owner = nullptr);
 
     // Parameter Setters
     void SetBoolean(const std::string& paramName, bool value) {

@@ -1417,17 +1417,7 @@ struct GameObject {
     TransformVector3 GetRightVector() const { return Transform.GetRightVector(); }
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
 
-    void Update(float dt) {
-        if (hasAnimator && animator.enabled) {
-            animator.Update(dt);
-        }
-        if (mobility == Mobility::Movable && autoRotate) {
-            rotation += autoRotateSpeed * dt;
-            if (rotation.x > 360.0f) rotation.x -= 360.0f;
-            if (rotation.y > 360.0f) rotation.y -= 360.0f;
-            if (rotation.z > 360.0f) rotation.z -= 360.0f;
-        }
-    }
+    void Update(float dt);
 
     // Runtime Lifecycle & Destruction (dev.md & user request: GameObject.Destroy())
     void Destroy();

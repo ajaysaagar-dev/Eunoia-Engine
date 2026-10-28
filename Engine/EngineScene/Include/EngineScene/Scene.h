@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -2777,6 +2777,188 @@ inline void GameObject::SetMobility(Mobility m, bool recursive) {
         scene->SetObjectMobility(id, m, recursive);
     } else {
         mobility = m;
+    }
+}
+
+inline void GameObject::Update(float dt) {
+    if (hasAnimator && animator.enabled) {
+        animator.Update(dt, this);
+    }
+    if (mobility == Mobility::Movable && autoRotate) {
+        rotation += autoRotateSpeed * dt;
+        if (rotation.x > 360.0f) rotation.x -= 360.0f;
+        if (rotation.y > 360.0f) rotation.y -= 360.0f;
+        if (rotation.z > 360.0f) rotation.z -= 360.0f;
+    }
+}
+
+inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner) {
+    if (!enabled) return;
+    if (!instance && !graphPath.empty()) {
+        LoadGraph(graphPath);
+    }
+    if (instance) {
+        instance->Update(dt);
+    }
+    if (!owner) return;
+
+    // Resolve mesh file path
+    std::string meshPath = "";
+    if (graph && !graph->skeletonMeshPath.empty()) {
+        meshPath = graph->skeletonMeshPath;
+    } else if (!owner->meshFilePath.empty()) {
+        meshPath = owner->meshFilePath;
+    }
+
+    if (meshPath.empty()) return;
+
+    // Normalize meshPath slashes
+    std::string normMeshPath = meshPath;
+    std::replace(normMeshPath.begin(), normMeshPath.end(), '\\', '/');
+
+    if (!skeletalMesh || cachedMeshPath != normMeshPath) {
+        skeletalMesh = SkeletalAnimationManager::Get().LoadSkeletalMesh(normMeshPath);
+        cachedMeshPath = normMeshPath;
+    }
+
+    if (!skeletalMesh || skeletalMesh->skeleton.bones.empty()) return;
+
+    const auto& skeleton = skeletalMesh->skeleton;
+    std::vector<BoneTransform> activeTransforms;
+    std::vector<BoneTransform> prevTransforms;
+
+    auto sampleStatePose = [&](const AnimationStateNode* state, float timeInState, std::vector<BoneTransform>& outPose) -> bool {
+        if (!state) return false;
+        if (state->isBlendSpace && !state->blendSpacePath.empty()) {
+            auto bIt = loadedBlends.find(state->blendSpacePath);
+            if (bIt == loadedBlends.end() || !bIt->second) {
+                auto blend = std::make_shared<AnimationBlend>();
+                if (blend->LoadFromFile(state->blendSpacePath)) {
+                    loadedBlends[state->blendSpacePath] = blend;
+                    bIt = loadedBlends.find(state->blendSpacePath);
+                    for (const auto& pt : blend->samplePoints) {
+                        if (!pt.animationClipPath.empty() && loadedClips.find(pt.animationClipPath) == loadedClips.end()) {
+                            auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(pt.animationClipPath, &skeleton);
+                            if (clip) loadedClips[pt.animationClipPath] = clip;
+                        }
+                    }
+                }
+            }
+            if (bIt != loadedBlends.end() && bIt->second) {
+                float valX = 0.0f;
+                float valY = 0.0f;
+                if (instance) {
+                    auto xIt = instance->runtimeParams.find(state->blendXParam);
+                    if (xIt != instance->runtimeParams.end()) valX = xIt->second.floatValue;
+                    auto yIt = instance->runtimeParams.find(state->blendYParam);
+                    if (yIt != instance->runtimeParams.end()) valY = yIt->second.floatValue;
+                }
+                float normTime = std::fmod(timeInState * 0.8f, 1.0f);
+                bIt->second->EvaluatePose(valX, valY, normTime, skeleton, loadedClips, outPose);
+                return true;
+            }
+        } else if (!state->clipPath.empty()) {
+            auto it = loadedClips.find(state->clipPath);
+            if (it == loadedClips.end() || !it->second) {
+                auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(state->clipPath, &skeleton);
+                if (clip) {
+                    loadedClips[state->clipPath] = clip;
+                    it = loadedClips.find(state->clipPath);
+                }
+            }
+            if (it != loadedClips.end() && it->second) {
+                it->second->SamplePose(timeInState, skeleton, outPose, state->loop);
+                return true;
+            }
+        }
+        return false;
+    };
+
+    if (instance && graph) {
+        const auto* curState = graph->FindState(instance->activeStateId);
+        sampleStatePose(curState, instance->timeInCurrentState, activeTransforms);
+    }
+
+    if (activeTransforms.empty()) {
+        activeTransforms.resize(skeleton.bones.size());
+        for (size_t i = 0; i < skeleton.bones.size(); ++i) {
+            activeTransforms[i].translation = glm::vec3(skeleton.bones[i].localBindTransform[3]);
+            activeTransforms[i].rotation = glm::quat_cast(skeleton.bones[i].localBindTransform);
+            activeTransforms[i].scale = glm::vec3(1.0f);
+        }
+    }
+
+    std::vector<BoneTransform> finalTransforms = activeTransforms;
+    if (instance && instance->isTransitioning && instance->previousStateId != 0 && graph) {
+        const auto* prevState = graph->FindState(instance->previousStateId);
+        sampleStatePose(prevState, instance->timeInPreviousState, prevTransforms);
+
+        if (!prevTransforms.empty()) {
+            float alpha = glm::clamp(instance->transitionProgress, 0.0f, 1.0f);
+            for (size_t i = 0; i < skeleton.bones.size(); ++i) {
+                if (i < prevTransforms.size() && i < activeTransforms.size()) {
+                    finalTransforms[i] = BoneTransform::Lerp(prevTransforms[i], activeTransforms[i], alpha);
+                }
+            }
+        }
+    }
+
+    // Compute bone matrices and deform skeletal mesh
+    std::vector<glm::mat4> boneMatrices;
+    skeletalMesh->ComputeBoneMatrices(finalTransforms, boneMatrices);
+    skeletalMesh->DeformMesh(boneMatrices);
+
+    // Compute base offset (align bottom-center to pivot)
+    glm::vec3 baseOffset = glm::vec3((skeletalMesh->aabbMin.x + skeletalMesh->aabbMax.x) * 0.5f, skeletalMesh->aabbMin.y, (skeletalMesh->aabbMin.z + skeletalMesh->aabbMax.z) * 0.5f);
+
+    // Push deformed vertices to scene GameObject(s)
+    if (!owner->childIds.empty() && owner->scene) {
+        for (int childId : owner->childIds) {
+            GameObject* child = owner->scene->FindObject(childId);
+            if (!child) continue;
+            int subIdx = child->submeshIndex;
+            if (subIdx < 0 || subIdx >= (int)skeletalMesh->submeshes.size()) continue;
+
+            const auto& sub = skeletalMesh->submeshes[subIdx];
+            size_t vCount = sub.runtimeVertices.size();
+            if (vCount == 0) continue;
+
+            if (child->mesh.vertices.size() != vCount) {
+                child->mesh.vertices.resize(vCount);
+                child->mesh.indices = sub.indices;
+                child->mesh.lodIndices.clear();
+            }
+
+            for (size_t i = 0; i < vCount; ++i) {
+                const auto& rv = sub.runtimeVertices[i];
+                child->mesh.vertices[i].pos = rv.pos - baseOffset - child->position;
+                child->mesh.vertices[i].normal = rv.normal;
+                child->mesh.vertices[i].uv = rv.uv;
+                child->mesh.vertices[i].tangent = rv.tangent;
+            }
+            child->mesh.CalculateAABB();
+        }
+    } else {
+        int subIdx = (owner->submeshIndex >= 0 && owner->submeshIndex < (int)skeletalMesh->submeshes.size()) ? owner->submeshIndex : 0;
+        if (subIdx >= 0 && subIdx < (int)skeletalMesh->submeshes.size()) {
+            const auto& sub = skeletalMesh->submeshes[subIdx];
+            size_t vCount = sub.runtimeVertices.size();
+            if (vCount > 0) {
+                if (owner->mesh.vertices.size() != vCount) {
+                    owner->mesh.vertices.resize(vCount);
+                    owner->mesh.indices = sub.indices;
+                    owner->mesh.lodIndices.clear();
+                }
+                for (size_t i = 0; i < vCount; ++i) {
+                    const auto& rv = sub.runtimeVertices[i];
+                    owner->mesh.vertices[i].pos = rv.pos - baseOffset;
+                    owner->mesh.vertices[i].normal = rv.normal;
+                    owner->mesh.vertices[i].uv = rv.uv;
+                    owner->mesh.vertices[i].tangent = rv.tangent;
+                }
+                owner->mesh.CalculateAABB();
+            }
+        }
     }
 }
 
