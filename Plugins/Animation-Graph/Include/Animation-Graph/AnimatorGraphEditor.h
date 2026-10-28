@@ -39,6 +39,10 @@ private:
     std::string m_defaultName = "Animator Graph";
     std::string m_defaultPath = "";
 
+    // Sidebar Layout (Adjustable horizontally)
+    float m_leftSidebarWidth = 300.0f;
+    float m_rightSidebarWidth = 554.0f; // +50% increase over previous 369px
+
     // Selection State
     uint32_t m_selectedNodeId = 0;
     uint32_t m_selectedArrowId = 0;

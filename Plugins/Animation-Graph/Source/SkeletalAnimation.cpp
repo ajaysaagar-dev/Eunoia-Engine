@@ -216,6 +216,16 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
             }
 
             skelMesh->valid = !skelMesh->submeshes.empty();
+            if (skelMesh->valid) {
+                ImportedModel impModel = MeshImporter::Load(normPath);
+                for (size_t mi = 0; mi < skelMesh->submeshes.size(); ++mi) {
+                    if (mi < impModel.meshes.size() && impModel.meshes[mi].material.hasMaterial) {
+                        skelMesh->submeshes[mi].material = impModel.meshes[mi].material;
+                    } else if (!impModel.meshes.empty() && impModel.meshes[0].material.hasMaterial) {
+                        skelMesh->submeshes[mi].material = impModel.meshes[0].material;
+                    }
+                }
+            }
             ufbx_free_scene(scene);
         }
     }

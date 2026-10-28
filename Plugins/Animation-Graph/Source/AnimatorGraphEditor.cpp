@@ -1,6 +1,7 @@
 #include <Animation-Graph/AnimatorGraphEditor.h>
 #include <EngineAssets/AssetManager.h>
 #include <EngineAssets/AssetRegistry.h>
+#include <EngineAssets/TextureManager.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
@@ -147,20 +148,62 @@ void AnimatorGraphEditor::Render(const ImVec2& position, const ImVec2& size) {
 
     std::string winName = "AnimatorGraphWorkspace##" + (m_graph ? m_graph->assetPath : "default");
     if (ImGui::Begin(winName.c_str(), nullptr, flags)) {
-        float leftWidth = 280.0f;
-        float rightWidth = 369.0f; // Exactly matches image.svg width="369"
-        float canvasWidth = std::max(200.0f, size.x - leftWidth - rightWidth);
+        const float splitterWidth = 6.0f;
+        const float minSidebarWidth = 200.0f;
+        const float minCanvasWidth = 220.0f;
+
+        // Clamp sidebars so central canvas always has room
+        float maxLeftWidth = std::max(minSidebarWidth, size.x - m_rightSidebarWidth - minCanvasWidth - splitterWidth * 2.0f);
+        m_leftSidebarWidth = glm::clamp(m_leftSidebarWidth, minSidebarWidth, maxLeftWidth);
+
+        float maxRightWidth = std::max(minSidebarWidth, size.x - m_leftSidebarWidth - minCanvasWidth - splitterWidth * 2.0f);
+        m_rightSidebarWidth = glm::clamp(m_rightSidebarWidth, minSidebarWidth, maxRightWidth);
+
+        float canvasWidth = std::max(minCanvasWidth, size.x - m_leftSidebarWidth - m_rightSidebarWidth - splitterWidth * 2.0f);
 
         // 1. Left Sidebar
-        RenderLeftSidebar(position, ImVec2(leftWidth, size.y));
+        RenderLeftSidebar(position, ImVec2(m_leftSidebarWidth, size.y));
+
+        // Splitter 1: Left Sidebar <-> Canvas
+        ImVec2 split1Pos(position.x + m_leftSidebarWidth, position.y);
+        ImGui::SetCursorScreenPos(split1Pos);
+        ImGui::InvisibleButton("##SplitterLeftAG", ImVec2(splitterWidth, size.y));
+        bool isSplit1Hovered = ImGui::IsItemHovered();
+        bool isSplit1Active = ImGui::IsItemActive();
+        if (isSplit1Hovered || isSplit1Active) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (isSplit1Active) {
+            m_leftSidebarWidth += ImGui::GetIO().MouseDelta.x;
+            m_leftSidebarWidth = glm::clamp(m_leftSidebarWidth, minSidebarWidth, std::max(minSidebarWidth, size.x - m_rightSidebarWidth - minCanvasWidth - splitterWidth * 2.0f));
+        }
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 split1Col = isSplit1Active ? IM_COL32(0, 180, 255, 255) : (isSplit1Hovered ? IM_COL32(90, 90, 90, 255) : IM_COL32(40, 40, 40, 255));
+        dl->AddRectFilled(split1Pos, ImVec2(split1Pos.x + splitterWidth, split1Pos.y + size.y), split1Col);
 
         // 2. Central Canvas
-        ImVec2 canvasPos(position.x + leftWidth, position.y);
+        ImVec2 canvasPos(position.x + m_leftSidebarWidth + splitterWidth, position.y);
         RenderCanvas(canvasPos, ImVec2(canvasWidth, size.y));
 
+        // Splitter 2: Canvas <-> Right Sidebar
+        ImVec2 split2Pos(canvasPos.x + canvasWidth, position.y);
+        ImGui::SetCursorScreenPos(split2Pos);
+        ImGui::InvisibleButton("##SplitterRightAG", ImVec2(splitterWidth, size.y));
+        bool isSplit2Hovered = ImGui::IsItemHovered();
+        bool isSplit2Active = ImGui::IsItemActive();
+        if (isSplit2Hovered || isSplit2Active) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+        }
+        if (isSplit2Active) {
+            m_rightSidebarWidth -= ImGui::GetIO().MouseDelta.x;
+            m_rightSidebarWidth = glm::clamp(m_rightSidebarWidth, minSidebarWidth, std::max(minSidebarWidth, size.x - m_leftSidebarWidth - minCanvasWidth - splitterWidth * 2.0f));
+        }
+        ImU32 split2Col = isSplit2Active ? IM_COL32(0, 180, 255, 255) : (isSplit2Hovered ? IM_COL32(90, 90, 90, 255) : IM_COL32(40, 40, 40, 255));
+        dl->AddRectFilled(split2Pos, ImVec2(split2Pos.x + splitterWidth, split2Pos.y + size.y), split2Col);
+
         // 3. Right Sidebar (Live Preview & Properties)
-        ImVec2 rightPos(position.x + leftWidth + canvasWidth, position.y);
-        RenderRightSidebar(rightPos, ImVec2(rightWidth, size.y));
+        ImVec2 rightPos(split2Pos.x + splitterWidth, position.y);
+        RenderRightSidebar(rightPos, ImVec2(m_rightSidebarWidth, size.y));
     }
     ImGui::End();
 
@@ -727,7 +770,7 @@ void AnimatorGraphEditor::RenderRightSidebar(const ImVec2& pos, const ImVec2& si
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
 
     if (ImGui::BeginChild("AGRightSidebar", size, true, ImGuiWindowFlags_None)) {
-        float previewHeight = 369.0f; // Exactly matches image.svg height="369"
+        float previewHeight = std::min(554.0f, std::max(280.0f, size.y * 0.65f)); // +50% increase from previous 369px
         float propHeight = std::max(200.0f, size.y - previewHeight - 16.0f);
 
         // Top: Selected Skeleton / Live Preview
@@ -845,17 +888,31 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
 
     // Render Skeletal Mesh in Real Time
     if (m_previewMesh && m_previewMesh->valid) {
-        // 1. Draw Skinned Character Mesh Triangles / Wireframe
-        ImU32 meshWireCol = IM_COL32(100, 180, 255, 160);
-        for (const auto& sub : m_previewMesh->submeshes) {
+        // 1. Draw Skinned Character with Textures / Materials (Solid, no wireframe polygon edges)
+        struct ShadedTriangle {
+            ImVec2 s0, s1, s2;
+            float depth;
+            ImU32 color;
+        };
+
+        std::vector<ShadedTriangle> triangles;
+        triangles.reserve(8192);
+
+        glm::vec3 keyLightDir = glm::normalize(glm::vec3(0.45f, 0.85f, 0.55f));
+        glm::vec3 fillLightDir = glm::normalize(glm::vec3(-0.45f, 0.25f, -0.45f));
+
+        for (size_t subIdx = 0; subIdx < m_previewMesh->submeshes.size(); ++subIdx) {
+            const auto& sub = m_previewMesh->submeshes[subIdx];
             const auto& verts = sub.runtimeVertices;
             const auto& indices = sub.indices;
 
-            size_t triCount = indices.size() / 3;
-            // Draw subset of edges for high performance wireframe preview
-            size_t step = (triCount > 2500) ? (triCount / 2500) : 1;
+            CachedTexture* pTex = nullptr;
+            if (sub.material.hasMaterial && !sub.material.baseColorTexture.empty()) {
+                pTex = TextureManager::Get().GetTexture(sub.material.baseColorTexture);
+            }
 
-            for (size_t ti = 0; ti < triCount; ti += step) {
+            size_t triCount = indices.size() / 3;
+            for (size_t ti = 0; ti < triCount; ++ti) {
                 uint32_t i0 = indices[ti * 3 + 0];
                 uint32_t i1 = indices[ti * 3 + 1];
                 uint32_t i2 = indices[ti * 3 + 2];
@@ -863,12 +920,68 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
 
                 ImVec2 s0, s1, s2;
                 float d0, d1, d2;
-                if (projectToScreen(verts[i0].pos, s0, d0) &&
-                    projectToScreen(verts[i1].pos, s1, d1) &&
-                    projectToScreen(verts[i2].pos, s2, d2)) {
-                    dl->AddTriangle(s0, s1, s2, meshWireCol, 1.0f);
+                if (!projectToScreen(verts[i0].pos, s0, d0) ||
+                    !projectToScreen(verts[i1].pos, s1, d1) ||
+                    !projectToScreen(verts[i2].pos, s2, d2)) {
+                    continue;
                 }
+
+                // 2D Backface culling: signed cross product
+                float cross2D = (s1.x - s0.x) * (s2.y - s0.y) - (s1.y - s0.y) * (s2.x - s0.x);
+                if (cross2D <= 0.0f) continue; // Face pointing away
+
+                // Calculate face normal in world space
+                glm::vec3 edge1 = verts[i1].pos - verts[i0].pos;
+                glm::vec3 edge2 = verts[i2].pos - verts[i0].pos;
+                glm::vec3 faceNorm = glm::cross(edge1, edge2);
+                float normLen = glm::length(faceNorm);
+                if (normLen > 1e-4f) faceNorm /= normLen;
+                else faceNorm = (verts[i0].normal + verts[i1].normal + verts[i2].normal) / 3.0f;
+
+                // Lighting
+                float NdotKey = glm::clamp(glm::dot(faceNorm, keyLightDir), 0.0f, 1.0f);
+                float NdotFill = glm::clamp(glm::dot(faceNorm, fillLightDir), 0.0f, 1.0f) * 0.25f;
+                float lighting = 0.30f + NdotKey * 0.60f + NdotFill;
+
+                // Color from texture or PBR material
+                glm::vec4 baseColor(0.75f, 0.75f, 0.78f, 1.0f);
+                if (pTex && pTex->valid) {
+                    glm::vec2 avgUv = (verts[i0].uv + verts[i1].uv + verts[i2].uv) / 3.0f;
+                    baseColor = pTex->Sample(avgUv.x, avgUv.y);
+                } else if (sub.material.hasMaterial && glm::length(sub.material.baseColor) > 0.01f) {
+                    baseColor = glm::vec4(sub.material.baseColor, 1.0f);
+                } else {
+                    static const glm::vec3 s_charPalette[] = {
+                        glm::vec3(0.80f, 0.76f, 0.72f),
+                        glm::vec3(0.30f, 0.40f, 0.55f),
+                        glm::vec3(0.55f, 0.28f, 0.28f),
+                        glm::vec3(0.25f, 0.25f, 0.28f),
+                        glm::vec3(0.82f, 0.68f, 0.32f)
+                    };
+                    baseColor = glm::vec4(s_charPalette[subIdx % 5], 1.0f);
+                }
+
+                glm::vec3 finalRgb = glm::vec3(baseColor) * lighting;
+                ImU32 triCol = IM_COL32(
+                    (int)glm::clamp(finalRgb.r * 255.0f, 0.0f, 255.0f),
+                    (int)glm::clamp(finalRgb.g * 255.0f, 0.0f, 255.0f),
+                    (int)glm::clamp(finalRgb.b * 255.0f, 0.0f, 255.0f),
+                    255
+                );
+
+                float avgDepth = (d0 + d1 + d2) / 3.0f;
+                triangles.push_back({ s0, s1, s2, avgDepth, triCol });
             }
+        }
+
+        // Depth sort triangles back-to-front (Painter's algorithm)
+        std::sort(triangles.begin(), triangles.end(), [](const ShadedTriangle& a, const ShadedTriangle& b) {
+            return a.depth > b.depth;
+        });
+
+        // Render solid textured/material triangles (NO polygons or wireframe edges)
+        for (const auto& tri : triangles) {
+            dl->AddTriangleFilled(tri.s0, tri.s1, tri.s2, tri.color);
         }
 
         // 2. Draw Bone Hierarchy Rig Lines & Joints in Model Space
@@ -891,6 +1004,7 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
             float boneDepth;
             if (projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
                 dl->AddCircleFilled(boneScreen, 4.0f, IM_COL32(255, 220, 50, 255));
+                dl->AddCircle(boneScreen, 5.5f, IM_COL32(0, 0, 0, 180), 0, 1.2f);
             }
 
             int pIdx = bones[b].parentIndex;
