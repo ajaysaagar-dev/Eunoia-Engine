@@ -3237,7 +3237,7 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                 AssetID id = AssetID::FromString(idStr);
                 const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
                 if (meta) {
-                    if (meta->type == AssetType::Mesh) {
+                    if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh) {
                         std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
                         std::error_code ec;
                         if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
@@ -3605,8 +3605,16 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S)) {
-            if (ImGui::GetIO().KeyShift) SaveSceneAs(scene);
-            else SaveScene(scene);
+            if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
+                auto activeAgEditor = Eunoia::AnimatorGraphManager::Get().GetActiveEditor();
+                if (activeAgEditor) {
+                    activeAgEditor->Save();
+                }
+            } else if (ImGui::GetIO().KeyShift) {
+                SaveSceneAs(scene);
+            } else {
+                SaveScene(scene);
+            }
         }
         if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_O)) {
             OpenScene(scene);
@@ -12876,7 +12884,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     std::filesystem::path fullUI = contentRootPath / item.meta.sourcePath;
                                     OpenUIEditor(fullUI.string());
                                     AddLog("LogContent", "Opened User Interface: " + item.meta.objectName, 2);
-                                } else if (item.meta.type == AssetType::Mesh) {
+                                } else if (item.meta.type == AssetType::Mesh || item.meta.type == AssetType::SkeletalMesh) {
                                     std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(item.meta.sourcePath);
                                     std::error_code ec;
                                     if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
@@ -12936,7 +12944,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 ImGui::Text("%s %s", icon, item.displayName.c_str());
                             }
                             if (!item.isFolder) {
-                                if (item.meta.type == AssetType::Mesh) {
+                                if (item.meta.type == AssetType::Mesh || item.meta.type == AssetType::SkeletalMesh) {
                                     ImGui::TextColored(ImVec4(0.95f, 0.65f, 0.25f, 1.0f), "[Drag to Viewport to spawn in Level]");
                                 } else if (item.meta.type == AssetType::Level) {
                                     ImGui::TextColored(ImVec4(0.30f, 0.85f, 0.95f, 1.0f), "[Drag to Viewport to open Level]");
@@ -13125,7 +13133,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::Mesh) {
+                                if (item.meta.type == AssetType::Mesh || item.meta.type == AssetType::SkeletalMesh) {
                                     if (ImGui::MenuItem("Spawn Mesh in Level")) {
                                         std::filesystem::path fullMesh = contentRootPath / item.meta.sourcePath;
                                         GameObject& newObj = scene.AddImportedMesh(fullMesh.string(), glm::vec3(0.0f, 0.5f, 0.0f));
