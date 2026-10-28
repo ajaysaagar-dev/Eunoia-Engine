@@ -37,9 +37,23 @@ void AnimatorGraphEditor::SyncPreviewResources() {
         }
     }
 
-    // Preload clips for all states
+    // Preload clips and blend spaces for all states
     for (const auto& s : m_graph->states) {
-        if (!s.clipPath.empty() && m_loadedClips.find(s.clipPath) == m_loadedClips.end()) {
+        if (s.isBlendSpace && !s.blendSpacePath.empty()) {
+            if (m_loadedBlends.find(s.blendSpacePath) == m_loadedBlends.end()) {
+                auto blend = std::make_shared<AnimationBlend>();
+                if (blend->LoadFromFile(s.blendSpacePath)) {
+                    m_loadedBlends[s.blendSpacePath] = blend;
+                    const Skeleton* skel = m_previewMesh ? &m_previewMesh->skeleton : nullptr;
+                    for (const auto& pt : blend->samplePoints) {
+                        if (!pt.animationClipPath.empty() && m_loadedClips.find(pt.animationClipPath) == m_loadedClips.end()) {
+                            auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(pt.animationClipPath, skel);
+                            if (clip) m_loadedClips[pt.animationClipPath] = clip;
+                        }
+                    }
+                }
+            }
+        } else if (!s.clipPath.empty() && m_loadedClips.find(s.clipPath) == m_loadedClips.end()) {
             const Skeleton* skel = m_previewMesh ? &m_previewMesh->skeleton : nullptr;
             auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(s.clipPath, skel);
             if (clip) {
@@ -82,14 +96,50 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
     std::vector<BoneTransform> activeTransforms;
     std::vector<BoneTransform> prevTransforms;
 
+    auto sampleStatePose = [&](const AnimationStateNode* state, float timeInState, std::vector<BoneTransform>& outPose) -> bool {
+        if (!state) return false;
+        if (state->isBlendSpace && !state->blendSpacePath.empty()) {
+            auto bIt = m_loadedBlends.find(state->blendSpacePath);
+            if (bIt == m_loadedBlends.end() || !bIt->second) {
+                auto blend = std::make_shared<AnimationBlend>();
+                if (blend->LoadFromFile(state->blendSpacePath)) {
+                    m_loadedBlends[state->blendSpacePath] = blend;
+                    bIt = m_loadedBlends.find(state->blendSpacePath);
+                    for (const auto& pt : blend->samplePoints) {
+                        if (!pt.animationClipPath.empty() && m_loadedClips.find(pt.animationClipPath) == m_loadedClips.end()) {
+                            auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(pt.animationClipPath, &skeleton);
+                            if (clip) m_loadedClips[pt.animationClipPath] = clip;
+                        }
+                    }
+                }
+            }
+            if (bIt != m_loadedBlends.end() && bIt->second) {
+                float valX = 0.0f;
+                float valY = 0.0f;
+                if (m_instance) {
+                    auto xIt = m_instance->runtimeParams.find(state->blendXParam);
+                    if (xIt != m_instance->runtimeParams.end()) valX = xIt->second.floatValue;
+                    auto yIt = m_instance->runtimeParams.find(state->blendYParam);
+                    if (yIt != m_instance->runtimeParams.end()) valY = yIt->second.floatValue;
+                }
+                float normTime = std::fmod(timeInState * 0.8f, 1.0f);
+                bIt->second->EvaluatePose(valX, valY, normTime, skeleton, m_loadedClips, outPose);
+                return true;
+            }
+        } else if (!state->clipPath.empty()) {
+            auto it = m_loadedClips.find(state->clipPath);
+            if (it != m_loadedClips.end() && it->second) {
+                it->second->SamplePose(timeInState, skeleton, outPose, state->loop);
+                return true;
+            }
+        }
+        return false;
+    };
+
     // Sample current state
     const auto* curState = m_graph->FindState(m_instance->activeStateId);
-    if (curState && !curState->clipPath.empty()) {
-        auto it = m_loadedClips.find(curState->clipPath);
-        if (it != m_loadedClips.end() && it->second) {
-            it->second->SamplePose(m_instance->timeInCurrentState, skeleton, activeTransforms, curState->loop);
-        }
-    }
+    sampleStatePose(curState, m_instance->timeInCurrentState, activeTransforms);
+
     if (activeTransforms.empty()) {
         activeTransforms.resize(skeleton.bones.size());
         for (size_t i = 0; i < skeleton.bones.size(); ++i) {
@@ -103,12 +153,7 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
     std::vector<BoneTransform> finalTransforms = activeTransforms;
     if (m_instance->isTransitioning && m_instance->previousStateId != 0) {
         const auto* prevState = m_graph->FindState(m_instance->previousStateId);
-        if (prevState && !prevState->clipPath.empty()) {
-            auto it = m_loadedClips.find(prevState->clipPath);
-            if (it != m_loadedClips.end() && it->second) {
-                it->second->SamplePose(m_instance->timeInPreviousState, skeleton, prevTransforms, prevState->loop);
-            }
-        }
+        sampleStatePose(prevState, m_instance->timeInPreviousState, prevTransforms);
 
         if (!prevTransforms.empty()) {
             float alpha = glm::clamp(m_instance->transitionProgress, 0.0f, 1.0f);
@@ -295,6 +340,56 @@ void AnimatorGraphEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& siz
                 }
 
                 if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", animPath.c_str());
+            }
+        }
+        ImGui::EndChild();
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // 2b. Compatible Animation Blends in Project (.eblend)
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Animation Blends:");
+        ImGui::TextDisabled("Drag & drop to canvas to create blend node");
+
+        ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+        if (ImGui::BeginChild("BlendListChildAG", ImVec2(0, 110.0f), true)) {
+            std::vector<std::string> blendFiles;
+            try {
+                if (!contentDir.empty() && std::filesystem::exists(contentDir)) {
+                    for (const auto& entry : std::filesystem::recursive_directory_iterator(contentDir)) {
+                        if (entry.is_regular_file() && entry.path().extension() == ".eblend") {
+                            // Check if this blend matches the skeleton
+                            std::string bPath = entry.path().generic_string();
+                            AnimationBlend testBlend;
+                            if (testBlend.LoadFromFile(bPath)) {
+                                if (m_graph->skeletonMeshPath.empty() || testBlend.skeletonMeshPath.empty() ||
+                                    std::filesystem::path(testBlend.skeletonMeshPath).filename() == std::filesystem::path(m_graph->skeletonMeshPath).filename()) {
+                                    blendFiles.push_back(bPath);
+                                }
+                            } else {
+                                blendFiles.push_back(bPath);
+                            }
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            if (blendFiles.empty()) {
+                ImGui::TextDisabled("No compatible .eblend assets found");
+            }
+            for (const auto& blendPath : blendFiles) {
+                std::string stem = std::filesystem::path(blendPath).stem().string();
+                std::string label = "  [Blend] " + stem;
+                ImGui::Selectable(label.c_str(), false);
+
+                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
+                    ImGui::SetDragDropPayload("EBLEND_ASSET", blendPath.c_str(), blendPath.size() + 1);
+                    ImGui::Text("Animation Blend Node: %s", stem.c_str());
+                    ImGui::EndDragDropSource();
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s\nDrag to canvas to create Animation Blend node", blendPath.c_str());
             }
         }
         ImGui::EndChild();
@@ -604,7 +699,7 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         ImU32 cardBg = IM_COL32(21, 21, 21, 255);
         dl->AddRectFilled(nPos, nEnd, cardBg, 4.0f);
 
-        // Border: Green for Entry/Begin, Cyan for Selected, Gold glow for Active Playing
+        // Border: Green for Entry/Begin, Cyan for Selected, Gold glow for Active Playing, Violet for Blend Space
         ImU32 borderCol = IM_COL32(60, 60, 60, 255);
         float borderThickness = 1.0f;
 
@@ -617,9 +712,17 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         } else if (s.isEntry) {
             borderCol = IM_COL32(60, 200, 100, 255);
             borderThickness = 1.5f;
+        } else if (s.isBlendSpace) {
+            borderCol = IM_COL32(160, 100, 240, 255);
+            borderThickness = 1.5f;
         }
 
         dl->AddRect(nPos, nEnd, borderCol, 4.0f, 0, borderThickness);
+
+        // Top accent header bar for Blend Space nodes
+        if (s.isBlendSpace) {
+            dl->AddRectFilled(nPos, ImVec2(nEnd.x, nPos.y + 4.0f * m_canvasZoom), IM_COL32(160, 100, 240, 255), 4.0f, ImDrawFlags_RoundCornersTop);
+        }
 
         // Edge port circle for dragging arrows
         ImVec2 portPos(nEnd.x, nPos.y + nodeHeight * 0.5f);
@@ -633,11 +736,16 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         ImVec2 textPos(nPos.x + (nodeWidth - titleSize.x) * 0.5f, nPos.y + 12.0f * m_canvasZoom);
         dl->AddText(textPos, IM_COL32(255, 255, 255, 255), title.c_str());
 
-        // Clip name underneath
-        std::string clipSub = s.clipPath.empty() ? "(No Clip)" : std::filesystem::path(s.clipPath).stem().string();
+        // Clip or Blend name underneath
+        std::string clipSub;
+        if (s.isBlendSpace) {
+            clipSub = s.blendSpacePath.empty() ? "(Blend 2D)" : "[Blend] " + std::filesystem::path(s.blendSpacePath).stem().string();
+        } else {
+            clipSub = s.clipPath.empty() ? "(No Clip)" : std::filesystem::path(s.clipPath).stem().string();
+        }
         ImVec2 clipSize = ImGui::CalcTextSize(clipSub.c_str());
         ImVec2 clipPos(nPos.x + (nodeWidth - clipSize.x) * 0.5f, nPos.y + 34.0f * m_canvasZoom);
-        dl->AddText(clipPos, IM_COL32(160, 160, 160, 255), clipSub.c_str());
+        dl->AddText(clipPos, s.isBlendSpace ? IM_COL32(180, 130, 255, 255) : IM_COL32(160, 160, 160, 255), clipSub.c_str());
 
         // Drag node or start transition connection
         if (isCanvasHovered && isHovered && ImGui::IsMouseClicked(0)) {
@@ -695,7 +803,7 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         }
     }
 
-    // Accept Drag & Drop Payload to create animation state node from sidebar
+    // Accept Drag & Drop Payload to create animation state node or blend space node from sidebar
     if (ImGui::BeginDragDropTargetCustom(ImRect(pos, ImVec2(pos.x + size.x, pos.y + size.y)), ImGui::GetID("CanvasDropTarget"))) {
         if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ANIM_CLIP_PATH")) {
             const char* clipPathStr = (const char*)payload->Data;
@@ -709,6 +817,24 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
 
             AnimationStateNode& newNode = m_graph->AddState(stateName, dropLocalPos);
             newNode.clipPath = clipPath;
+            m_selectedNodeId = newNode.id;
+            m_selectedArrowId = 0;
+            m_isDirty = true;
+            SyncPreviewResources();
+        }
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("EBLEND_ASSET")) {
+            const char* blendPathStr = (const char*)payload->Data;
+            std::string blendPath(blendPathStr);
+            std::string blendName = std::filesystem::path(blendPath).stem().string();
+
+            glm::vec2 dropLocalPos(
+                (mousePos.x - pos.x - m_canvasPan.x) / m_canvasZoom,
+                (mousePos.y - pos.y - m_canvasPan.y) / m_canvasZoom
+            );
+
+            AnimationStateNode& newNode = m_graph->AddState(blendName, dropLocalPos);
+            newNode.isBlendSpace = true;
+            newNode.blendSpacePath = blendPath;
             m_selectedNodeId = newNode.id;
             m_selectedArrowId = 0;
             m_isDirty = true;
@@ -770,18 +896,40 @@ void AnimatorGraphEditor::RenderRightSidebar(const ImVec2& pos, const ImVec2& si
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(8.0f, 8.0f));
 
     if (ImGui::BeginChild("AGRightSidebar", size, true, ImGuiWindowFlags_None)) {
-        float previewHeight = std::min(554.0f, std::max(280.0f, size.y * 0.65f)); // +50% increase from previous 369px
-        float propHeight = std::max(200.0f, size.y - previewHeight - 16.0f);
+        // Clamp preview height to valid region within sidebar
+        float maxPreviewH = std::max(100.0f, size.y - 120.0f);
+        m_previewHeight = glm::clamp(m_previewHeight, 150.0f, maxPreviewH);
+        float propHeight = std::max(100.0f, size.y - m_previewHeight - 20.0f);
 
         // Top: Selected Skeleton / Live Preview
-        RenderLivePreview(pos, ImVec2(size.x, previewHeight));
+        RenderLivePreview(pos, ImVec2(size.x, m_previewHeight));
 
         ImGui::Spacing();
-        ImGui::Separator();
+
+        // Draggable Vertical Splitter between 3D Live Preview and Properties
+        ImVec2 splitterPos = ImGui::GetCursorScreenPos();
+        float availW = ImGui::GetContentRegionAvail().x;
+        ImGui::InvisibleButton("##PreviewPropSplitter", ImVec2(availW, 6.0f));
+        bool isSplitterHovered = ImGui::IsItemHovered();
+        bool isSplitterActive = ImGui::IsItemActive();
+
+        if (isSplitterHovered || isSplitterActive) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+        if (isSplitterActive) {
+            m_previewHeight += ImGui::GetIO().MouseDelta.y;
+            m_previewHeight = glm::clamp(m_previewHeight, 150.0f, maxPreviewH);
+        }
+
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImU32 splitterCol = isSplitterActive ? IM_COL32(0, 200, 255, 255) :
+                            (isSplitterHovered ? IM_COL32(100, 160, 220, 200) : IM_COL32(50, 50, 55, 255));
+        dl->AddLine(ImVec2(splitterPos.x, splitterPos.y + 2.5f), ImVec2(splitterPos.x + availW, splitterPos.y + 2.5f), splitterCol, 2.0f);
+
         ImGui::Spacing();
 
         // Bottom: Properties
-        RenderProperties(ImVec2(pos.x, pos.y + previewHeight), ImVec2(size.x, propHeight));
+        RenderProperties(ImVec2(pos.x, pos.y + m_previewHeight + 10.0f), ImVec2(size.x, propHeight));
     }
     ImGui::EndChild();
 
@@ -797,7 +945,11 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[SAVED]");
     }
-    ImGui::SameLine(ImGui::GetWindowWidth() - 145.0f);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 215.0f);
+    ImGui::Checkbox("Bones", &m_showBones);
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle bone rig overlay");
+
+    ImGui::SameLine();
     if (ImGui::SmallButton("Restart")) {
         if (m_instance) m_instance->Reset();
     }
@@ -984,37 +1136,39 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
             dl->AddTriangleFilled(tri.s0, tri.s1, tri.s2, tri.color);
         }
 
-        // 2. Draw Bone Hierarchy Rig Lines & Joints in Model Space
-        const auto& bones = m_previewMesh->skeleton.bones;
-        std::vector<glm::mat4> modelBoneTransforms(bones.size(), glm::mat4(1.0f));
-        for (size_t b = 0; b < bones.size(); ++b) {
-            glm::mat4 localMat = bones[b].localBindTransform;
-            int pIdx = bones[b].parentIndex;
-            if (pIdx >= 0 && pIdx < (int)bones.size()) {
-                modelBoneTransforms[b] = modelBoneTransforms[pIdx] * localMat;
-            } else {
-                modelBoneTransforms[b] = localMat;
-            }
-        }
-
-        for (size_t b = 0; b < bones.size(); ++b) {
-            glm::vec3 boneWorldPos(modelBoneTransforms[b][3]);
-
-            ImVec2 boneScreen;
-            float boneDepth;
-            if (projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
-                dl->AddCircleFilled(boneScreen, 4.0f, IM_COL32(255, 220, 50, 255));
-                dl->AddCircle(boneScreen, 5.5f, IM_COL32(0, 0, 0, 180), 0, 1.2f);
+        // 2. Draw Bone Hierarchy Rig Lines & Joints in Model Space (Optional overlay)
+        if (m_showBones) {
+            const auto& bones = m_previewMesh->skeleton.bones;
+            std::vector<glm::mat4> modelBoneTransforms(bones.size(), glm::mat4(1.0f));
+            for (size_t b = 0; b < bones.size(); ++b) {
+                glm::mat4 localMat = bones[b].localBindTransform;
+                int pIdx = bones[b].parentIndex;
+                if (pIdx >= 0 && pIdx < (int)bones.size()) {
+                    modelBoneTransforms[b] = modelBoneTransforms[pIdx] * localMat;
+                } else {
+                    modelBoneTransforms[b] = localMat;
+                }
             }
 
-            int pIdx = bones[b].parentIndex;
-            if (pIdx >= 0 && pIdx < (int)bones.size()) {
-                glm::vec3 parentPos(modelBoneTransforms[pIdx][3]);
-                ImVec2 pScreen;
-                float pDepth;
-                if (projectToScreen(parentPos, pScreen, pDepth) &&
-                    projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
-                    dl->AddLine(pScreen, boneScreen, IM_COL32(255, 140, 0, 255), 2.5f);
+            for (size_t b = 0; b < bones.size(); ++b) {
+                glm::vec3 boneWorldPos(modelBoneTransforms[b][3]);
+
+                ImVec2 boneScreen;
+                float boneDepth;
+                if (projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
+                    dl->AddCircleFilled(boneScreen, 4.0f, IM_COL32(255, 220, 50, 255));
+                    dl->AddCircle(boneScreen, 5.5f, IM_COL32(0, 0, 0, 180), 0, 1.2f);
+                }
+
+                int pIdx = bones[b].parentIndex;
+                if (pIdx >= 0 && pIdx < (int)bones.size()) {
+                    glm::vec3 parentPos(modelBoneTransforms[pIdx][3]);
+                    ImVec2 pScreen;
+                    float pDepth;
+                    if (projectToScreen(parentPos, pScreen, pDepth) &&
+                        projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
+                        dl->AddLine(pScreen, boneScreen, IM_COL32(255, 140, 0, 255), 2.5f);
+                    }
                 }
             }
         }
@@ -1053,68 +1207,161 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
             return;
         }
 
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Animation State Node");
-        ImGui::Spacing();
+        if (node->isBlendSpace) {
+            ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Animation Blend Node (2D)");
+            ImGui::Spacing();
 
-        // State Name
-        char nameBuf[128];
-        strncpy_s(nameBuf, sizeof(nameBuf), node->name.c_str(), sizeof(nameBuf) - 1);
-        if (ImGui::InputText("Name##NodeNameProp", nameBuf, sizeof(nameBuf))) {
-            node->name = nameBuf;
-            m_isDirty = true;
-        }
-
-        // Animation Clip Path
-        ImGui::Spacing();
-        ImGui::Text("Animation Clip:");
-        std::string clipLabel = node->clipPath.empty() 
-            ? "[Choose Animation Clip...]" 
-            : std::filesystem::path(node->clipPath).filename().string();
-
-        ImGui::PushItemWidth(-1);
-        if (ImGui::BeginCombo("##NodeClipCombo", clipLabel.c_str())) {
-            std::vector<std::string> anims = SkeletalAnimationManager::Get().FindProjectAnimations("Content", m_graph->skeletonMeshPath);
-            for (const auto& aPath : anims) {
-                std::string stem = std::filesystem::path(aPath).stem().string();
-                bool isSel = (node->clipPath == aPath);
-                if (ImGui::Selectable(stem.c_str(), isSel)) {
-                    node->clipPath = aPath;
-                    m_isDirty = true;
-                    SyncPreviewResources();
-                }
+            // State Name
+            char nameBuf[128];
+            strncpy_s(nameBuf, sizeof(nameBuf), node->name.c_str(), sizeof(nameBuf) - 1);
+            if (ImGui::InputText("Name##BlendNodeNameProp", nameBuf, sizeof(nameBuf))) {
+                node->name = nameBuf;
+                m_isDirty = true;
             }
-            ImGui::EndCombo();
-        }
-        ImGui::PopItemWidth();
 
-        // Playback Speed
-        ImGui::Spacing();
-        if (ImGui::SliderFloat("Speed Multiplier", &node->speed, 0.1f, 5.0f, "%.2fx")) {
-            m_isDirty = true;
-        }
+            // Blend Space Asset Path
+            ImGui::Spacing();
+            ImGui::Text("Blend Space File: %s", std::filesystem::path(node->blendSpacePath).filename().string().c_str());
+            ImGui::TextDisabled("%s", node->blendSpacePath.c_str());
 
-        // Looping
-        if (ImGui::Checkbox("Looping", &node->loop)) {
-            m_isDirty = true;
-        }
-
-        // Is Entry / Begin state
-        if (ImGui::Checkbox("Entry State (Begin)", &node->isEntry)) {
-            if (node->isEntry) {
-                for (auto& s : m_graph->states) {
-                    if (s.id != node->id) s.isEntry = false;
+            // X Axis Parameter Binding (Float Parameter)
+            ImGui::Spacing();
+            ImGui::Text("X Axis Parameter (Float):");
+            std::string xParamLabel = node->blendXParam.empty() ? "[Select Float Param...]" : node->blendXParam;
+            ImGui::PushItemWidth(-1);
+            if (ImGui::BeginCombo("##BlendXParamCombo", xParamLabel.c_str())) {
+                for (const auto& p : m_graph->parameters) {
+                    if (p.type == AnimatorParamType::Float) {
+                        bool isSel = (node->blendXParam == p.name);
+                        if (ImGui::Selectable(p.name.c_str(), isSel)) {
+                            node->blendXParam = p.name;
+                            m_isDirty = true;
+                        }
+                    }
                 }
-                m_graph->entryStateId = node->id;
+                ImGui::EndCombo();
             }
-            m_isDirty = true;
-        }
+            ImGui::PopItemWidth();
 
-        ImGui::Spacing();
-        ImGui::Separator();
-        if (ImGui::Button("Delete State##DeleteNodeBtn", ImVec2(-1, 0))) {
-            m_graph->RemoveState(node->id);
-            m_selectedNodeId = 0;
-            m_isDirty = true;
+            // Y Axis Parameter Binding (Float Parameter)
+            ImGui::Spacing();
+            ImGui::Text("Y Axis Parameter (Float):");
+            std::string yParamLabel = node->blendYParam.empty() ? "[Select Float Param...]" : node->blendYParam;
+            ImGui::PushItemWidth(-1);
+            if (ImGui::BeginCombo("##BlendYParamCombo", yParamLabel.c_str())) {
+                for (const auto& p : m_graph->parameters) {
+                    if (p.type == AnimatorParamType::Float) {
+                        bool isSel = (node->blendYParam == p.name);
+                        if (ImGui::Selectable(p.name.c_str(), isSel)) {
+                            node->blendYParam = p.name;
+                            m_isDirty = true;
+                        }
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopItemWidth();
+
+            // Live runtime values for X and Y
+            if (m_instance) {
+                float liveX = 0.0f;
+                float liveY = 0.0f;
+                auto xIt = m_instance->runtimeParams.find(node->blendXParam);
+                if (xIt != m_instance->runtimeParams.end()) liveX = xIt->second.floatValue;
+                auto yIt = m_instance->runtimeParams.find(node->blendYParam);
+                if (yIt != m_instance->runtimeParams.end()) liveY = yIt->second.floatValue;
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.8f, 1.0f), "Live Input: X=%.2f, Y=%.2f", liveX, liveY);
+            }
+
+            // Playback Speed
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Speed Multiplier", &node->speed, 0.1f, 5.0f, "%.2fx")) {
+                m_isDirty = true;
+            }
+
+            // Is Entry / Begin state
+            if (ImGui::Checkbox("Entry State (Begin)", &node->isEntry)) {
+                if (node->isEntry) {
+                    for (auto& s : m_graph->states) {
+                        if (s.id != node->id) s.isEntry = false;
+                    }
+                    m_graph->entryStateId = node->id;
+                }
+                m_isDirty = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            if (ImGui::Button("Delete State##DeleteBlendNodeBtn", ImVec2(-1, 0))) {
+                m_graph->RemoveState(node->id);
+                m_selectedNodeId = 0;
+                m_isDirty = true;
+            }
+        } else {
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Animation State Node");
+            ImGui::Spacing();
+
+            // State Name
+            char nameBuf[128];
+            strncpy_s(nameBuf, sizeof(nameBuf), node->name.c_str(), sizeof(nameBuf) - 1);
+            if (ImGui::InputText("Name##NodeNameProp", nameBuf, sizeof(nameBuf))) {
+                node->name = nameBuf;
+                m_isDirty = true;
+            }
+
+            // Animation Clip Path
+            ImGui::Spacing();
+            ImGui::Text("Animation Clip:");
+            std::string clipLabel = node->clipPath.empty() 
+                ? "[Choose Animation Clip...]" 
+                : std::filesystem::path(node->clipPath).filename().string();
+
+            ImGui::PushItemWidth(-1);
+            if (ImGui::BeginCombo("##NodeClipCombo", clipLabel.c_str())) {
+                std::vector<std::string> anims = SkeletalAnimationManager::Get().FindProjectAnimations("Content", m_graph->skeletonMeshPath);
+                for (const auto& aPath : anims) {
+                    std::string stem = std::filesystem::path(aPath).stem().string();
+                    bool isSel = (node->clipPath == aPath);
+                    if (ImGui::Selectable(stem.c_str(), isSel)) {
+                        node->clipPath = aPath;
+                        m_isDirty = true;
+                        SyncPreviewResources();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            ImGui::PopItemWidth();
+
+            // Playback Speed
+            ImGui::Spacing();
+            if (ImGui::SliderFloat("Speed Multiplier", &node->speed, 0.1f, 5.0f, "%.2fx")) {
+                m_isDirty = true;
+            }
+
+            // Looping
+            if (ImGui::Checkbox("Looping", &node->loop)) {
+                m_isDirty = true;
+            }
+
+            // Is Entry / Begin state
+            if (ImGui::Checkbox("Entry State (Begin)", &node->isEntry)) {
+                if (node->isEntry) {
+                    for (auto& s : m_graph->states) {
+                        if (s.id != node->id) s.isEntry = false;
+                    }
+                    m_graph->entryStateId = node->id;
+                }
+                m_isDirty = true;
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            if (ImGui::Button("Delete State##DeleteNodeBtn", ImVec2(-1, 0))) {
+                m_graph->RemoveState(node->id);
+                m_selectedNodeId = 0;
+                m_isDirty = true;
+            }
         }
 
     } else if (m_selectedArrowId != 0) {

@@ -176,6 +176,10 @@ struct AnimationStateNode {
     uint32_t id = 0;
     std::string name = "State";
     bool isEntry = false;
+    bool isBlendSpace = false;
+    std::string blendSpacePath = "";
+    std::string blendXParam = "";
+    std::string blendYParam = "";
     std::string clipPath = "";
     float speed = 1.0f;
     bool loop = true;
@@ -369,6 +373,10 @@ public:
             out << "      \"id\": " << s.id << ",\n";
             out << "      \"name\": \"" << s.name << "\",\n";
             out << "      \"isEntry\": " << (s.isEntry ? "true" : "false") << ",\n";
+            out << "      \"isBlendSpace\": " << (s.isBlendSpace ? "true" : "false") << ",\n";
+            out << "      \"blendSpacePath\": \"" << s.blendSpacePath << "\",\n";
+            out << "      \"blendXParam\": \"" << s.blendXParam << "\",\n";
+            out << "      \"blendYParam\": \"" << s.blendYParam << "\",\n";
             out << "      \"clipPath\": \"" << s.clipPath << "\",\n";
             out << "      \"speed\": " << s.speed << ",\n";
             out << "      \"loop\": " << (s.loop ? "true" : "false") << ",\n";
@@ -503,6 +511,10 @@ public:
                     s.id = (uint32_t)extractNumber(objStr, "id", 0);
                     s.name = extractString(objStr, "name");
                     s.isEntry = extractBool(objStr, "isEntry", false);
+                    s.isBlendSpace = extractBool(objStr, "isBlendSpace", false);
+                    s.blendSpacePath = extractString(objStr, "blendSpacePath");
+                    s.blendXParam = extractString(objStr, "blendXParam");
+                    s.blendYParam = extractString(objStr, "blendYParam");
                     s.clipPath = extractString(objStr, "clipPath");
                     s.speed = (float)extractNumber(objStr, "speed", 1.0);
                     s.loop = extractBool(objStr, "loop", true);

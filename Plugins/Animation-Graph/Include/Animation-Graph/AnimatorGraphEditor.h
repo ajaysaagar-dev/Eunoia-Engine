@@ -2,6 +2,7 @@
 
 #include <Animation-Graph/AnimatorGraph.h>
 #include <Animation-Graph/SkeletalAnimation.h>
+#include <Animation-Blending/AnimationBlend.h>
 #include <imgui.h>
 #include <memory>
 #include <vector>
@@ -33,15 +34,18 @@ private:
     std::unique_ptr<AnimatorInstance> m_instance;
     std::shared_ptr<SkeletalMesh> m_previewMesh;
     std::unordered_map<std::string, std::shared_ptr<AnimationClip>> m_loadedClips;
+    std::unordered_map<std::string, std::shared_ptr<AnimationBlend>> m_loadedBlends;
 
     bool m_isDirty = false;
     float m_saveNotificationTimer = 0.0f;
     std::string m_defaultName = "Animator Graph";
     std::string m_defaultPath = "";
 
-    // Sidebar Layout (Adjustable horizontally)
+    // Sidebar Layout (Adjustable horizontally & vertically)
     float m_leftSidebarWidth = 300.0f;
     float m_rightSidebarWidth = 554.0f; // +50% increase over previous 369px
+    float m_previewHeight = 450.0f;     // Adjustable vertically via splitter
+    bool m_showBones = false;           // Yellow bone rig overlay hidden by default
 
     // Selection State
     uint32_t m_selectedNodeId = 0;
