@@ -1,5 +1,6 @@
 #include <EngineAssets/AnimatorGraphEditor.h>
 #include <EngineAssets/AssetManager.h>
+#include <EngineAssets/AssetRegistry.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <iostream>
@@ -163,11 +164,25 @@ void AnimatorGraphEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& siz
             ? "[Select Skeleton Mesh...]" 
             : std::filesystem::path(m_graph->skeletonMeshPath).filename().string();
 
+        // Resolve project content directory from graph asset path or AssetRegistry
+        std::string contentDir = "";
+        if (m_graph && !m_graph->assetPath.empty()) {
+            std::string ap = m_graph->assetPath;
+            std::replace(ap.begin(), ap.end(), '\\', '/');
+            size_t cPos = ap.rfind("/Content");
+            if (cPos != std::string::npos) {
+                contentDir = ap.substr(0, cPos + 8);
+            }
+        }
+        if (contentDir.empty()) {
+            contentDir = AssetRegistry::Get().GetContentRoot().string();
+        }
+
         ImGui::PushItemWidth(-1);
         if (ImGui::BeginCombo("##SkeletonMeshCombo", currentMeshLabel.c_str())) {
-            std::vector<std::string> meshes = SkeletalAnimationManager::Get().FindProjectSkeletalMeshes("Content");
+            std::vector<std::string> meshes = SkeletalAnimationManager::Get().FindProjectSkeletalMeshes(contentDir);
             if (meshes.empty()) {
-                ImGui::Selectable("No 3D Models in Content/", false, ImGuiSelectableFlags_Disabled);
+                ImGui::Selectable("No Skeletal Meshes found in project", false, ImGuiSelectableFlags_Disabled);
             }
             for (const auto& meshPath : meshes) {
                 std::string fname = std::filesystem::path(meshPath).filename().string();
@@ -200,7 +215,7 @@ void AnimatorGraphEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& siz
         
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
         if (ImGui::BeginChild("AnimListChild", ImVec2(0, 160.0f), true)) {
-            std::vector<std::string> anims = SkeletalAnimationManager::Get().FindProjectAnimations("Content", m_graph->skeletonMeshPath);
+            std::vector<std::string> anims = SkeletalAnimationManager::Get().FindProjectAnimations(contentDir, m_graph->skeletonMeshPath);
             if (anims.empty()) {
                 ImGui::TextDisabled("No compatible animations found");
             }

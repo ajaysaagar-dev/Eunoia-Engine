@@ -758,6 +758,7 @@ void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& 
         currentContentPath = contentRootPath;
         TextureManager::Get().SetProjectRoot(contentRootPath);
         AssetManager::Get().Initialize(contentRootPath);
+        AssetRegistry::Get().SetContentRoot(contentRootPath);
         knownModelFiles.clear();
         pendingModelImportQueue.clear();
         showModelImportModal = false;
@@ -2672,6 +2673,7 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     AssetRegistry::Get().Clear();
     TextureManager::Get().SetProjectRoot(activeProjectRoot);
     AssetManager::Get().Initialize(activeProjectRoot);
+    AssetRegistry::Get().SetContentRoot(contentRootPath);
 
     // Single unified recursive directory walk for models, behaviour scripts, and scene discovery
     if (!isGameMode) {
@@ -12168,7 +12170,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     ImGui::Text("Select the target Skeleton Mesh for all currently importing animations:");
                     ImGui::Spacing();
 
-                    std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes("Content");
+                    std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes(contentRootPath.string());
                     std::string comboLabel = selectedBatchImportSkeletonMesh.empty() 
                         ? "[Choose Target Skeleton Mesh...]" 
                         : std::filesystem::path(selectedBatchImportSkeletonMesh).filename().string();
@@ -12247,7 +12249,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     if (bonesImportOptionType == 1) {
                         ImGui::Spacing();
                         ImGui::Text("Target Skeleton Mesh:");
-                        std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes("Content");
+                        std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes(contentRootPath.string());
 
                         std::string comboLabel = selectedBonesAnimationTargetSkeleton.empty()
                             ? "[Choose Target Skeleton Mesh...]"
