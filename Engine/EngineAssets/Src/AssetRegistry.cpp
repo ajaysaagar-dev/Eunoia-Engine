@@ -487,6 +487,16 @@ void AssetRegistry::ReadOrGenerateSidecar(const std::filesystem::path& diskFileP
                     while (!idStr.empty() && isspace((unsigned char)idStr.back())) idStr.pop_back();
                     meta.id = AssetID::FromString(idStr);
                 }
+                if (line.find("type:") != std::string::npos) {
+                    auto pos = line.find(':');
+                    std::string tStr = line.substr(pos + 1);
+                    while (!tStr.empty() && isspace((unsigned char)tStr.front())) tStr.erase(tStr.begin());
+                    while (!tStr.empty() && isspace((unsigned char)tStr.back())) tStr.pop_back();
+                    AssetType parsedType = StringToAssetType(tStr);
+                    if (parsedType != AssetType::Unknown) {
+                        meta.type = parsedType;
+                    }
+                }
             }
         }
     }

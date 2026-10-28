@@ -90,6 +90,9 @@ public:
 
     void Clear();
 
+    void ReadOrGenerateSidecar(const std::filesystem::path& diskFilePath, AssetMetadata& meta);
+    void WriteSidecar(const std::filesystem::path& diskFilePath, const AssetMetadata& meta);
+
 private:
     AssetRegistry() = default;
 
@@ -103,6 +106,4 @@ private:
     std::filesystem::path m_contentRoot;
 
     void RebuildIndexes();
-    void ReadOrGenerateSidecar(const std::filesystem::path& diskFilePath, AssetMetadata& meta);
-    void WriteSidecar(const std::filesystem::path& diskFilePath, const AssetMetadata& meta);
 };
