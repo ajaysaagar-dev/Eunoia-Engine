@@ -29,7 +29,9 @@ enum class AssetType {
     Data,
     Project,
     AnimatorGraph,
-    AnimationGraph = AnimatorGraph
+    AnimationGraph = AnimatorGraph,
+    AnimationBlend,
+    BlendSpace = AnimationBlend
 };
 
 inline const char* AssetTypeToString(AssetType type) {
@@ -56,6 +58,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Data:            return "Data";
         case AssetType::Project:         return "Project";
         case AssetType::AnimatorGraph:   return "Animator Graph";
+        case AssetType::AnimationBlend:  return "Animation Blend";
         default:                         return "Unknown";
     }
 }
@@ -85,6 +88,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "data")         return AssetType::Data;
     if (s == "project" || s == "euproject" || s == "eproject") return AssetType::Project;
     if (s == "animatorgraph" || s == "animator-graph" || s == "animator graph" || s == "eanimator" || s == "animator") return AssetType::AnimatorGraph;
+    if (s == "animationblend" || s == "animation-blend" || s == "animation blend" || s == "eblend" || s == "blend") return AssetType::AnimationBlend;
     return AssetType::Unknown;
 }
 
@@ -138,6 +142,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "ebehaviour" || e == "visualbehaviour") {
         return AssetType::VisualBehaviour;
+    }
+    if (e == "eblend" || e == "blend") {
+        return AssetType::AnimationBlend;
     }
     if (e == "eanimator" || e == "animator") {
         return AssetType::AnimatorGraph;
