@@ -57,11 +57,22 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
         ufbx_load_opts opts = { 0 };
         opts.target_axes = ufbx_axes_right_handed_y_up;
         opts.target_unit_meters = 1.0f;
+        opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
+        opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
         opts.generate_missing_normals = true;
 
         ufbx_error error;
         ufbx_scene* scene = ufbx_load_file(normPath.c_str(), &opts, &error);
         if (scene) {
+            // Map bone nodes to skin cluster inverse bind matrices (geometry_to_bone)
+            std::unordered_map<const ufbx_node*, ufbx_matrix> boneToInvBind;
+            for (size_t c = 0; c < scene->skin_clusters.count; ++c) {
+                ufbx_skin_cluster* cl = scene->skin_clusters.data[c];
+                if (cl && cl->bone_node) {
+                    boneToInvBind[cl->bone_node] = cl->geometry_to_bone;
+                }
+            }
+
             // 1. Collect all bones / skin clusters
             std::unordered_map<const ufbx_node*, int> nodeToBoneIndex;
             for (size_t i = 0; i < scene->nodes.count; ++i) {
@@ -80,8 +91,14 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
                 if (isBone || scene->skin_clusters.count == 0) {
                     Bone b;
                     b.name = node->name.data ? std::string(node->name.data, node->name.length) : ("Bone_" + std::to_string(i));
-                    b.localBindTransform = UfbxToGlmMat4(node->geometry_to_node);
-                    b.inverseBindMatrix = glm::inverse(UfbxToGlmMat4(node->geometry_to_world));
+                    b.localBindTransform = UfbxToGlmMat4(node->node_to_parent);
+
+                    auto invIt = boneToInvBind.find(node);
+                    if (invIt != boneToInvBind.end()) {
+                        b.inverseBindMatrix = UfbxToGlmMat4(invIt->second);
+                    } else {
+                        b.inverseBindMatrix = glm::inverse(UfbxToGlmMat4(node->node_to_world));
+                    }
 
                     int boneIdx = (int)skelMesh->skeleton.bones.size();
                     nodeToBoneIndex[node] = boneIdx;
@@ -259,6 +276,34 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
         }
     }
 
+    // Compute AABB and bounding radius for camera auto-framing
+    glm::vec3 minP(1e9f);
+    glm::vec3 maxP(-1e9f);
+    bool hasVerts = false;
+    for (const auto& sub : skelMesh->submeshes) {
+        for (const auto& bv : sub.bindVertices) {
+            minP = glm::min(minP, bv.pos);
+            maxP = glm::max(maxP, bv.pos);
+            hasVerts = true;
+        }
+    }
+    if (!hasVerts && !skelMesh->skeleton.bones.empty()) {
+        for (const auto& b : skelMesh->skeleton.bones) {
+            glm::vec3 p(b.localBindTransform[3]);
+            minP = glm::min(minP, p);
+            maxP = glm::max(maxP, p);
+            hasVerts = true;
+        }
+    }
+    if (!hasVerts) {
+        minP = glm::vec3(-1.0f);
+        maxP = glm::vec3(1.0f);
+    }
+    skelMesh->aabbMin = minP;
+    skelMesh->aabbMax = maxP;
+    skelMesh->aabbCenter = (minP + maxP) * 0.5f;
+    skelMesh->boundingRadius = std::max(0.5f, glm::length(maxP - minP) * 0.5f);
+
     m_meshCache[normPath] = skelMesh;
     return skelMesh;
 }
@@ -281,6 +326,7 @@ std::shared_ptr<AnimationClip> SkeletalAnimationManager::LoadAnimationClip(const
         ufbx_load_opts opts = { 0 };
         opts.target_axes = ufbx_axes_right_handed_y_up;
         opts.target_unit_meters = 1.0f;
+        opts.space_conversion = UFBX_SPACE_CONVERSION_MODIFY_GEOMETRY;
 
         ufbx_error error;
         ufbx_scene* scene = ufbx_load_file(normPath.c_str(), &opts, &error);

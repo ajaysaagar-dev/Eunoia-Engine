@@ -168,6 +168,12 @@ public:
     std::vector<SkinnedSubmesh> submeshes;
     bool valid = false;
 
+    // Bounding volume for framing and bounds calculation
+    glm::vec3 aabbMin{0.0f};
+    glm::vec3 aabbMax{0.0f};
+    glm::vec3 aabbCenter{0.0f};
+    float boundingRadius = 1.0f;
+
     // Evaluates final bone transformation matrices: Matrix = WorldPose * InverseBindMatrix
     void ComputeBoneMatrices(const std::vector<BoneTransform>& localTransforms, std::vector<glm::mat4>& outBoneMatrices) const {
         size_t count = skeleton.bones.size();
