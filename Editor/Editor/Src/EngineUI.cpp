@@ -3693,7 +3693,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
                         !(showMaterialEditor && materialWorkspaceActive) &&
                         !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() &&
-                        !Eunoia::AnimatorGraphManager::Get().IsActive();
+                        !Eunoia::AnimatorGraphManager::Get().IsActive() &&
+                        !Eunoia::AnimationBlendManager::Get().IsActive();
 
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
@@ -12207,6 +12208,15 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 #ifdef _WIN32
                         SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
 #endif
+                        // Register in AssetRegistry immediately
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::AnimationBlend;
+                        vMeta.objectName = inputName;
+                        std::filesystem::path rel = std::filesystem::relative(blendPath, contentRootPath, bec);
+                        vMeta.sourcePath = bec ? (inputName + ".eblend") : rel.generic_string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
                         TriggerBackgroundRegistrySync(contentRootPath);
                         OpenAnimationBlendEditor(createdPath);
                         AddLog("LogContent", "Created Animation Blend: " + inputName + ".eblend in " + targetDir, 2);
@@ -13014,7 +13024,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
+                                    OpenAnimationBlendEditor(fullBlend.string());
+                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
                                     OpenAnimatorGraphEditor(fullAg.string());
                                     AddLog("LogContent", "Opened Animator Graph: " + item.meta.objectName, 2);
@@ -13264,7 +13278,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
+                                    OpenAnimationBlendEditor(fullBlend.string());
+                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     if (ImGui::MenuItem("Open in Animator Graph Editor")) {
                                         std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
                                         OpenAnimatorGraphEditor(fullAg.string());
@@ -13467,6 +13485,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 case AssetType::Script:          iconTag = "BEH";   accentCol = IM_COL32(217, 102, 242, 255); break; // Purple
                                 case AssetType::Level:           iconTag = "LEVEL"; accentCol = IM_COL32(51, 217, 242, 255);  break; // Cyan
                                 case AssetType::Project:         iconTag = "PROJ";  accentCol = IM_COL32(255, 204, 0, 255);   break; // Gold
+                                case AssetType::AnimationBlend:  iconTag = "BLEND"; accentCol = IM_COL32(160, 100, 240, 255); break; // Purple
+                                case AssetType::AnimatorGraph:   iconTag = "AG";    accentCol = IM_COL32(0, 220, 255, 255);    break; // Cyan
                                 default:                         iconTag = "FILE";  accentCol = IM_COL32(153, 153, 153, 255); break;
                             }
                         }
