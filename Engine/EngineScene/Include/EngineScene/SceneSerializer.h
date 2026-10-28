@@ -444,6 +444,11 @@ public:
             file << "      \"uiBorderColor\": [" << obj.ui3d.borderColor.r << ", " << obj.ui3d.borderColor.g << ", " << obj.ui3d.borderColor.b << ", " << obj.ui3d.borderColor.a << "],\n";
             file << "      \"uiBorderWidth\": " << obj.ui3d.borderWidth << ",\n";
 
+            file << "      \"hasAnimator\": " << BoolStr(obj.hasAnimator) << ",\n";
+            if (obj.hasAnimator) {
+                file << "      \"animatorEnabled\": " << BoolStr(obj.animator.enabled) << ",\n";
+                file << "      \"animatorGraphPath\": " << QuoteStr(obj.animator.graphPath) << ",\n";
+            }
             file << "      \"hasPhysics\": " << BoolStr(obj.hasPhysics) << ",\n";
             if (obj.hasPhysics) {
                 file << "      \"physicsEnabled\": " << BoolStr(obj.physics.enabled) << ",\n";
@@ -1867,6 +1872,23 @@ public:
             if (obj.ui3d.borderColor.a <= 0.001f) obj.ui3d.borderWidth = 0.0f;
         } else {
             obj.ui3d.borderWidth = 0.0f;
+        }
+
+        // Parse Animation Graph Modifier
+        p = actorBlock.find("\"hasAnimator\"");
+        if (p != std::string::npos) {
+            obj.hasAnimator = ParseBoolAt(actorBlock, p, false);
+            if (obj.hasAnimator) {
+                obj.animator.enabled = true;
+                size_t ap = actorBlock.find("\"animatorEnabled\""); if (ap != std::string::npos) obj.animator.enabled = ParseBoolAt(actorBlock, ap, true);
+                ap = actorBlock.find("\"animatorGraphPath\"");
+                if (ap != std::string::npos) {
+                    std::string gPath = ParseStringAt(actorBlock, ap, "");
+                    if (!gPath.empty()) {
+                        obj.animator.LoadGraph(gPath);
+                    }
+                }
+            }
         }
 
         // Parse Physics Modifier

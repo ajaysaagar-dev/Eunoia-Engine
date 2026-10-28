@@ -13,6 +13,7 @@
 #include <Physics/PhysicsTypes.h>
 #include <UISystem/UITypes.h>
 #include <EngineScene/TerrainComponent.h>
+#include <EngineScene/AnimationGraphModifier.h>
 
 // Wicked Engine Light System Alignment
 enum class LightType : uint32_t {
@@ -757,6 +758,22 @@ struct GameObject {
     std::vector<CollisionModifier> modifiers;
     bool hasPhysics = false;
     PhysicsModifier physics;
+    bool hasAnimator = false;
+    AnimationGraphModifier animator;
+
+    void AddAnimatorModifier() {
+        hasAnimator = true;
+        animator.enabled = true;
+        animator.name = "Animation Graph";
+    }
+
+    void RemoveAnimatorModifier() {
+        hasAnimator = false;
+        animator.enabled = false;
+        animator.graph.reset();
+        animator.instance.reset();
+        animator.graphPath = "";
+    }
 
     // Tags system (Support for all GameObjects, Actors, Empty Actors)
     std::vector<std::string> tags;
@@ -1029,6 +1046,8 @@ struct GameObject {
         modifiers = std::move(other.modifiers);
         hasPhysics = other.hasPhysics;
         physics = std::move(other.physics);
+        hasAnimator = other.hasAnimator;
+        animator = std::move(other.animator);
         tags = std::move(other.tags);
         scene = other.scene;
         Transform.gameObject = this;
@@ -1125,6 +1144,8 @@ struct GameObject {
         modifiers = other.modifiers;
         hasPhysics = other.hasPhysics;
         physics = other.physics;
+        hasAnimator = other.hasAnimator;
+        animator = other.animator;
         scene = other.scene;
         Transform.gameObject = this;
         behaviours.clear();
@@ -1397,6 +1418,9 @@ struct GameObject {
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
 
     void Update(float dt) {
+        if (hasAnimator && animator.enabled) {
+            animator.Update(dt);
+        }
         if (mobility == Mobility::Movable && autoRotate) {
             rotation += autoRotateSpeed * dt;
             if (rotation.x > 360.0f) rotation.x -= 360.0f;
