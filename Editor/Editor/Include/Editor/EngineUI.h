@@ -637,6 +637,12 @@ public:
     std::vector<std::string> pendingBatchImportAnimFiles;
     std::string selectedBatchImportSkeletonMesh = "";
 
+    // Bones Import Options Dialog (Ask whether Skeletal Mesh or Animation when bones found)
+    bool showBonesImportOptionPopup = false;
+    std::string pendingBonesImportFilePath = "";
+    int bonesImportOptionType = 0; // 0 = Skeletal Mesh, 1 = Animation
+    std::string selectedBonesAnimationTargetSkeleton = "";
+
     // Behaviours & Play Mode (dev.md)
     bool isPlayModeActive = false;
     bool showAddBehaviourPopup = false;

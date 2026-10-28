@@ -3060,6 +3060,12 @@ void EngineUI::ImportMeshWithSavePrompt(Scene& level) {
 
     // Queue model for rich 3D inspection and material/texture auto-assignment
     QueueModelImport(destPath.string());
+    bool hasAnimPrompt = false;
+    if (Eunoia::SkeletalAnimationManager::FileHasBones(destPath.string(), &hasAnimPrompt)) {
+        pendingBonesImportFilePath = destPath.string();
+        bonesImportOptionType = 0;
+        showBonesImportOptionPopup = true;
+    }
 }
 
 void EngineUI::HandleFileDrop(const char** paths, int count) {
@@ -3147,7 +3153,14 @@ void EngineUI::HandleFileDrop(const char** paths, int count) {
             QueueModelImport(modelPath);
             std::string mExt = std::filesystem::path(modelPath).extension().string();
             std::transform(mExt.begin(), mExt.end(), mExt.begin(), ::tolower);
-            if (mExt == ".fbx" || mExt == ".anim" || mExt == ".eanim") {
+            if (mExt == ".fbx") {
+                bool hasAnim = false;
+                if (Eunoia::SkeletalAnimationManager::FileHasBones(modelPath, &hasAnim)) {
+                    pendingBonesImportFilePath = modelPath;
+                    bonesImportOptionType = 0;
+                    showBonesImportOptionPopup = true;
+                }
+            } else if (mExt == ".anim" || mExt == ".eanim") {
                 pendingBatchImportAnimFiles.push_back(modelPath);
                 showBatchSkeletonImportPopup = true;
             }
@@ -12202,6 +12215,136 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         pendingBatchImportAnimFiles.clear();
                         ImGui::CloseCurrentPopup();
                     }
+                    ImGui::EndPopup();
+                }
+
+                // Bones Detected Import Options Dialog (Ask whether Skeletal Mesh or Animation when bones found)
+                if (showBonesImportOptionPopup) {
+                    ImGui::OpenPopup("Bones Detected - Import Options##BonesImportModal");
+                    showBonesImportOptionPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Bones Detected - Import Options##BonesImportModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string fileName = std::filesystem::path(pendingBonesImportFilePath).filename().string();
+                    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "Bones / Skeleton Detected in Asset:");
+                    ImGui::TextDisabled("%s", fileName.c_str());
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    ImGui::Text("How would you like to import this asset?");
+                    ImGui::Spacing();
+
+                    ImGui::RadioButton("Skeletal Mesh (Rigged 3D Character / Mesh)", &bonesImportOptionType, 0);
+                    ImGui::Indent(24.0f);
+                    ImGui::TextDisabled("Imports as a rigged 3D mesh with bones hierarchy.\nThis model will be registered as a Skeleton Mesh and will show\nwherever a Skeleton is needed (e.g. in Animator Graphs and animation linking).");
+                    ImGui::Unindent(24.0f);
+
+                    ImGui::Spacing();
+                    ImGui::RadioButton("Animation (Skeletal Animation Clip / Motion)", &bonesImportOptionType, 1);
+                    ImGui::Indent(24.0f);
+                    ImGui::TextDisabled("Imports skeletal motion/keyframe curves linked to a project Skeleton Mesh.");
+
+                    if (bonesImportOptionType == 1) {
+                        ImGui::Spacing();
+                        ImGui::Text("Target Skeleton Mesh:");
+                        std::vector<std::string> skelMeshes = Eunoia::SkeletalAnimationManager::Get().FindProjectSkeletalMeshes("Content");
+
+                        std::string comboLabel = selectedBonesAnimationTargetSkeleton.empty()
+                            ? "[Choose Target Skeleton Mesh...]"
+                            : std::filesystem::path(selectedBonesAnimationTargetSkeleton).filename().string();
+
+                        ImGui::SetNextItemWidth(380.0f);
+                        if (ImGui::BeginCombo("##BonesTargetSkelCombo", comboLabel.c_str())) {
+                            if (skelMeshes.empty()) {
+                                ImGui::Selectable("No Skeletal Meshes found in Content/", false, ImGuiSelectableFlags_Disabled);
+                            }
+                            for (const auto& sm : skelMeshes) {
+                                std::string smName = std::filesystem::path(sm).filename().string();
+                                bool isSel = (sm == selectedBonesAnimationTargetSkeleton);
+                                if (ImGui::Selectable(smName.c_str(), isSel)) {
+                                    selectedBonesAnimationTargetSkeleton = sm;
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+
+                        if (skelMeshes.empty()) {
+                            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f), "(Note: No Skeletal Meshes found yet. You can import this model as a Skeletal Mesh first)");
+                        }
+                    }
+                    ImGui::Unindent(24.0f);
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    if (ImGui::Button("Confirm & Import", ImVec2(160, 0))) {
+                        std::filesystem::path fPath(pendingBonesImportFilePath);
+                        std::string metaPath = pendingBonesImportFilePath + ".assetmeta";
+
+                        AssetMetadata meta;
+                        AssetMetadata* existingMeta = AssetRegistry::Get().FindByNameOrPath(fPath.filename().string());
+                        if (existingMeta) {
+                            meta = *existingMeta;
+                        } else {
+                            AssetRegistry::Get().ReadOrGenerateSidecar(fPath, meta);
+                            meta.objectName = fPath.stem().string();
+                            std::error_code bec;
+                            std::filesystem::path rel = std::filesystem::relative(fPath, contentRootPath, bec);
+                            meta.sourcePath = bec ? fPath.filename().string() : rel.generic_string();
+                            meta.virtualPath = currentVirtualDir + "/" + meta.objectName;
+                        }
+
+                        if (bonesImportOptionType == 0) {
+                            // Skeletal Mesh
+                            meta.type = AssetType::SkeletalMesh;
+                            AssetRegistry::Get().RegisterAsset(meta);
+
+                            std::ofstream mf(metaPath);
+                            if (mf.is_open()) {
+                                mf << "# Eunoia-Editor Asset Sidecar Metadata\n";
+                                mf << "assetId: " << meta.id.ToString() << "\n";
+                                mf << "type: Skeletal Mesh\n";
+                                mf << "isSkeletalMesh: true\n";
+                                mf << "hasSkeleton: true\n";
+                                mf << "virtualPath: " << meta.virtualPath << "\n";
+                            }
+#ifdef _WIN32
+                            SetFileAttributesW(std::filesystem::path(metaPath).wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                            AddLog("LogContent", "Registered Skeletal Mesh: " + fPath.filename().string() + " (Ready for Animator Graph)", 2);
+                        } else {
+                            // Animation
+                            meta.type = AssetType::Animation;
+                            AssetRegistry::Get().RegisterAsset(meta);
+
+                            std::ofstream mf(metaPath);
+                            if (mf.is_open()) {
+                                mf << "# Eunoia-Editor Asset Sidecar Metadata\n";
+                                mf << "assetId: " << meta.id.ToString() << "\n";
+                                mf << "type: Animation\n";
+                                mf << "isAnimation: true\n";
+                                mf << "targetSkeleton: " << selectedBonesAnimationTargetSkeleton << "\n";
+                                mf << "virtualPath: " << meta.virtualPath << "\n";
+                            }
+#ifdef _WIN32
+                            SetFileAttributesW(std::filesystem::path(metaPath).wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                            std::string skelName = selectedBonesAnimationTargetSkeleton.empty() ? "None" : std::filesystem::path(selectedBonesAnimationTargetSkeleton).filename().string();
+                            AddLog("LogContent", "Registered Animation: " + fPath.filename().string() + " linked to Skeleton: " + skelName, 2);
+                        }
+
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        pendingBonesImportFilePath = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(100, 0))) {
+                        pendingBonesImportFilePath = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+
                     ImGui::EndPopup();
                 }
 
