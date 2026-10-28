@@ -1,0 +1,11 @@
+{
+    "name": "Animation-Blending",
+    "version": "1.0.0",
+    "description": "Unreal Engine-inspired 2D animation blend space system, multi-sample pose interpolation, and editor.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "animation",
+    "core": true,
+    "dependencies": ["engine", "scene", "assets", "Animation-Graph"],
+    "provides": ["IAnimationBlendingPlugin"]
+}
