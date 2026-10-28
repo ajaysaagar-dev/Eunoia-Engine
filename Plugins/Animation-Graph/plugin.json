@@ -1,0 +1,11 @@
+{
+    "name": "Animation-Graph",
+    "version": "1.0.0",
+    "description": "Skeletal animation state machine, real-time node graph editor, and character pose blending plugin.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "animation",
+    "core": true,
+    "dependencies": ["engine", "scene", "assets"],
+    "provides": ["IAnimationGraphPlugin"]
+}

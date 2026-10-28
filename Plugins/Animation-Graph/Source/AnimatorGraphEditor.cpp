@@ -1,4 +1,4 @@
-#include <EngineAssets/AnimatorGraphEditor.h>
+#include <Animation-Graph/AnimatorGraphEditor.h>
 #include <EngineAssets/AssetManager.h>
 #include <EngineAssets/AssetRegistry.h>
 #include <imgui.h>
@@ -52,6 +52,8 @@ void AnimatorGraphEditor::Save() {
     if (m_graph && !m_graph->assetPath.empty()) {
         if (m_graph->SaveToFile(m_graph->assetPath)) {
             m_isDirty = false;
+            m_saveNotificationTimer = 2.5f;
+            std::cout << "[AnimatorGraph] Saved graph: " << m_graph->assetPath << std::endl;
         }
     }
 }
@@ -124,7 +126,17 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
 }
 
 void AnimatorGraphEditor::Render(const ImVec2& position, const ImVec2& size) {
-    UpdateSimulation(ImGui::GetIO().DeltaTime);
+    float dt = ImGui::GetIO().DeltaTime;
+    UpdateSimulation(dt);
+
+    if (m_saveNotificationTimer > 0.0f) {
+        m_saveNotificationTimer -= dt;
+    }
+
+    // Shortcut: Ctrl + S to save Animator Graph
+    if (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+        Save();
+    }
 
     ImGui::SetNextWindowPos(position);
     ImGui::SetNextWindowSize(size);
@@ -738,7 +750,17 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
     ImDrawList* dl = ImGui::GetWindowDrawList();
 
     ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "LIVE PREVIEW - SKELETON");
-    ImGui::SameLine(ImGui::GetWindowWidth() - 70.0f);
+    if (m_saveNotificationTimer > 0.0f) {
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "[SAVED]");
+    }
+    ImGui::SameLine(ImGui::GetWindowWidth() - 145.0f);
+    if (ImGui::SmallButton("Restart")) {
+        if (m_instance) m_instance->Reset();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Restart state machine simulation from Entry state");
+
+    ImGui::SameLine();
     if (ImGui::SmallButton("Reset Cam")) {
         ResetPreviewCamera();
     }
@@ -1014,8 +1036,12 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
             if (!m_graph->parameters.empty()) {
                 TransitionCondition cond;
                 cond.paramName = m_graph->parameters.front().name;
-                cond.op = (m_graph->parameters.front().type == AnimatorParamType::Boolean) 
-                    ? ConditionOp::IsTrue : ConditionOp::Greater;
+                if (m_graph->parameters.front().type == AnimatorParamType::Boolean) {
+                    cond.op = ConditionOp::IsTrue;
+                    cond.targetBool = true;
+                } else {
+                    cond.op = ConditionOp::Greater;
+                }
                 trans->conditions.push_back(cond);
                 m_isDirty = true;
             }
@@ -1023,7 +1049,7 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add Condition");
 
         if (trans->conditions.empty()) {
-            ImGui::TextDisabled("No conditions (transitions immediately)");
+            ImGui::TextDisabled("No conditions (Entry auto-transitions; others hold)");
         }
 
         size_t condToDelete = (size_t)-1;
@@ -1059,21 +1085,26 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
                     int opIdx = (cond.op == ConditionOp::IsFalse) ? 1 : 0;
                     if (ImGui::Combo("##BoolOpCombo", &opIdx, boolOps, 2)) {
                         cond.op = (opIdx == 1) ? ConditionOp::IsFalse : ConditionOp::IsTrue;
+                        cond.targetBool = (opIdx == 0);
                         m_isDirty = true;
                     }
                 } else if (p->type == AnimatorParamType::Float || p->type == AnimatorParamType::Int) {
-                    ImGui::SetNextItemWidth(55.0f);
-                    const char* mathOps[] = { ">", "<", "==", "!=" };
+                    ImGui::SetNextItemWidth(65.0f);
+                    const char* mathOps[] = { ">", "<", ">=", "<=", "==", "!=" };
                     int opIdx = 0;
                     if (cond.op == ConditionOp::Less) opIdx = 1;
-                    else if (cond.op == ConditionOp::Equal) opIdx = 2;
-                    else if (cond.op == ConditionOp::NotEqual) opIdx = 3;
+                    else if (cond.op == ConditionOp::GreaterEqual) opIdx = 2;
+                    else if (cond.op == ConditionOp::LessEqual) opIdx = 3;
+                    else if (cond.op == ConditionOp::Equal) opIdx = 4;
+                    else if (cond.op == ConditionOp::NotEqual) opIdx = 5;
 
-                    if (ImGui::Combo("##MathOpCombo", &opIdx, mathOps, 4)) {
+                    if (ImGui::Combo("##MathOpCombo", &opIdx, mathOps, 6)) {
                         if (opIdx == 0) cond.op = ConditionOp::Greater;
                         else if (opIdx == 1) cond.op = ConditionOp::Less;
-                        else if (opIdx == 2) cond.op = ConditionOp::Equal;
-                        else if (opIdx == 3) cond.op = ConditionOp::NotEqual;
+                        else if (opIdx == 2) cond.op = ConditionOp::GreaterEqual;
+                        else if (opIdx == 3) cond.op = ConditionOp::LessEqual;
+                        else if (opIdx == 4) cond.op = ConditionOp::Equal;
+                        else if (opIdx == 5) cond.op = ConditionOp::NotEqual;
                         m_isDirty = true;
                     }
 

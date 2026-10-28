@@ -1,4 +1,4 @@
-#include <EngineAssets/SkeletalAnimation.h>
+#include <Animation-Graph/SkeletalAnimation.h>
 #include <EngineAssets/Addressables.h>
 #include <EngineAssets/AssetRegistry.h>
 #include <iostream>
