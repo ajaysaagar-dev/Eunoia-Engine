@@ -127,91 +127,137 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
 
             skelMesh->skeleton.BuildIndexMap();
 
-            // 2. Load meshes & skin weights
-            for (size_t m = 0; m < scene->meshes.count; ++m) {
-                ufbx_mesh* uMesh = scene->meshes.data[m];
-                if (!uMesh || uMesh->num_vertices == 0) continue;
-
-                SkinnedSubmesh sub;
-                sub.name = uMesh->name.data ? std::string(uMesh->name.data, uMesh->name.length) : ("Submesh_" + std::to_string(m));
-
-                size_t numFaces = uMesh->num_faces;
-                sub.bindVertices.reserve(uMesh->num_indices);
-                sub.indices.reserve(uMesh->num_indices);
-
-                // Check skin deformers
-                ufbx_skin_deformer* skin = (uMesh->skin_deformers.count > 0) ? uMesh->skin_deformers.data[0] : nullptr;
-
-                for (size_t f = 0; f < numFaces; ++f) {
-                    ufbx_face face = uMesh->faces.data[f];
-                    if (face.num_indices < 3) continue;
-
-                    // Triangulate polygon fans
-                    for (size_t vi = 1; vi + 1 < face.num_indices; ++vi) {
-                        uint32_t fIndices[3] = {
-                            face.index_begin,
-                            (uint32_t)(face.index_begin + vi),
-                            (uint32_t)(face.index_begin + vi + 1)
-                        };
-
-                        for (int k = 0; k < 3; ++k) {
-                            uint32_t index = fIndices[k];
-                            uint32_t vIndex = uMesh->vertex_indices.data[index];
-
-                            SkinnedVertex sv;
-                            ufbx_vec3 pos = ufbx_get_vertex_vec3(&uMesh->vertex_position, index);
-                            sv.pos = UfbxToGlmVec3(pos);
-
-                            if (uMesh->vertex_normal.exists) {
-                                ufbx_vec3 n = ufbx_get_vertex_vec3(&uMesh->vertex_normal, index);
-                                sv.normal = UfbxToGlmVec3(n);
-                            } else {
-                                sv.normal = glm::vec3(0, 1, 0);
-                            }
-
-                            if (uMesh->vertex_uv.exists) {
-                                ufbx_vec2 uv = ufbx_get_vertex_vec2(&uMesh->vertex_uv, index);
-                                sv.uv = glm::vec2((float)uv.x, (float)uv.y);
-                            }
-
-                            // Extract skin weights
-                            if (skin && vIndex < skin->vertices.count) {
-                                ufbx_skin_vertex skinV = skin->vertices.data[vIndex];
-                                float weightSum = 0.0f;
-                                for (size_t wi = 0; wi < skinV.num_weights && wi < 4; ++wi) {
-                                    ufbx_skin_weight sw = skin->weights.data[skinV.weight_begin + wi];
-                                    if (sw.cluster_index < skin->clusters.count) {
-                                        ufbx_skin_cluster* cl = skin->clusters.data[sw.cluster_index];
-                                        auto bIt = nodeToBoneIndex.find(cl->bone_node);
-                                        if (bIt != nodeToBoneIndex.end()) {
-                                            sv.boneIndices[wi] = (uint32_t)bIt->second;
-                                            sv.boneWeights[wi] = (float)sw.weight;
-                                            weightSum += (float)sw.weight;
-                                        }
-                                    }
-                                }
-                                if (weightSum > 0.0001f) {
-                                    sv.boneWeights /= weightSum;
-                                }
-                            }
-
-                            sub.indices.push_back((uint32_t)sub.bindVertices.size());
-                            sub.bindVertices.push_back(sv);
-                        }
+            // 2. Load meshes & skin weights (grouped by material to match MeshImporter submesh structure)
+            struct NodeMeshEntry {
+                ufbx_node* node;
+                ufbx_mesh* mesh;
+            };
+            std::vector<NodeMeshEntry> entries;
+            for (size_t i = 0; i < scene->nodes.count; ++i) {
+                ufbx_node* node = scene->nodes.data[i];
+                if (node && node->mesh && node->mesh->num_faces > 0) {
+                    entries.push_back({ node, node->mesh });
+                }
+            }
+            if (entries.empty()) {
+                for (size_t i = 0; i < scene->meshes.count; ++i) {
+                    ufbx_mesh* mesh = scene->meshes.data[i];
+                    if (mesh && mesh->num_faces > 0) {
+                        entries.push_back({ nullptr, mesh });
                     }
                 }
+            }
 
-                // Initialize runtime vertices to bind pose
-                sub.runtimeVertices.resize(sub.bindVertices.size());
-                for (size_t i = 0; i < sub.bindVertices.size(); ++i) {
-                    sub.runtimeVertices[i].pos = sub.bindVertices[i].pos;
-                    sub.runtimeVertices[i].normal = sub.bindVertices[i].normal;
-                    sub.runtimeVertices[i].uv = sub.bindVertices[i].uv;
-                    sub.runtimeVertices[i].tangent = sub.bindVertices[i].tangent;
+            for (size_t entryIdx = 0; entryIdx < entries.size(); ++entryIdx) {
+                ufbx_node* node = entries[entryIdx].node;
+                ufbx_mesh* uMesh = entries[entryIdx].mesh;
+                if (!uMesh || uMesh->num_vertices == 0) continue;
+
+                std::string baseMeshName;
+                if (node && node->name.data && node->name.length > 0) {
+                    baseMeshName = std::string(node->name.data, node->name.length);
+                } else if (uMesh->name.data && uMesh->name.length > 0) {
+                    baseMeshName = std::string(uMesh->name.data, uMesh->name.length);
+                } else {
+                    baseMeshName = "Submesh_" + std::to_string(entryIdx);
                 }
 
-                if (!sub.bindVertices.empty() && !sub.indices.empty()) {
-                    skelMesh->submeshes.push_back(std::move(sub));
+                size_t numMats = std::max((size_t)1, (size_t)uMesh->materials.count);
+                std::vector<std::vector<size_t>> matFaces(numMats);
+                for (size_t f = 0; f < uMesh->faces.count; ++f) {
+                    size_t matIdx = 0;
+                    if (uMesh->face_material.count > f) {
+                        int32_t fm = uMesh->face_material.data[f];
+                        if (fm >= 0 && (size_t)fm < numMats) {
+                            matIdx = (size_t)fm;
+                        }
+                    }
+                    matFaces[matIdx].push_back(f);
+                }
+
+                ufbx_skin_deformer* skin = (uMesh->skin_deformers.count > 0) ? uMesh->skin_deformers.data[0] : nullptr;
+
+                for (size_t mIdx = 0; mIdx < numMats; ++mIdx) {
+                    const auto& faceList = matFaces[mIdx];
+                    if (faceList.empty()) continue;
+
+                    SkinnedSubmesh sub;
+                    sub.name = baseMeshName;
+                    if (numMats > 1) {
+                        sub.name += "_" + std::to_string(mIdx);
+                    }
+
+                    for (size_t f : faceList) {
+                        ufbx_face face = uMesh->faces.data[f];
+                        if (face.num_indices < 3) continue;
+
+                        // Triangulate polygon fans
+                        for (size_t vi = 1; vi + 1 < face.num_indices; ++vi) {
+                            uint32_t fIndices[3] = {
+                                face.index_begin,
+                                (uint32_t)(face.index_begin + vi),
+                                (uint32_t)(face.index_begin + vi + 1)
+                            };
+
+                            for (int k = 0; k < 3; ++k) {
+                                uint32_t index = fIndices[k];
+                                uint32_t vIndex = uMesh->vertex_indices.data[index];
+
+                                SkinnedVertex sv;
+                                ufbx_vec3 pos = ufbx_get_vertex_vec3(&uMesh->vertex_position, index);
+                                sv.pos = UfbxToGlmVec3(pos);
+
+                                if (uMesh->vertex_normal.exists) {
+                                    ufbx_vec3 n = ufbx_get_vertex_vec3(&uMesh->vertex_normal, index);
+                                    sv.normal = UfbxToGlmVec3(n);
+                                } else {
+                                    sv.normal = glm::vec3(0, 1, 0);
+                                }
+
+                                if (uMesh->vertex_uv.exists) {
+                                    ufbx_vec2 uv = ufbx_get_vertex_vec2(&uMesh->vertex_uv, index);
+                                    sv.uv = glm::vec2((float)uv.x, (float)uv.y);
+                                }
+
+                                // Extract skin weights
+                                if (skin && vIndex < skin->vertices.count) {
+                                    ufbx_skin_vertex skinV = skin->vertices.data[vIndex];
+                                    float weightSum = 0.0f;
+                                    for (size_t wi = 0; wi < skinV.num_weights && wi < 4; ++wi) {
+                                        ufbx_skin_weight sw = skin->weights.data[skinV.weight_begin + wi];
+                                        if (sw.cluster_index < skin->clusters.count) {
+                                            ufbx_skin_cluster* cl = skin->clusters.data[sw.cluster_index];
+                                            auto bIt = nodeToBoneIndex.find(cl->bone_node);
+                                            if (bIt != nodeToBoneIndex.end()) {
+                                                sv.boneIndices[wi] = (uint32_t)bIt->second;
+                                                sv.boneWeights[wi] = (float)sw.weight;
+                                                weightSum += (float)sw.weight;
+                                            }
+                                        }
+                                    }
+                                    if (weightSum > 0.0001f) {
+                                        sv.boneWeights /= weightSum;
+                                    }
+                                }
+
+                                sub.indices.push_back((uint32_t)sub.bindVertices.size());
+                                sub.bindVertices.push_back(sv);
+                            }
+                        }
+                    }
+
+                    // Initialize runtime vertices to bind pose
+                    sub.runtimeVertices.resize(sub.bindVertices.size());
+                    for (size_t i = 0; i < sub.bindVertices.size(); ++i) {
+                        sub.runtimeVertices[i].pos = sub.bindVertices[i].pos;
+                        sub.runtimeVertices[i].normal = sub.bindVertices[i].normal;
+                        sub.runtimeVertices[i].uv = sub.bindVertices[i].uv;
+                        sub.runtimeVertices[i].tangent = sub.bindVertices[i].tangent;
+                    }
+
+                    if (!sub.bindVertices.empty() && !sub.indices.empty()) {
+                        skelMesh->submeshes.push_back(std::move(sub));
+                    }
                 }
             }
 
