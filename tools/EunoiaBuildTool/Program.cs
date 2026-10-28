@@ -804,6 +804,8 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "SFLOD", "Source", "SFLODSystem.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "SFLOD", "Source", "SFLODPlugin.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "MeshImporter.cpp"),
+                Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "SkeletalAnimation.cpp"),
+                Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "AnimatorGraphEditor.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "TextureManager.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "DirectXTex.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "DirectXTexD3D12.cpp"),
@@ -1212,6 +1214,8 @@ Options:
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "TextureManager.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "DirectXTex.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "MeshImporter.cpp"),
+                Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "SkeletalAnimation.cpp"),
+                Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "AnimatorGraphEditor.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Graphics", "Source", "GraphicsSystem.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Graphics", "Source", "GraphicsPlugin.cpp"),
                 Path.Combine(s_projectDir, "Runtime", "Src", "Main.cpp")
