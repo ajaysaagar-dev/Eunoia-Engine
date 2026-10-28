@@ -31,6 +31,9 @@ void AnimatorGraphEditor::SyncPreviewResources() {
 
     if (!m_graph->skeletonMeshPath.empty()) {
         m_previewMesh = SkeletalAnimationManager::Get().LoadSkeletalMesh(m_graph->skeletonMeshPath);
+        if (m_previewMesh && m_previewMesh->valid) {
+            ResetPreviewCamera();
+        }
     }
 
     // Preload clips for all states
@@ -55,9 +58,14 @@ void AnimatorGraphEditor::Save() {
 
 void AnimatorGraphEditor::ResetPreviewCamera() {
     m_previewYaw = 45.0f;
-    m_previewPitch = 20.0f;
-    m_previewDistance = 3.5f;
-    m_previewTarget = glm::vec3(0.0f, 1.0f, 0.0f);
+    m_previewPitch = 15.0f;
+    if (m_previewMesh && m_previewMesh->valid) {
+        m_previewTarget = m_previewMesh->aabbCenter;
+        m_previewDistance = std::max(1.5f, m_previewMesh->boundingRadius * 2.2f);
+    } else {
+        m_previewTarget = glm::vec3(0.0f, 1.0f, 0.0f);
+        m_previewDistance = 3.5f;
+    }
 }
 
 void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
@@ -365,7 +373,7 @@ void AnimatorGraphEditor::DrawArrow(ImDrawList* dl, const ImVec2& p1, const ImVe
         glm::vec2 dir = d / len;
         glm::vec2 perp(-dir.y, dir.x);
 
-        float arrowSize = 12.0f;
+        float arrowSize = isSelected ? 15.0f : 12.0f;
         ImVec2 tip = p2;
         ImVec2 side1(p2.x - dir.x * arrowSize + perp.x * (arrowSize * 0.5f),
                      p2.y - dir.y * arrowSize + perp.y * (arrowSize * 0.5f));
@@ -376,9 +384,10 @@ void AnimatorGraphEditor::DrawArrow(ImDrawList* dl, const ImVec2& p1, const ImVe
     }
 
     if (isSelected) {
-        // Glowing dot at midpoint
+        // Glowing dot and ring at midpoint
         ImVec2 mid((p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f);
-        dl->AddCircleFilled(mid, 5.0f, IM_COL32(0, 200, 255, 255));
+        dl->AddCircleFilled(mid, 6.0f, IM_COL32(0, 220, 255, 255));
+        dl->AddCircle(mid, 9.0f, IM_COL32(0, 220, 255, 120), 0, 2.0f);
     }
 }
 
@@ -426,6 +435,8 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
     const float nodeWidth = 203.0f * m_canvasZoom;
     const float nodeHeight = 62.0f * m_canvasZoom;
 
+    uint32_t clickedArrowId = 0;
+
     // 1. Draw Transitions / Arrows between nodes
     for (const auto& t : m_graph->transitions) {
         const auto* src = m_graph->FindState(t.sourceStateId);
@@ -465,19 +476,31 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         }
 
         bool isSelected = (m_selectedArrowId == t.id);
-        ImU32 arrowColor = isSelected ? IM_COL32(0, 200, 255, 255) : IM_COL32(230, 230, 230, 255);
+        ImU32 arrowColor = isSelected ? IM_COL32(0, 220, 255, 255) : IM_COL32(230, 230, 230, 255);
 
-        // Click detection on arrow
-        ImVec2 mid((p1.x + p2.x) * 0.5f, (p1.y + p2.y) * 0.5f);
-        if (isCanvasHovered && ImGui::IsMouseClicked(0)) {
-            float distToMid = glm::length(glm::vec2(mousePos.x - mid.x, mousePos.y - mid.y));
-            if (distToMid < 16.0f) {
-                m_selectedArrowId = t.id;
-                m_selectedNodeId = 0;
-            }
+        // Point-to-segment distance check for clicking anywhere along arrow line
+        glm::vec2 vSeg(p2.x - p1.x, p2.y - p1.y);
+        glm::vec2 wMouse(mousePos.x - p1.x, mousePos.y - p1.y);
+        float lenSq = glm::dot(vSeg, vSeg);
+        float tProj = (lenSq > 0.0001f) ? glm::clamp(glm::dot(wMouse, vSeg) / lenSq, 0.0f, 1.0f) : 0.0f;
+        glm::vec2 nearestPt = glm::vec2(p1.x, p1.y) + tProj * vSeg;
+        float distToLine = glm::length(glm::vec2(mousePos.x, mousePos.y) - nearestPt);
+
+        bool isArrowHovered = (distToLine < 12.0f);
+        if (isArrowHovered && !isSelected) {
+            arrowColor = IM_COL32(100, 220, 255, 255);
         }
 
-        DrawArrow(dl, p1, p2, arrowColor, isSelected ? 3.0f : 2.0f, isSelected, t.id);
+        if (isCanvasHovered && isArrowHovered && ImGui::IsMouseClicked(0) && !m_isConnecting) {
+            clickedArrowId = t.id;
+        }
+
+        DrawArrow(dl, p1, p2, arrowColor, isSelected ? 3.5f : (isArrowHovered ? 2.5f : 2.0f), isSelected, t.id);
+    }
+
+    if (clickedArrowId != 0) {
+        m_selectedArrowId = clickedArrowId;
+        m_selectedNodeId = 0;
     }
 
     // 2. Dragging a new transition arrow
@@ -599,19 +622,19 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         m_draggedNodeId = 0;
     }
 
-    // Canvas click to deselect
+    // Canvas click to deselect (only if neither a node nor an arrow was clicked)
     if (isCanvasHovered && ImGui::IsMouseClicked(0) && !m_isConnecting) {
-        bool hitAny = false;
+        bool hitAnyNode = false;
         for (const auto& s : m_graph->states) {
             ImVec2 nPos(pos.x + m_canvasPan.x + s.position.x * m_canvasZoom,
                         pos.y + m_canvasPan.y + s.position.y * m_canvasZoom);
             if (mousePos.x >= nPos.x && mousePos.x <= nPos.x + nodeWidth &&
                 mousePos.y >= nPos.y && mousePos.y <= nPos.y + nodeHeight) {
-                hitAny = true;
+                hitAnyNode = true;
                 break;
             }
         }
-        if (!hitAny) {
+        if (!hitAnyNode && clickedArrowId == 0) {
             m_selectedNodeId = 0;
             m_selectedArrowId = 0;
         }
@@ -735,7 +758,8 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
         }
 
         if (ImGui::GetIO().MouseWheel != 0.0f) {
-            m_previewDistance = glm::clamp(m_previewDistance - ImGui::GetIO().MouseWheel * 0.3f, 0.5f, 20.0f);
+            float zoomSpeed = std::max(0.1f, m_previewDistance * 0.1f);
+            m_previewDistance = glm::clamp(m_previewDistance - ImGui::GetIO().MouseWheel * zoomSpeed, 0.1f, 5000.0f);
         }
     }
     if (!ImGui::IsMouseDown(0) && !ImGui::IsMouseDown(1)) {
@@ -761,7 +785,9 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
 
     glm::mat4 view = glm::lookAt(camPos, m_previewTarget, glm::vec3(0.0f, 1.0f, 0.0f));
     float aspect = previewSize.x / std::max(1.0f, previewSize.y);
-    glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.05f, 100.0f);
+    float nearPlane = std::max(0.01f, m_previewDistance * 0.005f);
+    float farPlane = std::max(100.0f, m_previewDistance * 25.0f);
+    glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, nearPlane, farPlane);
     glm::mat4 viewProj = proj * view;
 
     auto projectToScreen = [&](const glm::vec3& worldPos, ImVec2& outScreen, float& outDepth) -> bool {
@@ -776,32 +802,36 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
         return true;
     };
 
-    // Draw 3D Ground Grid
+    // Draw 3D Ground Grid (adaptive to mesh bounds)
+    float gridExtent = (m_previewMesh && m_previewMesh->valid) ? std::max(2.5f, m_previewMesh->boundingRadius * 1.5f) : 5.0f;
+    float gridStep = gridExtent / 10.0f;
+    float groundY = (m_previewMesh && m_previewMesh->valid) ? m_previewMesh->aabbMin.y : 0.0f;
     ImU32 groundGridCol = IM_COL32(40, 40, 40, 255);
-    for (int g = -5; g <= 5; ++g) {
+    for (int g = -10; g <= 10; ++g) {
+        float offset = g * gridStep;
         ImVec2 pA, pB;
         float dA, dB;
-        if (projectToScreen(glm::vec3((float)g, 0.0f, -5.0f), pA, dA) &&
-            projectToScreen(glm::vec3((float)g, 0.0f, 5.0f), pB, dB)) {
-            dl->AddLine(pA, pB, groundGridCol);
+        if (projectToScreen(glm::vec3(offset, groundY, -gridExtent), pA, dA) &&
+            projectToScreen(glm::vec3(offset, groundY, gridExtent), pB, dB)) {
+            dl->AddLine(pA, pB, (g == 0) ? IM_COL32(65, 65, 65, 255) : groundGridCol);
         }
-        if (projectToScreen(glm::vec3(-5.0f, 0.0f, (float)g), pA, dA) &&
-            projectToScreen(glm::vec3(5.0f, 0.0f, (float)g), pB, dB)) {
-            dl->AddLine(pA, pB, groundGridCol);
+        if (projectToScreen(glm::vec3(-gridExtent, groundY, offset), pA, dA) &&
+            projectToScreen(glm::vec3(gridExtent, groundY, offset), pB, dB)) {
+            dl->AddLine(pA, pB, (g == 0) ? IM_COL32(65, 65, 65, 255) : groundGridCol);
         }
     }
 
     // Render Skeletal Mesh in Real Time
     if (m_previewMesh && m_previewMesh->valid) {
         // 1. Draw Skinned Character Mesh Triangles / Wireframe
-        ImU32 meshWireCol = IM_COL32(100, 180, 255, 140);
+        ImU32 meshWireCol = IM_COL32(100, 180, 255, 160);
         for (const auto& sub : m_previewMesh->submeshes) {
             const auto& verts = sub.runtimeVertices;
             const auto& indices = sub.indices;
 
             size_t triCount = indices.size() / 3;
             // Draw subset of edges for high performance wireframe preview
-            size_t step = (triCount > 2000) ? (triCount / 2000) : 1;
+            size_t step = (triCount > 2500) ? (triCount / 2500) : 1;
 
             for (size_t ti = 0; ti < triCount; ti += step) {
                 uint32_t i0 = indices[ti * 3 + 0];
@@ -819,25 +849,36 @@ void AnimatorGraphEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& siz
             }
         }
 
-        // 2. Draw Bone Hierarchy Rig Lines & Joints
+        // 2. Draw Bone Hierarchy Rig Lines & Joints in Model Space
         const auto& bones = m_previewMesh->skeleton.bones;
+        std::vector<glm::mat4> modelBoneTransforms(bones.size(), glm::mat4(1.0f));
         for (size_t b = 0; b < bones.size(); ++b) {
-            glm::vec3 boneWorldPos(bones[b].localBindTransform[3]);
+            glm::mat4 localMat = bones[b].localBindTransform;
+            int pIdx = bones[b].parentIndex;
+            if (pIdx >= 0 && pIdx < (int)bones.size()) {
+                modelBoneTransforms[b] = modelBoneTransforms[pIdx] * localMat;
+            } else {
+                modelBoneTransforms[b] = localMat;
+            }
+        }
+
+        for (size_t b = 0; b < bones.size(); ++b) {
+            glm::vec3 boneWorldPos(modelBoneTransforms[b][3]);
 
             ImVec2 boneScreen;
             float boneDepth;
             if (projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
-                dl->AddCircleFilled(boneScreen, 3.5f, IM_COL32(255, 220, 50, 255));
+                dl->AddCircleFilled(boneScreen, 4.0f, IM_COL32(255, 220, 50, 255));
             }
 
             int pIdx = bones[b].parentIndex;
             if (pIdx >= 0 && pIdx < (int)bones.size()) {
-                glm::vec3 parentPos(bones[pIdx].localBindTransform[3]);
+                glm::vec3 parentPos(modelBoneTransforms[pIdx][3]);
                 ImVec2 pScreen;
                 float pDepth;
                 if (projectToScreen(parentPos, pScreen, pDepth) &&
                     projectToScreen(boneWorldPos, boneScreen, boneDepth)) {
-                    dl->AddLine(pScreen, boneScreen, IM_COL32(255, 140, 0, 255), 2.0f);
+                    dl->AddLine(pScreen, boneScreen, IM_COL32(255, 140, 0, 255), 2.5f);
                 }
             }
         }
