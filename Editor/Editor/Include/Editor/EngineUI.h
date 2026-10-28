@@ -632,6 +632,11 @@ public:
     char newAnimatorGraphNameBuf[64] = "AG_NewAnimator";
     void OpenAnimatorGraphEditor(const std::string& path);
 
+    // Animation Blend Space 2D Editor
+    bool showNewAnimationBlendPopup = false;
+    char newAnimationBlendNameBuf[64] = "BS_NewBlend";
+    void OpenAnimationBlendEditor(const std::string& path);
+
     // Batch Animation Import Skeleton Selector Dialog
     bool showBatchSkeletonImportPopup = false;
     std::vector<std::string> pendingBatchImportAnimFiles;

@@ -41,6 +41,7 @@
 #include <Node-Behaviour/NodeBehaviourInstance.h>
 #include <SFLOD/SFLODSystem.h>
 #include <EngineAssets/AnimatorGraphEditor.h>
+#include <Animation-Blending/AnimationBlendManager.h>
 #include <EngineAssets/SkeletalAnimation.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
@@ -3767,6 +3768,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
         } else if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
             Eunoia::AnimatorGraphManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
+        } else if (Eunoia::AnimationBlendManager::Get().IsActive()) {
+            Eunoia::AnimationBlendManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
         } else if (Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive()) {
             Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y), &scene);
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
@@ -4857,7 +4860,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
-        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive());
+        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive() && !Eunoia::AnimationBlendManager::Get().IsActive());
         std::string levelTabName = "Level Editor";
         if (levelUnsaved) levelTabName += "*";
         levelTabName += "##Tab_Level";
@@ -4866,6 +4869,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             materialWorkspaceActive = false;
             Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+            Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
             uiMgr.SwitchToMainEditor();
             if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
                 PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
@@ -4884,6 +4888,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             if (RenderTabWithSaveProgress(matLabel.c_str(), isMatActive, openMaterialDocs[i].saveState, tabBtnH)) {
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+            Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
                 SwitchToMaterialEditor((int)i);
             }
 
@@ -4925,6 +4930,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 materialWorkspaceActive = false;
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+            Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
                 uiMgr.SwitchToEditor(tabIdx);
             }
 
@@ -4967,6 +4973,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 materialWorkspaceActive = false;
                 uiMgr.SwitchToMainEditor();
                 Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+            Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
                 nbMgr.SwitchToEditor((int)i);
             }
 
@@ -5035,6 +5042,49 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             agMgr.Close((size_t)agToClose);
         }
 
+        // 3.7 Animation Blend Tabs (Multiple open Animation Blend 2D editors)
+        auto& blendMgr = Eunoia::AnimationBlendManager::Get();
+        const auto& blendEditors = blendMgr.GetEditors();
+        int blendToClose = -1;
+        for (size_t i = 0; i < blendEditors.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isBlendActive = (blendMgr.IsActive() && blendMgr.GetActiveEditorIndex() == (int)i);
+            std::string blendLabel = "[Blend] " + blendEditors[i]->GetName();
+            if (blendEditors[i]->IsDirty()) blendLabel += "*";
+            blendLabel += "##BlendTab_" + std::to_string(i);
+
+            TabSaveProgressState dummyBlendSaveState;
+            if (RenderTabWithSaveProgress(blendLabel.c_str(), isBlendActive, dummyBlendSaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToMainEditor();
+                nbMgr.SwitchToMainEditor();
+                agMgr.SwitchToMainEditor();
+                blendMgr.SwitchToEditor((int)i);
+            }
+
+            // Close button âœ•
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "âœ•##CloseBlendTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                blendToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", blendEditors[i]->GetName().c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (blendToClose >= 0) {
+            blendMgr.Close((size_t)blendToClose);
+        }
+
         // 4. "+" Quick Add New Document Switch
         ImGui::SameLine(0.0f, 6.0f * uiScale);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.071f, 0.071f, 0.078f, 1.0f)); // #121214
@@ -5054,6 +5104,10 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
                 showNewAnimatorGraphPopup = true;
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+            if (ImGui::MenuItem("New Animation Blend (.eblend)...")) {
+                showNewAnimationBlendPopup = true;
+                snprintf(newAnimationBlendNameBuf, sizeof(newAnimationBlendNameBuf), "BS_NewBlend");
             }
                         if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                 showNewNodeBehaviourPopup = true;
@@ -10581,6 +10635,15 @@ void EngineUI::OpenAnimatorGraphEditor(const std::string& path) {
     AddLog("LogContent", "Opened Animator Graph Editor for: " + path, 0);
 }
 
+void EngineUI::OpenAnimationBlendEditor(const std::string& path) {
+    materialWorkspaceActive = false;
+    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+    Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+    Eunoia::AnimationBlendManager::Get().Open(path);
+    AddLog("LogContent", "Opened Animation Blend Editor for: " + path, 0);
+}
+
 void EngineUI::OpenNodeBehaviourEditor(const std::string& path) {
     materialWorkspaceActive = false;
     EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
@@ -12092,6 +12155,70 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 // Animator Graph asset creation modal
+                // Animation Blend asset creation modal
+                if (showNewAnimationBlendPopup) {
+                    ImGui::OpenPopup("Create Animation Blend##BlendModal");
+                    showNewAnimationBlendPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Animation Blend##BlendModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Animation Blend Name (.eblend):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##BlendNameInput", newAnimationBlendNameBuf, sizeof(newAnimationBlendNameBuf));
+
+                    std::string inputName = newAnimationBlendNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "Will create: %s.eblend in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path blendDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code bec;
+                        std::filesystem::create_directories(blendDir, bec);
+
+                        std::string createdPath = Eunoia::AnimationBlendManager::Get().CreateNewAnimationBlend(blendDir.string(), inputName);
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path blendPath(createdPath);
+                        std::filesystem::path metaPath = blendDir / (inputName + ".eblend.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Animation Blend\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenAnimationBlendEditor(createdPath);
+                        AddLog("LogContent", "Created Animation Blend: " + inputName + ".eblend in " + targetDir, 2);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 if (showNewAnimatorGraphPopup) {
                     ImGui::OpenPopup("Create Animator Graph##AGModal");
                     showNewAnimatorGraphPopup = false;
@@ -12876,7 +13003,18 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                     OpenNodeBehaviourEditor(fullNb.string());
                                     AddLog("LogContent", "Opened Node Behaviour: " + item.meta.objectName, 2);
-                                } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
+                                } else if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
+                                    OpenAnimationBlendEditor(fullBlend.string());
+                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
+                                } else if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Animation Blend Editor")) {
+                                        std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
+                                        OpenAnimationBlendEditor(fullBlend.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
                                     OpenAnimatorGraphEditor(fullAg.string());
                                     AddLog("LogContent", "Opened Animator Graph: " + item.meta.objectName, 2);
@@ -13116,6 +13254,13 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open in Node Behaviour Editor")) {
                                         std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                         OpenNodeBehaviourEditor(fullNb.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.sourcePath.find(".eblend") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Animation Blend Editor")) {
+                                        std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
+                                        OpenAnimationBlendEditor(fullBlend.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -13399,6 +13544,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
                 showNewAnimatorGraphPopup = true;
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+            if (ImGui::MenuItem("New Animation Blend (.eblend)...")) {
+                showNewAnimationBlendPopup = true;
+                snprintf(newAnimationBlendNameBuf, sizeof(newAnimationBlendNameBuf), "BS_NewBlend");
             }
                         if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
