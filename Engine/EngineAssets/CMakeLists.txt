@@ -5,6 +5,8 @@ add_library(EngineAssets STATIC
     Src/AssetRegistry.cpp
     Src/AssetManager.cpp
     Src/MeshImporter.cpp
+    Src/SkeletalAnimation.cpp
+    Src/AnimatorGraphEditor.cpp
     Src/TextureManager.cpp
     ${EUNOIA_DEPS}/ufbx/ufbx.c
 )
@@ -13,6 +15,7 @@ target_include_directories(EngineAssets PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
     $<INSTALL_INTERFACE:Include>
     ${EUNOIA_DEPS}/glm
+    ${EUNOIA_DEPS}/imgui
 )
 
 target_include_directories(EngineAssets PRIVATE

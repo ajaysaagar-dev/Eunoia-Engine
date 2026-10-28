@@ -27,7 +27,9 @@ enum class AssetType {
     UserInterface3D,
     UI3D = UserInterface3D,
     Data,
-    Project
+    Project,
+    AnimatorGraph,
+    AnimationGraph = AnimatorGraph
 };
 
 inline const char* AssetTypeToString(AssetType type) {
@@ -53,6 +55,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::UserInterface3D: return "User Interface 3D";
         case AssetType::Data:            return "Data";
         case AssetType::Project:         return "Project";
+        case AssetType::AnimatorGraph:   return "Animator Graph";
         default:                         return "Unknown";
     }
 }
@@ -81,6 +84,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "userinterface" || s == "user_interface" || s == "user interface" || s == "ui" || s == "eui") return AssetType::UserInterface;
     if (s == "data")         return AssetType::Data;
     if (s == "project" || s == "euproject" || s == "eproject") return AssetType::Project;
+    if (s == "animatorgraph" || s == "animator-graph" || s == "animator graph" || s == "eanimator" || s == "animator") return AssetType::AnimatorGraph;
     return AssetType::Unknown;
 }
 
@@ -134,6 +138,12 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     }
     if (e == "ebehaviour" || e == "visualbehaviour") {
         return AssetType::VisualBehaviour;
+    }
+    if (e == "eanimator" || e == "animator") {
+        return AssetType::AnimatorGraph;
+    }
+    if (e == "anim" || e == "eanim") {
+        return AssetType::Animation;
     }
     if (e == "behaviour" || e == "cpp" || e == "h") {
         return AssetType::Behaviour;
