@@ -14,6 +14,7 @@
 #include <UISystem/UITypes.h>
 #include <EngineScene/TerrainComponent.h>
 #include <EngineScene/AnimationGraphModifier.h>
+#include <EngineScene/LevelAnimationComponent.h>
 
 // Wicked Engine Light System Alignment
 enum class LightType : uint32_t {
@@ -249,7 +250,8 @@ enum class PrimitiveType {
     Camera,
     WaterBody,
     UserInterface,
-    Terrain
+    Terrain,
+    LevelAnimation
 };
 
 inline const char* GetPrimitiveTypeName(PrimitiveType type) {
@@ -281,6 +283,7 @@ inline const char* GetPrimitiveTypeName(PrimitiveType type) {
         case PrimitiveType::WaterBody:        return "Water Body";
         case PrimitiveType::UserInterface:    return "User Interface";
         case PrimitiveType::Terrain:          return "Terrain";
+        case PrimitiveType::LevelAnimation:   return "Level Animation";
         default:                              return "Object";
     }
 }
@@ -760,6 +763,8 @@ struct GameObject {
     PhysicsModifier physics;
     bool hasAnimator = false;
     AnimationGraphModifier animator;
+    bool hasLevelAnimation = false;
+    Eunoia::LevelAnimationComponent levelAnimation;
 
     void AddAnimatorModifier() {
         hasAnimator = true;

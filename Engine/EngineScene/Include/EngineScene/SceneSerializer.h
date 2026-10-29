@@ -444,6 +444,14 @@ public:
             file << "      \"uiBorderColor\": [" << obj.ui3d.borderColor.r << ", " << obj.ui3d.borderColor.g << ", " << obj.ui3d.borderColor.b << ", " << obj.ui3d.borderColor.a << "],\n";
             file << "      \"uiBorderWidth\": " << obj.ui3d.borderWidth << ",\n";
 
+            file << "      \"hasLevelAnimation\": " << BoolStr(obj.hasLevelAnimation) << ",\n";
+            if (obj.hasLevelAnimation) {
+                file << "      \"levelAnimationEnabled\": " << BoolStr(obj.levelAnimation.enabled) << ",\n";
+                file << "      \"levelAnimationPath\": " << QuoteStr(obj.levelAnimation.animationPath) << ",\n";
+                file << "      \"levelAnimationPlayOnStart\": " << BoolStr(obj.levelAnimation.playOnStart) << ",\n";
+                file << "      \"levelAnimationLoop\": " << BoolStr(obj.levelAnimation.loop) << ",\n";
+                file << "      \"levelAnimationPlaybackSpeed\": " << obj.levelAnimation.playbackSpeed << ",\n";
+            }
             file << "      \"hasAnimator\": " << BoolStr(obj.hasAnimator) << ",\n";
             if (obj.hasAnimator) {
                 file << "      \"animatorEnabled\": " << BoolStr(obj.animator.enabled) << ",\n";
@@ -1872,6 +1880,30 @@ public:
             if (obj.ui3d.borderColor.a <= 0.001f) obj.ui3d.borderWidth = 0.0f;
         } else {
             obj.ui3d.borderWidth = 0.0f;
+        }
+
+        // Parse Level Animation Component
+        p = actorBlock.find("\"hasLevelAnimation\"");
+        if (p != std::string::npos) {
+            obj.hasLevelAnimation = ParseBoolAt(actorBlock, p, false);
+            if (obj.hasLevelAnimation) {
+                obj.levelAnimation.enabled = true;
+                size_t lp = actorBlock.find("\"levelAnimationEnabled\"");
+                if (lp != std::string::npos) obj.levelAnimation.enabled = ParseBoolAt(actorBlock, lp, true);
+                lp = actorBlock.find("\"levelAnimationPlayOnStart\"");
+                if (lp != std::string::npos) obj.levelAnimation.playOnStart = ParseBoolAt(actorBlock, lp, true);
+                lp = actorBlock.find("\"levelAnimationLoop\"");
+                if (lp != std::string::npos) obj.levelAnimation.loop = ParseBoolAt(actorBlock, lp, true);
+                lp = actorBlock.find("\"levelAnimationPlaybackSpeed\"");
+                if (lp != std::string::npos) obj.levelAnimation.playbackSpeed = ParseFloatAt(actorBlock, lp, 1.0f);
+                lp = actorBlock.find("\"levelAnimationPath\"");
+                if (lp != std::string::npos) {
+                    std::string aPath = ParseStringAt(actorBlock, lp, "");
+                    if (!aPath.empty()) {
+                        obj.levelAnimation.LoadAnimation(aPath);
+                    }
+                }
+            }
         }
 
         // Parse Animation Graph Modifier

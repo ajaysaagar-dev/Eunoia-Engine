@@ -2780,9 +2780,38 @@ inline void GameObject::SetMobility(Mobility m, bool recursive) {
     }
 }
 
+
+inline void Eunoia::LevelAnimationComponent::Update(float dt, ::GameObject* owner, ::Scene* scene) {
+    if (!enabled || !scene) return;
+    if (!animation && !animationPath.empty()) {
+        LoadAnimation(animationPath);
+    }
+    if (!animation) return;
+
+    if (scene->isPlayMode && playOnStart && !isPlaying && currentTime <= 0.001f) {
+        isPlaying = true;
+    }
+
+    if (isPlaying) {
+        currentTime += dt * playbackSpeed;
+        if (currentTime > animation->duration) {
+            if (loop && animation->duration > 0.001f) {
+                currentTime = std::fmod(currentTime, animation->duration);
+            } else {
+                currentTime = animation->duration;
+                isPlaying = false;
+            }
+        }
+        animation->Evaluate(currentTime, *scene);
+    }
+}
+
 inline void GameObject::Update(float dt) {
     if (hasAnimator && animator.enabled) {
         animator.Update(dt, this);
+    }
+    if (hasLevelAnimation && levelAnimation.enabled) {
+        levelAnimation.Update(dt, this, scene);
     }
     if (mobility == Mobility::Movable && autoRotate) {
         rotation += autoRotateSpeed * dt;
