@@ -36,8 +36,7 @@ struct CachedTexture {
         // Repeat wrapping
         u = u - std::floor(u);
         v = v - std::floor(v);
-        // Direct3D / standard UV orientation
-        v = 1.0f - v;
+        // Direct3D texture coordinate space: V=0 maps to row 0, matching DX12 shaders and image memory layout.
 
         int x = (int)(u * (width - 1));
         int y = (int)(v * (height - 1));
