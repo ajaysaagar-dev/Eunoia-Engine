@@ -2893,7 +2893,7 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
 
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
                 blend->EvaluatePose(coordIt->second.x, coordIt->second.y, normTime, skeleton, loadedClips, outPose);
-                if (state->rootMotion) {
+                if (state->rootMotion || blend->rootMotion) {
                     ApplyRootMotionInPlace(outPose, skeleton);
                 }
                 return true;
