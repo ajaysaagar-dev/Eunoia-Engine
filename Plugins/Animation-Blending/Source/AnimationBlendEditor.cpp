@@ -86,6 +86,9 @@ void AnimationBlendEditor::Update(float deltaTime) {
     // Evaluate 2D blend space pose at smoothed coordinates
     std::vector<BoneTransform> blendedTransforms;
     m_blend->EvaluatePose(m_smoothedX, m_smoothedY, m_previewNormalizedTime, m_previewMesh->skeleton, m_loadedClips, blendedTransforms);
+    if (m_blend->rootMotion) {
+        ApplyRootMotionInPlace(blendedTransforms, m_previewMesh->skeleton);
+    }
 
     // Compute skin matrices and deform mesh in real time
     std::vector<glm::mat4> boneMatrices;
@@ -334,6 +337,17 @@ void AnimationBlendEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& si
                 m_isDirty = true;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Individual smoothing time for Y axis parameter");
+
+            // 5. Root Motion Configuration
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "ROOT MOTION");
+            ImGui::TextDisabled("In-place playback locking root motion:");
+            if (ImGui::Checkbox("Root Motion##LeftSidebarBlend", &m_blend->rootMotion)) {
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play animation in one place by locking root horizontal translation");
         }
     }
     ImGui::EndChild();
@@ -904,6 +918,11 @@ void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& siz
 
     ImGui::Spacing();
     ImGui::SliderFloat("Speed##PlaybackSpeed", &m_playbackSpeed, 0.1f, 3.0f, "%.2fx");
+
+    if (ImGui::Checkbox("Root Motion##PropRootMotionBlend", &m_blend->rootMotion)) {
+        m_isDirty = true;
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Play animation in one place by locking root horizontal translation");
 
     ImGui::Spacing();
     ImGui::Separator();

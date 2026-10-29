@@ -129,7 +129,7 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
                 currCoord.y = AnimationBlend::SmoothDamp(currCoord.y, valY, deltaTime, stY);
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
                 bIt->second->EvaluatePose(currCoord.x, currCoord.y, normTime, skeleton, m_loadedClips, outPose);
-                if (state->rootMotion) {
+                if (state->rootMotion || bIt->second->rootMotion) {
                     ApplyRootMotionInPlace(outPose, skeleton);
                 }
                 return true;
