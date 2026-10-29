@@ -29,6 +29,13 @@ using Camera = OrbitCamera;
 using Vector2 = glm::vec2;
 using Vector4 = glm::vec4;
 
+// User-defined literal support for behaviour scripts (e.g. 0f, 5f)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wliteral-suffix"
+constexpr float operator""f(unsigned long long val) noexcept { return static_cast<float>(val); }
+constexpr float operator""F(unsigned long long val) noexcept { return static_cast<float>(val); }
+#pragma GCC diagnostic pop
+
 // Global World Delta Seconds variable (dev.md: "the global var called 'World Delta Seconds' use as a DeltaTime")
 inline float WorldDeltaSeconds = 0.0f;
 inline float World_Delta_Seconds = 0.0f;
