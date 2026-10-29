@@ -780,6 +780,23 @@ struct GameObject {
         animator.graphPath = "";
     }
 
+    void AddLevelAnimation() {
+        hasLevelAnimation = true;
+        levelAnimation.enabled = true;
+        levelAnimation.playOnStart = true;
+        levelAnimation.loop = true;
+        levelAnimation.playbackSpeed = 1.0f;
+    }
+
+    void RemoveLevelAnimation() {
+        hasLevelAnimation = false;
+        levelAnimation.enabled = false;
+        levelAnimation.animation.reset();
+        levelAnimation.animationPath = "";
+        levelAnimation.isPlaying = false;
+        levelAnimation.currentTime = 0.0f;
+    }
+
     // Tags system (Support for all GameObjects, Actors, Empty Actors)
     std::vector<std::string> tags;
 
@@ -1053,6 +1070,8 @@ struct GameObject {
         physics = std::move(other.physics);
         hasAnimator = other.hasAnimator;
         animator = std::move(other.animator);
+        hasLevelAnimation = other.hasLevelAnimation;
+        levelAnimation = std::move(other.levelAnimation);
         tags = std::move(other.tags);
         scene = other.scene;
         Transform.gameObject = this;
@@ -1151,6 +1170,8 @@ struct GameObject {
         physics = other.physics;
         hasAnimator = other.hasAnimator;
         animator = other.animator;
+        hasLevelAnimation = other.hasLevelAnimation;
+        levelAnimation = other.levelAnimation;
         scene = other.scene;
         Transform.gameObject = this;
         behaviours.clear();
@@ -1210,6 +1231,13 @@ struct GameObject {
         : id(objId), name(objName), type(objType), position(pos), color(col), Transform(this) {
         if (type == PrimitiveType::Camera) {
             isCamera = true;
+        }
+        if (type == PrimitiveType::LevelAnimation) {
+            hasLevelAnimation = true;
+            levelAnimation.enabled = true;
+            levelAnimation.playOnStart = true;
+            levelAnimation.loop = true;
+            levelAnimation.playbackSpeed = 1.0f;
         }
         if (type == PrimitiveType::UserInterface) {
             isUserInterface = true;

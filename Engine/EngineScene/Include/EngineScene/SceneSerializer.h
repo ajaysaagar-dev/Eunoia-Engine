@@ -810,6 +810,7 @@ private:
         if (s == "TubeLight" || s == "Tube Light" || s == "DiscLight" || s == "Disc Light") return PrimitiveType::AreaLight;
         if (s == "Camera") return PrimitiveType::Camera;
         if (s == "UserInterface" || s == "User Interface" || s == "UI" || s == "UserInterface3D" || s == "UI3D") return PrimitiveType::UserInterface;
+        if (s == "LevelAnimation" || s == "Level Animation") return PrimitiveType::LevelAnimation;
         return PrimitiveType::Cube;
     }
 
@@ -1837,6 +1838,10 @@ public:
         // Parse 3D User Interface Properties
         p = actorBlock.find("\"isUserInterface\""); if (p != std::string::npos) obj.isUserInterface = ParseBoolAt(actorBlock, p, false);
         if (obj.type == PrimitiveType::UserInterface) obj.isUserInterface = true;
+        if (obj.type == PrimitiveType::LevelAnimation) {
+            obj.hasLevelAnimation = true;
+            obj.levelAnimation.enabled = true;
+        }
         p = actorBlock.find("\"uiAssetPath\""); if (p != std::string::npos) obj.ui3d.uiAssetPath = ParseStringAt(actorBlock, p, "");
         p = actorBlock.find("\"uiSpace\""); if (p != std::string::npos) obj.ui3d.space = (EunoiaUI::UI3DSpaceType)ParseIntAt(actorBlock, p, 0);
         p = actorBlock.find("\"uiSize\""); if (p != std::string::npos) {
