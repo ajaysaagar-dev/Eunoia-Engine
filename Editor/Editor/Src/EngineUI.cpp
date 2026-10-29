@@ -43,6 +43,9 @@
 #include <EngineAssets/AnimatorGraphEditor.h>
 #include <Animation-Blending/AnimationBlendManager.h>
 #include <EngineAssets/SkeletalAnimation.h>
+#include <Level-Animation/LevelAnimation.h>
+#include <Level-Animation/LevelAnimationEditor.h>
+#include <Level-Animation/LevelAnimationManager.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -3259,6 +3262,30 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                             fullLevel = contentRootPath / meta->sourcePath;
                         }
                         OpenLevelFromPath(level, fullLevel.string());
+                    } else if (meta->type == AssetType::LevelAnimation || meta->sourcePath.find(".elanim") != std::string::npos) {
+                        std::filesystem::path fullAnim = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
+                        std::error_code ec;
+                        if (fullAnim.empty() || !std::filesystem::exists(fullAnim, ec) || std::filesystem::file_size(fullAnim, ec) == 0) {
+                            fullAnim = contentRootPath / meta->sourcePath;
+                        }
+                        ImVec2 mousePos = ImGui::GetMousePos();
+                        glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
+
+                        GameObject& newObj = level.AddEmptyActor(spawnPos);
+                        newObj.name = meta->objectName.empty() ? "LevelAnimation" : meta->objectName;
+                        newObj.type = PrimitiveType::LevelAnimation;
+                        newObj.hasLevelAnimation = true;
+                        newObj.levelAnimation.enabled = true;
+                        newObj.levelAnimation.playOnStart = true;
+                        newObj.levelAnimation.loop = true;
+                        newObj.levelAnimation.animationPath = fullAnim.string();
+                        newObj.levelAnimation.LoadAnimation(fullAnim.string());
+                        level.selectedId = newObj.id;
+                        Eunoia::LevelAnimationManager::Get().SetActiveActorId(newObj.id);
+                        if (newObj.levelAnimation.animation) {
+                            Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(newObj.levelAnimation.animation);
+                        }
+                        AddLog("LogLevelAnimation", "Spawned Level Animation '" + newObj.name + "' into Level", 2);
                     }
                 }
             }
@@ -3437,6 +3464,12 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     if (levelUnsaved) {
         RequestViewportRedraw(10);
     }
+        float uiDt = ImGui::GetIO().DeltaTime;
+    Eunoia::LevelAnimationEditor::Get().UpdatePlayback(scene, uiDt);
+    if (Eunoia::LevelAnimationEditor::Get().IsPlaying()) {
+        RequestViewportRedraw(4);
+    }
+
     if (ImGuizmo::IsUsing() || ImGuizmo::IsOver()) {
         RequestViewportRedraw(10);
     }
@@ -5105,6 +5138,10 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
                 showNewAnimatorGraphPopup = true;
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+                        if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                showNewLevelAnimationPopup = true;
+                snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
             }
             if (ImGui::MenuItem("New Animation Blend (.eblend)...")) {
                 showNewAnimationBlendPopup = true;
@@ -7129,6 +7166,9 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::Spacing();
             ImGui::Checkbox("Lock Uniform Scale", &lockAspectScale);
 
+                        if (transformChanged && Eunoia::LevelAnimationManager::Get().IsRecording()) {
+                Eunoia::LevelAnimationManager::Get().RecordTransform(scene, *obj);
+            }
             if (transformChanged && (obj->isLight || IsLightPrimitive(obj->type))) {
                 scene.SyncLightPositionsFromActors();
             }
@@ -10763,6 +10803,16 @@ void EngineUI::OpenAnimatorGraphEditor(const std::string& path) {
     AddLog("LogContent", "Opened Animator Graph Editor for: " + path, 0);
 }
 
+void EngineUI::OpenLevelAnimationEditor(const std::string& path) {
+    auto anim = Eunoia::LevelAnimationManager::Get().LoadLevelAnimation(path);
+    if (anim) {
+        Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(anim);
+        bottomDrawerTab = 1;
+        bottomDrawerOpen = true;
+        AddLog("LogLevelAnimation", "Opened Level Animation: " + anim->name, 0);
+    }
+}
+
 void EngineUI::OpenAnimationBlendEditor(const std::string& path) {
     materialWorkspaceActive = false;
     EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
@@ -12284,6 +12334,77 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                 // Animator Graph asset creation modal
                 // Animation Blend asset creation modal
+                                // Level Animation asset creation modal
+                if (showNewLevelAnimationPopup) {
+                    ImGui::OpenPopup("Create Level Animation##LAModal");
+                    showNewLevelAnimationPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Level Animation##LAModal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Enter Level Animation Name (.elanim):");
+                    ImGui::SetNextItemWidth(300.0f);
+                    ImGui::InputText("##LANameInput", newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf));
+
+                    std::string inputName = newLevelAnimationNameBuf;
+                    while (!inputName.empty() && isspace((unsigned char)inputName.front())) inputName.erase(inputName.begin());
+                    while (!inputName.empty() && isspace((unsigned char)inputName.back())) inputName.pop_back();
+
+                    bool isValidName = !inputName.empty();
+                    if (isValidName) {
+                        ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "Will create: %s.elanim in %s", inputName.c_str(), targetDir.c_str());
+                    }
+                    ImGui::Spacing();
+
+                    bool enterPressed = ImGui::IsKeyPressed(ImGuiKey_Enter);
+                    if (!isValidName) ImGui::BeginDisabled();
+                    bool createClicked = ImGui::Button("Create", ImVec2(120, 0));
+                    if (!isValidName) ImGui::EndDisabled();
+
+                    if (isValidName && (createClicked || enterPressed)) {
+                        std::string diskSub = targetDir;
+                        if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                        if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                        std::filesystem::path laDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                        std::error_code laec;
+                        std::filesystem::create_directories(laDir, laec);
+
+                        std::string createdPath = Eunoia::LevelAnimationManager::Get().CreateNewLevelAnimation(laDir.string(), inputName);
+
+                        // Write .assetmeta sidecar
+                        std::filesystem::path laPath(createdPath);
+                        std::filesystem::path metaPath = laDir / (inputName + ".elanim.assetmeta");
+                        std::ofstream metaFile(metaPath);
+                        AssetID aid = AssetID::CreateRandom();
+                        std::string vPath = (targetDir.empty() || targetDir == "/") ?
+                            ("/" + inputName) : (targetDir + "/" + inputName);
+                        if (metaFile.is_open()) {
+                            metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
+                                     << "assetId: " << aid.ToString() << "\n"
+                                     << "type: Level Animation\n"
+                                     << "virtualPath: " << vPath << "\n";
+                        }
+#ifdef _WIN32
+                        SetFileAttributesW(metaPath.wstring().c_str(), FILE_ATTRIBUTE_HIDDEN);
+#endif
+                        AssetMetadata vMeta;
+                        vMeta.id = aid;
+                        vMeta.type = AssetType::LevelAnimation;
+                        vMeta.objectName = inputName;
+                        vMeta.sourcePath = std::filesystem::relative(laPath, contentRootPath).string();
+                        vMeta.virtualPath = vPath;
+                        AssetRegistry::Get().RegisterAsset(vMeta);
+                        TriggerBackgroundRegistrySync(contentRootPath);
+                        OpenLevelAnimationEditor(createdPath);
+                        AddLog("LogContent", "Created Level Animation: " + inputName + ".elanim in " + targetDir, 2);
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
                 if (showNewAnimationBlendPopup) {
                     ImGui::OpenPopup("Create Animation Blend##BlendModal");
                     showNewAnimationBlendPopup = false;
@@ -13143,6 +13264,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 } else if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
                                     std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
                                     OpenAnimationBlendEditor(fullBlend.string());
+                                } else if (item.meta.type == AssetType::LevelAnimation || item.meta.sourcePath.find(".elanim") != std::string::npos) {
+                                    std::filesystem::path fullAnim = contentRootPath / item.meta.sourcePath;
+                                    OpenLevelAnimationEditor(fullAnim.string());
+                                    AddLog("LogLevelAnimation", "Opened Level Animation: " + item.meta.objectName, 2);
                                     AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
@@ -13391,6 +13516,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open in Animation Blend Editor")) {
                                         std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
                                         OpenAnimationBlendEditor(fullBlend.string());
+                                } else if (item.meta.type == AssetType::LevelAnimation || item.meta.sourcePath.find(".elanim") != std::string::npos) {
+                                    std::filesystem::path fullAnim = contentRootPath / item.meta.sourcePath;
+                                    OpenLevelAnimationEditor(fullAnim.string());
+                                    AddLog("LogLevelAnimation", "Opened Level Animation: " + item.meta.objectName, 2);
                                     }
                                     ImGui::Separator();
                                 }
@@ -13676,6 +13805,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                     if (ImGui::MenuItem("New Animator Graph (.eanimator)...")) {
                 showNewAnimatorGraphPopup = true;
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
+            }
+                        if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                showNewLevelAnimationPopup = true;
+                snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
             }
             if (ImGui::MenuItem("New Animation Blend (.eblend)...")) {
                 showNewAnimationBlendPopup = true;

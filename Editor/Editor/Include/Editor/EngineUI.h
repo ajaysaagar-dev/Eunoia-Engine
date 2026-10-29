@@ -228,7 +228,7 @@ public:
 
     void RenderClusterCullingStats(Scene& scene);
 
-    // Bottom drawer active tab: 0=Content Browser, 1=Output Log
+    // Bottom drawer active tab: 0=Content Browser, 1=Animation, 2=Output Log
     int bottomDrawerTab = 0;
     bool bottomDrawerOpen = true;
 
@@ -636,6 +636,11 @@ public:
     bool showNewAnimationBlendPopup = false;
     char newAnimationBlendNameBuf[64] = "BS_NewBlend";
     void OpenAnimationBlendEditor(const std::string& path);
+
+    // Level Animation Plugin & Timeline
+    bool showNewLevelAnimationPopup = false;
+    char newLevelAnimationNameBuf[64] = "LA_NewAnimation";
+    void OpenLevelAnimationEditor(const std::string& path);
 
     // Batch Animation Import Skeleton Selector Dialog
     bool showBatchSkeletonImportPopup = false;
