@@ -43,10 +43,21 @@ public:
     std::string skeletonMeshPath = "";
     BlendAxis xAxis{"Speed", 0.0f, 100.0f, 4};
     BlendAxis yAxis{"Direction", -180.0f, 180.0f, 4};
+    float smoothingTime = 0.25f;
+    float smoothTimeX = 0.25f;
+    float smoothTimeY = 0.25f;
     std::vector<BlendSamplePoint> samplePoints;
     uint32_t nextSampleId = 1;
 
     AnimationBlend() = default;
+
+    // Evaluates smoothed coordinate towards target coordinate over delta time
+    static float SmoothDamp(float current, float target, float dt, float smoothTime) {
+        if (smoothTime <= 0.0001f || dt <= 0.00001f) return target;
+        float factor = 1.0f - std::exp(-dt / std::max(smoothTime, 0.001f));
+        factor = glm::clamp(factor, 0.0f, 1.0f);
+        return current + (target - current) * factor;
+    }
 
     BlendSamplePoint& AddSamplePoint(const std::string& clipPath, const std::string& clipName, const glm::vec2& coords) {
         BlendSamplePoint pt;
@@ -219,6 +230,9 @@ public:
         out << "  \"name\": \"" << name << "\",\n";
         out << "  \"skeletonMesh\": \"" << skeletonMeshPath << "\",\n";
         out << "  \"nextSampleId\": " << nextSampleId << ",\n";
+        out << "  \"smoothingTime\": " << smoothingTime << ",\n";
+        out << "  \"smoothTimeX\": " << smoothTimeX << ",\n";
+        out << "  \"smoothTimeY\": " << smoothTimeY << ",\n";
         out << "  \"xAxis\": {\n";
         out << "    \"name\": \"" << xAxis.name << "\",\n";
         out << "    \"min\": " << xAxis.minVal << ",\n";
@@ -285,6 +299,9 @@ public:
         name = extractString(content, "name");
         skeletonMeshPath = extractString(content, "skeletonMesh");
         nextSampleId = (uint32_t)extractNumber(content, "nextSampleId", 1.0);
+        smoothingTime = (float)extractNumber(content, "smoothingTime", 0.25);
+        smoothTimeX = (float)extractNumber(content, "smoothTimeX", (double)smoothingTime);
+        smoothTimeY = (float)extractNumber(content, "smoothTimeY", (double)smoothingTime);
 
         // X Axis
         size_t xPos = content.find("\"xAxis\":");

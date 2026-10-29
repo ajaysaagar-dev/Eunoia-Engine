@@ -48,6 +48,8 @@ private:
     // 2D Blend Grid State
     float m_cursorX = 0.0f;
     float m_cursorY = 0.0f;
+    float m_smoothedX = 0.0f;
+    float m_smoothedY = 0.0f;
     bool m_isDraggingCursor = false;
     uint32_t m_selectedSampleId = 0;
     bool m_isDraggingSample = false;

@@ -795,7 +795,7 @@ void AnimationBlendEditor::RenderLivePreview(const ImVec2& pos, const ImVec2& si
 
     // Live coordinate badge in preview
     char statusBuf[64];
-    snprintf(statusBuf, sizeof(statusBuf), "Blend: X=%.1f, Y=%.1f", m_cursorX, m_cursorY);
+    snprintf(statusBuf, sizeof(statusBuf), "Blend: X=%.1f, Y=%.1f", m_smoothedX, m_smoothedY);
     dl->AddText(ImVec2(previewPos.x + 8.0f, previewPos.y + 8.0f), IM_COL32(0, 255, 180, 255), statusBuf);
 
     dl->PopClipRect();
@@ -858,7 +858,7 @@ void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& siz
 
     // Table of Sample Points and Current Calculated Weights
     ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Sample Influences (%zu):", m_blend->samplePoints.size());
-    std::vector<float> weights = m_blend->CalculateWeights(m_cursorX, m_cursorY);
+    std::vector<float> weights = m_blend->CalculateWeights(m_smoothedX, m_smoothedY);
 
     if (ImGui::BeginTable("SampleInfluenceTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Clip");
