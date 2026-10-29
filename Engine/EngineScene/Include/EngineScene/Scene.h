@@ -2893,6 +2893,9 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
 
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
                 blend->EvaluatePose(coordIt->second.x, coordIt->second.y, normTime, skeleton, loadedClips, outPose);
+                if (state->rootMotion) {
+                    ApplyRootMotionInPlace(outPose, skeleton);
+                }
                 return true;
             }
         } else if (!state->clipPath.empty()) {
@@ -2906,6 +2909,9 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
             }
             if (it != loadedClips.end() && it->second) {
                 it->second->SamplePose(timeInState, skeleton, outPose, state->loop);
+                if (state->rootMotion) {
+                    ApplyRootMotionInPlace(outPose, skeleton);
+                }
                 return true;
             }
         }
