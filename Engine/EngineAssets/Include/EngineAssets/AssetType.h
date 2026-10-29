@@ -31,7 +31,9 @@ enum class AssetType {
     AnimatorGraph,
     AnimationGraph = AnimatorGraph,
     AnimationBlend,
-    BlendSpace = AnimationBlend
+    BlendSpace = AnimationBlend,
+    LevelAnimation,
+    LevelSequence = LevelAnimation
 };
 
 inline const char* AssetTypeToString(AssetType type) {
@@ -59,6 +61,7 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Project:         return "Project";
         case AssetType::AnimatorGraph:   return "Animator Graph";
         case AssetType::AnimationBlend:  return "Animation Blend";
+        case AssetType::LevelAnimation:  return "Level Animation";
         default:                         return "Unknown";
     }
 }
@@ -89,6 +92,7 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "project" || s == "euproject" || s == "eproject") return AssetType::Project;
     if (s == "animatorgraph" || s == "animator-graph" || s == "animator graph" || s == "eanimator" || s == "animator") return AssetType::AnimatorGraph;
     if (s == "animationblend" || s == "animation-blend" || s == "animation blend" || s == "eblend" || s == "blend") return AssetType::AnimationBlend;
+    if (s == "levelanimation" || s == "level-animation" || s == "level animation" || s == "elanim") return AssetType::LevelAnimation;
     return AssetType::Unknown;
 }
 
@@ -143,6 +147,9 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     if (e == "ebehaviour" || e == "visualbehaviour") {
         return AssetType::VisualBehaviour;
     }
+    if (e == "elanim") {
+        return AssetType::LevelAnimation;
+    }
     if (e == "eblend" || e == "blend") {
         return AssetType::AnimationBlend;
     }
@@ -184,6 +191,7 @@ inline const char* GetAssetTypeIcon(AssetType type) {
         case AssetType::UserInterface3D: return "🔮";
         case AssetType::Data:            return "📊";
         case AssetType::Project:         return "📁";
+        case AssetType::LevelAnimation:  return "🎬";
         default:                         return "📄";
     }
 }
