@@ -2860,8 +2860,8 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
                     smoothedBlendCoords[state->id] = glm::vec2(targetX, targetY);
                     coordIt = smoothedBlendCoords.find(state->id);
                 } else {
-                    float stX = (blend->smoothTimeX > 0.0001f) ? blend->smoothTimeX : blend->smoothingTime;
-                    float stY = (blend->smoothTimeY > 0.0001f) ? blend->smoothTimeY : blend->smoothingTime;
+                    float stX = (state->smoothTimeX > 0.0001f) ? state->smoothTimeX : ((graph && graph->smoothTimeX > 0.0001f) ? graph->smoothTimeX : ((blend->smoothTimeX > 0.0001f) ? blend->smoothTimeX : blend->smoothingTime));
+                    float stY = (state->smoothTimeY > 0.0001f) ? state->smoothTimeY : ((graph && graph->smoothTimeY > 0.0001f) ? graph->smoothTimeY : ((blend->smoothTimeY > 0.0001f) ? blend->smoothTimeY : blend->smoothingTime));
                     coordIt->second.x = AnimationBlend::SmoothDamp(coordIt->second.x, targetX, dt, stX);
                     coordIt->second.y = AnimationBlend::SmoothDamp(coordIt->second.y, targetY, dt, stY);
                 }
