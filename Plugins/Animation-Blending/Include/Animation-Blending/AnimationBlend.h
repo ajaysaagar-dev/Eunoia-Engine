@@ -49,6 +49,7 @@ public:
     float smoothingTime = 0.25f;
     float smoothTimeX = 0.25f;
     float smoothTimeY = 0.25f;
+    bool rootMotion = false;
     std::vector<BlendSamplePoint> samplePoints;
     uint32_t nextSampleId = 1;
 
@@ -240,6 +241,7 @@ public:
         out << "  \"smoothingTime\": " << smoothingTime << ",\n";
         out << "  \"smoothTimeX\": " << smoothTimeX << ",\n";
         out << "  \"smoothTimeY\": " << smoothTimeY << ",\n";
+        out << "  \"rootMotion\": " << (rootMotion ? "true" : "false") << ",\n";
         out << "  \"xAxis\": {\n";
         out << "    \"name\": \"" << xAxis.name << "\",\n";
         out << "    \"min\": " << xAxis.minVal << ",\n";
@@ -326,6 +328,7 @@ public:
         smoothingTime = (float)extractNumber(content, "smoothingTime", 0.25);
         smoothTimeX = (float)extractNumber(content, "smoothTimeX", (double)smoothingTime);
         smoothTimeY = (float)extractNumber(content, "smoothTimeY", (double)smoothingTime);
+        rootMotion = extractBool(content, "rootMotion", false);
 
         // X Axis
         size_t xPos = content.find("\"xAxis\":");
