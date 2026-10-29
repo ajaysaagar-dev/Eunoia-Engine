@@ -5976,6 +5976,34 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
             }
         }
         ImGui::Separator();
+        if (!obj.isLight && !obj.isCamera && obj.type != PrimitiveType::Camera && !obj.isUserInterface && obj.type != PrimitiveType::Empty && obj.type != PrimitiveType::LevelAnimation) {
+            bool hasMesh = !obj.mesh.vertices.empty() || !obj.childIds.empty();
+            if (hasMesh) {
+                ImGui::Separator();
+                if (ImGui::MenuItem("Shade Smooth")) {
+                    UndoManager::Get().RecordSnapshot(scene, "Shade Smooth: " + obj.name);
+                    obj.SetSmoothShading(true, obj.autoSmoothAngle);
+                    for (int cid : obj.childIds) {
+                        if (GameObject* child = scene.FindObject(cid)) {
+                            child->SetSmoothShading(true, obj.autoSmoothAngle);
+                        }
+                    }
+                    AddLog("LogActor", "Applied Shade Smooth to " + obj.name, 2);
+                    RequestViewportRedraw(2);
+                }
+                if (ImGui::MenuItem("Shade Flat")) {
+                    UndoManager::Get().RecordSnapshot(scene, "Shade Flat: " + obj.name);
+                    obj.SetSmoothShading(false);
+                    for (int cid : obj.childIds) {
+                        if (GameObject* child = scene.FindObject(cid)) {
+                            child->SetSmoothShading(false);
+                        }
+                    }
+                    AddLog("LogActor", "Applied Shade Flat to " + obj.name, 2);
+                    RequestViewportRedraw(2);
+                }
+            }
+        }
         if (ImGui::BeginMenu("Add Child")) {
             if (ImGui::BeginMenu("3D Meshes / Primitives")) {
                 if (ImGui::MenuItem("Cube"))      { scene.AddObject(PrimitiveType::Cube,     glm::vec3(0), glm::vec3(0.55f), obj.id); AddLog("LogActor", "Added Cube as child", 2); }
@@ -8187,6 +8215,64 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextDisabled("Static Mesh Asset:");
             ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "%s", meshAsset);
             ImGui::TextDisabled("Vertices: %d | Triangles: %d", (int)obj->mesh.vertices.size(), (int)obj->mesh.indices.size() / 3);
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::TextDisabled("Shading (Blender Workflow):");
+
+            float btnW = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
+            if (ImGui::Button("Shade Smooth", ImVec2(btnW, 24.0f * uiScale))) {
+                UndoManager::Get().RecordSnapshot(scene, "Shade Smooth: " + obj->name);
+                obj->SetSmoothShading(true, obj->autoSmoothAngle);
+                for (int cid : obj->childIds) {
+                    if (GameObject* child = scene.FindObject(cid)) {
+                        child->SetSmoothShading(true, obj->autoSmoothAngle);
+                    }
+                }
+                AddLog("LogActor", "Applied Shade Smooth to " + obj->name, 2);
+                RequestViewportRedraw(2);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Shade Flat", ImVec2(btnW, 24.0f * uiScale))) {
+                UndoManager::Get().RecordSnapshot(scene, "Shade Flat: " + obj->name);
+                obj->SetSmoothShading(false);
+                for (int cid : obj->childIds) {
+                    if (GameObject* child = scene.FindObject(cid)) {
+                        child->SetSmoothShading(false);
+                    }
+                }
+                AddLog("LogActor", "Applied Shade Flat to " + obj->name, 2);
+                RequestViewportRedraw(2);
+            }
+
+            bool smShade = obj->smoothShading;
+            if (ImGui::Checkbox("Smooth Shading", &smShade)) {
+                UndoManager::Get().RecordSnapshot(scene, "Toggle Smooth Shading: " + obj->name);
+                obj->SetSmoothShading(smShade, obj->autoSmoothAngle);
+                for (int cid : obj->childIds) {
+                    if (GameObject* child = scene.FindObject(cid)) {
+                        child->SetSmoothShading(smShade, obj->autoSmoothAngle);
+                    }
+                }
+                RequestViewportRedraw(2);
+            }
+
+            if (obj->smoothShading) {
+                float angle = obj->autoSmoothAngle;
+                if (ImGui::SliderFloat("Auto Smooth Angle", &angle, 0.0f, 180.0f, "%.0f deg")) {
+                    obj->autoSmoothAngle = angle;
+                    obj->SetSmoothShading(true, angle);
+                    for (int cid : obj->childIds) {
+                        if (GameObject* child = scene.FindObject(cid)) {
+                            child->SetSmoothShading(true, angle);
+                        }
+                    }
+                    RequestViewportRedraw(2);
+                }
+                if (ImGui::IsItemDeactivatedAfterEdit()) {
+                    UndoManager::Get().RecordSnapshot(scene, "Change Auto Smooth Angle: " + obj->name);
+                }
+            }
         }
 
         // 3. Materials Category (Element 0) (mesh actors or parent actors with children)
