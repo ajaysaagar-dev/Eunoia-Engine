@@ -2,6 +2,7 @@
 #include <vector>
 #include <array>
 #include <map>
+#include <unordered_map>
 #include <algorithm>
 #include <cmath>
 #include <glm/glm.hpp>
@@ -249,6 +250,168 @@ public:
             float handedness = (glm::dot(glm::cross(n, orthoT), tan2[a]) < 0.0f) ? -1.0f : 1.0f;
             vertices[a].tangent = glm::vec4(orthoT, handedness);
         }
+    }
+
+    // Blender-compatible Smooth Shading normal generation:
+    // Calculates angle-weighted face normals averaged across vertices sharing coincident positions.
+    // creaseAngleDeg: angle threshold (e.g. 180.0f = full smooth, 60.0f = auto-smooth with sharp creases).
+    static void ComputeSmoothNormals(std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices, float creaseAngleDeg = 180.0f) {
+        if (vertices.empty() || indices.size() < 3) return;
+
+        size_t numFaces = indices.size() / 3;
+        std::vector<glm::vec3> faceNormals(numFaces, glm::vec3(0.0f, 1.0f, 0.0f));
+
+        // 1. Calculate face normals
+        for (size_t f = 0; f < numFaces; ++f) {
+            uint32_t i0 = indices[f * 3 + 0];
+            uint32_t i1 = indices[f * 3 + 1];
+            uint32_t i2 = indices[f * 3 + 2];
+            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size()) continue;
+
+            const glm::vec3& p0 = vertices[i0].pos;
+            const glm::vec3& p1 = vertices[i1].pos;
+            const glm::vec3& p2 = vertices[i2].pos;
+
+            glm::vec3 e0 = p1 - p0;
+            glm::vec3 e1 = p2 - p0;
+            glm::vec3 fn = glm::cross(e0, e1);
+            float fnLen = glm::length(fn);
+            if (fnLen > 1e-6f) {
+                faceNormals[f] = fn / fnLen;
+            }
+        }
+
+        // 2. Spatial hashing to cluster co-located vertices (within 1e-4 tolerance)
+        struct PosHash {
+            size_t operator()(const glm::ivec3& v) const {
+                size_t h = 2166136261u;
+                h = (h ^ (size_t)v.x) * 16777619u;
+                h = (h ^ (size_t)v.y) * 16777619u;
+                h = (h ^ (size_t)v.z) * 16777619u;
+                return h;
+            }
+        };
+
+        std::unordered_map<glm::ivec3, std::vector<size_t>, PosHash> posToFaces;
+        posToFaces.reserve(vertices.size());
+
+        for (size_t f = 0; f < numFaces; ++f) {
+            for (int k = 0; k < 3; ++k) {
+                uint32_t vi = indices[f * 3 + k];
+                if (vi >= vertices.size()) continue;
+                const glm::vec3& p = vertices[vi].pos;
+                glm::ivec3 cell(
+                    (int)std::floor(p.x * 10000.0f + 0.5f),
+                    (int)std::floor(p.y * 10000.0f + 0.5f),
+                    (int)std::floor(p.z * 10000.0f + 0.5f)
+                );
+                posToFaces[cell].push_back(f * 3 + k);
+            }
+        }
+
+        float cosCrease = std::cos(glm::radians(creaseAngleDeg));
+        std::vector<glm::vec3> newNormals(vertices.size(), glm::vec3(0.0f));
+
+        for (size_t f = 0; f < numFaces; ++f) {
+            uint32_t fIndices[3] = { indices[f * 3 + 0], indices[f * 3 + 1], indices[f * 3 + 2] };
+            const glm::vec3& fn = faceNormals[f];
+
+            for (int k = 0; k < 3; ++k) {
+                uint32_t vi = fIndices[k];
+                if (vi >= vertices.size()) continue;
+
+                const glm::vec3& p0 = vertices[vi].pos;
+                glm::ivec3 cell(
+                    (int)std::floor(p0.x * 10000.0f + 0.5f),
+                    (int)std::floor(p0.y * 10000.0f + 0.5f),
+                    (int)std::floor(p0.z * 10000.0f + 0.5f)
+                );
+
+                auto it = posToFaces.find(cell);
+                glm::vec3 smoothN(0.0f);
+
+                if (it != posToFaces.end()) {
+                    for (size_t cornerIdx : it->second) {
+                        size_t adjFace = cornerIdx / 3;
+                        int adjK = (int)(cornerIdx % 3);
+                        const glm::vec3& adjFn = faceNormals[adjFace];
+
+                        if (creaseAngleDeg < 179.9f && glm::dot(fn, adjFn) < cosCrease) {
+                            continue;
+                        }
+
+                        uint32_t a0 = indices[adjFace * 3 + adjK];
+                        uint32_t a1 = indices[adjFace * 3 + (adjK + 1) % 3];
+                        uint32_t a2 = indices[adjFace * 3 + (adjK + 2) % 3];
+                        if (a0 >= vertices.size() || a1 >= vertices.size() || a2 >= vertices.size()) continue;
+
+                        glm::vec3 d1 = vertices[a1].pos - vertices[a0].pos;
+                        glm::vec3 d2 = vertices[a2].pos - vertices[a0].pos;
+                        float len1 = glm::length(d1);
+                        float len2 = glm::length(d2);
+                        float angle = 1.0f;
+                        if (len1 > 1e-6f && len2 > 1e-6f) {
+                            float dotVal = glm::clamp(glm::dot(d1, d2) / (len1 * len2), -1.0f, 1.0f);
+                            angle = std::acos(dotVal);
+                        }
+                        smoothN += adjFn * angle;
+                    }
+                }
+
+                float sLen = glm::length(smoothN);
+                if (sLen > 1e-6f) {
+                    newNormals[vi] = smoothN / sLen;
+                } else {
+                    newNormals[vi] = fn;
+                }
+            }
+        }
+
+        for (size_t i = 0; i < vertices.size(); ++i) {
+            float nLen = glm::length(newNormals[i]);
+            if (nLen > 1e-6f) {
+                vertices[i].normal = newNormals[i] / nLen;
+            }
+        }
+
+        CalculateTangents(vertices, indices);
+    }
+
+    // Blender-compatible Flat Shading normal generation:
+    static void ComputeFlatNormals(std::vector<MeshVertex>& vertices, const std::vector<uint32_t>& indices) {
+        if (vertices.empty() || indices.size() < 3) return;
+
+        for (size_t i = 0; i + 2 < indices.size(); i += 3) {
+            uint32_t i0 = indices[i];
+            uint32_t i1 = indices[i + 1];
+            uint32_t i2 = indices[i + 2];
+            if (i0 >= vertices.size() || i1 >= vertices.size() || i2 >= vertices.size()) continue;
+
+            const glm::vec3& p0 = vertices[i0].pos;
+            const glm::vec3& p1 = vertices[i1].pos;
+            const glm::vec3& p2 = vertices[i2].pos;
+
+            glm::vec3 fn = glm::cross(p1 - p0, p2 - p0);
+            float len = glm::length(fn);
+            if (len > 1e-6f) fn /= len;
+            else fn = glm::vec3(0.0f, 1.0f, 0.0f);
+
+            vertices[i0].normal = fn;
+            vertices[i1].normal = fn;
+            vertices[i2].normal = fn;
+        }
+
+        CalculateTangents(vertices, indices);
+    }
+
+    static void ComputeSmoothNormals(PrimitiveMesh& mesh, float creaseAngleDeg = 180.0f) {
+        ComputeSmoothNormals(mesh.vertices, mesh.indices, creaseAngleDeg);
+        mesh.GenerateLODs();
+    }
+
+    static void ComputeFlatNormals(PrimitiveMesh& mesh) {
+        ComputeFlatNormals(mesh.vertices, mesh.indices);
+        mesh.GenerateLODs();
     }
     static PrimitiveMesh CreateCube(float size = 1.0f, int sub = 12) {
         PrimitiveMesh mesh;

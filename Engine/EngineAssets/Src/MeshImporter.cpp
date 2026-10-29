@@ -370,21 +370,24 @@ ImportedModel MeshImporter::LoadOBJ(const std::string& filePath) {
                 }
             }
 
-            // Compute flat normals if missing
-            for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-                MeshVertex& v0 = mesh.vertices[mesh.indices[i]];
-                MeshVertex& v1 = mesh.vertices[mesh.indices[i+1]];
-                MeshVertex& v2 = mesh.vertices[mesh.indices[i+2]];
-
-                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                    glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                    v0.normal = normal;
-                    v1.normal = normal;
-                    v2.normal = normal;
+            // Compute smooth normals if missing in OBJ
+            bool missingNormals = false;
+            for (const auto& v : mesh.vertices) {
+                if (glm::length(v.normal) < 0.001f) {
+                    missingNormals = true;
+                    break;
                 }
             }
 
-            GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
+            if (missingNormals) {
+                GeometryBuilder::ComputeSmoothNormals(mesh.vertices, mesh.indices);
+            } else {
+                for (auto& v : mesh.vertices) {
+                    float nl = glm::length(v.normal);
+                    if (nl > 1e-6f) v.normal /= nl;
+                }
+                GeometryBuilder::CalculateTangents(mesh.vertices, mesh.indices);
+            }
             LogShaderResourceValidation(mesh.material, true, true, !attrib.texcoords.empty());
 
             mesh.valid = !mesh.vertices.empty();
@@ -584,7 +587,8 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                         vertex.normal = normMatrix * vertex.normal;
                     }
                     float nLen = glm::length(vertex.normal);
-                    if (nLen > 0.001f) vertex.normal /= nLen;
+                    if (nLen > 1e-6f) vertex.normal /= nLen;
+                    else vertex.normal = glm::vec3(0.0f, 1.0f, 0.0f);
                 }
                 if (uvAccessor) {
                     cgltf_accessor_read_float(uvAccessor, k, &vertex.uv.x, 2);
@@ -593,7 +597,9 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                     cgltf_accessor_read_float(tanAccessor, k, &vertex.tangent.x, 4);
                     if (hasTransform) {
                         glm::vec3 t3 = glm::mat3(nodeWorld) * glm::vec3(vertex.tangent);
-                        if (glm::length(t3) > 0.001f) t3 = glm::normalize(t3);
+                        float tLen = glm::length(t3);
+                        if (tLen > 1e-6f) t3 /= tLen;
+                        else t3 = glm::vec3(1.0f, 0.0f, 0.0f);
                         vertex.tangent = glm::vec4(t3, vertex.tangent.w);
                     }
                 }
@@ -610,16 +616,20 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
                 }
             }
 
-            for (size_t idx = 0; idx + 2 < mesh.indices.size(); idx += 3) {
-                MeshVertex& v0 = mesh.vertices[mesh.indices[idx]];
-                MeshVertex& v1 = mesh.vertices[mesh.indices[idx+1]];
-                MeshVertex& v2 = mesh.vertices[mesh.indices[idx+2]];
+            if (!normAccessor) {
+                GeometryBuilder::ComputeSmoothNormals(mesh.vertices, mesh.indices);
+            } else {
+                for (size_t idx = 0; idx + 2 < mesh.indices.size(); idx += 3) {
+                    MeshVertex& v0 = mesh.vertices[mesh.indices[idx]];
+                    MeshVertex& v1 = mesh.vertices[mesh.indices[idx+1]];
+                    MeshVertex& v2 = mesh.vertices[mesh.indices[idx+2]];
 
-                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                    glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                    v0.normal = normal;
-                    v1.normal = normal;
-                    v2.normal = normal;
+                    if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
+                        glm::vec3 normal = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                        v0.normal = normal;
+                        v1.normal = normal;
+                        v2.normal = normal;
+                    }
                 }
             }
 
@@ -873,10 +883,12 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
                             n = ufbx_transform_direction(&normMatrix, n);
                         }
                         glm::vec3 gn((float)n.x, (float)n.y, (float)n.z);
-                        if (glm::length(gn) > 1e-4f) gn = glm::normalize(gn);
+                        float nLen = glm::length(gn);
+                        if (nLen > 1e-6f) gn /= nLen;
+                        else gn = glm::vec3(0.0f, 1.0f, 0.0f);
                         v.normal = gn;
                     } else {
-                        v.normal = { 0.0f, 1.0f, 0.0f };
+                        v.normal = { 0.0f, 0.0f, 0.0f };
                     }
 
                     if (mesh->vertex_uv.exists) {
@@ -891,7 +903,6 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
                         if (hasTransform) {
                             tg = ufbx_transform_direction(&geomToWorld, tg);
                         }
-                        ufbx_vec3 n = ufbx_get_vertex_vec3(&mesh->vertex_normal, idx);
                         float h = 1.0f;
                         if (mesh->vertex_bitangent.exists) {
                             ufbx_vec3 b = ufbx_get_vertex_vec3(&mesh->vertex_bitangent, idx);
@@ -904,7 +915,9 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
                             h = (glm::dot(glm::cross(gn, gt), gb) < 0.0f) ? -1.0f : 1.0f;
                         }
                         glm::vec3 gt((float)tg.x, (float)tg.y, (float)tg.z);
-                        if (glm::length(gt) > 1e-4f) gt = glm::normalize(gt);
+                        float tLen = glm::length(gt);
+                        if (tLen > 1e-6f) gt /= tLen;
+                        else gt = glm::vec3(1.0f, 0.0f, 0.0f);
                         v.tangent = { gt.x, gt.y, gt.z, h };
                     }
 
@@ -913,15 +926,19 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
                 }
             }
 
-            for (size_t k = 0; k + 2 < im.indices.size(); k += 3) {
-                MeshVertex& v0 = im.vertices[im.indices[k]];
-                MeshVertex& v1 = im.vertices[im.indices[k+1]];
-                MeshVertex& v2 = im.vertices[im.indices[k+2]];
-                if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
-                    glm::vec3 n = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
-                    v0.normal = n;
-                    v1.normal = n;
-                    v2.normal = n;
+            if (!mesh->vertex_normal.exists) {
+                GeometryBuilder::ComputeSmoothNormals(im.vertices, im.indices);
+            } else {
+                for (size_t k = 0; k + 2 < im.indices.size(); k += 3) {
+                    MeshVertex& v0 = im.vertices[im.indices[k]];
+                    MeshVertex& v1 = im.vertices[im.indices[k+1]];
+                    MeshVertex& v2 = im.vertices[im.indices[k+2]];
+                    if (glm::length(v0.normal) < 0.001f || glm::length(v1.normal) < 0.001f || glm::length(v2.normal) < 0.001f) {
+                        glm::vec3 n = glm::normalize(glm::cross(v1.pos - v0.pos, v2.pos - v0.pos));
+                        v0.normal = n;
+                        v1.normal = n;
+                        v2.normal = n;
+                    }
                 }
             }
 
