@@ -19,10 +19,11 @@ struct BlendAxis {
     float minVal = 0.0f;
     float maxVal = 100.0f;
     int divisions = 4;
+    float smoothingTime = 0.25f;
 
     BlendAxis() = default;
-    BlendAxis(const std::string& n, float minV, float maxV, int div = 4)
-        : name(n), minVal(minV), maxVal(maxV), divisions(div) {}
+    BlendAxis(const std::string& n, float minV, float maxV, int div = 4, float smoothT = 0.25f)
+        : name(n), minVal(minV), maxVal(maxV), divisions(div), smoothingTime(smoothT) {}
 };
 
 struct BlendSamplePoint {
@@ -237,13 +238,15 @@ public:
         out << "    \"name\": \"" << xAxis.name << "\",\n";
         out << "    \"min\": " << xAxis.minVal << ",\n";
         out << "    \"max\": " << xAxis.maxVal << ",\n";
-        out << "    \"divisions\": " << xAxis.divisions << "\n";
+        out << "    \"divisions\": " << xAxis.divisions << ",\n";
+        out << "    \"smoothingTime\": " << smoothTimeX << "\n";
         out << "  },\n";
         out << "  \"yAxis\": {\n";
         out << "    \"name\": \"" << yAxis.name << "\",\n";
         out << "    \"min\": " << yAxis.minVal << ",\n";
         out << "    \"max\": " << yAxis.maxVal << ",\n";
-        out << "    \"divisions\": " << yAxis.divisions << "\n";
+        out << "    \"divisions\": " << yAxis.divisions << ",\n";
+        out << "    \"smoothingTime\": " << smoothTimeY << "\n";
         out << "  },\n";
         out << "  \"samples\": [\n";
         for (size_t i = 0; i < samplePoints.size(); ++i) {
@@ -312,6 +315,8 @@ public:
             xAxis.minVal = (float)extractNumber(xBlock, "min", 0.0);
             xAxis.maxVal = (float)extractNumber(xBlock, "max", 100.0);
             xAxis.divisions = (int)extractNumber(xBlock, "divisions", 4.0);
+            xAxis.smoothingTime = (float)extractNumber(xBlock, "smoothingTime", (double)smoothTimeX);
+            smoothTimeX = xAxis.smoothingTime;
         }
 
         // Y Axis
@@ -323,6 +328,8 @@ public:
             yAxis.minVal = (float)extractNumber(yBlock, "min", -180.0);
             yAxis.maxVal = (float)extractNumber(yBlock, "max", 180.0);
             yAxis.divisions = (int)extractNumber(yBlock, "divisions", 4.0);
+            yAxis.smoothingTime = (float)extractNumber(yBlock, "smoothingTime", (double)smoothTimeY);
+            smoothTimeY = yAxis.smoothingTime;
         }
 
         // Samples

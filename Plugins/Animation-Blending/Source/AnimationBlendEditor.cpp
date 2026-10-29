@@ -77,9 +77,15 @@ void AnimationBlendEditor::Update(float deltaTime) {
         return;
     }
 
-    // Evaluate 2D blend space pose at (m_cursorX, m_cursorY)
+    // Damp smoothed coordinates towards target cursor position using X and Y smoothing times
+    float stX = (m_blend->smoothTimeX > 0.0001f) ? m_blend->smoothTimeX : m_blend->smoothingTime;
+    float stY = (m_blend->smoothTimeY > 0.0001f) ? m_blend->smoothTimeY : m_blend->smoothingTime;
+    m_smoothedX = AnimationBlend::SmoothDamp(m_smoothedX, m_cursorX, deltaTime, stX);
+    m_smoothedY = AnimationBlend::SmoothDamp(m_smoothedY, m_cursorY, deltaTime, stY);
+
+    // Evaluate 2D blend space pose at smoothed coordinates
     std::vector<BoneTransform> blendedTransforms;
-    m_blend->EvaluatePose(m_cursorX, m_cursorY, m_previewNormalizedTime, m_previewMesh->skeleton, m_loadedClips, blendedTransforms);
+    m_blend->EvaluatePose(m_smoothedX, m_smoothedY, m_previewNormalizedTime, m_previewMesh->skeleton, m_loadedClips, blendedTransforms);
 
     // Compute skin matrices and deform mesh in real time
     std::vector<glm::mat4> boneMatrices;
@@ -279,6 +285,11 @@ void AnimationBlendEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& si
             if (ImGui::DragFloat("Min##XAxis", &m_blend->xAxis.minVal, 1.0f)) m_isDirty = true;
             if (ImGui::DragFloat("Max##XAxis", &m_blend->xAxis.maxVal, 1.0f)) m_isDirty = true;
             if (ImGui::DragInt("Divisions##XAxis", &m_blend->xAxis.divisions, 1, 1, 20)) m_isDirty = true;
+            if (ImGui::DragFloat("Smoothing Time (s)##XAxis", &m_blend->smoothTimeX, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_blend->xAxis.smoothingTime = m_blend->smoothTimeX;
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoothing / damping time for X axis (seconds)");
 
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "VERTICAL (Y) AXIS");
@@ -291,6 +302,38 @@ void AnimationBlendEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& si
             if (ImGui::DragFloat("Min##YAxis", &m_blend->yAxis.minVal, 1.0f)) m_isDirty = true;
             if (ImGui::DragFloat("Max##YAxis", &m_blend->yAxis.maxVal, 1.0f)) m_isDirty = true;
             if (ImGui::DragInt("Divisions##YAxis", &m_blend->yAxis.divisions, 1, 1, 20)) m_isDirty = true;
+            if (ImGui::DragFloat("Smoothing Time (s)##YAxis", &m_blend->smoothTimeY, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_blend->yAxis.smoothingTime = m_blend->smoothTimeY;
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Smoothing / damping time for Y axis (seconds)");
+
+            // 4. Smoothing & Interpolation Configuration
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "SMOOTHING & INTERPOLATION");
+            ImGui::TextDisabled("Coordinate damping over delta time:");
+
+            ImGui::Text("Master Smoothing Time (s):");
+            if (ImGui::DragFloat("##BlendMasterSmooth", &m_blend->smoothingTime, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Master smoothing duration fallback");
+
+            ImGui::Text("X Smoothing Time (s):");
+            if (ImGui::DragFloat("##BlendSmoothX", &m_blend->smoothTimeX, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_blend->xAxis.smoothingTime = m_blend->smoothTimeX;
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Individual smoothing time for X axis parameter");
+
+            ImGui::Text("Y Smoothing Time (s):");
+            if (ImGui::DragFloat("##BlendSmoothY", &m_blend->smoothTimeY, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_blend->yAxis.smoothingTime = m_blend->smoothTimeY;
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Individual smoothing time for Y axis parameter");
         }
     }
     ImGui::EndChild();
@@ -496,6 +539,13 @@ void AnimationBlendEditor::RenderGridCanvas(const ImVec2& pos, const ImVec2& siz
             }
 
             // 3. Draw Preview Cursor (Crosshair)
+            ImVec2 smoothScreen = toScreen(m_smoothedX, m_smoothedY);
+            if (std::hypot(smoothScreen.x - cursorScreen.x, smoothScreen.y - cursorScreen.y) > 2.0f) {
+                dl->AddLine(cursorScreen, smoothScreen, IM_COL32(0, 255, 180, 180), 1.5f);
+                dl->AddCircleFilled(smoothScreen, 5.0f, IM_COL32(0, 255, 180, 230));
+                dl->AddCircle(smoothScreen, 8.0f, IM_COL32(0, 255, 180, 150), 0, 1.2f);
+            }
+
             dl->AddCircle(cursorScreen, 12.0f, IM_COL32(255, 255, 255, 240), 0, 2.0f);
             dl->AddCircleFilled(cursorScreen, 4.0f, IM_COL32(255, 50, 50, 255));
             dl->AddLine(ImVec2(cursorScreen.x - 18.0f, cursorScreen.y), ImVec2(cursorScreen.x + 18.0f, cursorScreen.y), IM_COL32(255, 255, 255, 200), 1.5f);
@@ -504,6 +554,9 @@ void AnimationBlendEditor::RenderGridCanvas(const ImVec2& pos, const ImVec2& siz
             // Floating live coordinate tooltip next to cursor
             char curBuf[64];
             snprintf(curBuf, sizeof(curBuf), "X: %.1f, Y: %.1f", m_cursorX, m_cursorY);
+            if (std::hypot(m_smoothedX - m_cursorX, m_smoothedY - m_cursorY) > 0.1f) {
+                snprintf(curBuf, sizeof(curBuf), "Target (%.1f, %.1f) | Smooth (%.1f, %.1f)", m_cursorX, m_cursorY, m_smoothedX, m_smoothedY);
+            }
             ImVec2 curSz = ImGui::CalcTextSize(curBuf);
             ImVec2 curPos(cursorScreen.x + 16.0f, cursorScreen.y - curSz.y * 0.5f);
             dl->AddRectFilled(ImVec2(curPos.x - 4.0f, curPos.y - 2.0f), ImVec2(curPos.x + curSz.x + 4.0f, curPos.y + curSz.y + 2.0f),
