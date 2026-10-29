@@ -1,0 +1,11 @@
+{
+    "name": "Level-Animation",
+    "version": "1.0.0",
+    "description": "Level sequence and cinematic animation system with timeline dope sheet, multi-object tracks, and real-time auto-keying.",
+    "author": "Eunoia Team",
+    "api_version": 1,
+    "category": "animation",
+    "core": true,
+    "dependencies": ["engine", "scene", "assets"],
+    "provides": ["ILevelAnimationPlugin"]
+}
