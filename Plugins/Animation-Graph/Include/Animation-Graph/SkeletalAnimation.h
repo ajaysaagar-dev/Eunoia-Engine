@@ -4,6 +4,8 @@
 #include <vector>
 #include <unordered_map>
 #include <memory>
+#include <algorithm>
+#include <cctype>
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -57,6 +59,27 @@ struct BoneTransform {
         return res;
     }
 };
+
+inline void ApplyRootMotionInPlace(std::vector<BoneTransform>& transforms, const Skeleton& skeleton) {
+    if (transforms.empty() || skeleton.bones.empty()) return;
+
+    for (size_t i = 0; i < skeleton.bones.size() && i < transforms.size(); ++i) {
+        const auto& b = skeleton.bones[i];
+        std::string lowerName = b.name;
+        std::transform(lowerName.begin(), lowerName.end(), lowerName.begin(), ::tolower);
+
+        bool isRootOrHips = (b.parentIndex == -1) ||
+                            (lowerName.find("root") != std::string::npos) ||
+                            (lowerName.find("hips") != std::string::npos) ||
+                            (lowerName.find("pelvis") != std::string::npos);
+
+        if (isRootOrHips) {
+            // Lock horizontal displacement (X and Z) in-place to skeleton bind pose
+            transforms[i].translation.x = b.localBindTransform[3].x;
+            transforms[i].translation.z = b.localBindTransform[3].z;
+        }
+    }
+}
 
 struct Keyframe {
     float time = 0.0f; // seconds

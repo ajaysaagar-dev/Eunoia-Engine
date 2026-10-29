@@ -185,6 +185,7 @@ struct AnimationStateNode {
     std::string clipPath = "";
     float speed = 1.0f;
     bool loop = true;
+    bool rootMotion = false;
     glm::vec2 position{100.0f, 100.0f};
 
     AnimationStateNode() = default;
@@ -390,6 +391,7 @@ public:
             out << "      \"clipPath\": \"" << s.clipPath << "\",\n";
             out << "      \"speed\": " << s.speed << ",\n";
             out << "      \"loop\": " << (s.loop ? "true" : "false") << ",\n";
+            out << "      \"rootMotion\": " << (s.rootMotion ? "true" : "false") << ",\n";
             out << "      \"posX\": " << s.position.x << ",\n";
             out << "      \"posY\": " << s.position.y << "\n";
             out << "    }" << (i + 1 < states.size() ? "," : "") << "\n";
@@ -533,6 +535,7 @@ public:
                     s.clipPath = extractString(objStr, "clipPath");
                     s.speed = (float)extractNumber(objStr, "speed", 1.0);
                     s.loop = extractBool(objStr, "loop", true);
+                    s.rootMotion = extractBool(objStr, "rootMotion", false);
                     s.position.x = (float)extractNumber(objStr, "posX", 100.0);
                     s.position.y = (float)extractNumber(objStr, "posY", 100.0);
                     if (s.id != 0) states.push_back(s);
