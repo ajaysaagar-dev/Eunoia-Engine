@@ -496,13 +496,37 @@ void AnimationBlendEditor::RenderGridCanvas(const ImVec2& pos, const ImVec2& siz
                 ImVec2 ptScreen = toScreen(pt.coords.x, pt.coords.y);
                 bool isSelected = (m_selectedSampleId == pt.id);
 
+                std::string badge = pt.animationClipName;
+                if (s < sampleWeights.size() && sampleWeights[s] > 0.005f) {
+                    char wBuf[32];
+                    snprintf(wBuf, sizeof(wBuf), " (%.0f%%)", sampleWeights[s] * 100.0f);
+                    badge += wBuf;
+                }
+                if (std::abs(pt.speed - 1.0f) > 0.01f) {
+                    char spdBuf[16];
+                    snprintf(spdBuf, sizeof(spdBuf), " [%.1fx]", pt.speed);
+                    badge += spdBuf;
+                }
+
+                ImVec2 bsz = ImGui::CalcTextSize(badge.c_str());
+                float radius = isSelected ? 8.5f : 7.0f;
+                ImVec2 bPos(ptScreen.x - bsz.x * 0.5f, ptScreen.y - radius - bsz.y - 4.0f);
+                ImVec2 badgeMin(bPos.x - 5.0f, bPos.y - 3.0f);
+                ImVec2 badgeMax(bPos.x + bsz.x + 5.0f, bPos.y + bsz.y + 3.0f);
+
                 float distToMouse = std::sqrt(
                     (mousePos.x - ptScreen.x) * (mousePos.x - ptScreen.x) +
                     (mousePos.y - ptScreen.y) * (mousePos.y - ptScreen.y)
                 );
-                bool isHovered = (distToMouse <= 12.0f);
+                bool isCircleHovered = (distToMouse <= 14.0f);
+                bool isBadgeHovered = (mousePos.x >= badgeMin.x && mousePos.x <= badgeMax.x && mousePos.y >= badgeMin.y && mousePos.y <= badgeMax.y);
+                bool isHovered = (isCircleHovered || isBadgeHovered);
 
-                // Sample point drag interaction
+                if (isHovered) {
+                    ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
+                }
+
+                // Sample point selection & drag interaction
                 if (isHovered && ImGui::IsMouseClicked(0)) {
                     m_selectedSampleId = pt.id;
                     m_isDraggingSample = true;
@@ -514,28 +538,30 @@ void AnimationBlendEditor::RenderGridCanvas(const ImVec2& pos, const ImVec2& siz
                     pt.coords = newAx;
                     m_isDirty = true;
                     ptScreen = toScreen(pt.coords.x, pt.coords.y);
+                    bPos = ImVec2(ptScreen.x - bsz.x * 0.5f, ptScreen.y - radius - bsz.y - 4.0f);
+                    badgeMin = ImVec2(bPos.x - 5.0f, bPos.y - 3.0f);
+                    badgeMax = ImVec2(bPos.x + bsz.x + 5.0f, bPos.y + bsz.y + 3.0f);
                 }
 
                 // Sample point visual
-                float radius = isHovered ? 9.0f : (isSelected ? 8.5f : 7.0f);
+                float drawRadius = isHovered ? 9.5f : radius;
                 ImU32 fillCol = isSelected ? IM_COL32(255, 180, 0, 255) :
                                 (isHovered ? IM_COL32(0, 230, 255, 255) : IM_COL32(0, 160, 220, 255));
-                dl->AddCircleFilled(ptScreen, radius + 3.0f, IM_COL32(0, 0, 0, 160));
-                dl->AddCircleFilled(ptScreen, radius, fillCol);
-                dl->AddCircle(ptScreen, radius, IM_COL32(255, 255, 255, 220), 0, 1.5f);
-
-                // Sample Name Badge
-                std::string badge = pt.animationClipName;
-                if (s < sampleWeights.size() && sampleWeights[s] > 0.005f) {
-                    char wBuf[32];
-                    snprintf(wBuf, sizeof(wBuf), " (%.0f%%)", sampleWeights[s] * 100.0f);
-                    badge += wBuf;
+                dl->AddCircleFilled(ptScreen, drawRadius + 4.0f, IM_COL32(0, 0, 0, 160));
+                dl->AddCircleFilled(ptScreen, drawRadius, fillCol);
+                dl->AddCircle(ptScreen, drawRadius, IM_COL32(255, 255, 255, 220), 0, isSelected ? 2.5f : 1.5f);
+                if (isSelected) {
+                    dl->AddCircle(ptScreen, drawRadius + 6.0f, IM_COL32(255, 190, 0, 200), 0, 1.8f);
                 }
-                ImVec2 bsz = ImGui::CalcTextSize(badge.c_str());
-                ImVec2 bPos(ptScreen.x - bsz.x * 0.5f, ptScreen.y - radius - bsz.y - 4.0f);
-                dl->AddRectFilled(ImVec2(bPos.x - 4.0f, bPos.y - 2.0f), ImVec2(bPos.x + bsz.x + 4.0f, bPos.y + bsz.y + 2.0f),
-                    IM_COL32(20, 20, 24, 210), 4.0f);
-                dl->AddText(bPos, isSelected ? IM_COL32(255, 220, 50, 255) : IM_COL32(230, 230, 230, 255), badge.c_str());
+
+                // Draw badge
+                dl->AddRectFilled(badgeMin, badgeMax, IM_COL32(20, 20, 24, 230), 4.0f);
+                if (isSelected) {
+                    dl->AddRect(badgeMin, badgeMax, IM_COL32(255, 180, 0, 255), 4.0f, 0, 1.5f);
+                } else if (isHovered) {
+                    dl->AddRect(badgeMin, badgeMax, IM_COL32(0, 200, 255, 180), 4.0f, 0, 1.0f);
+                }
+                dl->AddText(bPos, isSelected ? IM_COL32(255, 220, 50, 255) : (isHovered ? IM_COL32(100, 230, 255, 255) : IM_COL32(230, 230, 230, 255)), badge.c_str());
             }
 
             // 3. Draw Preview Cursor (Crosshair)
@@ -886,23 +912,102 @@ void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& siz
     // Selected Sample Point Details
     BlendSamplePoint* selPoint = m_blend->FindSamplePoint(m_selectedSampleId);
     if (selPoint) {
-        ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "Selected Sample Point: #%u", selPoint->id);
-        ImGui::Text("Animation: %s", selPoint->animationClipName.c_str());
-        ImGui::TextDisabled("Path: %s", selPoint->animationClipPath.c_str());
-
-        std::string xPtLabel = m_blend->xAxis.name + "##SelPtX";
-        std::string yPtLabel = m_blend->yAxis.name + "##SelPtY";
-        if (ImGui::DragFloat(xPtLabel.c_str(), &selPoint->coords.x, 0.5f, minX, maxX)) m_isDirty = true;
-        if (ImGui::DragFloat(yPtLabel.c_str(), &selPoint->coords.y, 0.5f, minY, maxY)) m_isDirty = true;
-
+        ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.2f, 1.0f), "SELECTED ANIMATION POINT #%u", selPoint->id);
         ImGui::Spacing();
-        if (ImGui::Button("Delete Sample Point##DeleteSelPtBtn", ImVec2(-1, 0))) {
+
+        // 1. Display Label / Name
+        char nameBuf[128];
+        snprintf(nameBuf, sizeof(nameBuf), "%s", selPoint->animationClipName.c_str());
+        if (ImGui::InputText("Label##SelPtName", nameBuf, sizeof(nameBuf))) {
+            selPoint->animationClipName = nameBuf;
+            m_isDirty = true;
+        }
+
+        // 2. Animation Clip Switcher
+        ImGui::Spacing();
+        ImGui::Text("Animation Clip:");
+        std::string currentClipLabel = selPoint->animationClipName.empty() ? "[No Clip Assigned]" : selPoint->animationClipName;
+        ImGui::PushItemWidth(-1);
+        if (ImGui::BeginCombo("##SelPtClipCombo", currentClipLabel.c_str())) {
+            std::string contentDir = AssetRegistry::Get().GetContentRoot().string();
+            std::vector<std::string> anims = SkeletalAnimationManager::Get().FindProjectAnimations(contentDir, m_blend->skeletonMeshPath);
+            for (const auto& aPath : anims) {
+                std::string stem = std::filesystem::path(aPath).stem().string();
+                bool isSelected = (selPoint->animationClipPath == aPath);
+                if (ImGui::Selectable(stem.c_str(), isSelected)) {
+                    selPoint->animationClipPath = aPath;
+                    selPoint->animationClipName = stem;
+                    m_isDirty = true;
+                    const Skeleton* skel = (m_previewMesh && m_previewMesh->valid) ? &m_previewMesh->skeleton : nullptr;
+                    if (m_loadedClips.find(aPath) == m_loadedClips.end()) {
+                        auto clip = SkeletalAnimationManager::Get().LoadAnimationClip(aPath, skel);
+                        if (clip) m_loadedClips[aPath] = clip;
+                    }
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", aPath.c_str());
+            }
+            ImGui::EndCombo();
+        }
+        ImGui::PopItemWidth();
+        ImGui::TextDisabled("File: %s", std::filesystem::path(selPoint->animationClipPath).filename().string().c_str());
+
+        // 3. Animation Speed Multiplier
+        ImGui::Spacing();
+        ImGui::Text("Animation Speed:");
+        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 70.0f);
+        if (ImGui::SliderFloat("##SelPtSpeedSlider", &selPoint->speed, 0.05f, 5.0f, "%.2fx")) {
+            m_isDirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset##ResetPtSpeed", ImVec2(60, 0))) {
+            selPoint->speed = 1.0f;
+            m_isDirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset speed to 1.0x default");
+
+        // 4. Looping option
+        ImGui::Spacing();
+        if (ImGui::Checkbox("Loop Animation##SelPtLoop", &selPoint->loop)) {
+            m_isDirty = true;
+        }
+
+        // 5. Grid Coordinates
+        ImGui::Spacing();
+        std::string xPtLabel = m_blend->xAxis.name + " (X)##SelPtX";
+        std::string yPtLabel = m_blend->yAxis.name + " (Y)##SelPtY";
+        if (ImGui::DragFloat(xPtLabel.c_str(), &selPoint->coords.x, 0.5f, minX, maxX, "%.2f")) m_isDirty = true;
+        if (ImGui::DragFloat(yPtLabel.c_str(), &selPoint->coords.y, 0.5f, minY, maxY, "%.2f")) m_isDirty = true;
+
+        // 6. Current Weight & Status Info
+        float currWeight = 0.0f;
+        std::vector<float> currWeights = m_blend->CalculateWeights(m_smoothedX, m_smoothedY);
+        for (size_t si = 0; si < m_blend->samplePoints.size(); ++si) {
+            if (m_blend->samplePoints[si].id == selPoint->id && si < currWeights.size()) {
+                currWeight = currWeights[si];
+                break;
+            }
+        }
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.0f, 1.0f, 0.8f, 1.0f), "Current Influence: %.1f%%", currWeight * 100.0f);
+
+        auto clipIt = m_loadedClips.find(selPoint->animationClipPath);
+        if (clipIt != m_loadedClips.end() && clipIt->second) {
+            ImGui::TextDisabled("Duration: %.2fs | Tracks: %zu", clipIt->second->duration, clipIt->second->tracks.size());
+        }
+
+        // 7. Delete Button
+        ImGui::Spacing();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.65f, 0.18f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.22f, 0.22f, 1.0f));
+        if (ImGui::Button("Delete Sample Point##DeleteSelPtBtn", ImVec2(-1, 26))) {
             m_blend->RemoveSamplePoint(selPoint->id);
             m_selectedSampleId = 0;
             m_isDirty = true;
         }
+        ImGui::PopStyleColor(2);
     } else {
-        ImGui::TextDisabled("Click a sample point pin on the grid to inspect/edit its coordinates.");
+        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No sample point selected.");
+        ImGui::TextDisabled("Click any sample point pin or name in the 2D grid to select and adjust its animation speed, coordinates, and clip.");
     }
 
     ImGui::Spacing();
@@ -913,8 +1018,9 @@ void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& siz
     ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "Sample Influences (%zu):", m_blend->samplePoints.size());
     std::vector<float> weights = m_blend->CalculateWeights(m_smoothedX, m_smoothedY);
 
-    if (ImGui::BeginTable("SampleInfluenceTable", 3, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+    if (ImGui::BeginTable("SampleInfluenceTable", 4, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
         ImGui::TableSetupColumn("Clip");
+        ImGui::TableSetupColumn("Speed");
         ImGui::TableSetupColumn("Position");
         ImGui::TableSetupColumn("Weight");
         ImGui::TableHeadersRow();
@@ -931,9 +1037,12 @@ void AnimationBlendEditor::RenderProperties(const ImVec2& pos, const ImVec2& siz
             }
 
             ImGui::TableSetColumnIndex(1);
-            ImGui::Text("(%.1f, %.1f)", pt.coords.x, pt.coords.y);
+            ImGui::Text("%.2fx", pt.speed);
 
             ImGui::TableSetColumnIndex(2);
+            ImGui::Text("(%.1f, %.1f)", pt.coords.x, pt.coords.y);
+
+            ImGui::TableSetColumnIndex(3);
             if (w > 0.01f) {
                 ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.4f, 1.0f), "%.1f%%", w * 100.0f);
             } else {

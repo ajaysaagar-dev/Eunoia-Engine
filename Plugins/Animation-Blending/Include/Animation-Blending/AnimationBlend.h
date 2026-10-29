@@ -31,10 +31,12 @@ struct BlendSamplePoint {
     std::string animationClipPath = "";
     std::string animationClipName = "";
     glm::vec2 coords{0.0f, 0.0f}; // In axis units (e.g. Speed 0..100, Direction -180..180)
+    float speed = 1.0f;
+    bool loop = true;
 
     BlendSamplePoint() = default;
-    BlendSamplePoint(uint32_t nid, const std::string& path, const std::string& clipName, const glm::vec2& c)
-        : id(nid), animationClipPath(path), animationClipName(clipName), coords(c) {}
+    BlendSamplePoint(uint32_t nid, const std::string& path, const std::string& clipName, const glm::vec2& c, float spd = 1.0f, bool lp = true)
+        : id(nid), animationClipPath(path), animationClipName(clipName), coords(c), speed(spd), loop(lp) {}
 };
 
 class AnimationBlend {
@@ -60,12 +62,14 @@ public:
         return current + (target - current) * factor;
     }
 
-    BlendSamplePoint& AddSamplePoint(const std::string& clipPath, const std::string& clipName, const glm::vec2& coords) {
+    BlendSamplePoint& AddSamplePoint(const std::string& clipPath, const std::string& clipName, const glm::vec2& coords, float speed = 1.0f, bool loop = true) {
         BlendSamplePoint pt;
         pt.id = nextSampleId++;
         pt.animationClipPath = clipPath;
         pt.animationClipName = clipName;
         pt.coords = coords;
+        pt.speed = speed;
+        pt.loop = loop;
         samplePoints.push_back(pt);
         return samplePoints.back();
     }
@@ -158,13 +162,15 @@ public:
         struct ActiveSample {
             std::shared_ptr<AnimationClip> clip;
             float weight;
+            float speed;
+            bool loop;
         };
         std::vector<ActiveSample> activeSamples;
         for (size_t i = 0; i < samplePoints.size(); ++i) {
             if (weights[i] > 1e-4f) {
                 auto it = loadedClips.find(samplePoints[i].animationClipPath);
                 if (it != loadedClips.end() && it->second) {
-                    activeSamples.push_back({ it->second, weights[i] });
+                    activeSamples.push_back({ it->second, weights[i], samplePoints[i].speed, samplePoints[i].loop });
                 }
             }
         }
@@ -173,16 +179,16 @@ public:
 
         // If only 1 active sample, sample directly
         if (activeSamples.size() == 1) {
-            float time = normalizedTime * activeSamples[0].clip->duration;
-            activeSamples[0].clip->SamplePose(time, skeleton, outTransforms, true);
+            float time = normalizedTime * activeSamples[0].clip->duration * activeSamples[0].speed;
+            activeSamples[0].clip->SamplePose(time, skeleton, outTransforms, activeSamples[0].loop);
             return;
         }
 
         // Multi-sample pose blending
         std::vector<std::vector<BoneTransform>> samplePoses(activeSamples.size());
         for (size_t s = 0; s < activeSamples.size(); ++s) {
-            float time = normalizedTime * activeSamples[s].clip->duration;
-            activeSamples[s].clip->SamplePose(time, skeleton, samplePoses[s], true);
+            float time = normalizedTime * activeSamples[s].clip->duration * activeSamples[s].speed;
+            activeSamples[s].clip->SamplePose(time, skeleton, samplePoses[s], activeSamples[s].loop);
         }
 
         // Blend all bone transforms
@@ -256,7 +262,9 @@ public:
             out << "      \"clipPath\": \"" << pt.animationClipPath << "\",\n";
             out << "      \"clipName\": \"" << pt.animationClipName << "\",\n";
             out << "      \"x\": " << pt.coords.x << ",\n";
-            out << "      \"y\": " << pt.coords.y << "\n";
+            out << "      \"y\": " << pt.coords.y << ",\n";
+            out << "      \"speed\": " << pt.speed << ",\n";
+            out << "      \"loop\": " << (pt.loop ? "true" : "false") << "\n";
             out << "    }" << (i + 1 < samplePoints.size() ? "," : "") << "\n";
         }
         out << "  ]\n";
@@ -297,6 +305,19 @@ public:
             while (end < json.size() && (json[end] == '-' || json[end] == '.' || (json[end] >= '0' && json[end] <= '9') || json[end] == 'e' || json[end] == 'E')) end++;
             if (start == end) return defVal;
             try { return std::stod(json.substr(start, end - start)); } catch (...) { return defVal; }
+        };
+
+        auto extractBool = [](const std::string& json, const std::string& key, bool defVal = true) -> bool {
+            std::string search = "\"" + key + "\":";
+            size_t pos = json.find(search);
+            if (pos == std::string::npos) return defVal;
+            size_t truePos = json.find("true", pos + search.size());
+            size_t falsePos = json.find("false", pos + search.size());
+            if (truePos != std::string::npos && (falsePos == std::string::npos || truePos < falsePos)) {
+                return (truePos - (pos + search.size()) < 10);
+            }
+            if (falsePos != std::string::npos) return false;
+            return defVal;
         };
 
         name = extractString(content, "name");
@@ -351,6 +372,8 @@ public:
                     pt.animationClipName = extractString(objStr, "clipName");
                     pt.coords.x = (float)extractNumber(objStr, "x", 0.0);
                     pt.coords.y = (float)extractNumber(objStr, "y", 0.0);
+                    pt.speed = (float)extractNumber(objStr, "speed", 1.0);
+                    pt.loop = extractBool(objStr, "loop", true);
 
                     if (pt.id != 0 && !pt.animationClipPath.empty()) {
                         samplePoints.push_back(pt);
