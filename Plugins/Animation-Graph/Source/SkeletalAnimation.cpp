@@ -209,9 +209,13 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
 
                                 if (uMesh->vertex_normal.exists) {
                                     ufbx_vec3 n = ufbx_get_vertex_vec3(&uMesh->vertex_normal, index);
-                                    sv.normal = UfbxToGlmVec3(n);
+                                    glm::vec3 gn = UfbxToGlmVec3(n);
+                                    float nl = glm::length(gn);
+                                    if (nl > 1e-6f) gn /= nl;
+                                    else gn = glm::vec3(0.0f, 1.0f, 0.0f);
+                                    sv.normal = gn;
                                 } else {
-                                    sv.normal = glm::vec3(0, 1, 0);
+                                    sv.normal = glm::vec3(0.0f, 1.0f, 0.0f);
                                 }
 
                                 if (uMesh->vertex_uv.exists) {
@@ -221,7 +225,11 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
 
                                 if (uMesh->vertex_tangent.exists) {
                                     ufbx_vec3 tg = ufbx_get_vertex_vec3(&uMesh->vertex_tangent, index);
-                                    sv.tangent = glm::vec4(UfbxToGlmVec3(tg), 1.0f);
+                                    glm::vec3 gt = UfbxToGlmVec3(tg);
+                                    float tl = glm::length(gt);
+                                    if (tl > 1e-6f) gt /= tl;
+                                    else gt = glm::vec3(1.0f, 0.0f, 0.0f);
+                                    sv.tangent = glm::vec4(gt, 1.0f);
                                 } else {
                                     sv.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
                                 }

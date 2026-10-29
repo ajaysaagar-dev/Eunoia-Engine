@@ -223,7 +223,9 @@ public:
 
                 glm::vec4 deformedPos = skinMat * glm::vec4(bv.pos, 1.0f);
                 glm::mat3 normalMat = glm::mat3(skinMat);
-                glm::vec3 deformedNorm = glm::normalize(normalMat * bv.normal);
+                glm::vec3 dn = normalMat * bv.normal;
+                float dnLen = glm::length(dn);
+                glm::vec3 deformedNorm = (dnLen > 1e-6f) ? (dn / dnLen) : glm::vec3(0.0f, 1.0f, 0.0f);
 
                 rv.pos = glm::vec3(deformedPos);
                 rv.normal = deformedNorm;
