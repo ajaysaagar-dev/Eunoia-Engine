@@ -691,6 +691,8 @@ struct GameObject {
     bool castShadows = true;
     bool receiveShadows = true;
     bool meshClusterCulling = false; // dev.md: Mesh Cluster Culling (OFF by default)
+    bool smoothShading = true;       // Blender-style Smooth Shading (true = smooth, false = flat)
+    float autoSmoothAngle = 180.0f;  // Crease angle in degrees for smooth normal calculation (default 180.0f = full smooth)
     bool enableLOD = false;          // Wicked Engine Mesh LOD: disabled by default (full quality)
     int forcedLOD = -1;              // -1 = Auto (distance & screen coverage), 0 = LOD0 .. 20 = LOD20
     float lodBias = 0.0f;            // Wicked Engine lod_bias (-20.0f to +20.0f)
@@ -1013,6 +1015,8 @@ struct GameObject {
         castShadows = other.castShadows;
         receiveShadows = other.receiveShadows;
         meshClusterCulling = other.meshClusterCulling;
+        smoothShading = other.smoothShading;
+        autoSmoothAngle = other.autoSmoothAngle;
         enableLOD = other.enableLOD;
         forcedLOD = other.forcedLOD;
         lodBias = other.lodBias;
@@ -1113,6 +1117,8 @@ struct GameObject {
         castShadows = other.castShadows;
         receiveShadows = other.receiveShadows;
         meshClusterCulling = other.meshClusterCulling;
+        smoothShading = other.smoothShading;
+        autoSmoothAngle = other.autoSmoothAngle;
         enableLOD = other.enableLOD;
         forcedLOD = other.forcedLOD;
         lodBias = other.lodBias;
@@ -1382,6 +1388,17 @@ struct GameObject {
                     mesh.indices.clear();
                 }
                 break;
+        }
+    }
+
+    void SetSmoothShading(bool smooth, float creaseAngle = 180.0f) {
+        smoothShading = smooth;
+        autoSmoothAngle = creaseAngle;
+        if (mesh.vertices.empty()) return;
+        if (smooth) {
+            GeometryBuilder::ComputeSmoothNormals(mesh, creaseAngle);
+        } else {
+            GeometryBuilder::ComputeFlatNormals(mesh);
         }
     }
 

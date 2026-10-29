@@ -220,6 +220,8 @@ public:
             file << "        \"castShadows\": " << BoolStr(obj.castShadows) << ",\n";
             file << "        \"receiveShadows\": " << BoolStr(obj.receiveShadows) << ",\n";
             file << "        \"meshClusterCulling\": " << BoolStr(obj.meshClusterCulling) << ",\n";
+            file << "        \"smoothShading\": " << BoolStr(obj.smoothShading) << ",\n";
+            file << "        \"autoSmoothAngle\": " << obj.autoSmoothAngle << ",\n";
             file << "        \"enableLOD\": " << BoolStr(obj.enableLOD) << ",\n";
             file << "        \"forcedLOD\": " << obj.forcedLOD << ",\n";
             file << "        \"lodBias\": " << obj.lodBias << ",\n";
@@ -1450,6 +1452,8 @@ public:
             p = matBlock.find("\"castShadows\""); if (p != std::string::npos) obj.castShadows = ParseBoolAt(matBlock, p, true);
             p = matBlock.find("\"receiveShadows\""); if (p != std::string::npos) obj.receiveShadows = ParseBoolAt(matBlock, p, true);
             p = matBlock.find("\"meshClusterCulling\""); if (p != std::string::npos) obj.meshClusterCulling = ParseBoolAt(matBlock, p, false);
+            p = matBlock.find("\"smoothShading\""); if (p != std::string::npos) obj.smoothShading = ParseBoolAt(matBlock, p, true);
+            p = matBlock.find("\"autoSmoothAngle\""); if (p != std::string::npos) obj.autoSmoothAngle = ParseFloatAt(matBlock, p, 180.0f);
             p = matBlock.find("\"enableLOD\""); if (p != std::string::npos) obj.enableLOD = ParseBoolAt(matBlock, p, false);
             p = matBlock.find("\"forcedLOD\""); if (p != std::string::npos) obj.forcedLOD = ParseIntAt(matBlock, p, -1);
             p = matBlock.find("\"lodBias\""); if (p != std::string::npos) obj.lodBias = ParseFloatAt(matBlock, p, 0.0f);
@@ -2218,6 +2222,12 @@ public:
                 obj.isLight = (obj.type != PrimitiveType::Empty);
                 obj.mesh.vertices.clear();
                 obj.mesh.indices.clear();
+            }
+
+            if (!obj.mesh.vertices.empty()) {
+                if (!obj.smoothShading) {
+                    GeometryBuilder::ComputeFlatNormals(obj.mesh);
+                }
             }
         }
 
