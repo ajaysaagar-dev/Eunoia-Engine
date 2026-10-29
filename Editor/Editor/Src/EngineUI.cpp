@@ -6060,6 +6060,13 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
                 scene.AddEmptyActor(glm::vec3(0), obj.id);
                 AddLog("LogActor", "Added Empty Actor as child", 2);
             }
+            if (ImGui::MenuItem("Level Animation")) {
+                GameObject& la = scene.AddEmptyActor(glm::vec3(0), obj.id);
+                la.name = "LevelAnimation";
+                la.type = PrimitiveType::LevelAnimation;
+                la.AddLevelAnimation();
+                AddLog("LogActor", "Added Level Animation as child", 2);
+            }
             ImGui::EndMenu();
         }
         ImGui::Separator();
@@ -6173,6 +6180,13 @@ void EngineUI::RenderOutliner(Scene& scene) {
             ImGui::Separator();
             if (ImGui::MenuItem("Camera"))            { GameObject& c = scene.AddObject(PrimitiveType::Camera, glm::vec3(0.0f, 2.0f, -4.0f)); c.name = "Camera Actor"; AddLog("LogActor", "Spawned Camera", 2); }
             if (ImGui::MenuItem("Empty Actor"))       { scene.AddEmptyActor(glm::vec3(0)); AddLog("LogActor", "Spawned Empty Actor", 2); }
+            if (ImGui::MenuItem("Level Animation"))   {
+                GameObject& la = scene.AddEmptyActor(glm::vec3(0));
+                la.name = "LevelAnimation";
+                la.type = PrimitiveType::LevelAnimation;
+                la.AddLevelAnimation();
+                AddLog("LogActor", "Spawned Level Animation Actor", 2);
+            }
             ImGui::EndPopup();
         }
 
@@ -6444,6 +6458,13 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 ImGui::EndMenu();
             }
             if (ImGui::MenuItem("Empty Actor")) { scene.AddEmptyActor(); AddLog("LogActor", "Spawned Empty Actor", 2); }
+            if (ImGui::MenuItem("Level Animation")) {
+                GameObject& la = scene.AddEmptyActor();
+                la.name = "LevelAnimation";
+                la.type = PrimitiveType::LevelAnimation;
+                la.AddLevelAnimation();
+                AddLog("LogActor", "Spawned Level Animation Actor", 2);
+            }
             ImGui::EndPopup();
         }
 
@@ -6703,6 +6724,8 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
         } else if (obj->isUserInterface || obj->type == PrimitiveType::UserInterface) {
             ImGui::TextColored(ImVec4(0.40f, 0.70f, 1.00f, 1.0f), "[UserInterface3DComponent]");
+        } else if (obj->type == PrimitiveType::LevelAnimation || obj->hasLevelAnimation) {
+            ImGui::TextColored(ImVec4(1.00f, 0.55f, 0.20f, 1.0f), "[LevelAnimationComponent]");
         } else if (obj->type == PrimitiveType::Empty) {
             if (!obj->modifiers.empty()) {
                 if (obj->modifiers[0].isTrigger) {
@@ -7878,8 +7901,128 @@ void EngineUI::RenderDetails(Scene& scene) {
             }
         }
 
+        // =========================================================
+        // LEVEL ANIMATION COMPONENT
+        // =========================================================
+        if (obj->hasLevelAnimation || obj->type == PrimitiveType::LevelAnimation) {
+            if (ImGui::CollapsingHeader("Level Animation", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::PushID("LevelAnimationDetailsSection");
+
+                ImGui::Checkbox("Enabled##LAEnabled", &obj->levelAnimation.enabled);
+                ImGui::SameLine(0.0f, 15.0f * uiScale);
+                ImGui::Checkbox("Play On Start##LAPlayOnStart", &obj->levelAnimation.playOnStart);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("When checked, this level animation automatically plays on start (default: enabled).");
+                }
+                ImGui::SameLine(0.0f, 15.0f * uiScale);
+                ImGui::Checkbox("Loop##LALoop", &obj->levelAnimation.loop);
+
+                ImGui::Spacing();
+                ImGui::DragFloat("Playback Speed##LASpeed", &obj->levelAnimation.playbackSpeed, 0.05f, -10.0f, 10.0f, "%.2fx");
+
+                ImGui::Spacing();
+                ImGui::Text("Animation Asset (.elanim)");
+
+                std::string currentAnimPreview = "(None - Select or Drop .elanim)";
+                if (!obj->levelAnimation.animationPath.empty()) {
+                    currentAnimPreview = std::filesystem::path(obj->levelAnimation.animationPath).filename().string();
+                }
+
+                if (ImGui::BeginCombo("##LevelAnimAssetCombo", currentAnimPreview.c_str())) {
+                    if (ImGui::Selectable("(None)", obj->levelAnimation.animationPath.empty())) {
+                        obj->levelAnimation.animation.reset();
+                        obj->levelAnimation.animationPath = "";
+                    }
+                    ImGui::Separator();
+
+                    // Search for .elanim files in content directory
+                    if (!contentRootPath.empty() && std::filesystem::exists(contentRootPath)) {
+                        std::error_code ec;
+                        for (auto it = std::filesystem::recursive_directory_iterator(contentRootPath, ec);
+                             it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+                            if (ec) break;
+                            if (it->is_regular_file() && it->path().extension() == ".elanim") {
+                                std::string rel = std::filesystem::relative(it->path(), contentRootPath, ec).string();
+                                bool isSel = (obj->levelAnimation.animationPath == it->path().string() || obj->levelAnimation.animationPath == rel);
+                                if (ImGui::Selectable(rel.c_str(), isSel)) {
+                                    obj->levelAnimation.LoadAnimation(it->path().string());
+                                    if (obj->levelAnimation.animation) {
+                                        Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(obj->levelAnimation.animation);
+                                        Eunoia::LevelAnimationManager::Get().SetActiveActorId(obj->id);
+                                    }
+                                    AddLog("LogLevelAnimation", "Assigned Level Animation: " + rel + " to " + obj->name, 0);
+                                }
+                            }
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                // Drag & drop target for .elanim assets from Content Browser
+                if (ImGui::BeginDragDropTarget()) {
+                    if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_BROWSER_ITEM")) {
+                        std::string droppedPath((const char*)payload->Data);
+                        if (droppedPath.find(".elanim") != std::string::npos) {
+                            std::filesystem::path fullP = contentRootPath / droppedPath;
+                            obj->levelAnimation.LoadAnimation(fullP.string());
+                            if (obj->levelAnimation.animation) {
+                                Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(obj->levelAnimation.animation);
+                                Eunoia::LevelAnimationManager::Get().SetActiveActorId(obj->id);
+                            }
+                            AddLog("LogLevelAnimation", "Dropped Level Animation: " + droppedPath + " onto " + obj->name, 0);
+                        }
+                    }
+                    ImGui::EndDragDropTarget();
+                }
+
+                ImGui::Spacing();
+
+                // Open in Animation Timeline button
+                if (ImGui::Button("Open in Animation Timeline", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f * uiScale))) {
+                    if (!obj->levelAnimation.animationPath.empty()) {
+                        OpenLevelAnimationEditor(obj->levelAnimation.animationPath);
+                    } else {
+                        bottomDrawerTab = 1;
+                        bottomDrawerOpen = true;
+                    }
+                    if (obj->levelAnimation.animation) {
+                        Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(obj->levelAnimation.animation);
+                    }
+                    Eunoia::LevelAnimationManager::Get().SetActiveActorId(obj->id);
+                }
+
+                // In-editor preview controls
+                if (obj->levelAnimation.animation) {
+                    ImGui::Spacing();
+                    float endT = obj->levelAnimation.animation->duration;
+                    ImGui::Text("Time: %.2fs / %.2fs", obj->levelAnimation.currentTime, endT);
+
+                    float btnW = (ImGui::GetContentRegionAvail().x - 16.0f) / 3.0f;
+                    if (ImGui::Button(obj->levelAnimation.isPlaying ? "Pause##LAPreview" : "Play##LAPreview", ImVec2(btnW, 22.0f * uiScale))) {
+                        if (obj->levelAnimation.isPlaying) {
+                            obj->levelAnimation.Pause();
+                        } else {
+                            obj->levelAnimation.Play();
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Stop##LAPreview", ImVec2(btnW, 22.0f * uiScale))) {
+                        obj->levelAnimation.Stop();
+                        obj->levelAnimation.Update(0.0f, obj, &scene);
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Reset##LAPreview", ImVec2(btnW, 22.0f * uiScale))) {
+                        obj->levelAnimation.currentTime = 0.0f;
+                        obj->levelAnimation.Update(0.0f, obj, &scene);
+                    }
+                }
+
+                ImGui::PopID();
+            }
+        }
+
         // Primitive Shape Settings Category (dev.md)
-        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && !obj->isTerrain && obj->type != PrimitiveType::Terrain && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh) {
+        if (!obj->isLight && !IsLightPrimitive(obj->type) && !obj->isCamera && !IsCameraPrimitive(obj->type) && !obj->isWaterBody && obj->type != PrimitiveType::WaterBody && !obj->isTerrain && obj->type != PrimitiveType::Terrain && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::ImportedMesh && obj->type != PrimitiveType::LevelAnimation) {
             char shapeHeader[128];
             snprintf(shapeHeader, sizeof(shapeHeader), "%s Parameters", GetPrimitiveTypeName(obj->type));
             if (ImGui::CollapsingHeader(shapeHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -8038,7 +8181,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 2. Static Mesh Category (only for mesh actors)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::LevelAnimation && ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
             char meshAsset[64];
             snprintf(meshAsset, sizeof(meshAsset), "SM_%s", GetPrimitiveTypeName(obj->type));
             ImGui::TextDisabled("Static Mesh Asset:");
@@ -8047,7 +8190,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 3. Materials Category (Element 0) (mesh actors or parent actors with children)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && (obj->type != PrimitiveType::Empty || !obj->childIds.empty()) && ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Camera && !obj->isUserInterface && obj->type != PrimitiveType::UserInterface && obj->type != PrimitiveType::LevelAnimation && (obj->type != PrimitiveType::Empty || !obj->childIds.empty()) && ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::TextDisabled("Element 0: Material Slot");
             if (!obj->childIds.empty()) {
                 ImGui::SameLine();
@@ -8247,7 +8390,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 4. Lighting & Shadows
-        if (!obj->isLight && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Lighting & Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::LevelAnimation && ImGui::CollapsingHeader("Lighting & Shadows", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Checkbox("Cast Shadows", &obj->castShadows);
             if (ImGui::IsItemHovered()) {
                 ImGui::SetTooltip("When enabled, this actor casts shadows into the real-time shadow map.");
@@ -8260,7 +8403,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 4.5 Wicked Engine Mesh LOD (Disabled by default - full quality when disabled)
-        if (!obj->isLight && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("Wicked Engine Mesh LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::LevelAnimation && ImGui::CollapsingHeader("Wicked Engine Mesh LOD", ImGuiTreeNodeFlags_DefaultOpen)) {
             bool lodEnabled = obj->enableLOD;
             if (ImGui::Checkbox("Enable Mesh LOD", &lodEnabled)) {
                 scene.SetMeshLODRecursive(obj->id, lodEnabled);
@@ -8353,7 +8496,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         }
 
         // 4.6 SFLOD (Single Face LOD / Imposter Cards System - Nacho Time!)
-        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty && ImGui::CollapsingHeader("SFLOD (Single Face LOD - Nacho Time!)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (!obj->isLight && !obj->isCamera && obj->type != PrimitiveType::Empty && obj->type != PrimitiveType::LevelAnimation && ImGui::CollapsingHeader("SFLOD (Single Face LOD - Nacho Time!)", ImGuiTreeNodeFlags_DefaultOpen)) {
             bool sflodEnabled = obj->enableSFLOD;
             if (ImGui::Checkbox("Enable SFLOD", &sflodEnabled)) {
                 obj->enableSFLOD = sflodEnabled;
@@ -8688,7 +8831,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         // 4.8 Modifiers Section (includes Collisions and Physics modifiers)
         if (!obj->isLight && !obj->isCamera && !IsLightPrimitive(obj->type) && !IsCameraPrimitive(obj->type)) {
             char modHeaderTitle[64];
-            int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0) + (obj->hasAnimator ? 1 : 0);
+            int totalMods = (int)obj->modifiers.size() + (obj->hasPhysics ? 1 : 0) + (obj->hasAnimator ? 1 : 0) + (obj->hasLevelAnimation ? 1 : 0);
             snprintf(modHeaderTitle, sizeof(modHeaderTitle), "Modifiers (%d)###ModifiersSection", totalMods);
             if (ImGui::CollapsingHeader(modHeaderTitle, ImGuiTreeNodeFlags_DefaultOpen)) {
                 // Add Modifier button and popup
@@ -8762,6 +8905,14 @@ void EngineUI::RenderDetails(Scene& scene) {
                         }
                     } else {
                         ImGui::TextDisabled("Animation Graph already added");
+                    }
+                    if (!obj->hasLevelAnimation) {
+                        if (ImGui::MenuItem("Level Animation")) {
+                            obj->AddLevelAnimation();
+                            AddLog("LogLevelAnimation", "Added Level Animation component to " + obj->name, 0);
+                        }
+                    } else {
+                        ImGui::TextDisabled("Level Animation already added");
                     }
 
                     ImGui::EndPopup();
