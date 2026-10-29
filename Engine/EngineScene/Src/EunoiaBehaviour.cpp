@@ -1876,12 +1876,38 @@ void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::u
                         }
                     }
                 } else {
-                    try {
-                        std::string clean = valStr;
-                        if (!clean.empty() && (clean.back() == 'f' || clean.back() == 'F' || clean.back() == 'd' || clean.back() == 'D')) {
-                            clean.pop_back();
+                    float fVal = 0.0f;
+                    bool isFloat = false;
+                    std::string clean = valStr;
+                    size_t c1 = clean.find_first_not_of(" \t\r\n;");
+                    size_t c2 = clean.find_last_not_of(" \t\r\n;");
+                    if (c1 != std::string::npos && c2 != std::string::npos) clean = clean.substr(c1, c2 - c1 + 1);
+                    if (m_floatStorage.find(clean) != m_floatStorage.end()) {
+                        fVal = m_floatStorage[clean];
+                        isFloat = true;
+                    } else if (m_intStorage.find(clean) != m_intStorage.end()) {
+                        fVal = (float)m_intStorage[clean];
+                        isFloat = true;
+                    } else {
+                        for (const auto& p : m_properties) {
+                            if ((p.name == clean || p.displayName == clean) && p.dataPtr && p.type == BehaviourPropertyType::Float) {
+                                fVal = *reinterpret_cast<float*>(p.dataPtr);
+                                isFloat = true;
+                                break;
+                            }
                         }
-                        float fVal = std::stof(clean);
+                    }
+                    if (!isFloat) {
+                        try {
+                            std::string cleanNum = clean;
+                            if (!cleanNum.empty() && (cleanNum.back() == 'f' || cleanNum.back() == 'F' || cleanNum.back() == 'd' || cleanNum.back() == 'D')) {
+                                cleanNum.pop_back();
+                            }
+                            fVal = std::stof(cleanNum);
+                            isFloat = true;
+                        } catch (...) {}
+                    }
+                    if (isFloat) {
                         m_floatStorage[vName] = fVal;
                         for (auto& prop : m_properties) {
                             if (prop.name == vName || prop.displayName == vName || NormalizePropName(prop.name) == NormalizePropName(vName)) {
@@ -1890,7 +1916,7 @@ void DynamicScriptBehaviour::ExecuteMethod(const std::string& methodName, std::u
                                 }
                             }
                         }
-                    } catch (...) {
+                    } else {
                         std::string sVal = valStr;
                         if (sVal.size() >= 2 && sVal.front() == '"' && sVal.back() == '"') {
                             sVal = sVal.substr(1, sVal.size() - 2);
@@ -2619,6 +2645,53 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             if (prop.name == assign.varName || prop.displayName == assign.varName) {
                 if (prop.dataPtr && prop.type == BehaviourPropertyType::Bool) {
                     *reinterpret_cast<bool*>(prop.dataPtr) = assign.targetValue;
+                }
+            }
+        }
+    }
+
+    // Execute real-time dynamic Numeric assignments inside Update()
+    for (const auto& assign : m_numericAssignments) {
+        bool boolConditionMet = true;
+        for (const auto& bCond : assign.requiredBools) {
+            bool curVal = GetBool(bCond.varName, bCond.expectedVal);
+            if (curVal != bCond.expectedVal) {
+                boolConditionMet = false;
+                break;
+            }
+        }
+        if (!boolConditionMet) continue;
+
+        if (!assign.requiredKeys.empty()) {
+            bool keyMet = true;
+            for (const auto& cond : assign.requiredKeys) {
+                if (cond.key >= 0) {
+                    bool down = false;
+                    if (cond.isMouseButton) {
+                        if (cond.isReleased) down = input.IsMouseReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsMousePressed(cond.key);
+                        else down = input.IsMouseDown(cond.key);
+                    } else {
+                        if (cond.isReleased) down = input.IsKeyReleased(cond.key);
+                        else if (cond.isPressed) down = input.IsKeyPressed(cond.key);
+                        else down = input.IsKeyDown(cond.key);
+                    }
+                    if (cond.isNegated) down = !down;
+                    if (!down) { keyMet = false; break; }
+                }
+            }
+            if (!keyMet) continue;
+        }
+
+        float val = assign.constantVal;
+        if (!assign.sourceVarName.empty()) {
+            val = GetFloat(assign.sourceVarName, assign.constantVal);
+        }
+        m_floatStorage[assign.varName] = val;
+        for (auto& prop : m_properties) {
+            if (prop.name == assign.varName || prop.displayName == assign.varName) {
+                if (prop.dataPtr && prop.type == BehaviourPropertyType::Float) {
+                    *reinterpret_cast<float*>(prop.dataPtr) = val;
                 }
             }
         }
@@ -3962,6 +4035,7 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
         }
 
         bool hasMinusBeforeVar = false;
+        bool hasMinusAfterVar = false;
         if (!outVar.empty()) {
             size_t varPos = s.find(outVar);
             if (varPos != std::string::npos) {
@@ -3976,50 +4050,81 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     }
                     if (onlyWs) hasMinusBeforeVar = true;
                 }
-            }
-        }
-
-        float sign = (isMouseNegated ^ hasMinusBeforeVar) ? -1.0f : 1.0f;
-        outMul = sign;
-
-        size_t numStart = std::string::npos;
-        for (size_t i = 0; i < s.size(); ++i) {
-            char c = s[i];
-            if (c == '-' || c == '+') {
-                if (i + 1 < s.size() && c == '-' && s[i + 1] == '>') continue; // skip ->
-                if (i + 1 < s.size() && (std::isdigit(static_cast<unsigned char>(s[i + 1])) || s[i + 1] == '.')) {
-                    numStart = i;
-                    break;
-                }
-            } else if (std::isdigit(static_cast<unsigned char>(c))) {
-                numStart = i;
-                break;
-            } else if (c == '.') {
-                if (i + 1 < s.size() && std::isdigit(static_cast<unsigned char>(s[i + 1]))) {
-                    numStart = i;
-                    break;
+                std::string afterVar = s.substr(varPos + outVar.size());
+                if (afterVar.find("*-") != std::string::npos || afterVar.find("* -") != std::string::npos) {
+                    hasMinusAfterVar = true;
                 }
             }
         }
-        if (numStart != std::string::npos) {
-            size_t numEnd = numStart;
-            if (s[numStart] == '-' || s[numStart] == '+') numEnd++;
-            while (numEnd < s.size() && (std::isdigit(s[numEnd]) || s[numEnd] == '.' || s[numEnd] == 'f' || s[numEnd] == 'F')) {
-                numEnd++;
+
+        if (outVar.empty()) {
+            // Direct substitution (e.g. 0.1f * -1, -0.1f, 0.1f, 10 * -1, 0, etc.)
+            std::string cExpr;
+            for (size_t i = 0; i < s.size(); ++i) {
+                char c = s[i];
+                if (std::isspace(static_cast<unsigned char>(c))) continue;
+                if ((c == 'f' || c == 'F') && i > 0 && (std::isdigit(static_cast<unsigned char>(s[i-1])) || s[i-1] == '.')) continue;
+                cExpr += c;
             }
-            std::string numStr = s.substr(numStart, numEnd - numStart);
-            if (!numStr.empty() && (numStr.back() == 'f' || numStr.back() == 'F')) numStr.pop_back();
-            try {
-                if (!numStr.empty() && numStr != "-" && numStr != "+") {
-                    float val = std::stof(numStr);
-                    if (outVar.empty()) {
-                        outConst = val;
-                        if (std::abs(val) > 1e-6f) outActive = true;
-                    } else {
-                        outMul = std::abs(val) * sign * (val < 0.0f ? -1.0f : 1.0f);
+            bool evalOk = false;
+            size_t mulPos = cExpr.find('*');
+            if (mulPos != std::string::npos && mulPos > 0 && mulPos + 1 < cExpr.size()) {
+                try {
+                    float leftNum = std::stof(cExpr.substr(0, mulPos));
+                    float rightNum = std::stof(cExpr.substr(mulPos + 1));
+                    outConst = leftNum * rightNum;
+                    evalOk = true;
+                } catch (...) {}
+            }
+            if (!evalOk) {
+                try {
+                    outConst = std::stof(cExpr);
+                    evalOk = true;
+                } catch (...) {}
+            }
+            if (evalOk && std::abs(outConst) > 1e-6f) {
+                outActive = true;
+            }
+        } else {
+            float mult = 1.0f;
+            size_t numStart = std::string::npos;
+            for (size_t i = 0; i < s.size(); ++i) {
+                char c = s[i];
+                if (c == '-' || c == '+') {
+                    if (i + 1 < s.size() && c == '-' && s[i + 1] == '>') continue;
+                    if (i + 1 < s.size() && (std::isdigit(static_cast<unsigned char>(s[i + 1])) || s[i + 1] == '.')) {
+                        numStart = i;
+                        break;
+                    }
+                } else if (std::isdigit(static_cast<unsigned char>(c))) {
+                    numStart = i;
+                    break;
+                } else if (c == '.') {
+                    if (i + 1 < s.size() && std::isdigit(static_cast<unsigned char>(s[i + 1]))) {
+                        numStart = i;
+                        break;
                     }
                 }
-            } catch (...) {}
+            }
+            if (numStart != std::string::npos) {
+                size_t numEnd = numStart;
+                if (s[numStart] == '-' || s[numStart] == '+') numEnd++;
+                while (numEnd < s.size() && (std::isdigit(s[numEnd]) || s[numEnd] == '.' || s[numEnd] == 'f' || s[numEnd] == 'F')) {
+                    numEnd++;
+                }
+                std::string numStr = s.substr(numStart, numEnd - numStart);
+                if (!numStr.empty() && (numStr.back() == 'f' || numStr.back() == 'F')) numStr.pop_back();
+                try {
+                    if (!numStr.empty() && numStr != "-" && numStr != "+") {
+                        mult = std::abs(std::stof(numStr));
+                    }
+                } catch (...) {}
+            }
+            if (hasMinusBeforeVar || hasMinusAfterVar) {
+                mult = -mult;
+            }
+            outMul = mult * (isMouseNegated ? -1.0f : 1.0f);
+            outActive = true;
         }
 
         if (!outVar.empty() || std::abs(outConst) > 1e-6f || outUseDt) {
@@ -4902,6 +5007,14 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                 act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
                 act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
             };
+            auto applyConditionsToNumericAssignment = [&](DynamicScriptBehaviour::DynamicNumericAssignment& act) {
+                for (const auto& sc : conditionStack) {
+                    act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
+                    act.requiredBools.insert(act.requiredBools.end(), sc.bools.begin(), sc.bools.end());
+                }
+                act.requiredKeys.insert(act.requiredKeys.end(), pendingSingleLineKeys.begin(), pendingSingleLineKeys.end());
+                act.requiredBools.insert(act.requiredBools.end(), pendingSingleLineBools.begin(), pendingSingleLineBools.end());
+            };
             auto applyConditionsToAction = [&](DynamicTransformAction& act) {
                 for (const auto& sc : conditionStack) {
                     act.requiredKeys.insert(act.requiredKeys.end(), sc.keys.begin(), sc.keys.end());
@@ -5201,6 +5314,12 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         bAssign.targetValue = (rightTrimLower == "true" || rightTrimLower == "1");
                         applyConditionsToBoolAssignment(bAssign);
                         m_boolAssignments.push_back(bAssign);
+                    } else {
+                        DynamicScriptBehaviour::DynamicNumericAssignment nAssign;
+                        nAssign.varName = varName;
+                        nAssign.sourceVarName = rightTrim;
+                        applyConditionsToNumericAssignment(nAssign);
+                        m_numericAssignments.push_back(nAssign);
                     }
                 }
             }

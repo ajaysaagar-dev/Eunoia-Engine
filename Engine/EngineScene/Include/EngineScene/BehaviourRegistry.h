@@ -87,6 +87,7 @@ public:
         clone->m_uiActions = m_uiActions;
         clone->m_lineTraceActions = m_lineTraceActions;
         clone->m_boolAssignments = m_boolAssignments;
+        clone->m_numericAssignments = m_numericAssignments;
         clone->m_methods = m_methods;
         clone->m_properties = m_properties;
         for (auto& p : clone->m_properties) {
@@ -361,6 +362,15 @@ public:
         std::vector<DynamicBoolCondition> requiredBools;
     };
     std::vector<DynamicBoolAssignment> m_boolAssignments;
+
+    struct DynamicNumericAssignment {
+        std::string varName;
+        std::string sourceVarName;
+        float constantVal = 0.0f;
+        std::vector<DynamicKeyCondition> requiredKeys;
+        std::vector<DynamicBoolCondition> requiredBools;
+    };
+    std::vector<DynamicNumericAssignment> m_numericAssignments;
 
     struct DynamicAnimatorAction {
         enum class ActionType { SetBoolean, SetFloat, SetInteger, SetString };
