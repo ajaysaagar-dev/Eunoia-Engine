@@ -129,12 +129,18 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
                 currCoord.y = AnimationBlend::SmoothDamp(currCoord.y, valY, deltaTime, stY);
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
                 bIt->second->EvaluatePose(currCoord.x, currCoord.y, normTime, skeleton, m_loadedClips, outPose);
+                if (state->rootMotion) {
+                    ApplyRootMotionInPlace(outPose, skeleton);
+                }
                 return true;
             }
         } else if (!state->clipPath.empty()) {
             auto it = m_loadedClips.find(state->clipPath);
             if (it != m_loadedClips.end() && it->second) {
                 it->second->SamplePose(timeInState, skeleton, outPose, state->loop);
+                if (state->rootMotion) {
+                    ApplyRootMotionInPlace(outPose, skeleton);
+                }
                 return true;
             }
         }
@@ -776,6 +782,9 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
         } else {
             clipSub = s.clipPath.empty() ? "(No Clip)" : std::filesystem::path(s.clipPath).stem().string();
         }
+        if (s.rootMotion) {
+            clipSub += " [RootMotion]";
+        }
         ImVec2 clipSize = ImGui::CalcTextSize(clipSub.c_str());
         ImVec2 clipPos(nPos.x + (nodeWidth - clipSize.x) * 0.5f, nPos.y + 34.0f * m_canvasZoom);
         dl->AddText(clipPos, s.isBlendSpace ? IM_COL32(180, 130, 255, 255) : IM_COL32(160, 160, 160, 255), clipSub.c_str());
@@ -891,6 +900,10 @@ void AnimatorGraphEditor::RenderCanvas(const ImVec2& pos, const ImVec2& size) {
                 for (auto& s : m_graph->states) s.isEntry = false;
                 node->isEntry = true;
                 m_graph->entryStateId = node->id;
+                m_isDirty = true;
+            }
+            if (ImGui::MenuItem("Root Motion (In-Place)", nullptr, node->rootMotion)) {
+                node->rootMotion = !node->rootMotion;
                 m_isDirty = true;
             }
             if (ImGui::MenuItem("Delete State")) {
@@ -1318,6 +1331,14 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
                 m_isDirty = true;
             }
 
+            // Root Motion (Default Off)
+            if (ImGui::Checkbox("Root Motion", &node->rootMotion)) {
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Play animation in one place (lock root horizontal translation)");
+            }
+
             // Smoothing Time overrides for this node
             ImGui::Spacing();
             ImGui::Text("X Axis Smoothing (s):");
@@ -1391,6 +1412,14 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
             // Looping
             if (ImGui::Checkbox("Looping", &node->loop)) {
                 m_isDirty = true;
+            }
+
+            // Root Motion (Default Off)
+            if (ImGui::Checkbox("Root Motion", &node->rootMotion)) {
+                m_isDirty = true;
+            }
+            if (ImGui::IsItemHovered()) {
+                ImGui::SetTooltip("Play animation in one place (lock root horizontal translation)");
             }
 
             // Is Entry / Begin state
