@@ -5140,6 +5140,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
             }
                         if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                popupTargetVirtualDir = currentVirtualDir;
                 showNewLevelAnimationPopup = true;
                 snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
             }
@@ -11610,9 +11611,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Content Browser", &showBottomDrawer, flags)) {
         // Tab Header buttons (Matching SVG Blueprint)
-        if (bottomDrawerTab > 1) bottomDrawerTab = 0;
+        if (bottomDrawerTab > 2) bottomDrawerTab = 0;
         bool isContentTab = (bottomDrawerTab == 0);
-        bool isLogTab     = (bottomDrawerTab == 1);
+        bool isAnimTab    = (bottomDrawerTab == 1);
+        bool isLogTab     = (bottomDrawerTab == 2);
 
         const ImVec4 cbAccentBlue  = ImVec4(0.000f, 0.400f, 1.000f, 1.0f); // #0066ff
         const ImVec4 accentBlue    = cbAccentBlue;
@@ -11628,9 +11630,15 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
         ImGui::PopStyleColor(2);
 
         ImGui::SameLine(0.0f, 4.0f * uiScale);
+        ImGui::PushStyleColor(ImGuiCol_Button, isAnimTab ? cbAccentBlue : cbInactiveTab);
+        ImGui::PushStyleColor(ImGuiCol_Text, isAnimTab ? cbTextWhite : cbTextMuted);
+        if (ImGui::Button("Animation", ImVec2(75.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
+        ImGui::PopStyleColor(2);
+
+        ImGui::SameLine(0.0f, 4.0f * uiScale);
         ImGui::PushStyleColor(ImGuiCol_Button, isLogTab ? cbAccentBlue : cbInactiveTab);
         ImGui::PushStyleColor(ImGuiCol_Text, isLogTab ? cbTextWhite : cbTextMuted);
-        if (ImGui::Button("Output Logs", ImVec2(80.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
+        if (ImGui::Button("Output Logs", ImVec2(80.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 2;
         ImGui::PopStyleColor(2);
 
         float collapseW = 85.0f * uiScale;
@@ -11748,6 +11756,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewMaterialPopup = true;
                         snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
+                    }
+                    if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewLevelAnimationPopup = true;
+                        snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                     }
                     if (ImGui::MenuItem("New Behavior (.eubeh)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
@@ -12852,6 +12865,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewMaterialPopup = true;
                             snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                         }
+                        if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewLevelAnimationPopup = true;
+                            snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
+                        }
                         if (ImGui::MenuItem("New Behaviour Script")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
@@ -13261,14 +13279,6 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     std::filesystem::path fullNb = contentRootPath / item.meta.sourcePath;
                                     OpenNodeBehaviourEditor(fullNb.string());
                                     AddLog("LogContent", "Opened Node Behaviour: " + item.meta.objectName, 2);
-                                } else if (item.meta.type == AssetType::AnimationBlend || item.meta.sourcePath.find(".eblend") != std::string::npos) {
-                                    std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
-                                    OpenAnimationBlendEditor(fullBlend.string());
-                                } else if (item.meta.type == AssetType::LevelAnimation || item.meta.sourcePath.find(".elanim") != std::string::npos) {
-                                    std::filesystem::path fullAnim = contentRootPath / item.meta.sourcePath;
-                                    OpenLevelAnimationEditor(fullAnim.string());
-                                    AddLog("LogLevelAnimation", "Opened Level Animation: " + item.meta.objectName, 2);
-                                    AddLog("LogContent", "Opened Animation Blend: " + item.meta.objectName, 2);
                                 } else if (item.meta.type == AssetType::AnimatorGraph || item.meta.sourcePath.find(".eanimator") != std::string::npos || item.meta.sourcePath.find(".animator") != std::string::npos) {
                                     std::filesystem::path fullAg = contentRootPath / item.meta.sourcePath;
                                     OpenAnimatorGraphEditor(fullAg.string());
@@ -13395,6 +13405,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewMaterialPopup = true;
                                     snprintf(newMaterialNameBuf, sizeof(newMaterialNameBuf), "M_NewMaterial");
                                 }
+                                if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewLevelAnimationPopup = true;
+                                    snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
+                                }
                                 if (ImGui::MenuItem("New Behaviour Script")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
@@ -13516,10 +13531,14 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open in Animation Blend Editor")) {
                                         std::filesystem::path fullBlend = contentRootPath / item.meta.sourcePath;
                                         OpenAnimationBlendEditor(fullBlend.string());
-                                } else if (item.meta.type == AssetType::LevelAnimation || item.meta.sourcePath.find(".elanim") != std::string::npos) {
-                                    std::filesystem::path fullAnim = contentRootPath / item.meta.sourcePath;
-                                    OpenLevelAnimationEditor(fullAnim.string());
-                                    AddLog("LogLevelAnimation", "Opened Level Animation: " + item.meta.objectName, 2);
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::LevelAnimation || item.meta.sourcePath.find(".elanim") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Animation Timeline")) {
+                                        std::filesystem::path fullAnim = contentRootPath / item.meta.sourcePath;
+                                        OpenLevelAnimationEditor(fullAnim.string());
+                                        AddLog("LogLevelAnimation", "Opened Level Animation: " + item.meta.objectName, 2);
                                     }
                                     ImGui::Separator();
                                 }
@@ -13728,6 +13747,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 case AssetType::Project:         iconTag = "PROJ";  accentCol = IM_COL32(255, 204, 0, 255);   break; // Gold
                                 case AssetType::AnimationBlend:  iconTag = "BLEND"; accentCol = IM_COL32(160, 100, 240, 255); break; // Purple
                                 case AssetType::AnimatorGraph:   iconTag = "AG";    accentCol = IM_COL32(0, 220, 255, 255);    break; // Cyan
+                                case AssetType::LevelAnimation:  iconTag = "L-ANIM"; accentCol = IM_COL32(255, 120, 50, 255); break; // Orange
                                 default:                         iconTag = "FILE";  accentCol = IM_COL32(153, 153, 153, 255); break;
                             }
                         }
@@ -13807,6 +13827,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 snprintf(newAnimatorGraphNameBuf, sizeof(newAnimatorGraphNameBuf), "AG_NewAnimator");
             }
                         if (ImGui::MenuItem("New Level Animation (.elanim)...")) {
+                popupTargetVirtualDir = currentVirtualDir;
                 showNewLevelAnimationPopup = true;
                 snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
             }
@@ -13820,6 +13841,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
                     }
                     if (ImGui::BeginMenu("Create")) {
+                        if (ImGui::MenuItem("Level Animation (.elanim)")) {
+                            popupTargetVirtualDir = currentVirtualDir;
+                            showNewLevelAnimationPopup = true;
+                            snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
+                        }
                         if (ImGui::MenuItem("Animator Graph (.eanimator)")) {
                             popupTargetVirtualDir = currentVirtualDir;
                             showNewAnimatorGraphPopup = true;
@@ -13933,6 +13959,10 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 ImGui::EndChild();
             }
             else if (bottomDrawerTab == 1) {
+                ImVec2 avail = ImGui::GetContentRegionAvail();
+                Eunoia::LevelAnimationEditor::Get().RenderTimeline(scene, ImGui::GetCursorScreenPos(), avail);
+            }
+            else if (bottomDrawerTab == 2) {
                 // Filter toolbar matching Old Eunoia Engine
                 if (ImGui::Button("Clear")) {
                     logs.clear();
