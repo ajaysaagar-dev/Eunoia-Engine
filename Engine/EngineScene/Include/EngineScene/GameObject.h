@@ -1279,50 +1279,10 @@ struct GameObject {
         else if (type == PrimitiveType::Pyramid) { params.width = 1.0f; params.depth = 1.0f; params.height = 1.2f; params.sides = 4; }
         else if (type == PrimitiveType::Prism) { params.radius = 0.6f; params.height = 1.2f; params.sides = 3; }
 
-        // Initialize default modifiers (by default respective shape added; 3D models and lights/cameras have NO modifiers by default)
+        // By default, newly created meshes, primitives, imported meshes, lights, and cameras have NO colliders
         modifiers.clear();
-        if (!IsLightPrimitive(type) && !IsCameraPrimitive(type) && type != PrimitiveType::Empty && type != PrimitiveType::UserInterface && type != PrimitiveType::ImportedMesh && !isImportedMesh) {
-            CollisionModifier mod;
-            if (type == PrimitiveType::Sphere || type == PrimitiveType::UVSphere || type == PrimitiveType::Icosphere) {
-                mod.name = "Sphere Collision";
-                mod.shapeType = CollisionShapeType::Sphere;
-                mod.radius = params.radius;
-            } else if (type == PrimitiveType::Capsule) {
-                mod.name = "Capsule Collision";
-                mod.shapeType = CollisionShapeType::Capsule;
-                mod.radius = params.radius;
-                mod.height = params.height;
-            } else if (type == PrimitiveType::Cylinder) {
-                mod.name = "Cylinder Collision";
-                mod.shapeType = CollisionShapeType::Cylinder;
-                mod.radius = params.radius;
-                mod.height = params.height;
-            } else if (type == PrimitiveType::Cone) {
-                mod.name = "Cone Collision";
-                mod.shapeType = CollisionShapeType::Cone;
-                mod.radius = params.radius;
-                mod.height = params.height;
-            } else if (type == PrimitiveType::Plane || type == PrimitiveType::Quad) {
-                mod.name = "Plane Collision";
-                mod.shapeType = CollisionShapeType::Plane;
-                mod.planeSize = glm::vec2(params.width, params.depth > 0.0f ? params.depth : params.height);
-            } else if (type == PrimitiveType::WaterBody) {
-                mod.name = "Plane Collision";
-                mod.shapeType = CollisionShapeType::Plane;
-                mod.planeSize = glm::vec2(water.width, water.length);
-                mod.isTrigger = true;
-            } else {
-                mod.name = "Box Collision";
-                mod.shapeType = CollisionShapeType::Box;
-                mod.boxExtents = glm::vec3(params.width * 0.5f, params.height * 0.5f, params.depth * 0.5f);
-            }
-            modifiers.push_back(mod);
-            collision = mod;
-        } else {
-            collision.enabled = false;
-            collision.shapeType = CollisionShapeType::None;
-        }
-
+        collision.enabled = false;
+        collision.shapeType = CollisionShapeType::None;
         RebuildMesh();
     }
 

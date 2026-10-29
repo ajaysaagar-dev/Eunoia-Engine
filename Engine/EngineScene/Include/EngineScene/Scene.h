@@ -2369,9 +2369,7 @@ struct RenderBatch {
                 !selObj->isLight && !IsLightPrimitive(selObj->type) &&
                 !selObj->isUserInterface && selObj->type != PrimitiveType::UserInterface)
             {
-                if (selObj->modifiers.empty()) {
-                    Collisions::CollisionSystem::Get().SetupDefaultModifiers(*selObj);
-                }
+
                 if (!selObj->modifiers.empty()) {
                     for (auto& mod : selObj->modifiers) {
                         mod.showWireframe = true;
@@ -2399,9 +2397,7 @@ struct RenderBatch {
                 if (obj.isCamera || IsCameraPrimitive(obj.type) || obj.isLight || IsLightPrimitive(obj.type) || obj.isUserInterface || obj.type == PrimitiveType::UserInterface) continue;
                 if (!obj.visible && obj.modifiers.empty()) continue;
                 if (obj.type == PrimitiveType::Empty && obj.modifiers.empty()) continue;
-                if (obj.modifiers.empty()) {
-                    Collisions::CollisionSystem::Get().SetupDefaultModifiers(obj);
-                }
+
                 if (!obj.modifiers.empty()) {
                     Collisions::CollisionSystem::Get().AppendCollisionWireframe(outVertices, outIndices, obj, cameraPos, GetWorldMatrix(obj));
                 }
