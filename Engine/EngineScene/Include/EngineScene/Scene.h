@@ -2845,16 +2845,29 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
                 }
             }
             if (bIt != loadedBlends.end() && bIt->second) {
-                float valX = 0.0f;
-                float valY = 0.0f;
+                const auto& blend = bIt->second;
+                float targetX = 0.0f;
+                float targetY = 0.0f;
                 if (instance) {
                     auto xIt = instance->runtimeParams.find(state->blendXParam);
-                    if (xIt != instance->runtimeParams.end()) valX = xIt->second.floatValue;
+                    if (xIt != instance->runtimeParams.end()) targetX = xIt->second.floatValue;
                     auto yIt = instance->runtimeParams.find(state->blendYParam);
-                    if (yIt != instance->runtimeParams.end()) valY = yIt->second.floatValue;
+                    if (yIt != instance->runtimeParams.end()) targetY = yIt->second.floatValue;
                 }
+
+                auto coordIt = smoothedBlendCoords.find(state->id);
+                if (coordIt == smoothedBlendCoords.end()) {
+                    smoothedBlendCoords[state->id] = glm::vec2(targetX, targetY);
+                    coordIt = smoothedBlendCoords.find(state->id);
+                } else {
+                    float stX = (blend->smoothTimeX > 0.0001f) ? blend->smoothTimeX : blend->smoothingTime;
+                    float stY = (blend->smoothTimeY > 0.0001f) ? blend->smoothTimeY : blend->smoothingTime;
+                    coordIt->second.x = AnimationBlend::SmoothDamp(coordIt->second.x, targetX, dt, stX);
+                    coordIt->second.y = AnimationBlend::SmoothDamp(coordIt->second.y, targetY, dt, stY);
+                }
+
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
-                bIt->second->EvaluatePose(valX, valY, normTime, skeleton, loadedClips, outPose);
+                blend->EvaluatePose(coordIt->second.x, coordIt->second.y, normTime, skeleton, loadedClips, outPose);
                 return true;
             }
         } else if (!state->clipPath.empty()) {

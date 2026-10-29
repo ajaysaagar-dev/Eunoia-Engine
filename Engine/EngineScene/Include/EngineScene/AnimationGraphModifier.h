@@ -25,6 +25,7 @@ struct AnimationGraphModifier {
     std::unordered_map<std::string, std::shared_ptr<AnimationBlend>> loadedBlends;
     std::shared_ptr<SkeletalMesh> skeletalMesh;
     std::string cachedMeshPath = "";
+    std::unordered_map<uint32_t, glm::vec2> smoothedBlendCoords;
 
     AnimationGraphModifier() = default;
 
@@ -38,6 +39,7 @@ struct AnimationGraphModifier {
         skeletalMesh = other.skeletalMesh;
         loadedClips = other.loadedClips;
         loadedBlends = other.loadedBlends;
+        smoothedBlendCoords = other.smoothedBlendCoords;
         if (!graphPath.empty()) {
             LoadGraph(graphPath);
         }
@@ -54,6 +56,7 @@ struct AnimationGraphModifier {
             skeletalMesh = other.skeletalMesh;
             loadedClips = other.loadedClips;
             loadedBlends = other.loadedBlends;
+            smoothedBlendCoords = other.smoothedBlendCoords;
             if (!graphPath.empty()) {
                 LoadGraph(graphPath);
             } else {
