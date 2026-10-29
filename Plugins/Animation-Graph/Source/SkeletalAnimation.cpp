@@ -216,7 +216,14 @@ std::shared_ptr<SkeletalMesh> SkeletalAnimationManager::LoadSkeletalMesh(const s
 
                                 if (uMesh->vertex_uv.exists) {
                                     ufbx_vec2 uv = ufbx_get_vertex_vec2(&uMesh->vertex_uv, index);
-                                    sv.uv = glm::vec2((float)uv.x, (float)uv.y);
+                                    sv.uv = glm::vec2((float)uv.x, 1.0f - (float)uv.y);
+                                }
+
+                                if (uMesh->vertex_tangent.exists) {
+                                    ufbx_vec3 tg = ufbx_get_vertex_vec3(&uMesh->vertex_tangent, index);
+                                    sv.tangent = glm::vec4(UfbxToGlmVec3(tg), 1.0f);
+                                } else {
+                                    sv.tangent = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
                                 }
 
                                 // Extract skin weights
