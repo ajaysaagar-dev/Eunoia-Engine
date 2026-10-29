@@ -122,8 +122,13 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
                     auto yIt = m_instance->runtimeParams.find(state->blendYParam);
                     if (yIt != m_instance->runtimeParams.end()) valY = yIt->second.floatValue;
                 }
+                auto& currCoord = m_smoothedBlendCoords[state->id];
+                float stX = (bIt->second->smoothTimeX > 0.0f) ? bIt->second->smoothTimeX : bIt->second->smoothingTime;
+                float stY = (bIt->second->smoothTimeY > 0.0f) ? bIt->second->smoothTimeY : bIt->second->smoothingTime;
+                currCoord.x = AnimationBlend::SmoothDamp(currCoord.x, valX, deltaTime, stX);
+                currCoord.y = AnimationBlend::SmoothDamp(currCoord.y, valY, deltaTime, stY);
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
-                bIt->second->EvaluatePose(valX, valY, normTime, skeleton, m_loadedClips, outPose);
+                bIt->second->EvaluatePose(currCoord.x, currCoord.y, normTime, skeleton, m_loadedClips, outPose);
                 return true;
             }
         } else if (!state->clipPath.empty()) {

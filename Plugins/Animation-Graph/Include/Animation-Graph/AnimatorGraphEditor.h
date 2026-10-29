@@ -35,6 +35,7 @@ private:
     std::shared_ptr<SkeletalMesh> m_previewMesh;
     std::unordered_map<std::string, std::shared_ptr<AnimationClip>> m_loadedClips;
     std::unordered_map<std::string, std::shared_ptr<AnimationBlend>> m_loadedBlends;
+    std::unordered_map<uint32_t, glm::vec2> m_smoothedBlendCoords;
 
     bool m_isDirty = false;
     float m_saveNotificationTimer = 0.0f;
