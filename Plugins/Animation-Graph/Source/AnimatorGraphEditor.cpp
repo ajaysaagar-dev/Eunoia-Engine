@@ -123,8 +123,8 @@ void AnimatorGraphEditor::UpdateSimulation(float deltaTime) {
                     if (yIt != m_instance->runtimeParams.end()) valY = yIt->second.floatValue;
                 }
                 auto& currCoord = m_smoothedBlendCoords[state->id];
-                float stX = (bIt->second->smoothTimeX > 0.0f) ? bIt->second->smoothTimeX : bIt->second->smoothingTime;
-                float stY = (bIt->second->smoothTimeY > 0.0f) ? bIt->second->smoothTimeY : bIt->second->smoothingTime;
+                float stX = (state->smoothTimeX > 0.0001f) ? state->smoothTimeX : ((m_graph && m_graph->smoothTimeX > 0.0001f) ? m_graph->smoothTimeX : ((bIt->second->smoothTimeX > 0.0f) ? bIt->second->smoothTimeX : bIt->second->smoothingTime));
+                float stY = (state->smoothTimeY > 0.0001f) ? state->smoothTimeY : ((m_graph && m_graph->smoothTimeY > 0.0001f) ? m_graph->smoothTimeY : ((bIt->second->smoothTimeY > 0.0f) ? bIt->second->smoothTimeY : bIt->second->smoothingTime));
                 currCoord.x = AnimationBlend::SmoothDamp(currCoord.x, valX, deltaTime, stX);
                 currCoord.y = AnimationBlend::SmoothDamp(currCoord.y, valY, deltaTime, stY);
                 float normTime = std::fmod(timeInState * 0.8f, 1.0f);
@@ -511,6 +511,34 @@ void AnimatorGraphEditor::RenderLeftSidebar(const ImVec2& pos, const ImVec2& siz
             m_graph->RemoveParameter(paramToDelete);
             m_isDirty = true;
         }
+
+        // 4. Smoothing & Interpolation for Blend Axes (X & Y individually)
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+        ImGui::TextColored(ImVec4(0.0f, 0.85f, 1.0f, 1.0f), "SMOOTHING & INTERPOLATION");
+        ImGui::TextDisabled("Set X and Y blend smoothing times individually:");
+
+        ImGui::Text("Smoothing Time (s):");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##AGMasterSmoothTime", &m_graph->smoothingTime, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+            m_isDirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Default master blend smoothing time");
+
+        ImGui::Text("X Smoothing Time (s):");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##AGSmoothTimeX", &m_graph->smoothTimeX, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+            m_isDirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Individual smoothing / damping time for changing X values");
+
+        ImGui::Text("Y Smoothing Time (s):");
+        ImGui::SetNextItemWidth(-1);
+        if (ImGui::DragFloat("##AGSmoothTimeY", &m_graph->smoothTimeY, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+            m_isDirty = true;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Individual smoothing / damping time for changing Y values");
     }
     ImGui::EndChild();
 
@@ -1287,6 +1315,17 @@ void AnimatorGraphEditor::RenderProperties(const ImVec2& pos, const ImVec2& size
             // Playback Speed
             ImGui::Spacing();
             if (ImGui::SliderFloat("Speed Multiplier", &node->speed, 0.1f, 5.0f, "%.2fx")) {
+                m_isDirty = true;
+            }
+
+            // Smoothing Time overrides for this node
+            ImGui::Spacing();
+            ImGui::Text("X Axis Smoothing (s):");
+            if (ImGui::DragFloat("##NodeSmoothX", &node->smoothTimeX, 0.01f, 0.0f, 5.0f, "%.2f s")) {
+                m_isDirty = true;
+            }
+            ImGui::Text("Y Axis Smoothing (s):");
+            if (ImGui::DragFloat("##NodeSmoothY", &node->smoothTimeY, 0.01f, 0.0f, 5.0f, "%.2f s")) {
                 m_isDirty = true;
             }
 

@@ -180,6 +180,8 @@ struct AnimationStateNode {
     std::string blendSpacePath = "";
     std::string blendXParam = "";
     std::string blendYParam = "";
+    float smoothTimeX = 0.25f;
+    float smoothTimeY = 0.25f;
     std::string clipPath = "";
     float speed = 1.0f;
     bool loop = true;
@@ -197,6 +199,9 @@ public:
     std::string skeletonMeshPath = "";
     uint32_t entryStateId = 0;
     uint32_t nextId = 1;
+    float smoothingTime = 0.25f;
+    float smoothTimeX = 0.25f;
+    float smoothTimeY = 0.25f;
 
     std::vector<AnimatorParam> parameters;
     std::vector<AnimationStateNode> states;
@@ -349,6 +354,9 @@ public:
         out << "  \"skeletonMesh\": \"" << skeletonMeshPath << "\",\n";
         out << "  \"entryStateId\": " << entryStateId << ",\n";
         out << "  \"nextId\": " << nextId << ",\n";
+        out << "  \"smoothingTime\": " << smoothingTime << ",\n";
+        out << "  \"smoothTimeX\": " << smoothTimeX << ",\n";
+        out << "  \"smoothTimeY\": " << smoothTimeY << ",\n";
 
         // Parameters
         out << "  \"parameters\": [\n";
@@ -377,6 +385,8 @@ public:
             out << "      \"blendSpacePath\": \"" << s.blendSpacePath << "\",\n";
             out << "      \"blendXParam\": \"" << s.blendXParam << "\",\n";
             out << "      \"blendYParam\": \"" << s.blendYParam << "\",\n";
+            out << "      \"smoothTimeX\": " << s.smoothTimeX << ",\n";
+            out << "      \"smoothTimeY\": " << s.smoothTimeY << ",\n";
             out << "      \"clipPath\": \"" << s.clipPath << "\",\n";
             out << "      \"speed\": " << s.speed << ",\n";
             out << "      \"loop\": " << (s.loop ? "true" : "false") << ",\n";
@@ -467,6 +477,9 @@ public:
         skeletonMeshPath = extractString(content, "skeletonMesh");
         entryStateId = (uint32_t)extractNumber(content, "entryStateId", 1);
         nextId = (uint32_t)extractNumber(content, "nextId", 1);
+        smoothingTime = (float)extractNumber(content, "smoothingTime", 0.25);
+        smoothTimeX = (float)extractNumber(content, "smoothTimeX", 0.25);
+        smoothTimeY = (float)extractNumber(content, "smoothTimeY", 0.25);
 
         // Parse Parameters
         size_t paramsPos = content.find("\"parameters\":");
@@ -515,6 +528,8 @@ public:
                     s.blendSpacePath = extractString(objStr, "blendSpacePath");
                     s.blendXParam = extractString(objStr, "blendXParam");
                     s.blendYParam = extractString(objStr, "blendYParam");
+                    s.smoothTimeX = (float)extractNumber(objStr, "smoothTimeX", 0.25);
+                    s.smoothTimeY = (float)extractNumber(objStr, "smoothTimeY", 0.25);
                     s.clipPath = extractString(objStr, "clipPath");
                     s.speed = (float)extractNumber(objStr, "speed", 1.0);
                     s.loop = extractBool(objStr, "loop", true);
