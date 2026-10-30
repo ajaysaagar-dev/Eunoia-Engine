@@ -1148,7 +1148,7 @@ Options:
             string runBat = Path.Combine(s_outputDir, "Run.bat");
             if (!File.Exists(runBat))
             {
-                File.WriteAllText(runBat, "@echo off\r\ncd /d \"%~dp0\"\r\necho [INFO] Starting Eunoia-Editor [DirectX 12]...\r\nstart \"\" \"Eunoia-Editor.exe\"\r\n");
+                File.WriteAllText(runBat, "@echo off\r\ncd /d \"%~dp0\"\r\necho [INFO] Starting Eunoia-Editor [DirectX 12]...\r\nstart \"\" \"Eunoia-Editor.exe\" %*\r\n");
             }
 
             PrintSuccess("Engine distribution packaged into: " + s_outputDir);
