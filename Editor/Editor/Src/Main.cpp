@@ -406,7 +406,7 @@ static DX12GpuTexture g_fallbackAO;
 static DX12GpuTexture g_fallbackMissing;
 static DX12GpuTexture g_fallbackBlack;  // Used as no-op lightmap when no bake is active
 
-// Lightmap SRV (t9) – filled by the light baking system or the black fallback
+// Lightmap SRV (t9) â€“ filled by the light baking system or the black fallback
 static D3D12_CPU_DESCRIPTOR_HANDLE g_lightmapSrvCpuHandle = {};
 static D3D12_GPU_DESCRIPTOR_HANDLE g_lightmapSrvGpuHandle = {};
 static bool g_lightmapSrvInHeap = false; // true once the dedicated slot has been written
@@ -523,7 +523,7 @@ bool TryAllocSrvDescriptors(UINT count, UINT& outBaseIndex)
 			std::cerr << "[SRV HEAP] Exhausted (" << SRV_HEAP_CAPACITY
 			          << " descriptors). Further textures/materials will use fallbacks.\n";
 			g_engineUI.AddLog("LogRecovery",
-				"SRV descriptor heap is full — new textures/materials will show as fallback until you restart or free assets.", 2);
+				"SRV descriptor heap is full â€” new textures/materials will show as fallback until you restart or free assets.", 2);
 			warned = true;
 		}
 		return false;
@@ -7922,7 +7922,7 @@ bool RecoverD3D12Device(HWND hwnd)
 	g_deviceLost = false;
 	std::cerr << "[RECOVERY] D3D12 device successfully recovered and state restored!\n";
 	EngineLogger::Get().LogAction("DEVICE_RECOVERED", "DirectX12", "GPU device recovered from reset. Session restored to exact condition.");
-	g_engineUI.AddLog("LogRecovery", "DirectX 12 graphics device successfully recovered — resumed exact session state.", 0);
+	g_engineUI.AddLog("LogRecovery", "DirectX 12 graphics device successfully recovered â€” resumed exact session state.", 0);
 	return true;
 }
 
@@ -8329,17 +8329,21 @@ int main(int argc, char** argv)
 	ImGui::CreateContext();
 	ImGuiIO& io = ImGui::GetIO();
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
-	io.IniFilename = nullptr; // Prevent stale off-screen positions from overriding responsive layout
+	io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;  // Enable all panels to be dockable
+	io.IniFilename = "editor_layout.ini"; // Save docking layout across sessions
 
 	// Load friendly, high-DPI readable UI font (Segoe UI at 18.0px) with fast 1x oversample
 	ImFont* mainFont = nullptr;
 	ImFontConfig fontConfig;
 	fontConfig.OversampleH = 1;
-	fontConfig.OversampleV = 1;
-	if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
-		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 18.0f, &fontConfig);
+	// Try Inter font first (Spartan-style clean UI), then fall back to Segoe UI / Arial
+	const std::string interPath = "Resources/Fonts/Inter-Regular.ttf";
+	if (std::filesystem::exists(interPath)) {
+		mainFont = io.Fonts->AddFontFromFileTTF(interPath.c_str(), 15.0f, &fontConfig);
+	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\segoeui.ttf")) {
+		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\segoeui.ttf", 16.0f, &fontConfig);
 	} else if (std::filesystem::exists("C:\\Windows\\Fonts\\arial.ttf")) {
-		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 18.0f, &fontConfig);
+		mainFont = io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\arial.ttf", 16.0f, &fontConfig);
 	}
 
 	// Merge symbols from Segoe UI Symbol font for clean glyphs/icons
@@ -8511,7 +8515,7 @@ int main(int argc, char** argv)
 		ShowWindow(hwnd, SW_MAXIMIZE);
 		glfwShowWindow(g_window);
 		UpdateWindow(hwnd);
-		logStartupStage("EditorWindow", "Editor window opened maximized — startup complete");
+		logStartupStage("EditorWindow", "Editor window opened maximized â€” startup complete");
 	} else {
 		// Dedicated Standalone Game Mode:
 		// Drain background progressive loader until the startup level is completely loaded
