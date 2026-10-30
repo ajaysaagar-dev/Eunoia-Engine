@@ -1,7 +1,8 @@
-#include <Editor/EngineUI.h>
+﻿#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
+#include "imgui_internal.h"
 #include "ImGuizmo.h"
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -557,9 +558,7 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
     }
 
     // 1b. Copy Plugins Include headers (UI-System, Collisions, Physics, RayTrace, Save-System, etc.)
-    std::vector<std::string> pluginModules = {
-        "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water", "Node-Behaviour", "SFLOD"
-    };
+    std::vector<std::string> pluginModules = { "UISystem", "Collisions", "Physics", "RayTrace", "SaveSystem", "Water", "Node-Behaviour", "SFLOD", "Character-Mechanics", "Animation-Graph", "Level-Animation" };
     for (const auto& plug : pluginModules) {
         std::filesystem::path srcInc = engineRoot / "Plugins" / plug / "Include";
         if (!std::filesystem::exists(srcInc, ec)) {
@@ -732,7 +731,7 @@ EngineUI::EngineUI() {
     // Load recent projects list (needed by both standalone browser and in-editor browser)
     LoadRecentProjects();
 
-    // Project Browser is NOT shown on startup â€” the standalone window handles it before the editor opens
+    // Project Browser is NOT shown on startup ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the standalone window handles it before the editor opens
     showProjectBrowser = false;
 }
 
@@ -744,7 +743,7 @@ EngineUI::~EngineUI() {
 
 void EngineUI::InitWithProject(const std::filesystem::path& projectPath, Scene& scene, OrbitCamera& camera, bool isGameMode, const std::string& specificScenePath, const std::string& specificBinPath) {
     if (projectPath.empty()) {
-        // No project selected â€” show in-editor project browser as fallback if not game mode
+        // No project selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â show in-editor project browser as fallback if not game mode
         if (!isGameMode) {
             showProjectBrowser = true;
         }
@@ -1474,7 +1473,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
             // Title Header
             ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "EUNOIA ENGINE");
             ImGui::SameLine();
-            ImGui::TextDisabled("â€” Project Browser");
+            ImGui::TextDisabled("ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Project Browser");
             ImGui::Spacing();
             ImGui::TextWrapped("Select an existing project or create a new empty game project to get started.");
             ImGui::Spacing();
@@ -1835,7 +1834,7 @@ std::filesystem::path EngineUI::RunStandaloneProjectBrowser() {
         return {};
     }
 
-    // Project selected â€” clean up the project browser window and return directly.
+    // Project selected ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â clean up the project browser window and return directly.
     ImGui_ImplOpenGL3_Shutdown();
     ImGui_ImplGlfw_Shutdown();
     ImGui::DestroyContext(browserCtx);
@@ -2076,7 +2075,7 @@ void EngineUI::RenderSaveLevelModal() {
         if (isAtRoot) {
             ImGui::BeginDisabled();
         }
-        if (ImGui::Button(" ⬆ Up ")) {
+        if (ImGui::Button(" Ã¢Â¬â€  Up ")) {
             std::filesystem::path parent = saveLevelCurrentFolder.parent_path();
             std::string rel = std::filesystem::relative(parent, rootDir, ec).generic_string();
             if (!ec && rel.find("..") == std::string::npos && std::filesystem::exists(parent, ec)) {
@@ -2669,7 +2668,7 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
     }
 
     if (m_window) {
-        std::string winTitle = "Eunoia Engine â€” [" + activeProjectName + "]";
+        std::string winTitle = "Eunoia Engine ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â [" + activeProjectName + "]";
         glfwSetWindowTitle(m_window, winTitle.c_str());
     }
 
@@ -3304,99 +3303,113 @@ void EngineUI::SetupTheme() {
 
     ImGui::StyleColorsDark(&style);
 
-    // dev.md styling: subtle rounded corners on frames/inputs, crisp 1px borders
-    style.WindowRounding    = 0.0f;
-    style.ChildRounding     = 0.0f;
-    style.FrameRounding     = 3.0f;
-    style.PopupRounding     = 3.0f;
-    style.ScrollbarRounding = 3.0f;
-    style.GrabRounding      = 2.0f;
-    style.TabRounding       = 3.0f;
+    // Spartan-Engine command deck: graphite panels, crisp white readouts and electric cyan signal
+    style.WindowPadding        = ImVec2(10.0f, 8.0f);
+    style.FramePadding         = ImVec2(7.0f, 4.0f);
+    style.CellPadding          = ImVec2(7.0f, 4.0f);
+    style.ItemSpacing          = ImVec2(7.0f, 5.0f);
+    style.ItemInnerSpacing     = ImVec2(5.0f, 4.0f);
+    style.IndentSpacing        = 16.0f;
+    style.ScrollbarSize        = 8.0f;
+    style.GrabMinSize          = 8.0f;
 
-    style.WindowBorderSize  = 1.0f;
-    style.ChildBorderSize   = 1.0f;
-    style.FrameBorderSize   = 1.0f;
-    style.PopupBorderSize   = 1.0f;
-    style.TabBorderSize     = 1.0f;
+    // Border-free design with depth value separation (Spartan Engine style)
+    style.WindowBorderSize     = 0.0f;
+    style.ChildBorderSize      = 0.0f;
+    style.PopupBorderSize      = 1.0f;
+    style.FrameBorderSize      = 0.0f;
+    style.TabBorderSize        = 0.0f;
+    style.TabBarBorderSize     = 0.0f;
+    style.TabBarOverlineSize   = 2.0f;
 
-    style.WindowPadding     = ImVec2(6.0f, 6.0f);
-    style.FramePadding      = ImVec2(5.0f, 3.0f);
-    style.ItemSpacing       = ImVec2(6.0f, 4.0f);
-    style.ItemInnerSpacing  = ImVec2(4.0f, 4.0f);
-    style.ScrollbarSize     = 8.0f;
-    style.GrabMinSize       = 8.0f;
+    style.WindowRounding       = 4.0f;
+    style.ChildRounding        = 4.0f;
+    style.FrameRounding        = 3.0f;
+    style.PopupRounding        = 5.0f;
+    style.ScrollbarRounding    = 4.0f;
+    style.GrabRounding         = 3.0f;
+    style.TabRounding          = 4.0f;
+    style.DockingSeparatorSize = 2.0f;
 
-    // dev.md Tailwind Theme Palette
-    const ImVec4 obsidian      = ImVec4(0.000f, 0.000f, 0.000f, 1.00f); // #000000
-    const ImVec4 charcoal      = ImVec4(0.0353f, 0.0353f, 0.0431f, 1.00f); // #09090b
-    const ImVec4 panelSurface  = ImVec4(0.0706f, 0.0706f, 0.0784f, 1.00f); // #121214
-    const ImVec4 borderCol     = ImVec4(0.1216f, 0.1216f, 0.1373f, 1.00f); // #1f1f23
-    const ImVec4 borderHover   = ImVec4(0.1529f, 0.1529f, 0.1647f, 1.00f); // #27272a
-    const ImVec4 accentBlue    = ImVec4(0.000f, 0.400f, 1.000f, 1.00f); // #0066ff
-    const ImVec4 accentBlueHov = ImVec4(0.100f, 0.500f, 1.000f, 1.00f); // #1a75ff
-    const ImVec4 accentEmerald = ImVec4(0.0627f, 0.7255f, 0.5059f, 1.00f); // #10b981
-    const ImVec4 text100       = ImVec4(0.957f, 0.957f, 0.961f, 1.00f); // #f4f4f5 (gray-100)
-    const ImVec4 text200       = ImVec4(0.894f, 0.894f, 0.906f, 1.00f); // #e4e4e7 (gray-200)
-    const ImVec4 text300       = ImVec4(0.831f, 0.831f, 0.847f, 1.00f); // #d4d4d8 (gray-300)
-    const ImVec4 text400       = ImVec4(0.631f, 0.631f, 0.667f, 1.00f); // #a1a1aa (gray-400)
-    const ImVec4 text500       = ImVec4(0.443f, 0.443f, 0.478f, 1.00f); // #71717a (gray-500)
+    // Spartan palette
+    const ImVec4 bg_color_1     = ImVec4(0.071f, 0.075f, 0.086f, 1.0f); // Graphite canvas #121316
+    const ImVec4 bg_color_2     = ImVec4(0.125f, 0.133f, 0.153f, 1.0f); // Surface #202227
+    const ImVec4 h_color_1      = ImVec4(0.925f, 0.945f, 0.965f, 1.0f); // Crisp white text #ecf1f6
+    const ImVec4 h_color_2      = ImVec4(0.580f, 0.615f, 0.660f, 1.0f); // Muted text #949da8
+    const ImVec4 color_accent_1 = ImVec4(0.161f, 0.827f, 1.000f, 1.0f); // Electric cyan #29d3ff
+    const ImVec4 color_accent_2 = ImVec4(0.039f, 0.431f, 0.588f, 1.0f); // Deep cyan #0a6e96
 
-    colors[ImGuiCol_Text]                  = text100;
-    colors[ImGuiCol_TextDisabled]          = text500;
-    colors[ImGuiCol_WindowBg]              = charcoal;
-    colors[ImGuiCol_ChildBg]               = charcoal;
-    colors[ImGuiCol_PopupBg]               = panelSurface;
-    colors[ImGuiCol_Border]                = borderCol;
-    colors[ImGuiCol_BorderShadow]          = ImVec4(0.00f, 0.00f, 0.00f, 0.00f);
-    colors[ImGuiCol_FrameBg]               = obsidian;
-    colors[ImGuiCol_FrameBgHovered]        = panelSurface;
-    colors[ImGuiCol_FrameBgActive]         = borderCol;
-    colors[ImGuiCol_TitleBg]               = obsidian;
-    colors[ImGuiCol_TitleBgActive]         = obsidian;
-    colors[ImGuiCol_TitleBgCollapsed]      = obsidian;
-    colors[ImGuiCol_MenuBarBg]             = charcoal;
-    colors[ImGuiCol_ScrollbarBg]           = obsidian;
-    colors[ImGuiCol_ScrollbarGrab]         = borderCol;
-    colors[ImGuiCol_ScrollbarGrabHovered]  = borderHover;
-    colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(0.200f, 0.200f, 0.220f, 1.00f);
-    colors[ImGuiCol_CheckMark]             = accentBlue;
-    colors[ImGuiCol_SliderGrab]            = accentBlue;
-    colors[ImGuiCol_SliderGrabActive]      = accentBlueHov;
-    colors[ImGuiCol_Button]                = panelSurface;
-    colors[ImGuiCol_ButtonHovered]         = borderCol;
-    colors[ImGuiCol_ButtonActive]          = accentBlue;
-    colors[ImGuiCol_Header]                = panelSurface;
-    colors[ImGuiCol_HeaderHovered]         = borderCol;
-    colors[ImGuiCol_HeaderActive]          = accentBlue;
-    colors[ImGuiCol_Separator]             = borderCol;
-    colors[ImGuiCol_SeparatorHovered]      = accentBlue;
-    colors[ImGuiCol_SeparatorActive]       = accentBlue;
-    colors[ImGuiCol_ResizeGrip]            = ImVec4(0.00f, 0.40f, 1.00f, 0.25f);
-    colors[ImGuiCol_ResizeGripHovered]     = ImVec4(0.00f, 0.40f, 1.00f, 0.65f);
-    colors[ImGuiCol_ResizeGripActive]      = accentBlue;
-    colors[ImGuiCol_Tab]                   = obsidian;
-    colors[ImGuiCol_TabHovered]            = borderCol;
-    colors[ImGuiCol_TabActive]             = accentBlue;
-    colors[ImGuiCol_TabUnfocused]          = obsidian;
-    colors[ImGuiCol_TabUnfocusedActive]   = panelSurface;
-    colors[ImGuiCol_TableHeaderBg]         = panelSurface;
-    colors[ImGuiCol_TableBorderStrong]     = borderCol;
-    colors[ImGuiCol_TableBorderLight]      = borderCol;
-    colors[ImGuiCol_TableRowBg]            = charcoal;
-    colors[ImGuiCol_TableRowBgAlt]         = panelSurface;
-    colors[ImGuiCol_TextSelectedBg]        = ImVec4(0.00f, 0.40f, 1.00f, 0.35f);
-    colors[ImGuiCol_DragDropTarget]        = accentBlue;
-    colors[ImGuiCol_NavHighlight]          = accentBlue;
-    colors[ImGuiCol_NavWindowingHighlight] = text100;
-    colors[ImGuiCol_NavWindowingDimBg]     = ImVec4(0.00f, 0.00f, 0.00f, 0.60f);
-    colors[ImGuiCol_ModalWindowDimBg]      = ImVec4(0.00f, 0.00f, 0.00f, 0.75f);
+    auto lerpCol = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
+        return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
+    };
+    auto withAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
+
+    ImVec4 color_canvas         = bg_color_1;
+    ImVec4 color_canvas_deep    = lerpCol(bg_color_1, ImVec4(0, 0, 0, 1), 0.40f);
+    ImVec4 color_surface        = bg_color_2;
+    ImVec4 color_surface_hover  = lerpCol(bg_color_2, h_color_1, 0.07f);
+    ImVec4 color_text           = h_color_1;
+    ImVec4 color_text_muted     = h_color_2;
+    ImVec4 color_accent_dim     = withAlpha(color_accent_1, 0.13f);
+    ImVec4 color_accent_line    = withAlpha(color_accent_1, 0.32f);
+
+    colors[ImGuiCol_Text]                  = color_text;
+    colors[ImGuiCol_TextDisabled]          = color_text_muted;
+    colors[ImGuiCol_WindowBg]              = color_canvas;
+    colors[ImGuiCol_ChildBg]               = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_PopupBg]               = withAlpha(lerpCol(color_canvas, color_surface, 0.35f), 0.97f);
+    colors[ImGuiCol_Border]                = withAlpha(color_text, 0.06f);
+    colors[ImGuiCol_BorderShadow]          = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_FrameBg]               = color_canvas_deep;
+    colors[ImGuiCol_FrameBgHovered]        = lerpCol(color_canvas_deep, color_surface, 0.35f);
+    colors[ImGuiCol_FrameBgActive]         = lerpCol(color_canvas_deep, color_accent_2, 0.25f);
+    colors[ImGuiCol_TitleBg]               = color_canvas_deep;
+    colors[ImGuiCol_TitleBgActive]         = color_canvas_deep;
+    colors[ImGuiCol_TitleBgCollapsed]      = color_canvas_deep;
+    colors[ImGuiCol_MenuBarBg]             = lerpCol(color_canvas_deep, color_canvas, 0.55f);
+    colors[ImGuiCol_ScrollbarBg]           = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_ScrollbarGrab]         = withAlpha(color_text, 0.10f);
+    colors[ImGuiCol_ScrollbarGrabHovered]  = withAlpha(color_text, 0.22f);
+    colors[ImGuiCol_ScrollbarGrabActive]   = withAlpha(color_accent_1, 0.70f);
+    colors[ImGuiCol_CheckMark]             = color_accent_1;
+    colors[ImGuiCol_SliderGrab]            = color_accent_2;
+    colors[ImGuiCol_SliderGrabActive]      = color_accent_1;
+    colors[ImGuiCol_Button]                = color_surface;
+    colors[ImGuiCol_ButtonHovered]         = color_surface_hover;
+    colors[ImGuiCol_ButtonActive]          = withAlpha(color_accent_1, 0.30f);
+    colors[ImGuiCol_Header]                = color_accent_dim;
+    colors[ImGuiCol_HeaderHovered]         = withAlpha(color_text, 0.05f);
+    colors[ImGuiCol_HeaderActive]          = withAlpha(color_accent_1, 0.22f);
+    colors[ImGuiCol_Separator]             = withAlpha(color_text, 0.05f);
+    colors[ImGuiCol_SeparatorHovered]      = color_accent_line;
+    colors[ImGuiCol_SeparatorActive]       = color_accent_1;
+    colors[ImGuiCol_ResizeGrip]            = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_ResizeGripHovered]     = color_accent_line;
+    colors[ImGuiCol_ResizeGripActive]      = color_accent_1;
+    colors[ImGuiCol_Tab]                   = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_TabHovered]            = lerpCol(color_canvas_deep, color_canvas, 0.6f);
+    colors[ImGuiCol_TabActive]             = color_canvas;
+    colors[ImGuiCol_TabUnfocused]          = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_TabUnfocusedActive]   = color_canvas;
+    colors[ImGuiCol_TableHeaderBg]         = color_surface;
+    colors[ImGuiCol_TableBorderStrong]     = withAlpha(color_text, 0.08f);
+    colors[ImGuiCol_TableBorderLight]      = withAlpha(color_text, 0.04f);
+    colors[ImGuiCol_TableRowBg]            = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_TableRowBgAlt]         = withAlpha(color_text, 0.02f);
+    colors[ImGuiCol_TextSelectedBg]        = withAlpha(color_accent_1, 0.35f);
+    colors[ImGuiCol_DragDropTarget]        = color_accent_1;
+    colors[ImGuiCol_NavHighlight]          = color_accent_1;
+    colors[ImGuiCol_NavWindowingHighlight] = color_text;
+    colors[ImGuiCol_NavWindowingDimBg]     = ImVec4(0, 0, 0, 0.60f);
+    colors[ImGuiCol_ModalWindowDimBg]      = ImVec4(0, 0, 0, 0.75f);
+    colors[ImGuiCol_DockingPreview]        = withAlpha(color_accent_1, 0.30f);
+    colors[ImGuiCol_DockingEmptyBg]        = ImVec4(0, 0, 0, 0);
 
     if (uiScale != 1.0f) {
         style.ScaleAllSizes(uiScale);
     }
     io.FontGlobalScale = uiScale;
 }
-
 void EngineUI::ApplyUIScale(float scale) {
     uiScale = std::clamp(scale, 0.25f, 2.50f);
     topBarHeight = 36.0f * uiScale;
@@ -3533,7 +3546,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
 
     // Unreal Keyboard Shortcuts (when not typing and not currently in free fly mode)
-    // During Play Mode, suppress editor shortcuts so gameplay input is uninterrupted (dev.md Â§54)
+    // During Play Mode, suppress editor shortcuts so gameplay input is uninterrupted (dev.md Ãƒâ€šÃ‚Â§54)
     if (!ImGui::GetIO().WantTextInput && !camera.isFlying && !scene.isPlayMode) {
         // F7: Compile Behaviour Scripts
         if (ImGui::IsKeyPressed(ImGuiKey_F7) && !isCompilingScripts) {
@@ -3732,6 +3745,51 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
 
+
+    // === DOCKSPACE (covers area below all top bars) ===
+    {
+        float topH = GetTopBarsTotalHeight();
+        ImGuiViewport* mainVp = ImGui::GetMainViewport();
+        ImGui::SetNextWindowPos(ImVec2(mainVp->Pos.x, mainVp->Pos.y + topH));
+        ImGui::SetNextWindowSize(ImVec2(mainVp->Size.x, mainVp->Size.y - topH - bottomBarHeight * uiScale));
+        ImGuiWindowFlags dockWinFlags =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoCollapse |
+            ImGuiWindowFlags_NoResize   | ImGuiWindowFlags_NoMove     |
+            ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoBackground |
+            ImGuiWindowFlags_NoDocking  | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        bool dockOpen = true;
+        ImGui::Begin("##EunoiaMainDockspace", &dockOpen, dockWinFlags);
+        ImGui::PopStyleVar(3);
+
+        ImGuiID dockId = ImGui::GetID("EunoiaDockSpace");
+        // Build default layout only once (first run or after reset)
+        if (!ImGui::DockBuilderGetNode(dockId) || ImGui::DockBuilderGetNode(dockId)->IsLeafNode()) {
+            ImGui::DockBuilderRemoveNode(dockId);
+            ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+            ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetContentRegionAvail());
+
+            ImGuiID dockRight  = 0;
+            ImGuiID dockLeft   = ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Left, 0.20f, nullptr, &dockRight);
+            ImGuiID dockBottom = 0;
+            ImGuiID dockCenter = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.28f, &dockBottom, nullptr);
+            ImGuiID dockOutliner = 0;
+            ImGuiID dockDetails  = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.50f, &dockDetails, &dockOutliner);
+
+            ImGui::DockBuilderDockWindow("Outliner",        dockOutliner);
+            ImGui::DockBuilderDockWindow("Details",         dockDetails);
+            ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+            ImGui::DockBuilderFinish(dockId);
+        }
+
+        ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f),
+            ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode);
+        ImGui::End();
+    }
+    // === END DOCKSPACE ===
     // 2. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" second row)
     RenderTopMenuBar(scene, camera, outShouldExit);
 
@@ -4220,7 +4278,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             }
 
                             ImGui::Separator();
-                            if (ImGui::MenuItem("â†º Reset to 100% Default", nullptr, false, currentPercent != 100)) {
+                            if (ImGui::MenuItem("ÃƒÂ¢Ã¢â‚¬Â Ã‚Âº Reset to 100% Default", nullptr, false, currentPercent != 100)) {
                                 ApplyUIScale(1.0f);
                                 SaveEditorConfig();
                                 AddLog("LogEditor", "UI Scale reset to 100%", 0);
@@ -4575,7 +4633,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     ImGui::EndMenu();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("â†º Reset Layout to Default")) {
+                if (ImGui::MenuItem("ÃƒÂ¢Ã¢â‚¬Â Ã‚Âº Reset Layout to Default")) {
                     leftSidebarWidth = 280.0f;
                     rightSidebarWidth = 320.0f;
                     bottomDockHeight = 260.0f;
@@ -4666,7 +4724,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
             }
 
             if (ImGui::BeginMenu("Build")) {
-                if (ImGui::MenuItem("âš¡ Compile Behaviour Scripts", "F7", false, !isCompilingScripts)) {
+                if (ImGui::MenuItem("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Compile Behaviour Scripts", "F7", false, !isCompilingScripts)) {
                     TriggerCompileScripts(&scene);
                 }
                 ImGui::Separator();
@@ -4674,7 +4732,7 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     StartGameBuildAsync(scene);
                 }
 
-                if (ImGui::MenuItem(scene.isPlayMode ? "â¹ Stop Play Mode" : "â–¶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
+                if (ImGui::MenuItem(scene.isPlayMode ? "ÃƒÂ¢Ã‚ÂÃ‚Â¹ Stop Play Mode" : "ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¶ Play in Editor (Full Screen)", "Ctrl+Delete")) {
                     if (scene.isPlayMode) ExitPlayMode(scene, currentCamera);
                     else EnterPlayMode(scene, currentCamera);
                 }
@@ -4926,7 +4984,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 SwitchToMaterialEditor((int)i);
             }
 
-            // Close button âœ•
+            // Close button ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -4935,7 +4993,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "âœ•##CloseMatTab_" + std::to_string(i);
+            std::string closeBtnId = "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢##CloseMatTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 matToClose = (int)i;
             }
@@ -4968,7 +5026,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 uiMgr.SwitchToEditor(tabIdx);
             }
 
-            // Close button ✕
+            // Close button Ã¢Å“â€¢
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -4977,7 +5035,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "✕##CloseUiTab_" + std::to_string(i);
+            std::string closeBtnId = "Ã¢Å“â€¢##CloseUiTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 uiToClose = (int)i;
             }
@@ -5011,7 +5069,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 nbMgr.SwitchToEditor((int)i);
             }
 
-            // Close button ✕
+            // Close button Ã¢Å“â€¢
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -5020,7 +5078,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "✕##CloseNbTab_" + std::to_string(i);
+            std::string closeBtnId = "Ã¢Å“â€¢##CloseNbTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 nbToClose = (int)i;
             }
@@ -5053,7 +5111,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 agMgr.SwitchToEditor((int)i);
             }
 
-            // Close button ✕
+            // Close button Ã¢Å“â€¢
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -5062,7 +5120,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "✕##CloseAgTab_" + std::to_string(i);
+            std::string closeBtnId = "Ã¢Å“â€¢##CloseAgTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 agToClose = (int)i;
             }
@@ -5096,7 +5154,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 blendMgr.SwitchToEditor((int)i);
             }
 
-            // Close button âœ•
+            // Close button ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢
             ImGui::SameLine(0.0f, 2.0f * uiScale);
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
@@ -5105,7 +5163,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
 
-            std::string closeBtnId = "âœ•##CloseBlendTab_" + std::to_string(i);
+            std::string closeBtnId = "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢##CloseBlendTab_" + std::to_string(i);
             if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
                 blendToClose = (int)i;
             }
@@ -5751,7 +5809,7 @@ void EngineUI::RenderCameraPreviewOverlay(Scene& scene, OrbitCamera& camera) {
         // Camera info overlay badge (bottom-left)
         char camInfo[64];
         if (!selObj->camera.isOrthographic) {
-            snprintf(camInfo, sizeof(camInfo), "FOV: %.1fÂ° | Persp", selObj->camera.fov);
+            snprintf(camInfo, sizeof(camInfo), "FOV: %.1fÃƒâ€šÃ‚Â° | Persp", selObj->camera.fov);
         } else {
             snprintf(camInfo, sizeof(camInfo), "Size: %.1f | Ortho", selObj->camera.orthoSize);
         }
@@ -6153,16 +6211,10 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
 void EngineUI::RenderOutliner(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
-    float bottomBarH = bottomBarHeight * uiScale;
-    float sidebarsY = vp->Pos.y + GetTopBarsTotalHeight();
-    float sidebarsH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH;
-    float outlinerH = showDetails ? std::round(sidebarsH * outlinerHeightRatio) : sidebarsH;
+    // Dockable window: size hint for first launch, can be repositioned via DockSpace
+    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, vp->Size.y * 0.55f), ImGuiCond_FirstUseEver);
 
-    // Docked flush as Top-Right Sidebar above Details panel (matching Frame.svg blueprint)
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, sidebarsY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, outlinerH), ImGuiCond_Always);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Outliner", &showOutliner, flags)) {
         // Outliner Header (dev.md Outliner Header)
         ImGui::AlignTextToFramePadding();
@@ -6188,7 +6240,7 @@ void EngineUI::RenderOutliner(Scene& scene) {
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Add Actor");
 
         ImGui::SameLine(0.0f, 2.0f * uiScale);
-        if (ImGui::Button("✕##CloseOutlinerBtn", ImVec2(closeBtnW, 18.0f * uiScale))) {
+        if (ImGui::Button("Ã¢Å“â€¢##CloseOutlinerBtn", ImVec2(closeBtnW, 18.0f * uiScale))) {
             showOutliner = false;
         }
         if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close Outliner");
@@ -6718,7 +6770,7 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
-            if (ImGui::Button("✕##CloseDetailsBtn", ImVec2(closeBtnW, 18.0f * uiScale))) {
+            if (ImGui::Button("Ã¢Å“â€¢##CloseDetailsBtn", ImVec2(closeBtnW, 18.0f * uiScale))) {
                 showDetails = false;
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close Details");
@@ -6923,7 +6975,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                 obj->terrain.editModeActive = true;
                 obj->terrain.materialPaintModeActive = false;
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "â— Terrain Sculpting Active (LMB on Viewport)");
+                ImGui::TextColored(ImVec4(0.35f, 0.95f, 0.45f, 1.0f), "ÃƒÂ¢Ã¢â‚¬â€Ã‚Â Terrain Sculpting Active (LMB on Viewport)");
                 ImGui::TextDisabled("Hold Shift to invert brush action (e.g. Lower instead of Raise)");
 
                 if (ImGui::CollapsingHeader("Brush Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -6985,7 +7037,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                                               obj->metallicTexture, obj->aoTexture);
 
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.80f, 0.50f, 1.0f, 1.0f), "â— Terrain Material Painting Active (LMB on Viewport)");
+                ImGui::TextColored(ImVec4(0.80f, 0.50f, 1.0f, 1.0f), "ÃƒÂ¢Ã¢â‚¬â€Ã‚Â Terrain Material Painting Active (LMB on Viewport)");
                 ImGui::TextDisabled("Select a layer to paint. Drag & drop layers to reorder. Slot [0] is Base Material.");
 
                 if (ImGui::CollapsingHeader("Material Layers Array", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -7662,7 +7714,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                 };
                 int wt = (int)w.type;
                 if (ImGui::Combo("Water Type", &wt, waterTypeNames, 14)) {
-                    // Re-apply preset for new type (Â§30 type switching)
+                    // Re-apply preset for new type (Ãƒâ€šÃ‚Â§30 type switching)
                     Scene::ApplyWaterBodyPreset(w, (WaterBodyType)wt);
                     // Rebuild mesh with new preset dimensions
                     obj->mesh = GeometryBuilder::CreatePlane(w.width, w.length, w.gridResolution, w.gridResolution);
@@ -7768,7 +7820,7 @@ void EngineUI::RenderDetails(Scene& scene) {
 
             // Flow (River, Stream, Waterfall)
             bool isFlowing = (w.type == WaterBodyType::River || w.type == WaterBodyType::Stream || w.type == WaterBodyType::Waterfall);
-            if (isFlowing && ImGui::CollapsingHeader("âž¡ï¸ Flow")) {
+            if (isFlowing && ImGui::CollapsingHeader("ÃƒÂ¢Ã…Â¾Ã‚Â¡ÃƒÂ¯Ã‚Â¸Ã‚Â Flow")) {
                 ImGui::Checkbox("Enable Flow", &w.enableFlow);
                 if (w.enableFlow) {
                     ImGui::DragFloat2("Flow Direction (XZ)", &w.flowDirection.x, 0.01f, -1.0f, 1.0f);
@@ -8280,7 +8332,7 @@ void EngineUI::RenderDetails(Scene& scene) {
             ImGui::TextDisabled("Element 0: Material Slot");
             if (!obj->childIds.empty()) {
                 ImGui::SameLine();
-                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 0.9f), "(â†³ Cascades to all %zu children)", obj->childIds.size());
+                ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 0.9f), "(ÃƒÂ¢Ã¢â‚¬Â Ã‚Â³ Cascades to all %zu children)", obj->childIds.size());
             }
 
             // Scan for all materials in contentRootPath (recursively across the entire project root)
@@ -9203,7 +9255,7 @@ void EngineUI::RenderDetails(Scene& scene) {
                             if (obj->physics.useGravity) {
                                 ImGui::DragFloat("Gravity Multiplier", &obj->physics.gravityMultiplier, 0.05f, 0.0f, 100.0f, "%.2fx");
                                 if (ImGui::IsItemHovered()) {
-                                    ImGui::SetTooltip("Multiplies global gravity (e.g. 1.0 = normal 9.81 m/sÂ², 2.0 = double gravity).");
+                                    ImGui::SetTooltip("Multiplies global gravity (e.g. 1.0 = normal 9.81 m/sÃƒâ€šÃ‚Â², 2.0 = double gravity).");
                                 }
                             }
 
@@ -9569,7 +9621,7 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
     ImGui::SameLine();
     bool hasTex = textureSlotAssetId.IsValid() || !textureSlotValue.empty();
     if (!hasTex) ImGui::BeginDisabled();
-    if (ImGui::Button("Ã—", ImVec2(clearBtnW, 0))) {
+    if (ImGui::Button("ÃƒÆ’Ã¢â‚¬â€", ImVec2(clearBtnW, 0))) {
         textureSlotValue = "";
         textureSlotAssetId = AssetID::Null();
         changed = true;
@@ -9585,10 +9637,10 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
             const char* fmtName = DirectX::GetFormatName(info.format);
             std::string fmtStr = (fmtName && strlen(fmtName) > 0) ? fmtName : "DXGI_FORMAT_R8G8B8A8_UNORM";
             if (info.isGpuReady) {
-                ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "   â†³ %dx%d | %s | %u Mip%s",
+                ImGui::TextColored(ImVec4(0.35f, 0.9f, 0.45f, 1.0f), "   ÃƒÂ¢Ã¢â‚¬Â Ã‚Â³ %dx%d | %s | %u Mip%s",
                     info.width, info.height, fmtStr.c_str(), info.mipLevels, info.mipLevels > 1 ? "s" : "");
             } else {
-                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "   â†³ %dx%d | %s | %u Mip%s  [Streaming...]",
+                ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.25f, 1.0f), "   ÃƒÂ¢Ã¢â‚¬Â Ã‚Â³ %dx%d | %s | %u Mip%s  [Streaming...]",
                     info.width, info.height, fmtStr.c_str(), info.mipLevels, info.mipLevels > 1 ? "s" : "");
             }
             ImGui::SameLine();
@@ -9626,7 +9678,7 @@ bool EngineUI::DrawTextureSlot(const char* label, std::string& textureSlotValue,
                 }
             }
         } else {
-            ImGui::TextDisabled("   â†³ [File Not Found or Unreadable]");
+            ImGui::TextDisabled("   ÃƒÂ¢Ã¢â‚¬Â Ã‚Â³ [File Not Found or Unreadable]");
         }
     }
 
@@ -10194,8 +10246,8 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÂ°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
-        ImGui::TextDisabled("Light: %.0fÂ° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÃƒâ€šÃ‚Â°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
+        ImGui::TextDisabled("Light: %.0fÃƒâ€šÃ‚Â° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
         ImGui::TextDisabled("Shader: %s", activeMaterial.shadingModel == 0 ? "PBR Cook-Torrance" : (activeMaterial.shadingModel == 1 ? "Unlit" : "Subsurface"));
 
         ImGui::EndChild();
@@ -10231,9 +10283,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
         ImGui::Separator();
         ImGui::Spacing();
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         // SECTION 1: SURFACE (dev.md)
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         if (ImGui::CollapsingHeader("SURFACE", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             if (DrawTextureSlot("Base Color", activeMaterial.baseColorTexture, activeMaterial.baseColorAssetId, availableTextures)) {
@@ -10275,9 +10327,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         // SECTION 2: VALUES (dev.md)
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         if (ImGui::CollapsingHeader("VALUES", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             if (ImGui::ColorEdit3("Base Color", &activeMaterial.baseColor.r, ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_DisplayRGB)) {
@@ -10357,9 +10409,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         // SECTION 3: SETTINGS (dev.md)
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         if (ImGui::CollapsingHeader("SETTINGS", ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Spacing();
             const char* shaders[] = { "PBR", "Unlit", "Subsurface" };
@@ -10407,9 +10459,9 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             ImGui::Spacing();
         }
 
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         // SECTION 4: DIRECTXTEX TOOLS
-        // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+        // ÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚ÂÃƒÂ¢Ã¢â‚¬Â¢Ã‚Â
         if (ImGui::CollapsingHeader("DIRECTXTEX TOOLS", ImGuiTreeNodeFlags_None)) {
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.3f, 0.85f, 1.0f, 1.0f), "DirectXTex Mipmap & Texture Processing Engine");
@@ -10419,7 +10471,7 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
             static float normalAmp = 1.0f;
             ImGui::SliderFloat("Normal Map Amplitude", &normalAmp, 0.1f, 10.0f, "%.2f");
             if (!activeMaterial.baseColorTexture.empty()) {
-                if (ImGui::Button("âš¡ Generate Normal Map from Base Color (DirectXTex)##GenNormBtn")) {
+                if (ImGui::Button("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Generate Normal Map from Base Color (DirectXTex)##GenNormBtn")) {
                     std::string res = TextureManager::Get().ResolvePath(activeMaterial.baseColorTexture);
                     CachedTexture* ct = TextureManager::Get().GetTexture(res);
                     if (ct && ct->valid && !ct->data.empty()) {
@@ -10623,8 +10675,8 @@ void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, con
         }
 
         ImGui::Spacing();
-        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÃ‚Â°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
-        ImGui::TextDisabled("Light: %.0fÃ‚Â° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
+        ImGui::TextColored(ImVec4(0.85f, 0.85f, 0.85f, 1.0f), "Shape: %s | Yaw: %.0fÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°", meshNames[matEditorPreviewMesh], matEditorRotationAngle);
+        ImGui::TextDisabled("Light: %.0fÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â° (L-Drag: Mesh | R-Drag: Light)", matEditorLightAngle);
 
         ImGui::Spacing();
         ImGui::Separator();
@@ -11144,7 +11196,7 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             if (ImGui::SliderFloat("Exposure / Intensity", &activeSkybox.exposure, 0.05f, 10.0f, "%.2f")) {
                 skyboxDirty = true;
             }
-            if (ImGui::SliderFloat("Rotation (Azimuth)", &activeSkybox.rotation, 0.0f, 360.0f, "%.1f°")) {
+            if (ImGui::SliderFloat("Rotation (Azimuth)", &activeSkybox.rotation, 0.0f, 360.0f, "%.1fÃ‚Â°")) {
                 skyboxDirty = true;
             }
             if (ImGui::Checkbox("Auto Rotate Sky", &activeSkybox.autoRotate)) {
@@ -11153,7 +11205,7 @@ void EngineUI::RenderSkyboxEditor(Scene& scene) {
             if (activeSkybox.autoRotate) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0f * uiScale);
-                if (ImGui::SliderFloat("Speed##SkyEditSpeed", &activeSkybox.autoRotateSpeed, -20.0f, 20.0f, "%.1f°/s")) {
+                if (ImGui::SliderFloat("Speed##SkyEditSpeed", &activeSkybox.autoRotateSpeed, -20.0f, 20.0f, "%.1fÃ‚Â°/s")) {
                     skyboxDirty = true;
                 }
             }
@@ -11245,12 +11297,12 @@ void EngineUI::RenderWorldSkyboxSettingsModal(Scene& scene) {
             ImGui::Spacing();
 
             ImGui::SliderFloat("Exposure / Intensity", &scene.skyboxExposure, 0.05f, 10.0f, "%.2f");
-            ImGui::SliderFloat("Rotation (Azimuth)", &scene.skyboxRotation, 0.0f, 360.0f, "%.1f°");
+            ImGui::SliderFloat("Rotation (Azimuth)", &scene.skyboxRotation, 0.0f, 360.0f, "%.1fÃ‚Â°");
             ImGui::Checkbox("Auto Rotate Sky", &scene.skyboxAutoRotate);
             if (scene.skyboxAutoRotate) {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(120.0f * uiScale);
-                ImGui::SliderFloat("Speed##SkyRotateSpeed", &scene.skyboxAutoRotateSpeed, -20.0f, 20.0f, "%.1f°/s");
+                ImGui::SliderFloat("Speed##SkyRotateSpeed", &scene.skyboxAutoRotateSpeed, -20.0f, 20.0f, "%.1fÃ‚Â°/s");
             }
             ImGui::ColorEdit3("Sky Tint", &scene.skyboxTint.x);
             ImGui::SliderFloat("Ambient Scene Contribution", &scene.skyboxAmbientContribution, 0.0f, 2.0f, "%.2f");
@@ -11835,17 +11887,11 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
 
 void EngineUI::RenderContentBrowser(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
-    float bottomBarH = bottomBarHeight * uiScale;
-    float curBottomH = bottomDrawerOpen ? bottomDockHeight : 26.0f;
-    float rightW = (showOutliner || showDetails) ? rightSidebarWidth : 0.0f;
-    float bottomW = vp->Size.x - rightW;
-    float bottomY = vp->Pos.y + vp->Size.y - bottomBarH - curBottomH;
 
-    // Docked flush as Bottom-Left Dock, sitting above bottom progress bar (matching Frame.svg blueprint)
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x, bottomY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(bottomW, curBottomH), ImGuiCond_Always);
+    // Dockable window: size hint for first launch, can be repositioned via DockSpace
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.75f, 260.0f * uiScale), ImGuiCond_FirstUseEver);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Content Browser", &showBottomDrawer, flags)) {
         // Tab Header buttons (Matching SVG Blueprint)
         if (bottomDrawerTab > 2) bottomDrawerTab = 0;
@@ -14290,7 +14336,8 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
         if (showBgIndicator && bottomDrawerOpen) {
             ImVec2 badgeSize(220.0f, 24.0f);
-            ImVec2 badgePos(vp->Pos.x + bottomW - badgeSize.x - 14.0f, bottomY + curBottomH - badgeSize.y - 7.0f);
+            ImVec2 winPos = ImGui::GetWindowPos(); ImVec2 winSize = ImGui::GetWindowSize();
+            ImVec2 badgePos(winPos.x + winSize.x - badgeSize.x - 14.0f, winPos.y + winSize.y - badgeSize.y - 7.0f);
             ImDrawList* fgList = ImGui::GetForegroundDrawList();
             fgList->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(16, 20, 28, 230), 4.0f);
             fgList->AddRect(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(40, 90, 160, 200), 4.0f);
@@ -14314,6 +14361,7 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
 void EngineUI::RenderLayoutSplitters() {
     if (isImmersiveMode) return;
+    if (ImGui::GetIO().ConfigFlags & ImGuiConfigFlags_DockingEnable) return; // DockSpace handles layout splitters natively
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
     if (!vp || vp->Size.x <= 10.0f || vp->Size.y <= 10.0f) return;
@@ -14457,7 +14505,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
     }
 
     // Task 2: bail out before ImGuizmo::Manipulate if modelMatrix is corrupted.
-    // Selecting a broken object should never hang rendering â€” it should just
+    // Selecting a broken object should never hang rendering ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â it should just
     // not show a gizmo for it until its data is fixed.
     {
         const float* mp = glm::value_ptr(modelMatrix);
@@ -14469,7 +14517,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
             static int lastWarnedId = -1;
             if (lastWarnedId != obj->id) {
                 std::cerr << "[RECOVERY] Object \"" << obj->name << "\" (id=" << obj->id
-                          << ") has a corrupted transform/mesh â€” gizmo suppressed to avoid GPU hang.\n";
+                          << ") has a corrupted transform/mesh ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â gizmo suppressed to avoid GPU hang.\n";
                 AddLog("LogRecovery",
                     "Object \"" + obj->name + "\" has a corrupted transform or mesh and its gizmo was suppressed. Fix or delete it.", 2);
                 lastWarnedId = obj->id;
@@ -14530,7 +14578,7 @@ void EngineUI::RenderGizmo(Scene& scene, OrbitCamera& camera, float viewportWidt
             if (std::abs(parentDet) > 1e-6f && !std::isnan(parentDet)) {
                 localMatrix = glm::inverse(parentWorld) * modelMatrix;
             }
-            // else: parent transform is degenerate â€” fall back to using modelMatrix
+            // else: parent transform is degenerate ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â fall back to using modelMatrix
             // as-is (world space) rather than propagating Inf/NaN into localMatrix.
         }
 
@@ -16167,7 +16215,7 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
     ImGui::SetNextWindowSize(ImVec2(1060, 680), ImGuiCond_Appearing);
     ImGui::SetNextWindowPos(ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, ImGui::GetIO().DisplaySize.y * 0.5f), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
 
-    std::string title = "3D Model Import Wizard â€” " + currentModelImport.modelName;
+    std::string title = "3D Model Import Wizard ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â " + currentModelImport.modelName;
     if (pendingModelImportQueue.size() > 1) {
         title += " (1 of " + std::to_string(pendingModelImportQueue.size()) + " queued)";
     }
@@ -16547,7 +16595,7 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.15f, 0.40f, 0.75f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.20f, 0.50f, 0.90f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.12f, 0.32f, 0.65f, 1.0f));
-            if (ImGui::Button("âš¡ Import All", ImVec2(110, 32))) {
+            if (ImGui::Button("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Import All", ImVec2(110, 32))) {
                 ExecuteModelImport(scene, currentModelImport.spawnInLevel, false);
                 while (pendingModelImportQueue.size() > 1) {
                     pendingModelImportQueue.erase(pendingModelImportQueue.begin());
@@ -16561,12 +16609,12 @@ void EngineUI::RenderModelImportModal(Scene& scene, OrbitCamera& camera) {
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("â­ Skip", ImVec2(80, 32))) {
+        if (ImGui::Button("ÃƒÂ¢Ã‚ÂÃ‚Â­ Skip", ImVec2(80, 32))) {
             AdvanceModelImportQueue();
         }
 
         ImGui::SameLine();
-        if (ImGui::Button("âœ• Cancel All", ImVec2(100, 32))) {
+        if (ImGui::Button("ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢ Cancel All", ImVec2(100, 32))) {
             pendingModelImportQueue.clear();
             showModelImportModal = false;
         }
@@ -16591,7 +16639,7 @@ void EngineUI::OpenScriptInCodeEditor(const std::string& path) {
 void EngineUI::RenderCodeEditor() {
     if (!showCodeEditor) return;
 
-    std::string title = "Code Editor â€” " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
+    std::string title = "Code Editor ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
     ImGui::SetNextWindowSize(ImVec2(740, 540), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title.c_str(), &showCodeEditor, ImGuiWindowFlags_MenuBar)) {
         if (ImGui::BeginMenuBar()) {
@@ -16607,7 +16655,7 @@ void EngineUI::RenderCodeEditor() {
                 LaunchVSCodeWorkspace(activeCodeEditorPath);
                 AddLog("LogContent", "Launched VS Code workspace for: " + activeCodeEditorFilename, 0);
             }
-            if (ImGui::MenuItem("âš¡ Compile Script", "F7", false, !isCompilingScripts)) {
+            if (ImGui::MenuItem("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Compile Script", "F7", false, !isCompilingScripts)) {
                 TriggerCompileScripts(nullptr);
             }
             ImGui::EndMenuBar();
@@ -16629,9 +16677,9 @@ void EngineUI::RenderCodeEditor() {
         }
         ImGui::SameLine();
         if (isCompilingScripts) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "â³ Compiling...");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "ÃƒÂ¢Ã‚ÂÃ‚Â³ Compiling...");
         } else {
-            if (ImGui::Button("âš¡ Compile")) {
+            if (ImGui::Button("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Compile")) {
                 TriggerCompileScripts(nullptr);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile this behaviour script and rebuild standalone game");
@@ -16694,7 +16742,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
             if (!isPlayActive) {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.55f, 0.25f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.18f, 0.70f, 0.32f, 1.0f));
-                if (ImGui::Button("â–¶ Play Mode (Full Screen Fit)", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                if (ImGui::Button("ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¶ Play Mode (Full Screen Fit)", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                     EnterPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor(2);
@@ -16702,11 +16750,11 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 ImGui::Spacing();
             } else {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.70f, 0.20f, 0.20f, 1.0f));
-                if (ImGui::Button("â¹ Stop Play Mode", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+                if (ImGui::Button("ÃƒÂ¢Ã‚ÂÃ‚Â¹ Stop Play Mode", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
                     ExitPlayMode(scene, currentCamera);
                 }
                 ImGui::PopStyleColor();
-                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "â–¶ Simulation Active");
+                ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.4f, 1.0f), "ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¶ Simulation Active");
                 ImGui::Spacing();
             }
         }
@@ -16871,11 +16919,11 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
 
             // Header line: Reorder, Class Title, Enable checkbox, Reset & Remove buttons
             if (i > 0) {
-                if (ImGui::SmallButton("â–²")) moveUpIdx = (int)i;
+                if (ImGui::SmallButton("ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â²")) moveUpIdx = (int)i;
                 ImGui::SameLine();
             }
             if (i + 1 < obj->behaviours.size()) {
-                if (ImGui::SmallButton("â–¼")) moveDownIdx = (int)i;
+                if (ImGui::SmallButton("ÃƒÂ¢Ã¢â‚¬â€œÃ‚Â¼")) moveDownIdx = (int)i;
                 ImGui::SameLine();
             }
 
@@ -17185,7 +17233,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                                         b->ResolveReferences(scene);
                                         AddLog("LogBehaviour", "Assigned " + draggedObj->name + " to " + prop.displayName, 2);
                                     } else {
-                                        AddLog("LogBehaviour", "Cannot assign " + draggedObj->name + " â€” incompatible type (" + ObjectRefTypeToString(prop.refType) + " expected).", 1);
+                                        AddLog("LogBehaviour", "Cannot assign " + draggedObj->name + " ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â incompatible type (" + ObjectRefTypeToString(prop.refType) + " expected).", 1);
                                     }
                                 }
                             }
@@ -17266,10 +17314,10 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
         // Title Header
         ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "EUNOIA ENGINE");
         ImGui::SameLine();
-        ImGui::TextDisabled("â€” Project Browser");
+        ImGui::TextDisabled("ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â Project Browser");
         if (hasActiveProject) {
             ImGui::SameLine(winW - 140.0f);
-            if (ImGui::SmallButton("âœ– Return to Editor")) {
+            if (ImGui::SmallButton("ÃƒÂ¢Ã…â€œÃ¢â‚¬â€œ Return to Editor")) {
                 showProjectBrowser = false;
             }
         }
@@ -17480,7 +17528,7 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
             } else if (targetExists) {
                 ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Folder already exists on disk. Will initialize/load project.");
             } else {
-                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "âœ… Ready to create empty project in selected path.");
+                ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.4f, 1.0f), "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¦ Ready to create empty project in selected path.");
             }
 
             ImGui::Spacing();
@@ -17489,7 +17537,7 @@ void EngineUI::RenderProjectBrowser(Scene& scene, OrbitCamera& camera) {
 
             bool canCreate = nameValid && pathValid;
             if (!canCreate) ImGui::BeginDisabled();
-            if (ImGui::Button("âœ¨ Create Project", ImVec2(180, 36))) {
+            if (ImGui::Button("ÃƒÂ¢Ã…â€œÃ‚Â¨ Create Project", ImVec2(180, 36))) {
                 CreateNewProject(newProjectPathBuf, newProjectNameBuf, scene, camera);
             }
             if (!canCreate) ImGui::EndDisabled();
@@ -17899,7 +17947,7 @@ void EngineUI::RenderGameBuildModal(Scene& scene) {
         }
 
         // Header Title
-        ImGui::TextColored(ImVec4(0.18f, 0.68f, 1.0f, 1.0f), "Ã°Å¸â€ºÂ  Standalone Game Build Pipeline");
+        ImGui::TextColored(ImVec4(0.18f, 0.68f, 1.0f, 1.0f), "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂºÃƒâ€šÃ‚Â  Standalone Game Build Pipeline");
         ImGui::Separator();
         ImGui::Spacing();
 
@@ -17924,11 +17972,11 @@ void EngineUI::RenderGameBuildModal(Scene& scene) {
 
         // Current Stage Status text
         if (building) {
-            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f), "Ã¢ÂÂ³ Building Standalone Package: %s", stage.c_str());
+            ImGui::TextColored(ImVec4(1.0f, 0.85f, 0.25f, 1.0f), "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€šÃ‚Â³ Building Standalone Package: %s", stage.c_str());
         } else if (success) {
-            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.35f, 1.0f), "Ã¢Å“â€¦ Standalone Build Succeeded! Ready for distribution.");
+            ImGui::TextColored(ImVec4(0.2f, 0.95f, 0.35f, 1.0f), "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Standalone Build Succeeded! Ready for distribution.");
         } else {
-            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "Ã¢ÂÅ’ %s", stage.c_str());
+            ImGui::TextColored(ImVec4(0.95f, 0.35f, 0.35f, 1.0f), "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ %s", stage.c_str());
         }
 
         ImGui::Spacing();
@@ -17957,7 +18005,7 @@ void EngineUI::RenderGameBuildModal(Scene& scene) {
             ImGui::EndDisabled();
         } else {
             if (success) {
-                if (ImGui::Button("Ã°Å¸Å¡â‚¬ Launch Game (.exe)", ImVec2(170, 32))) {
+                if (ImGui::Button("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â¡ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ Launch Game (.exe)", ImVec2(170, 32))) {
                     if (!exePath.empty() && std::filesystem::exists(exePath)) {
                         ShellExecuteA(NULL, "open", exePath.c_str(), NULL, outDir.string().c_str(), SW_SHOW);
                     } else if (std::filesystem::exists(outDir / "Run.bat")) {
@@ -17966,7 +18014,7 @@ void EngineUI::RenderGameBuildModal(Scene& scene) {
                     }
                 }
                 ImGui::SameLine();
-                if (ImGui::Button("Ã°Å¸â€œÂ Open Build Folder", ImVec2(170, 32))) {
+                if (ImGui::Button("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â Open Build Folder", ImVec2(170, 32))) {
                     if (!outDir.empty() && std::filesystem::exists(outDir)) {
                         ShellExecuteA(NULL, "open", outDir.string().c_str(), NULL, NULL, SW_SHOWNORMAL);
                     }
