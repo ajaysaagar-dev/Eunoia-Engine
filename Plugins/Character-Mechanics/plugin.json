@@ -1,0 +1,11 @@
+{
+  "name": "Character-Mechanics",
+  "displayName": "Character Mechanics",
+  "version": "1.0.0",
+  "author": "Eunoia Engine",
+  "description": "Character movement mechanics, locomotion vectors, and player locomotion controllers.",
+  "category": "Gameplay",
+  "dependencies": [],
+  "entryPoint": "Plugins/Character-Mechanics/Source/CharacterMechanicsPlugin.cpp",
+  "includeDir": "Plugins/Character-Mechanics/Include"
+}
