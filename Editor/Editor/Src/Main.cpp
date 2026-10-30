@@ -1,4 +1,4 @@
-﻿#define GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
@@ -8061,6 +8061,8 @@ int main(int argc, char** argv)
 	GetModuleFileNameA(NULL, exePathBuf, MAX_PATH);
 	std::filesystem::path currentExePath(exePathBuf);
 	std::filesystem::path exeDir = currentExePath.parent_path();
+	std::error_code cpec;
+	std::filesystem::current_path(exeDir, cpec);
 	std::string exeNameLower = currentExePath.filename().string();
 	std::transform(exeNameLower.begin(), exeNameLower.end(), exeNameLower.begin(), ::tolower);
 
@@ -8203,7 +8205,50 @@ int main(int argc, char** argv)
 	} else {
 		// If project wasn't explicitly given via CLI, launch the standalone Project Browser window
 		if (selectedProjectPath.empty()) {
-			selectedProjectPath = EngineUI::RunStandaloneProjectBrowser();
+			// Auto-load recent project if not explicitly forcing standalone browser
+			if (!forceStandaloneBrowser) {
+				std::filesystem::path recentCfg;
+				char* appdata = getenv("LOCALAPPDATA");
+				if (appdata) {
+					recentCfg = std::filesystem::path(appdata) / "EunoiaEngine" / "RecentProjects.json";
+				} else {
+					recentCfg = "RecentProjects.json";
+				}
+				std::error_code ec;
+				if (std::filesystem::exists(recentCfg, ec)) {
+					std::ifstream f(recentCfg);
+					if (f.is_open()) {
+						try {
+							nlohmann::json j;
+							f >> j;
+							if (j.is_array() && !j.empty()) {
+								for (const auto& item : j) {
+									if (item.contains("rootPath")) {
+										std::string rp = item["rootPath"].get<std::string>();
+										if (std::filesystem::exists(rp, ec) && std::filesystem::is_directory(rp, ec)) {
+											selectedProjectPath = rp;
+											std::cerr << "[INFO] Auto-loading recent project: " << rp << std::endl;
+											break;
+										}
+									}
+								}
+							}
+						} catch (...) {}
+					}
+				}
+
+				if (selectedProjectPath.empty()) {
+					std::filesystem::path swatPath = "C:\\Projects\\Eunoia-Engine\\Projects\\SWAT";
+					if (std::filesystem::exists(swatPath, ec) && std::filesystem::is_directory(swatPath, ec)) {
+						selectedProjectPath = swatPath;
+						std::cerr << "[INFO] Defaulting to SWAT project: " << swatPath.string() << std::endl;
+					}
+				}
+			}
+
+			if (selectedProjectPath.empty()) {
+				selectedProjectPath = EngineUI::RunStandaloneProjectBrowser();
+			}
 			
 			// If user closed the project browser or pressed Quit, exit cleanly
 			if (selectedProjectPath.empty()) {
