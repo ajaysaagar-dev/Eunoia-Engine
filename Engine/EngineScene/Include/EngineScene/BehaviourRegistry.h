@@ -305,7 +305,8 @@ public:
             RotateRelative,
             RotateWorld,
             LockCursor,
-            UnlockCursor
+            UnlockCursor,
+            AddMovement
         };
         ActionType type = ActionType::TranslateRelative;
         glm::vec3 constantDelta{0.0f};
@@ -317,6 +318,19 @@ public:
         std::string targetRefName;
         std::vector<DynamicKeyCondition> requiredKeys;
         std::vector<DynamicBoolCondition> requiredBools;
+
+        // Character Mechanics AddMovement support
+        float constantSpeed = 0.0f;
+        std::string speedVarName;
+        float speedMultiplier = 1.0f;
+        bool speedUseDeltaTime = false;
+        std::string dirRefName;
+        std::string dirVarName;
+        bool isForwardVector = false;
+        bool isRightVector = false;
+        bool isUpVector = false;
+        glm::vec3 constantDirection{0.0f};
+        bool negate = false;
     };
     std::vector<DynamicTransformAction> m_transformActions;
 

@@ -14,6 +14,7 @@
 #include <RayTrace/RayTrace.h>
 #include <SaveSystem/SaveSystem.h>
 #include <EngineScene/AnimationGraphModifier.h>
+#include <CharacterMechanics/CharacterMechanics.h>
 
 // Forward declarations
 struct GameObject;
@@ -752,6 +753,11 @@ public:
     TransformVector3 GetForwardVector() const { return Transform.GetForwardVector(); }
     TransformVector3 GetRightVector() const { return Transform.GetRightVector(); }
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
+
+    // Character Mechanics
+    Eunoia::CharacterMechanics::CharacterMechanicsHandle AssumeAsCharacter() {
+        return Eunoia::CharacterMechanics::CharacterMechanicsHandle{ m_owner, this };
+    }
 
     // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
     double GetMouseX(bool negate = false) const;

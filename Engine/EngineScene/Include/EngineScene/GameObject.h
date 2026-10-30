@@ -1427,6 +1427,11 @@ struct GameObject {
     TransformVector3 GetRightVector() const { return Transform.GetRightVector(); }
     TransformVector3 GetUpVector() const { return Transform.GetUpVector(); }
 
+    // Character Mechanics
+    Eunoia::CharacterMechanics::CharacterMechanicsHandle AssumeAsCharacter() {
+        return Eunoia::CharacterMechanics::CharacterMechanicsHandle{ this, nullptr };
+    }
+
     void Update(float dt);
 
     // Runtime Lifecycle & Destruction (dev.md & user request: GameObject.Destroy())

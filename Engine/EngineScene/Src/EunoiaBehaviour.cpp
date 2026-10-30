@@ -4,6 +4,7 @@
 #include <EngineScene/Scene.h>
 #include <EnginePlatform/InputSystem.h>
 #include <EngineRenderer/Camera.h>
+#include <CharacterMechanics/CharacterMechanics.h>
 #include <cmath>
 #include <fstream>
 #include <sstream>
@@ -2604,6 +2605,49 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
             CursorState.Locked();
         } else if (action.type == DynamicTransformAction::ActionType::UnlockCursor) {
             CursorState.UnLocked();
+        } else if (action.type == DynamicTransformAction::ActionType::AddMovement) {
+            float speed = action.constantSpeed;
+            if (!action.speedVarName.empty()) {
+                speed = GetFloat(action.speedVarName, action.constantSpeed) * action.speedMultiplier;
+            }
+            if (action.speedUseDeltaTime) {
+                speed *= dt;
+            }
+
+            GameObject* refObj = m_owner;
+            if (!action.dirRefName.empty()) {
+                void* refPtr = GetRef(action.dirRefName);
+                if (refPtr) {
+                    refObj = reinterpret_cast<GameObject*>(refPtr);
+                } else if (m_scene && m_owner) {
+                    std::string lowerRef = action.dirRefName;
+                    std::transform(lowerRef.begin(), lowerRef.end(), lowerRef.begin(), ::tolower);
+                    for (auto& obj : m_scene->objects) {
+                        if (obj.parentId == m_owner->id) {
+                            std::string objLower = obj.name;
+                            std::transform(objLower.begin(), objLower.end(), objLower.begin(), ::tolower);
+                            if (objLower.find(lowerRef) != std::string::npos || lowerRef.find("cam") != std::string::npos || lowerRef.find("boom") != std::string::npos) {
+                                refObj = &obj;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+            glm::vec3 worldDir = action.constantDirection;
+            if (action.isForwardVector) {
+                worldDir = refObj ? glm::vec3(refObj->GetForwardVector()) : glm::vec3(0.0f, 0.0f, 1.0f);
+            } else if (action.isRightVector) {
+                worldDir = refObj ? glm::vec3(refObj->GetRightVector()) : glm::vec3(1.0f, 0.0f, 0.0f);
+            } else if (action.isUpVector) {
+                worldDir = refObj ? glm::vec3(refObj->GetUpVector()) : glm::vec3(0.0f, 1.0f, 0.0f);
+            } else if (!action.dirVarName.empty()) {
+                worldDir = GetVec3(action.dirVarName, worldDir);
+            }
+
+            GameObject* target = targetObj ? targetObj : m_owner;
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().AddMovement(target, speed, worldDir, action.negate);
         }
     }
 
@@ -3919,6 +3963,15 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
     };
     std::unordered_map<std::string, LocalVarExpr> localVars;
 
+    struct LocalVecExpr {
+        std::string refName;
+        bool isForward = false;
+        bool isRight = false;
+        bool isUp = false;
+        glm::vec3 constVal{0.0f};
+    };
+    std::unordered_map<std::string, LocalVecExpr> localVecVars;
+
     auto parseArgExpr = [&](const std::string& rawExpr, float& outConst, bool& outUseDt, std::string& outVar, float& outMul, std::string& outScaleVar, bool& outActive) {
         outConst = 0.0f;
         outUseDt = false;
@@ -4889,6 +4942,27 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                     LocalVarExpr expr;
                     parseArgExpr(right, expr.constantVal, expr.useDt, expr.varName, expr.varMultiplier, expr.scaleVarName, expr.isActive);
                     localVars[varName] = expr;
+
+                    // Track vector assignments e.g. auto x = CameraBoom->GetForwardVector();
+                    if (right.find("GetForwardVector") != std::string::npos ||
+                        right.find("GetRightVector") != std::string::npos ||
+                        right.find("GetUpVector") != std::string::npos) {
+                        LocalVecExpr vExpr;
+                        vExpr.isForward = (right.find("GetForwardVector") != std::string::npos);
+                        vExpr.isRight = (right.find("GetRightVector") != std::string::npos);
+                        vExpr.isUp = (right.find("GetUpVector") != std::string::npos);
+                        size_t arrowP = right.find("->");
+                        if (arrowP == std::string::npos) arrowP = right.find('.');
+                        if (arrowP != std::string::npos) {
+                            std::string ref = right.substr(0, arrowP);
+                            size_t rb = ref.find_last_not_of(" \t\r\n;{}()");
+                            if (rb != std::string::npos) {
+                                size_t ra = ref.find_last_of(" \t\r\n;{}()", rb);
+                                vExpr.refName = (ra == std::string::npos) ? ref.substr(0, rb + 1) : ref.substr(ra + 1, rb - ra);
+                            }
+                        }
+                        localVecVars[varName] = vExpr;
+                    }
                 }
             }
 
@@ -5368,6 +5442,113 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         for (int i = 0; i < 3; ++i) {
                             parseArgExpr(args[i], action.constantDelta[i], action.useDeltaTime[i], action.varNames[i], action.varMultiplier[i], action.scaleVarNames[i], action.activeAxis[i]);
                         }
+                        applyConditionsToAction(action);
+                        m_transformActions.push_back(action);
+                    }
+                }
+            }
+
+            // 2b. Scan for AddMovement (Character Mechanics Plugin)
+            // Supports:
+            //   AssumeAsCharacter().AddMovement(Speed, World direction vector, negate = false);
+            //   EngineSystem.CharacterMechanics::AddMovement(Speed, World direction vector, negate = false);
+            //   EngineSystem.CharacterMechanics.AddMovement(...)
+            //   EngineSystem::CharacterMechanics::AddMovement(...)
+            //   CharacterMechanics::AddMovement(...)
+            size_t addMovPos = l.find("AddMovement(");
+            if (addMovPos != std::string::npos) {
+                DynamicTransformAction action;
+                action.type = DynamicTransformAction::ActionType::AddMovement;
+
+                // Check if target specified (e.g. gameObject->AssumeAsCharacter().AddMovement or Player->AssumeAsCharacter().AddMovement)
+                size_t assumePos = l.find("AssumeAsCharacter().AddMovement");
+                if (assumePos != std::string::npos && assumePos > 0) {
+                    std::string targetPrefix = l.substr(0, assumePos);
+                    size_t arrowP = targetPrefix.rfind("->");
+                    if (arrowP != std::string::npos) {
+                        std::string tName = targetPrefix.substr(0, arrowP);
+                        size_t nb = tName.find_last_not_of(" \t\r\n;{}()");
+                        if (nb != std::string::npos) {
+                            size_t na = tName.find_last_of(" \t\r\n;{}()", nb);
+                            action.targetRefName = (na == std::string::npos) ? tName.substr(0, nb + 1) : tName.substr(na + 1, nb - na);
+                        }
+                    }
+                }
+
+                size_t openP = l.find('(', addMovPos);
+                size_t closeP = l.rfind(')');
+                if (openP != std::string::npos && closeP != std::string::npos && closeP > openP) {
+                    std::string argsStr = l.substr(openP + 1, closeP - openP - 1);
+                    std::vector<std::string> args;
+                    std::string cur;
+                    int parenDepth = 0;
+                    for (char c : argsStr) {
+                        if (c == '(') parenDepth++;
+                        else if (c == ')') parenDepth--;
+                        else if (c == ',' && parenDepth == 0) {
+                            args.push_back(cur);
+                            cur.clear();
+                            continue;
+                        }
+                        cur += c;
+                    }
+                    if (!cur.empty()) args.push_back(cur);
+
+                    if (args.size() >= 2) {
+                        // Arg 0: Speed
+                        bool dummyActive = false;
+                        std::string dummyScale;
+                        parseArgExpr(args[0], action.constantSpeed, action.speedUseDeltaTime, action.speedVarName, action.speedMultiplier, dummyScale, dummyActive);
+
+                        // Arg 1: Direction vector
+                        std::string dirArg = args[1];
+                        size_t d1 = dirArg.find_first_not_of(" \t\r\n");
+                        size_t d2 = dirArg.find_last_not_of(" \t\r\n");
+                        if (d1 != std::string::npos && d2 != std::string::npos) {
+                            dirArg = dirArg.substr(d1, d2 - d1 + 1);
+                        }
+
+                        if (localVecVars.find(dirArg) != localVecVars.end()) {
+                            const auto& lve = localVecVars[dirArg];
+                            action.dirRefName = lve.refName;
+                            action.isForwardVector = lve.isForward;
+                            action.isRightVector = lve.isRight;
+                            action.isUpVector = lve.isUp;
+                            action.constantDirection = lve.constVal;
+                        } else {
+                            if (dirArg.find("GetForwardVector") != std::string::npos) {
+                                action.isForwardVector = true;
+                            } else if (dirArg.find("GetRightVector") != std::string::npos) {
+                                action.isRightVector = true;
+                            } else if (dirArg.find("GetUpVector") != std::string::npos) {
+                                action.isUpVector = true;
+                            }
+
+                            // Check for reference object, e.g. CameraBoom->GetForwardVector()
+                            size_t arrowP = dirArg.find("->");
+                            if (arrowP == std::string::npos) arrowP = dirArg.find('.');
+                            if (arrowP != std::string::npos) {
+                                std::string ref = dirArg.substr(0, arrowP);
+                                size_t rb = ref.find_last_not_of(" \t\r\n;{}()");
+                                if (rb != std::string::npos) {
+                                    size_t ra = ref.find_last_of(" \t\r\n;{}()", rb);
+                                    action.dirRefName = (ra == std::string::npos) ? ref.substr(0, rb + 1) : ref.substr(ra + 1, rb - ra);
+                                }
+                            } else if (!action.isForwardVector && !action.isRightVector && !action.isUpVector) {
+                                action.dirVarName = dirArg;
+                            }
+                        }
+
+                        // Arg 2 (optional): negate
+                        if (args.size() >= 3) {
+                            std::string negArg = args[2];
+                            std::string negLower = negArg;
+                            std::transform(negLower.begin(), negLower.end(), negLower.begin(), ::tolower);
+                            if (negLower.find("true") != std::string::npos || negLower.find("1") != std::string::npos) {
+                                action.negate = true;
+                            }
+                        }
+
                         applyConditionsToAction(action);
                         m_transformActions.push_back(action);
                     }
