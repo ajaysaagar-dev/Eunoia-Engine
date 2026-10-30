@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -414,15 +414,7 @@ struct BehaviourTransform {
     // 1. By delta (x, y, z) / (delta) / (new Vector3(...))
     // Transforms movement relative to current facing direction (local space heading):
     // +X = Forward, -X = Backward, +Z = Right, -Z = Left, +Y = Up, -Y = Down
-    void RelativeTranslate(const glm::vec3& delta) {
-        glm::vec3 rot = Rotation.LocalSpace();
-        float rYaw = glm::radians(rot.y);
-        glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
-        glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
-        glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
-        glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
-        Location.LocalSpace(Location.LocalSpace() + localDelta);
-    }
+    void RelativeTranslate(const glm::vec3& delta);
     void RelativeTranslate(float x, float y, float z) { RelativeTranslate(glm::vec3(x, y, z)); }
     void RelativeTranslate(const glm::vec3* delta) { if (delta) { RelativeTranslate(*delta); delete delta; } }
 
@@ -475,7 +467,7 @@ struct BehaviourRayTraceProxy {
 };
 
 // ============================================================================
-// EunoiaBehaviour — Canonical Base Behaviour Class (dev.md Section 1)
+// EunoiaBehaviour â€” Canonical Base Behaviour Class (dev.md Section 1)
 // ============================================================================
 class EunoiaBehaviour {
 public:
@@ -536,7 +528,7 @@ public:
     GameObject* FindWithTag(const std::string& tag) const { return FindObjectWithTag(tag); }
 
     // -------------------------------------------------------------------------
-    // GetBehaviour<T>() / HasBehaviour<T>() — access sibling behaviours on the
+    // GetBehaviour<T>() / HasBehaviour<T>() â€” access sibling behaviours on the
     // same owner (dev.md Section 62, 63)
     // -------------------------------------------------------------------------
     template<typename T>
@@ -546,13 +538,13 @@ public:
     bool HasBehaviour() const;
 
     // -------------------------------------------------------------------------
-    // GetTransform() — returns BehaviourTransform reference (dev.md Section 34)
+    // GetTransform() â€” returns BehaviourTransform reference (dev.md Section 34)
     // -------------------------------------------------------------------------
     BehaviourTransform& GetTransform() { return Transform; }
     const BehaviourTransform& GetTransform() const { return Transform; }
 
     // -------------------------------------------------------------------------
-    // GetComponent<T>() — typed component access on the owner (dev.md Section 35)
+    // GetComponent<T>() â€” typed component access on the owner (dev.md Section 35)
     // Specialisations for LightComponent, PrimitiveMesh, OrbitCamera defined
     // after the class.
     // -------------------------------------------------------------------------
@@ -560,7 +552,7 @@ public:
     T* GetComponent() const { return nullptr; }
 
     // -------------------------------------------------------------------------
-    // SpawnGameObject / DestroyGameObject — runtime object creation (dev.md §45)
+    // SpawnGameObject / DestroyGameObject â€” runtime object creation (dev.md Â§45)
     // -------------------------------------------------------------------------
     GameObject* SpawnGameObject(const std::string& name, const glm::vec3& position = glm::vec3(0.0f));
     void        DestroyGameObject(int objectId);

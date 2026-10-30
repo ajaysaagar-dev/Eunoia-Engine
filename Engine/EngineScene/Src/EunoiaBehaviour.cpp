@@ -1,4 +1,4 @@
-#include <EngineScene/EunoiaBehaviour.h>
+﻿#include <EngineScene/EunoiaBehaviour.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <EngineScene/GameObject.h>
 #include <EngineScene/Scene.h>
@@ -1128,6 +1128,23 @@ void GameObjectTransform::WorldTranslate(const glm::vec3& fromPoint, const glm::
 void GameObjectTransform::RelativeTranslate(const glm::vec3& delta) {
     if (!gameObject) return;
     glm::vec3 rot = GetRelativeRotationInternal();
+    if (gameObject->scene) {
+        for (int childId : gameObject->childIds) {
+            GameObject* child = gameObject->scene->FindObject(childId);
+            if (child && (child->name.find("Camera") != std::string::npos || child->name.find("Boom") != std::string::npos)) {
+                rot.y = child->rotation.y;
+                break;
+            }
+        }
+        if (rot.y == 0.0f) {
+            for (auto& obj : gameObject->scene->objects) {
+                if ((obj.name.find("CameraBoom") != std::string::npos || obj.name.find("Camera") != std::string::npos) && obj.parentId == gameObject->id) {
+                    rot.y = obj.rotation.y;
+                    break;
+                }
+            }
+        }
+    }
     float rYaw = glm::radians(rot.y);
     glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
     glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
@@ -1139,6 +1156,36 @@ void GameObjectTransform::RelativeTranslate(const glm::vec3& delta) {
 void GameObjectTransform::RelativeTranslate(const glm::vec3& fromPoint, const glm::vec3& toLocation) {
     if (!gameObject) return;
     RelativeTranslate(toLocation - fromPoint);
+}
+
+void BehaviourTransform::RelativeTranslate(const glm::vec3& delta) {
+    glm::vec3 rot = Rotation.LocalSpace();
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        GameObject* owner = m_behaviour->GetOwner();
+        if (owner && owner->scene) {
+            for (int childId : owner->childIds) {
+                GameObject* child = owner->scene->FindObject(childId);
+                if (child && (child->name.find("Camera") != std::string::npos || child->name.find("Boom") != std::string::npos)) {
+                    rot.y = child->rotation.y;
+                    break;
+                }
+            }
+            if (rot.y == 0.0f) {
+                for (auto& obj : owner->scene->objects) {
+                    if ((obj.name.find("CameraBoom") != std::string::npos || obj.name.find("Camera") != std::string::npos) && obj.parentId == owner->id) {
+                        rot.y = obj.rotation.y;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    float rYaw = glm::radians(rot.y);
+    glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+    glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+    glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
+    Location.LocalSpace(Location.LocalSpace() + localDelta);
 }
 
 // BehaviourTransform::AxisProxy implementations
@@ -2567,10 +2614,35 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
         if (!targetObj) continue;
 
         if (action.type == DynamicTransformAction::ActionType::TranslateRelative) {
-            if (targetObj == m_owner) {
-                Transform.Translate(delta.x, delta.y, delta.z);
+            float rYaw = 0.0f;
+            if (targetObj && targetObj->scene) {
+                for (int childId : targetObj->childIds) {
+                    GameObject* child = targetObj->scene->FindObject(childId);
+                    if (child && (child->name.find("Camera") != std::string::npos || child->name.find("Boom") != std::string::npos)) {
+                        rYaw = glm::radians(child->rotation.y);
+                        break;
+                    }
+                }
+                if (rYaw == 0.0f) {
+                    for (auto& obj : targetObj->scene->objects) {
+                        if ((obj.name.find("CameraBoom") != std::string::npos || obj.name.find("Camera") != std::string::npos) && obj.parentId == targetObj->id) {
+                            rYaw = glm::radians(obj.rotation.y);
+                            break;
+                        }
+                    }
+                }
+            }
+            if (rYaw != 0.0f) {
+                glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+                glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+                glm::vec3 localDelta = delta.x * forward + delta.z * right;
+                targetObj->position += localDelta;
             } else {
-                targetObj->transform.RelativeTranslate(delta.x, delta.y, delta.z);
+                if (targetObj == m_owner) {
+                    Transform.Translate(delta.x, delta.y, delta.z);
+                } else {
+                    targetObj->transform.RelativeTranslate(delta.x, delta.y, delta.z);
+                }
             }
         } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
             if (targetObj == m_owner) {
@@ -6071,7 +6143,7 @@ void DynamicScriptBehaviour::ResetToDefaults() {
 // ============================================================================
 // GetComponent<T> Specialisations (dev.md Section 35)
 // Implementations live here to avoid circular includes between
-// EunoiaBehaviour.h ↔ GameObject.h.
+// EunoiaBehaviour.h Ã¢â€ â€ GameObject.h.
 // ============================================================================
 
 template<>
