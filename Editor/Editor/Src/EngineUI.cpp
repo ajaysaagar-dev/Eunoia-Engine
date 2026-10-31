@@ -1,4 +1,4 @@
-﻿#include <Editor/EngineUI.h>
+#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
@@ -2766,6 +2766,7 @@ bool EngineUI::LoadProject(const std::filesystem::path& projRoot, Scene& scene, 
         }
     }
 
+    BehaviourRegistry::Get().ClearProjectScripts();
     for (const auto& entry : std::filesystem::recursive_directory_iterator(contentRootPath, std::filesystem::directory_options::skip_permission_denied, ec)) {
         if (!entry.is_directory(ec)) {
             std::string ext = entry.path().extension().string();
@@ -3779,59 +3780,38 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetContentRegionAvail());
 
             ImGuiID dockRight = 0;
-            ImGuiID dockMain  = ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.22f, &dockRight, nullptr);
+            ImGuiID dockRemaining = 0;
+            ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.22f, &dockRight, &dockRemaining);
+
             ImGuiID dockBottom = 0;
-            ImGuiID dockCenter = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, &dockBottom, nullptr);
+            ImGuiID dockCenter = 0;
+            ImGui::DockBuilderSplitNode(dockRemaining, ImGuiDir_Down, 0.28f, &dockBottom, &dockCenter);
+
+            ImGuiID dockDetails = 0;
             ImGuiID dockOutliner = 0;
-            ImGuiID dockDetails  = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.50f, &dockDetails, &dockOutliner);
+            ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.50f, &dockDetails, &dockOutliner);
 
             ImGui::DockBuilderDockWindow("Outliner",        dockOutliner);
             ImGui::DockBuilderDockWindow("Details",         dockDetails);
             ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
-            ImGui::DockBuilderDockWindow("Scene",           dockCenter);
             ImGui::DockBuilderFinish(dockId);
         }
 
-        ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+        ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f),
+            ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode);
 
         ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId);
-        if (centralNode) {
+        if (centralNode && centralNode->Size.x > 20.0f && centralNode->Size.y > 20.0f) {
             m_dynamicViewportRect.x = centralNode->Pos.x - mainVp->Pos.x;
             m_dynamicViewportRect.y = centralNode->Pos.y - mainVp->Pos.y;
-            m_dynamicViewportRect.width = std::max(20.0f, centralNode->Size.x);
-            m_dynamicViewportRect.height = std::max(20.0f, centralNode->Size.y);
+            m_dynamicViewportRect.width = centralNode->Size.x;
+            m_dynamicViewportRect.height = centralNode->Size.y;
             m_hasDynamicViewportRect = true;
         }
 
         ImGui::End();
     }
     // === END DOCKSPACE ===
-
-    // Level Viewport "Scene" Dockable Window (matches Atlas UI reference image copy.png)
-    if (isMainEditor) {
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-        bool sceneOpen = true;
-        ImGuiWindowFlags sceneFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
-                                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
-        if (ImGui::Begin("Scene", &sceneOpen, sceneFlags)) {
-            ImVec2 vMin = ImGui::GetWindowContentRegionMin();
-            ImVec2 vMax = ImGui::GetWindowContentRegionMax();
-            ImVec2 wPos = ImGui::GetWindowPos();
-            ImGuiViewport* mainVp = ImGui::GetMainViewport();
-
-            m_dynamicViewportRect.x = wPos.x + vMin.x - mainVp->Pos.x;
-            m_dynamicViewportRect.y = wPos.y + vMin.y - mainVp->Pos.y;
-            m_dynamicViewportRect.width = std::max(20.0f, vMax.x - vMin.x);
-            m_dynamicViewportRect.height = std::max(20.0f, vMax.y - vMin.y);
-            m_hasDynamicViewportRect = true;
-
-            // Transparent hit area for mouse interaction & drop targets
-            ImGui::InvisibleButton("##SceneViewportHitArea", ImVec2(m_dynamicViewportRect.width, m_dynamicViewportRect.height));
-        }
-        ImGui::End();
-        ImGui::PopStyleVar(2);
-    }
 
     // 2. Top Menu Bar
     RenderTopMenuBar(scene, camera, outShouldExit);
@@ -16828,10 +16808,25 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                 }
             }
 
+            std::error_code cNormEc;
+            std::filesystem::path curContentNorm = std::filesystem::weakly_canonical(contentRootPath, cNormEc);
+            std::string curContentStr = curContentNorm.generic_string();
+
             const auto& allBehaviors = BehaviourRegistry::Get().GetAll();
             int matchCount = 0;
             for (const auto& pair : allBehaviors) {
                 const auto& info = pair.second;
+
+                // Only show behaviours belonging to this project (or native engine behaviours)
+                if (!info.isNative && !info.sourceCpp.empty()) {
+                    std::error_code cEc;
+                    std::filesystem::path srcNorm = std::filesystem::weakly_canonical(info.sourceCpp, cEc);
+                    std::string srcStr = srcNorm.generic_string();
+                    if (!curContentStr.empty() && srcStr.rfind(curContentStr, 0) != 0) {
+                        continue; // Belongs to a different project! Skip it!
+                    }
+                }
+
                 std::string nameLower = info.displayName;
                 std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
                 std::string classLower = info.className;
