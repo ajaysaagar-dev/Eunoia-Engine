@@ -88,6 +88,43 @@ static EngineUI* g_pEngineUI = nullptr;
 extern bool g_pendingPickClick;
 static bool s_justExitedPlayMode = false;
 
+struct PromotedTabWindow {
+    std::string name;
+    bool active = true;
+};
+static std::vector<PromotedTabWindow> s_promotedTabs;
+static int s_activePromotedTabIndex = -1;
+
+static bool IsWindowPromotedTab(const std::string& name) {
+    for (const auto& tab : s_promotedTabs) {
+        if (tab.name == name) return true;
+    }
+    return false;
+}
+
+static void PromoteWindowToWorkspaceTab(const std::string& name) {
+    for (size_t i = 0; i < s_promotedTabs.size(); ++i) {
+        if (s_promotedTabs[i].name == name) {
+            s_activePromotedTabIndex = (int)i;
+            return;
+        }
+    }
+    PromotedTabWindow tab;
+    tab.name = name;
+    tab.active = true;
+    s_promotedTabs.push_back(tab);
+    s_activePromotedTabIndex = (int)s_promotedTabs.size() - 1;
+}
+
+static void ClosePromotedWorkspaceTab(int idx) {
+    if (idx >= 0 && idx < (int)s_promotedTabs.size()) {
+        s_promotedTabs.erase(s_promotedTabs.begin() + idx);
+        if (s_activePromotedTabIndex >= (int)s_promotedTabs.size()) {
+            s_activePromotedTabIndex = (int)s_promotedTabs.size() - 1;
+        }
+    }
+}
+
 void AddEngineLog(const std::string& category, const std::string& message, int level) {
     if (g_pEngineUI) {
         g_pEngineUI->AddLog(category, message, level);
@@ -3749,7 +3786,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
                         !(showMaterialEditor && materialWorkspaceActive) &&
                         !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() &&
                         !Eunoia::AnimatorGraphManager::Get().IsActive() &&
-                        !Eunoia::AnimationBlendManager::Get().IsActive();
+                        !Eunoia::AnimationBlendManager::Get().IsActive() &&
+                        !Eunoia::BehaviourManager::Get().IsActive() && (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size());
 
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
@@ -3796,6 +3834,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             ImGui::DockBuilderDockWindow("Outliner",        dockOutliner);
             ImGui::DockBuilderDockWindow("Details",         dockDetails);
             ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+            ImGui::DockBuilderDockWindow("Animation",       dockBottom);
+            ImGui::DockBuilderDockWindow("Output Log",      dockBottom);
             ImGui::DockBuilderFinish(dockId);
         }
 
@@ -3820,7 +3860,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
 
     if (isMainEditor) {
         // 2. Outliner (Matches UI_Ref.svg "Outliner" left sidebar)
-        if (showOutliner) {
+        if (showOutliner && !IsWindowPromotedTab("Outliner")) {
             RenderOutliner(scene);
         }
 
@@ -3837,7 +3877,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             float preLightRange = (prevSel && prevSel->isLight) ? prevSel->light.range : 0.0f;
             bool preLightShadows = (prevSel && prevSel->isLight) ? prevSel->light.castShadows : false;
 
-            RenderDetails(scene);
+            if (!IsWindowPromotedTab("Details")) {
+                RenderDetails(scene);
+            }
 
             GameObject* postSel = scene.GetSelected();
             if (postSel) {
@@ -3856,9 +3898,15 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
         }
 
-        // 4. Content Browser (Matches UI_Ref.svg "Content Browser" full-width bottom panel)
-        if (showBottomDrawer) {
-            RenderContentBrowser(scene);
+        // 4. Dockable Bottom Windows (Content Browser, Animation, Output Log)
+        if (showContentBrowserWindow && !IsWindowPromotedTab("Content Browser")) {
+            RenderContentBrowserWindow(scene);
+        }
+        if (showAnimationWindow && !IsWindowPromotedTab("Animation")) {
+            RenderAnimationTimelineWindow(scene);
+        }
+        if (showOutputLogWindow && !IsWindowPromotedTab("Output Log")) {
+            RenderOutputLogWindow();
         }
 
         // Dynamic splitters to resize Left Sidebar, Right Sidebar, and Bottom Content Browser
@@ -3883,6 +3931,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             if (showBottomDrawer) {
                 RenderContentBrowser(scene);
             }
+        } else if (Eunoia::BehaviourManager::Get().IsActive()) {
+            Eunoia::BehaviourManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
         } else if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
             Eunoia::AnimatorGraphManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
         } else if (Eunoia::AnimationBlendManager::Get().IsActive()) {
@@ -3891,6 +3941,55 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             Eunoia::NodeBehaviour::NodeBehaviourManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y), &scene);
         } else if (!EunoiaUI::UIEditorManager::Get().IsMainEditorActive()) {
             EunoiaUI::UIEditorManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
+        } else if (s_activePromotedTabIndex >= 0 && s_activePromotedTabIndex < (int)s_promotedTabs.size()) {
+            const std::string& pName = s_promotedTabs[s_activePromotedTabIndex].name;
+            ImGui::SetNextWindowPos(ImVec2(wsPos.x, wsPos.y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(wsSize.x, wsSize.y), ImGuiCond_Always);
+            ImGuiWindowFlags pFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus;
+            if (ImGui::Begin(pName.c_str(), nullptr, pFlags)) {
+                if (pName == "Content Browser") {
+                    RenderContentBrowserContent(scene);
+                } else if (pName == "Animation") {
+                    ImVec2 avail = ImGui::GetContentRegionAvail();
+                    Eunoia::LevelAnimationEditor::Get().RenderTimeline(scene, ImGui::GetCursorScreenPos(), avail);
+                } else if (pName == "Output Log") {
+                    if (ImGui::Button("Clear")) { logs.clear(); }
+                    ImGui::SameLine(); ImGui::Checkbox("Info", &logShowInfo);
+                    ImGui::SameLine(); ImGui::Checkbox("Warnings", &logShowWarnings);
+                    ImGui::SameLine(); ImGui::Checkbox("Errors", &logShowErrors);
+                    ImGui::SameLine(); ImGui::Checkbox("Auto-scroll", &logAutoScroll);
+                    ImGui::SameLine(ImGui::GetWindowWidth() - 220.0f);
+                    ImGui::SetNextItemWidth(200.0f);
+                    ImGui::InputTextWithHint("##LogSearchTab", "Filter Log...", logSearchBuf, sizeof(logSearchBuf));
+                    ImGui::Separator();
+                    ImGui::BeginChild("OutputLogScrollingRegionTab", ImVec2(0, 0), false, ImGuiWindowFlags_HorizontalScrollbar);
+                    std::string searchLower = logSearchBuf;
+                    std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
+                    for (const auto& entry : logs) {
+                        if (entry.level == 0 && !logShowInfo) continue;
+                        if (entry.level == 1 && !logShowWarnings) continue;
+                        if ((entry.level == 2 || entry.level == 3) && !logShowErrors) continue;
+                        if (!searchLower.empty()) {
+                            std::string msgLower = entry.message;
+                            std::transform(msgLower.begin(), msgLower.end(), msgLower.begin(), ::tolower);
+                            if (msgLower.find(searchLower) == std::string::npos) continue;
+                        }
+                        ImVec4 col = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+                        if (entry.level == 1) col = ImVec4(1.0f, 0.85f, 0.2f, 1.0f);
+                        else if (entry.level == 2 || entry.level == 3) col = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
+                        else if (entry.level == 4) col = ImVec4(0.3f, 1.0f, 0.4f, 1.0f);
+                        ImGui::TextColored(col, "[%s] %s", entry.category.c_str(), entry.message.c_str());
+                    }
+                    if (logAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY())
+                        ImGui::SetScrollHereY(1.0f);
+                    ImGui::EndChild();
+                } else if (pName == "Outliner") {
+                    RenderOutliner(scene);
+                } else if (pName == "Details") {
+                    RenderDetails(scene);
+                }
+            }
+            ImGui::End();
         }
     }
 
@@ -4643,9 +4742,11 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
             }
 
             if (ImGui::BeginMenu("Window")) {
-                ImGui::MenuItem("Outliner (Left Sidebar)", nullptr, &showOutliner);
-                ImGui::MenuItem("Details (Right Sidebar)", nullptr, &showDetails);
-                ImGui::MenuItem("Content Browser (Bottom Dock)", nullptr, &showBottomDrawer);
+                ImGui::MenuItem("Outliner", nullptr, &showOutliner);
+                ImGui::MenuItem("Details", nullptr, &showDetails);
+                ImGui::MenuItem("Content Browser", nullptr, &showContentBrowserWindow);
+                ImGui::MenuItem("Animation", nullptr, &showAnimationWindow);
+                ImGui::MenuItem("Output Log", nullptr, &showOutputLogWindow);
                 ImGui::MenuItem("Viewport Overlay", nullptr, &showViewportOverlay);
                 if (ImGui::BeginMenu("Editor Gizmos")) {
                     ImGui::MenuItem("Show Light Gizmos", nullptr, &Eunoia::EditorGizmoSystem::Get().showLightGizmos);
@@ -4977,7 +5078,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
-        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive() && !Eunoia::AnimationBlendManager::Get().IsActive());
+        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive() && !Eunoia::AnimationBlendManager::Get().IsActive() && !Eunoia::BehaviourManager::Get().IsActive() && (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size()));
         std::string levelTabName = "Level Editor";
         if (levelUnsaved) levelTabName += "*";
         levelTabName += "##Tab_Level";
@@ -4988,6 +5089,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
             uiMgr.SwitchToMainEditor();
+            Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+            s_activePromotedTabIndex = -1;
             if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
                 PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
             }
@@ -5006,6 +5109,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
+                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 SwitchToMaterialEditor((int)i);
             }
 
@@ -5048,6 +5153,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
+                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 uiMgr.SwitchToEditor(tabIdx);
             }
 
@@ -5091,6 +5198,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 uiMgr.SwitchToMainEditor();
                 Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
+                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 nbMgr.SwitchToEditor((int)i);
             }
 
@@ -5133,6 +5242,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 materialWorkspaceActive = false;
                 uiMgr.SwitchToMainEditor();
                 nbMgr.SwitchToMainEditor();
+                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 agMgr.SwitchToEditor((int)i);
             }
 
@@ -5176,6 +5287,8 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 uiMgr.SwitchToMainEditor();
                 nbMgr.SwitchToMainEditor();
                 agMgr.SwitchToMainEditor();
+                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 blendMgr.SwitchToEditor((int)i);
             }
 
@@ -5220,6 +5333,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 nbMgr.SwitchToMainEditor();
                 agMgr.SwitchToMainEditor();
                 blendMgr.SwitchToMainEditor();
+                s_activePromotedTabIndex = -1;
                 behMgr.SwitchToEditor((int)i);
             }
 
@@ -5244,6 +5358,43 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
 
         if (behToClose >= 0) {
             behMgr.Close((size_t)behToClose);
+        }
+
+                // 3.9 Promoted Workspace Tabs (Dockable windows dragged to top tab switcher bar)
+        int promotedToClose = -1;
+        for (size_t i = 0; i < s_promotedTabs.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isPromotedActive = (s_activePromotedTabIndex == (int)i);
+            std::string tabLabel = "[" + s_promotedTabs[i].name + "]##PromotedTab_" + std::to_string(i);
+            TabSaveProgressState dummySaveState;
+            if (RenderTabWithSaveProgress(tabLabel.c_str(), isPromotedActive, dummySaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToMainEditor();
+                nbMgr.SwitchToMainEditor();
+                agMgr.SwitchToMainEditor();
+                blendMgr.SwitchToMainEditor();
+                behMgr.SwitchToMainEditor();
+                s_activePromotedTabIndex = (int)i;
+            }
+
+            // Close button for promoted tab
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+            std::string closeBtnId = "x##ClosePromotedTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                promotedToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s Tab", s_promotedTabs[i].name.c_str());
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+        if (promotedToClose >= 0) {
+            ClosePromotedWorkspaceTab(promotedToClose);
         }
 
         // 4. "+" Quick Add New Document Switch
@@ -5400,6 +5551,31 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             }
         }
 #endif
+
+        // Window Drag & Drop target to promote any dockable window into a fullscreen workspace tab
+        if (ImGui::BeginDragDropTarget()) {
+            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload(IMGUI_PAYLOAD_TYPE_WINDOW)) {
+                ImGuiWindow* draggedWin = *(ImGuiWindow**)payload->Data;
+                if (draggedWin && draggedWin->Name) {
+                    std::string winName = draggedWin->Name;
+                    size_t hashPos = winName.find("###");
+                    if (hashPos != std::string::npos) winName = winName.substr(0, hashPos);
+                    size_t doubleHashPos = winName.find("##");
+                    if (doubleHashPos != std::string::npos) winName = winName.substr(0, doubleHashPos);
+                    if (!winName.empty() && winName[0] != '#') {
+                        PromoteWindowToWorkspaceTab(winName);
+                        materialWorkspaceActive = false;
+                        uiMgr.SwitchToMainEditor();
+                        nbMgr.SwitchToMainEditor();
+                        agMgr.SwitchToMainEditor();
+                        blendMgr.SwitchToMainEditor();
+                        behMgr.SwitchToMainEditor();
+                        AddLog("LogUI", "Promoted window to workspace tab: " + winName, 0);
+                    }
+                }
+            }
+            ImGui::EndDragDropTarget();
+        }
 
         // Bottom border line #1f1f23
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -11169,6 +11345,11 @@ void EngineUI::OpenLevelAnimationEditor(const std::string& path) {
 }
 
 void EngineUI::OpenBehaviourEditor(const std::string& path) {
+    materialWorkspaceActive = false;
+    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
+    Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
+    Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
     Eunoia::BehaviourManager::Get().Open(path);
     AddLog("LogContent", "Opened Behaviour Blueprint Editor: " + path, 0);
 }
