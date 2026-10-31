@@ -201,6 +201,9 @@ public:
     bool showOutliner = true;
     bool showDetails = true;
     bool showBottomDrawer = true;
+    bool showContentBrowserWindow = true;
+    bool showAnimationWindow = true;
+    bool showOutputLogWindow = true;
     bool showViewportOverlay = true;
     bool showHelpModal = false;
     bool showUndoHistory = false;
@@ -273,6 +276,9 @@ public:
 
     bool showNewMaterialPopup = false;
     char newMaterialNameBuf[64] = "M_NewMaterial";
+
+    bool showNewBehaviourAssetPopup = false;
+    char newBehaviourAssetNameBuf[64] = "B_NewActor";
 
     // Item / Folder Renaming State & Methods
     bool showRenameAssetPopup = false;
@@ -476,6 +482,9 @@ public:
     bool prevShowOutliner = true;
     bool prevShowDetails = true;
     bool prevShowBottomDrawer = true;
+    bool prevShowContentBrowserWindow = true;
+    bool prevShowAnimationWindow = true;
+    bool prevShowOutputLogWindow = true;
 
     // Level File Management (In whole project "Level" is used instead of "Scene")
     std::string currentLevelFilePath = "";
@@ -816,6 +825,11 @@ private:
     void DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_set<int>& visitedIds, int depth = 0);
     void RenderDetails(Scene& scene);
     void RenderContentBrowser(Scene& scene);
+    void RenderContentBrowserWindow(Scene& scene);
+    void RenderAnimationTimelineWindow(Scene& scene);
+    void RenderOutputLogWindow();
+    void RenderContentBrowserContent(Scene& scene);
+    void OpenBehaviourEditor(const std::string& path);
     void RenderMaterialEditor(Scene& scene);
     void RenderSkyboxEditor(Scene& scene);
     void RenderWaterEditor(Scene& scene);

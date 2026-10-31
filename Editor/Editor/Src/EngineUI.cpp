@@ -47,6 +47,8 @@
 #include <Level-Animation/LevelAnimation.h>
 #include <Level-Animation/LevelAnimationEditor.h>
 #include <Level-Animation/LevelAnimationManager.h>
+#include <Behaviour/BehaviourManager.h>
+#include <Behaviour/BehaviourAsset.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -5200,6 +5202,50 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             blendMgr.Close((size_t)blendToClose);
         }
 
+        // 3.8 Behaviour Blueprint Tabs (Unreal Engine Blueprint Actor editors)
+        auto& behMgr = Eunoia::BehaviourManager::Get();
+        const auto& behEditors = behMgr.GetEditors();
+        int behToClose = -1;
+        for (size_t i = 0; i < behEditors.size(); ++i) {
+            ImGui::SameLine(0.0f, 4.0f * uiScale);
+            bool isBehActive = (behMgr.IsActive() && behMgr.GetActiveEditorIndex() == (int)i);
+            std::string behLabel = "[B] " + behEditors[i]->GetName();
+            if (behEditors[i]->IsDirty()) behLabel += "*";
+            behLabel += "##BehTab_" + std::to_string(i);
+
+            TabSaveProgressState dummyBehSaveState;
+            if (RenderTabWithSaveProgress(behLabel.c_str(), isBehActive, dummyBehSaveState, tabBtnH)) {
+                materialWorkspaceActive = false;
+                uiMgr.SwitchToMainEditor();
+                nbMgr.SwitchToMainEditor();
+                agMgr.SwitchToMainEditor();
+                blendMgr.SwitchToMainEditor();
+                behMgr.SwitchToEditor((int)i);
+            }
+
+            // Close button
+            ImGui::SameLine(0.0f, 2.0f * uiScale);
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
+
+            std::string closeBtnId = "x##CloseBehTab_" + std::to_string(i);
+            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
+                behToClose = (int)i;
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", behEditors[i]->GetName().c_str());
+
+            ImGui::PopStyleVar(2);
+            ImGui::PopStyleColor(4);
+        }
+
+        if (behToClose >= 0) {
+            behMgr.Close((size_t)behToClose);
+        }
+
         // 4. "+" Quick Add New Document Switch
         ImGui::SameLine(0.0f, 6.0f * uiScale);
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.071f, 0.071f, 0.078f, 1.0f)); // #121214
@@ -5229,7 +5275,11 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 showNewAnimationBlendPopup = true;
                 snprintf(newAnimationBlendNameBuf, sizeof(newAnimationBlendNameBuf), "BS_NewBlend");
             }
-                        if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
+                        if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
+                    showNewBehaviourAssetPopup = true;
+                    snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
+                }
+                if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                 showNewNodeBehaviourPopup = true;
                 snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
             }
@@ -11110,10 +11160,17 @@ void EngineUI::OpenLevelAnimationEditor(const std::string& path) {
     auto anim = Eunoia::LevelAnimationManager::Get().LoadLevelAnimation(path);
     if (anim) {
         Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(anim);
+        showAnimationWindow = true;
+        ImGui::SetWindowFocus("Animation");
         bottomDrawerTab = 1;
         bottomDrawerOpen = true;
         AddLog("LogLevelAnimation", "Opened Level Animation: " + anim->name, 0);
     }
+}
+
+void EngineUI::OpenBehaviourEditor(const std::string& path) {
+    Eunoia::BehaviourManager::Get().Open(path);
+    AddLog("LogContent", "Opened Behaviour Blueprint Editor: " + path, 0);
 }
 
 void EngineUI::OpenAnimationBlendEditor(const std::string& path) {
@@ -11899,63 +11956,116 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
 }
 
 void EngineUI::RenderContentBrowser(Scene& scene) {
+    RenderContentBrowserWindow(scene);
+}
+
+void EngineUI::RenderContentBrowserWindow(Scene& scene) {
+    if (!showContentBrowserWindow) return;
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
     // Dockable window: size hint for first launch, can be repositioned via DockSpace
     ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.75f, 260.0f * uiScale), ImGuiCond_FirstUseEver);
 
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
-    if (ImGui::Begin("Content Browser", &showBottomDrawer, flags)) {
-        // Tab Header buttons (Matching SVG Blueprint)
-        if (bottomDrawerTab > 2) bottomDrawerTab = 0;
-        bool isContentTab = (bottomDrawerTab == 0);
-        bool isAnimTab    = (bottomDrawerTab == 1);
-        bool isLogTab     = (bottomDrawerTab == 2);
+    if (ImGui::Begin("Content Browser", &showContentBrowserWindow, flags)) {
+        RenderContentBrowserContent(scene);
+    }
+    ImGui::End();
+}
 
-        const ImVec4 cbAccentBlue  = ImVec4(0.000f, 0.400f, 1.000f, 1.0f); // #0066ff
-        const ImVec4 accentBlue    = cbAccentBlue;
-        const ImVec4 cbInactiveTab = ImVec4(0.000f, 0.000f, 0.000f, 0.0f);
-        const ImVec4 cbTextWhite   = ImVec4(1.000f, 1.000f, 1.000f, 1.0f);
-        const ImVec4 cbTextMuted   = ImVec4(0.631f, 0.631f, 0.667f, 1.0f); // #a1a1aa
+void EngineUI::RenderAnimationTimelineWindow(Scene& scene) {
+    if (!showAnimationWindow) return;
+    ImGuiViewport* vp = ImGui::GetMainViewport();
 
-        float tabBtnHeight = 20.0f * uiScale;
+    // Dockable window: size hint for first launch, can be repositioned via DockSpace
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.75f, 260.0f * uiScale), ImGuiCond_FirstUseEver);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, isContentTab ? cbAccentBlue : cbInactiveTab);
-        ImGui::PushStyleColor(ImGuiCol_Text, isContentTab ? cbTextWhite : cbTextMuted);
-        if (ImGui::Button("Content Browser", ImVec2(100.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 0;
-        ImGui::PopStyleColor(2);
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    if (ImGui::Begin("Animation", &showAnimationWindow, flags)) {
+        ImVec2 avail = ImGui::GetContentRegionAvail();
+        Eunoia::LevelAnimationEditor::Get().RenderTimeline(scene, ImGui::GetCursorScreenPos(), avail);
+    }
+    ImGui::End();
+}
 
-        ImGui::SameLine(0.0f, 4.0f * uiScale);
-        ImGui::PushStyleColor(ImGuiCol_Button, isAnimTab ? cbAccentBlue : cbInactiveTab);
-        ImGui::PushStyleColor(ImGuiCol_Text, isAnimTab ? cbTextWhite : cbTextMuted);
-        if (ImGui::Button("Animation", ImVec2(75.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 1;
-        ImGui::PopStyleColor(2);
+void EngineUI::RenderOutputLogWindow() {
+    if (!showOutputLogWindow) return;
+    ImGuiViewport* vp = ImGui::GetMainViewport();
 
-        ImGui::SameLine(0.0f, 4.0f * uiScale);
-        ImGui::PushStyleColor(ImGuiCol_Button, isLogTab ? cbAccentBlue : cbInactiveTab);
-        ImGui::PushStyleColor(ImGuiCol_Text, isLogTab ? cbTextWhite : cbTextMuted);
-        if (ImGui::Button("Output Logs", ImVec2(80.0f * uiScale, tabBtnHeight))) bottomDrawerTab = 2;
-        ImGui::PopStyleColor(2);
+    // Dockable window: size hint for first launch, can be repositioned via DockSpace
+    ImGui::SetNextWindowSize(ImVec2(vp->Size.x * 0.75f, 260.0f * uiScale), ImGuiCond_FirstUseEver);
 
-        float collapseW = 85.0f * uiScale;
-        if (ImGui::GetContentRegionAvail().x > collapseW) {
-            ImGui::SameLine(ImGui::GetWindowWidth() - collapseW - ImGui::GetStyle().WindowPadding.x);
-        } else {
-            ImGui::SameLine();
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
+    if (ImGui::Begin("Output Log", &showOutputLogWindow, flags)) {
+        // Filter toolbar matching Old Eunoia Engine
+        if (ImGui::Button("Clear")) {
+            logs.clear();
         }
+        ImGui::SameLine();
+        ImGui::Checkbox("Info", &logShowInfo);
+        ImGui::SameLine();
+        ImGui::Checkbox("Warnings", &logShowWarnings);
+        ImGui::SameLine();
+        ImGui::Checkbox("Errors", &logShowErrors);
+        ImGui::SameLine();
+        ImGui::Checkbox("Auto-scroll", &logAutoScroll);
 
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.137f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Text, cbTextMuted);
-        if (ImGui::Button(bottomDrawerOpen ? "Collapse [-]" : "Expand [+]", ImVec2(collapseW, tabBtnHeight))) {
-            bottomDrawerOpen = !bottomDrawerOpen;
-        }
-        ImGui::PopStyleColor(3);
+        ImGui::SameLine(ImGui::GetWindowWidth() - 220.0f);
+        ImGui::SetNextItemWidth(200.0f);
+        ImGui::InputTextWithHint("##LogSearch", "Filter Log...", logSearchBuf, sizeof(logSearchBuf));
+
         ImGui::Separator();
 
-        if (bottomDrawerOpen) {
-            if (bottomDrawerTab == 0) {
-                // Registry-Backed Content Browser (dev.md Section 14, 34, 35)
+        // Log messages child
+        ImGui::BeginChild("LogScrollArea", ImVec2(0, -32), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+
+        std::string searchLower = logSearchBuf;
+        std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
+
+        for (const auto& entry : logs) {
+            if (entry.level == 0 && !logShowInfo) continue;
+            if (entry.level == 1 && !logShowWarnings) continue;
+            if ((entry.level == 2 || entry.level == 3) && !logShowErrors) continue;
+
+            if (!searchLower.empty()) {
+                std::string msgLower = entry.message;
+                std::transform(msgLower.begin(), msgLower.end(), msgLower.begin(), ::tolower);
+                if (msgLower.find(searchLower) == std::string::npos) continue;
+            }
+
+            ImVec4 col = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
+            if (entry.level == 1) col = ImVec4(1.0f, 0.85f, 0.2f, 1.0f);      // Warning Yellow
+            else if (entry.level == 2 || entry.level == 3) col = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Error Red
+            else if (entry.level == 4) col = ImVec4(0.3f, 1.0f, 0.4f, 1.0f);  // Success Green
+
+            ImGui::TextColored(col, "[%s] %s", entry.category.c_str(), entry.message.c_str());
+        }
+
+        if (logAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
+            ImGui::SetScrollHereY(1.0f);
+        }
+        ImGui::EndChild();
+
+        // Command line input
+        ImGui::PushItemWidth(-1.0f);
+        if (ImGui::InputTextWithHint("##LogCommandInput", "Enter Lua / Engine command and press Enter...", consoleInput, sizeof(consoleInput), ImGuiInputTextFlags_EnterReturnsTrue)) {
+            if (consoleInput[0] != '\0') {
+                AddLog("Command", consoleInput, 0);
+                consoleInput[0] = '\0';
+            }
+        }
+        ImGui::PopItemWidth();
+    }
+    ImGui::End();
+}
+
+void EngineUI::RenderContentBrowserContent(Scene& scene) {
+    const ImVec4 cbAccentBlue  = ImVec4(0.000f, 0.400f, 1.000f, 1.0f); // #0066ff
+    const ImVec4 accentBlue    = cbAccentBlue;
+    const ImVec4 cbTextWhite   = ImVec4(1.000f, 1.000f, 1.000f, 1.0f);
+    const ImVec4 cbTextMuted   = ImVec4(0.631f, 0.631f, 0.667f, 1.0f);
+
+    // Registry-Backed Content Browser (dev.md Section 14, 34, 35)
                 std::error_code ec;
                 if (currentVirtualDir.empty()) currentVirtualDir = "/Game";
 
@@ -12295,6 +12405,46 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                 TriggerBackgroundRegistrySync(contentRootPath);
                                 AddLog("LogContent", "Created folder: " + std::string(newFolderNameBuf) + " in " + targetDir, 2);
                             }
+                        }
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+                        popupTargetVirtualDir = "";
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::EndPopup();
+                }
+
+                if (showNewBehaviourAssetPopup) {
+                    ImGui::OpenPopup("Create Behaviour##Modal");
+                    showNewBehaviourAssetPopup = false;
+                }
+                if (ImGui::BeginPopupModal("Create Behaviour##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
+                    ImGui::Text("Creating Behaviour Asset in: %s", targetDir.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter behaviour asset name:");
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::InputText("##BehAssetNameInput", newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf));
+                    ImGui::Spacing();
+                    if (ImGui::Button("Create", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
+                        if (strlen(newBehaviourAssetNameBuf) > 0) {
+                            std::string behFileName = newBehaviourAssetNameBuf;
+                            if (behFileName.find(".behaviour") == std::string::npos) behFileName += ".behaviour";
+                            std::string diskSub = targetDir;
+                            if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
+                            if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
+                            std::filesystem::path dstDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
+                            std::error_code ec;
+                            std::filesystem::create_directories(dstDir, ec);
+                            std::filesystem::path behFilePath = dstDir / behFileName;
+
+                            Eunoia::BehaviourManager::Get().CreateNewBehaviour(behFilePath.string());
+                            TriggerBackgroundRegistrySync(contentRootPath);
+                            AddLog("LogContent", "Created Behaviour asset: " + behFilePath.string(), 2);
+                            OpenBehaviourEditor(behFilePath.string());
                         }
                         popupTargetVirtualDir = "";
                         ImGui::CloseCurrentPopup();
@@ -13064,6 +13214,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 // Directory Hierarchy with highlighting and drag/drop
                 auto RenderVirtualDirNode = [&](auto& self, const std::string& vDir) -> void {
                     std::vector<std::string> subdirs = AssetRegistry::Get().GetSubdirectories(vDir);
+                    subdirs.erase(std::remove_if(subdirs.begin(), subdirs.end(), [](const std::string& s) {
+                        return s.find(".internal") != std::string::npos;
+                    }), subdirs.end());
                     std::string dirName = AssetPath::GetObjectName(vDir);
                     if (vDir == "/Game") dirName = "Content";
 
@@ -13166,7 +13319,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                             showNewLevelAnimationPopup = true;
                             snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                         }
-                        if (ImGui::MenuItem("New Behaviour Script")) {
+                        if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
+                            popupTargetVirtualDir = vDir;
+                            showNewBehaviourAssetPopup = true;
+                            snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
+                        }
+                        if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
                             std::string defName = "NewBehaviour";
@@ -13311,6 +13469,9 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
 
                 // Subdirectories in current virtual folder
                 std::vector<std::string> currentSubdirs = AssetRegistry::Get().GetSubdirectories(currentVirtualDir);
+                currentSubdirs.erase(std::remove_if(currentSubdirs.begin(), currentSubdirs.end(), [](const std::string& s) {
+                    return s.find(".internal") != std::string::npos;
+                }), currentSubdirs.end());
 
                 // Build ordered list of all visible item keys for Windows Shift+Click contiguous selection
                 std::vector<std::string> visibleItemKeys;
@@ -13334,14 +13495,17 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         sPath.find(".html") != std::string::npos ||
                         sPath.find(".elogs") != std::string::npos ||
                         sPath.find(".log") != std::string::npos ||
+                        sPath.find(".internal") != std::string::npos ||
                         vPath.find(".assetmeta") != std::string::npos ||
                         vPath.find(".meta") != std::string::npos ||
                         vPath.find(".metadata") != std::string::npos ||
                         vPath.find(".html") != std::string::npos ||
                         vPath.find(".elogs") != std::string::npos ||
                         vPath.find(".log") != std::string::npos ||
+                        vPath.find(".internal") != std::string::npos ||
                         oName.find(".assetmeta") != std::string::npos ||
                         oName.find(".meta") != std::string::npos ||
+                        oName.find(".internal") != std::string::npos ||
                         oName.find(".metadata") != std::string::npos) {
                         continue;
                     }
@@ -13599,7 +13763,11 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                         fullLevel = contentRootPath / item.meta.sourcePath;
                                     }
                                     OpenLevelFromPath(scene, fullLevel.string());
-                                } else if (item.meta.type == AssetType::Behaviour || item.meta.type == AssetType::Script) {
+                                } else if (item.meta.type == AssetType::Behaviour || item.meta.sourcePath.find(".behaviour") != std::string::npos) {
+                                    std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
+                                    OpenBehaviourEditor(fullBeh.string());
+                                    AddLog("LogContent", "Opened Behaviour Blueprint: " + item.meta.objectName, 2);
+                                } else if (item.meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
                                     OpenScriptInCodeEditor(fullScript.string());
                                 } else if (item.meta.type == AssetType::Project) {
@@ -13706,7 +13874,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     showNewLevelAnimationPopup = true;
                                     snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                                 }
-                                if (ImGui::MenuItem("New Behaviour Script")) {
+                                if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
+                                    popupTargetVirtualDir = item.subDir;
+                                    showNewBehaviourAssetPopup = true;
+                                    snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
+                                }
+                                if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
                                     std::string defName = "NewBehaviour";
@@ -13865,6 +14038,24 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                                     if (ImGui::MenuItem("Open Level in Viewport")) {
                                         std::filesystem::path fullLevel = contentRootPath / item.meta.sourcePath;
                                         OpenLevelFromPath(scene, fullLevel.string());
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Behaviour || item.meta.sourcePath.find(".behaviour") != std::string::npos) {
+                                    if (ImGui::MenuItem("Open in Behaviour Editor")) {
+                                        std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
+                                        OpenBehaviourEditor(fullBeh.string());
+                                    }
+                                    if (ImGui::MenuItem("Spawn Actor in Level")) {
+                                        std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
+                                        Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(scene, fullBeh.string(), glm::vec3(0.0f, 0.0f, 0.0f));
+                                    }
+                                    ImGui::Separator();
+                                }
+                                if (item.meta.type == AssetType::Script) {
+                                    if (ImGui::MenuItem("Edit Script in VS Code")) {
+                                        std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
+                                        OpenScriptInCodeEditor(fullScript.string());
                                     }
                                     ImGui::Separator();
                                 }
@@ -14181,7 +14372,12 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                         ImGui::EndMenu();
                     }
                     ImGui::Separator();
-                    if (ImGui::MenuItem("New Behaviour Script")) {
+                    if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewBehaviourAssetPopup = true;
+                        snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
+                    }
+                    if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
                         std::string defName = "NewBehaviour";
@@ -14253,124 +14449,59 @@ void EngineUI::RenderContentBrowser(Scene& scene) {
                 }
 
                 ImGui::EndChild();
-            }
-            else if (bottomDrawerTab == 1) {
-                ImVec2 avail = ImGui::GetContentRegionAvail();
-                Eunoia::LevelAnimationEditor::Get().RenderTimeline(scene, ImGui::GetCursorScreenPos(), avail);
-            }
-            else if (bottomDrawerTab == 2) {
-                // Filter toolbar matching Old Eunoia Engine
-                if (ImGui::Button("Clear")) {
-                    logs.clear();
+            
+
+// Periodic real-time check for external file changes in contentRootPath
+    static auto s_lastDiskCheck = std::chrono::steady_clock::now();
+    static std::filesystem::file_time_type s_lastContentTime{};
+    auto nowTime = std::chrono::steady_clock::now();
+    if (std::chrono::duration_cast<std::chrono::milliseconds>(nowTime - s_lastDiskCheck).count() > 1500) {
+        s_lastDiskCheck = nowTime;
+        if (!contentRootPath.empty() && !s_bgSync.isRunning.load()) {
+            std::error_code ec;
+            auto curTime = std::filesystem::last_write_time(contentRootPath, ec);
+            if (!ec) {
+                if (s_lastContentTime != std::filesystem::file_time_type{} && curTime != s_lastContentTime) {
+                    TriggerBackgroundRegistrySync(contentRootPath);
                 }
-                ImGui::SameLine();
-                ImGui::Checkbox("Info", &logShowInfo);
-                ImGui::SameLine();
-                ImGui::Checkbox("Warnings", &logShowWarnings);
-                ImGui::SameLine();
-                ImGui::Checkbox("Errors", &logShowErrors);
-                ImGui::SameLine();
-                ImGui::Checkbox("Auto-scroll", &logAutoScroll);
-
-                ImGui::SameLine(ImGui::GetWindowWidth() - 220.0f);
-                ImGui::SetNextItemWidth(200.0f);
-                ImGui::InputTextWithHint("##LogSearch", "Filter Log...", logSearchBuf, sizeof(logSearchBuf));
-
-                ImGui::Separator();
-
-                // Log messages child
-                ImGui::BeginChild("LogScrollArea", ImVec2(0, -32), true, ImGuiWindowFlags_AlwaysVerticalScrollbar);
-
-                std::string searchLower = logSearchBuf;
-                std::transform(searchLower.begin(), searchLower.end(), searchLower.begin(), ::tolower);
-
-                for (const auto& entry : logs) {
-                    if (entry.level == 0 && !logShowInfo) continue;
-                    if (entry.level == 1 && !logShowWarnings) continue;
-                    if ((entry.level == 2 || entry.level == 3) && !logShowErrors) continue;
-
-                    if (!searchLower.empty()) {
-                        std::string msgLower = entry.message;
-                        std::transform(msgLower.begin(), msgLower.end(), msgLower.begin(), ::tolower);
-                        if (msgLower.find(searchLower) == std::string::npos) continue;
-                    }
-
-                    ImVec4 col = ImVec4(0.85f, 0.85f, 0.85f, 1.0f);
-                    if (entry.level == 1) col = ImVec4(1.0f, 0.85f, 0.2f, 1.0f);      // Warning Yellow
-                    else if (entry.level == 2 || entry.level == 3) col = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);  // Error Red
-                    else if (entry.level == 4) col = ImVec4(0.3f, 1.0f, 0.4f, 1.0f);  // Success Green
-
-                    ImGui::TextColored(col, "[%s] %s", entry.category.c_str(), entry.message.c_str());
-                }
-
-                if (logAutoScroll && ImGui::GetScrollY() >= ImGui::GetScrollMaxY()) {
-                    ImGui::SetScrollHereY(1.0f);
-                }
-                ImGui::EndChild();
-
-                // Command line input
-                ImGui::PushItemWidth(-1.0f);
-                if (ImGui::InputTextWithHint("##LogCommandInput", "Enter Lua / Engine command and press Enter...", consoleInput, sizeof(consoleInput), ImGuiInputTextFlags_EnterReturnsTrue)) {
-                    if (consoleInput[0] != '\0') {
-                        AddLog("Command", consoleInput, 0);
-                        consoleInput[0] = '\0';
-                    }
-                }
-                ImGui::PopItemWidth();
-            }
-        }
-
-        // Periodic real-time check for external file changes in contentRootPath
-        static auto s_lastDiskCheck = std::chrono::steady_clock::now();
-        static std::filesystem::file_time_type s_lastContentTime{};
-        auto nowTime = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(nowTime - s_lastDiskCheck).count() > 1500) {
-            s_lastDiskCheck = nowTime;
-            if (!contentRootPath.empty() && !s_bgSync.isRunning.load()) {
-                std::error_code ec;
-                auto curTime = std::filesystem::last_write_time(contentRootPath, ec);
-                if (!ec) {
-                    if (s_lastContentTime != std::filesystem::file_time_type{} && curTime != s_lastContentTime) {
-                        TriggerBackgroundRegistrySync(contentRootPath);
-                    }
-                    s_lastContentTime = curTime;
-                }
-            }
-        }
-
-        // Subtle Bottom-Right Background Sync Progress Indicator
-        bool bgSyncActive = s_bgSync.isRunning.load();
-        static auto s_lastActiveTime = std::chrono::steady_clock::now();
-        if (bgSyncActive) {
-            s_lastActiveTime = std::chrono::steady_clock::now();
-        }
-        auto timeSinceSync = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - s_lastActiveTime).count();
-        bool showBgIndicator = bgSyncActive || (timeSinceSync < 1500);
-
-        if (showBgIndicator && bottomDrawerOpen) {
-            ImVec2 badgeSize(220.0f, 24.0f);
-            ImVec2 winPos = ImGui::GetWindowPos(); ImVec2 winSize = ImGui::GetWindowSize();
-            ImVec2 badgePos(winPos.x + winSize.x - badgeSize.x - 14.0f, winPos.y + winSize.y - badgeSize.y - 7.0f);
-            ImDrawList* fgList = ImGui::GetForegroundDrawList();
-            fgList->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(16, 20, 28, 230), 4.0f);
-            fgList->AddRect(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(40, 90, 160, 200), 4.0f);
-
-            if (bgSyncActive) {
-                float prog = s_bgSync.progress.load();
-                float barW = (badgeSize.x - 20.0f) * std::max(0.05f, prog);
-                fgList->AddRectFilled(ImVec2(badgePos.x + 10.0f, badgePos.y + badgeSize.y - 4.0f),
-                                      ImVec2(badgePos.x + 10.0f + barW, badgePos.y + badgeSize.y - 2.0f),
-                                      IM_COL32(40, 160, 240, 255), 1.0f);
-                char buf[64];
-                snprintf(buf, sizeof(buf), "Syncing... (%d%%)", (int)(prog * 100.0f));
-                fgList->AddText(ImVec2(badgePos.x + 12.0f, badgePos.y + 3.0f), IM_COL32(180, 220, 255, 240), buf);
-            } else {
-                fgList->AddText(ImVec2(badgePos.x + 12.0f, badgePos.y + 3.0f), IM_COL32(90, 230, 130, 240), "Registry Synchronized");
+                s_lastContentTime = curTime;
             }
         }
     }
-    ImGui::End();
+
+    // Subtle Bottom-Right Background Sync Progress Indicator
+    bool bgSyncActive = s_bgSync.isRunning.load();
+    static auto s_lastActiveTime = std::chrono::steady_clock::now();
+    if (bgSyncActive) {
+        s_lastActiveTime = std::chrono::steady_clock::now();
+    }
+    auto timeSinceSync = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - s_lastActiveTime).count();
+    bool showBgIndicator = bgSyncActive || (timeSinceSync < 1500);
+
+    if (showBgIndicator) {
+        ImVec2 badgeSize(220.0f, 24.0f);
+        ImVec2 winPos = ImGui::GetWindowPos(); ImVec2 winSize = ImGui::GetWindowSize();
+        ImVec2 badgePos(winPos.x + winSize.x - badgeSize.x - 14.0f, winPos.y + winSize.y - badgeSize.y - 7.0f);
+        ImDrawList* fgList = ImGui::GetForegroundDrawList();
+        fgList->AddRectFilled(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(16, 20, 28, 230), 4.0f);
+        fgList->AddRect(badgePos, ImVec2(badgePos.x + badgeSize.x, badgePos.y + badgeSize.y), IM_COL32(40, 90, 160, 200), 4.0f);
+
+        if (bgSyncActive) {
+            float prog = s_bgSync.progress.load();
+            float barW = (badgeSize.x - 20.0f) * std::max(0.05f, prog);
+            fgList->AddRectFilled(ImVec2(badgePos.x + 10.0f, badgePos.y + badgeSize.y - 4.0f),
+                                  ImVec2(badgePos.x + 10.0f + barW, badgePos.y + badgeSize.y - 2.0f),
+                                  IM_COL32(40, 160, 240, 255), 1.0f);
+            char buf[64];
+            snprintf(buf, sizeof(buf), "Syncing... (%d%%)", (int)(prog * 100.0f));
+            fgList->AddText(ImVec2(badgePos.x + 12.0f, badgePos.y + 3.0f), IM_COL32(180, 220, 255, 240), buf);
+        } else {
+            fgList->AddText(ImVec2(badgePos.x + 12.0f, badgePos.y + 3.0f), IM_COL32(90, 230, 130, 240), "Registry Synchronized");
+        }
+    }
 }
+
+
 
 void EngineUI::RenderLayoutSplitters() {
     if (isImmersiveMode) return;
@@ -16740,12 +16871,12 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
     ImGui::Spacing();
     ImGui::Separator();
     char headerLabel[128];
-    snprintf(headerLabel, sizeof(headerLabel), "Behaviours (%zu)###BehavioursHeader", obj->behaviours.size());
+    snprintf(headerLabel, sizeof(headerLabel), "Behaviour Scripts (%zu)###BehavioursHeader", obj->behaviours.size());
     if (ImGui::CollapsingHeader(headerLabel, ImGuiTreeNodeFlags_DefaultOpen)) {
         ImGui::Spacing();
 
-        // Button to add behaviour
-        if (ImGui::Button("+ Add Behaviour", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
+        // Button to add behaviour script
+        if (ImGui::Button("+ Add Behaviour Script", ImVec2(ImGui::GetContentRegionAvail().x, 26.0f))) {
             showAddBehaviourPopup = true;
             behaviourSearchBuf[0] = '\0';
         }
@@ -16773,14 +16904,14 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
         }
 
         if (showAddBehaviourPopup) {
-            ImGui::OpenPopup("Add Behaviour##Modal");
+            ImGui::OpenPopup("Add Behaviour Script##Modal");
             showAddBehaviourPopup = false;
         }
 
-        if (ImGui::BeginPopupModal("Add Behaviour##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-            ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "Select Behaviour to Attach:");
+        if (ImGui::BeginPopupModal("Add Behaviour Script##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+            ImGui::TextColored(ImVec4(0.12f, 0.68f, 1.00f, 1.0f), "Select Behaviour Script to Attach:");
             ImGui::SetNextItemWidth(300.0f);
-            ImGui::InputTextWithHint("##BehSearch", "Search Behaviours...", behaviourSearchBuf, sizeof(behaviourSearchBuf));
+            ImGui::InputTextWithHint("##BehSearch", "Search Behaviour Scripts...", behaviourSearchBuf, sizeof(behaviourSearchBuf));
             ImGui::Separator();
 
             std::string searchLower = behaviourSearchBuf;
@@ -16797,7 +16928,7 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                             std::string pStr = it->path().string();
                             std::string pLower = pStr;
                             std::transform(pLower.begin(), pLower.end(), pLower.begin(), ::tolower);
-                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos) {
+                            if (pLower.find(".assetmeta") == std::string::npos && pLower.find(".meta") == std::string::npos && pLower.find(".internal") == std::string::npos) {
                                 std::string stem = it->path().stem().string();
                                 if (stem != "Cube" && stem != "EngineUI" && stem != "EunoiaBehaviour" && stem != "TextureManager" && stem != "AssetRegistry" && stem != "AssetManager") {
                                     BehaviourRegistry::Get().RegisterScriptFile(stem, it->path().string());
@@ -16824,6 +16955,9 @@ void EngineUI::RenderBehavioursSection(Scene& scene, GameObject* obj) {
                     std::string srcStr = srcNorm.generic_string();
                     if (!curContentStr.empty() && srcStr.rfind(curContentStr, 0) != 0) {
                         continue; // Belongs to a different project! Skip it!
+                    }
+                    if (srcStr.find(".internal") != std::string::npos) {
+                        continue; // Hidden internal Blueprint script! Skip it!
                     }
                 }
 
