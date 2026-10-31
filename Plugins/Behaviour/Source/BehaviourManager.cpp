@@ -74,15 +74,14 @@ void BehaviourManager::RenderActiveTabWorkspace(const glm::vec2& pos, const glm:
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
     ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.082f, 0.082f, 0.102f, 1.0f));
 
+    flags |= ImGuiWindowFlags_NoBackground;
     std::string winId = "##BehaviourWorkspace_" + activeEditor->filePath;
     if (ImGui::Begin(winId.c_str(), nullptr, flags)) {
         activeEditor->RenderContent(scene);
     }
     ImGui::End();
 
-    ImGui::PopStyleColor();
     ImGui::PopStyleVar(3);
 }
 

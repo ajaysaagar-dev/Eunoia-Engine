@@ -3,6 +3,7 @@
 #include <EngineScene/Scene.h>
 #include <EngineAssets/AssetRegistry.h>
 #include <EngineAssets/AssetManager.h>
+#include <EngineScene/BehaviourRegistry.h>
 #include <ImGuizmo.h>
 #include <glm/gtc/type_ptr.hpp>
 #include <fstream>
@@ -10,9 +11,11 @@
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 #ifdef _WIN32
 #include <windows.h>
+#include <commdlg.h>
 #endif
 
 namespace Eunoia {
@@ -131,6 +134,7 @@ BehaviourEditorWindow::BehaviourEditorWindow(const std::string& path, const std:
 
 void BehaviourEditorWindow::SetupStudioLighting() {
     previewScene.Clear();
+    previewScene.isStudioPreview = true;
     previewScene.enableSkybox = false;
     previewScene.clearColor = glm::vec4(0.055f, 0.058f, 0.072f, 1.0f);
     previewScene.enableShadows = true;
@@ -139,8 +143,9 @@ void BehaviourEditorWindow::SetupStudioLighting() {
     // 1. Directional Key Sunlight
     previewScene.lightDirection = glm::normalize(glm::vec3(0.55f, -1.0f, 0.65f));
     previewScene.lightColor = glm::vec3(1.0f, 0.98f, 0.94f);
-    previewScene.lightIntensity = 1.4f;
-    previewScene.ambientIntensity = 0.35f;
+    previewScene.lightIntensity = 1.5f;
+    previewScene.ambientIntensity = 0.40f;
+    previewScene.ambientColor = glm::vec3(0.18f, 0.20f, 0.25f);
 
     // 2. Multi-point Studio Lights (Isolated strictly inside previewScene, never shown in Outliner)
     PointLight keyLight;
@@ -148,8 +153,9 @@ void BehaviourEditorWindow::SetupStudioLighting() {
     keyLight.name = "__StudioKeyLight";
     keyLight.position = glm::vec3(3.5f, 4.5f, 3.5f);
     keyLight.color = glm::vec3(1.0f, 0.96f, 0.90f);
-    keyLight.intensity = 2.2f;
-    keyLight.range = 30.0f;
+    keyLight.intensity = 2.5f;
+    keyLight.range = 35.0f;
+    keyLight.enabled = true;
     keyLight.castShadows = true;
     previewScene.pointLights.push_back(keyLight);
 
@@ -158,8 +164,9 @@ void BehaviourEditorWindow::SetupStudioLighting() {
     fillLight.name = "__StudioFillLight";
     fillLight.position = glm::vec3(-3.5f, 3.0f, -2.5f);
     fillLight.color = glm::vec3(0.85f, 0.92f, 1.0f);
-    fillLight.intensity = 1.3f;
-    fillLight.range = 25.0f;
+    fillLight.intensity = 1.6f;
+    fillLight.range = 30.0f;
+    fillLight.enabled = true;
     fillLight.castShadows = false;
     previewScene.pointLights.push_back(fillLight);
 
@@ -168,8 +175,9 @@ void BehaviourEditorWindow::SetupStudioLighting() {
     rimLight.name = "__StudioRimLight";
     rimLight.position = glm::vec3(0.0f, 4.5f, -4.5f);
     rimLight.color = glm::vec3(0.95f, 0.97f, 1.0f);
-    rimLight.intensity = 1.6f;
-    rimLight.range = 25.0f;
+    rimLight.intensity = 2.0f;
+    rimLight.range = 30.0f;
+    rimLight.enabled = true;
     rimLight.castShadows = false;
     previewScene.pointLights.push_back(rimLight);
 
@@ -181,7 +189,16 @@ void BehaviourEditorWindow::SyncPreviewScene() {
         SetupStudioLighting();
     }
 
-    // Keep the 3 studio lights, remove all user object components
+    // Keep the 3 studio lights
+    std::vector<PointLight> studioLights;
+    for (const auto& pl : previewScene.pointLights) {
+        if (pl.name.rfind("__Studio", 0) == 0) {
+            studioLights.push_back(pl);
+        }
+    }
+    previewScene.pointLights = studioLights;
+
+    // Clear user meshes
     previewScene.objects.clear();
 
     // Rebuild user components from asset into previewScene
@@ -224,6 +241,25 @@ void BehaviourEditorWindow::SyncPreviewScene() {
                 obj->light.color = c.lightColor;
                 obj->light.intensity = c.lightIntensity;
                 obj->light.range = c.lightRange;
+                obj->light.enabled = c.visible;
+                obj->light.innerConeAngle = c.innerConeAngle;
+                obj->light.outerConeAngle = c.outerConeAngle;
+                obj->light.castShadows = c.castShadows;
+
+                // Also populate in previewScene.pointLights so it illuminates the 3D viewport!
+                PointLight pl;
+                pl.id = c.id;
+                pl.name = c.name;
+                pl.type = obj->light.type;
+                pl.position = c.localPosition;
+                pl.color = c.lightColor;
+                pl.intensity = c.lightIntensity;
+                pl.range = c.lightRange;
+                pl.enabled = c.visible;
+                pl.innerConeAngle = c.innerConeAngle;
+                pl.outerConeAngle = c.outerConeAngle;
+                pl.castShadows = c.castShadows;
+                previewScene.pointLights.push_back(pl);
             }
 
             compIdToObjId[c.id] = obj->id;
@@ -315,51 +351,65 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
         Save();
     }
 
+    // 1. Top Blueprint Editor Toolbar
     RenderTopToolbar();
 
-    float totalW = ImGui::GetContentRegionAvail().x;
-    float totalH = ImGui::GetContentRegionAvail().y;
+    // 2. Full ImGui DockSpace across the workspace area
+    std::string dockSpaceName = "BehaviourDockSpace_" + name;
+    ImGuiID dockId = ImGui::GetID(dockSpaceName.c_str());
 
-    float leftW = 280.0f;
-    float rightW = 340.0f;
-    float centerW = std::max(200.0f, totalW - leftW - rightW);
+    // Build default layout on first use or reset
+    if (!ImGui::DockBuilderGetNode(dockId) || ImGui::DockBuilderGetNode(dockId)->IsLeafNode()) {
+        ImGui::DockBuilderRemoveNode(dockId);
+        ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
+        ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetContentRegionAvail());
 
-    float bottomCBHeight = 220.0f;
-    float centerH = std::max(150.0f, totalH - bottomCBHeight);
+        ImGuiID dockLeft = 0;
+        ImGuiID dockRemaining = 0;
+        ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Left, 0.22f, &dockLeft, &dockRemaining);
 
-    // Left Column: Outliner (Top) + Behaviour Scripts (Bottom)
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 0.0f));
-    ImGui::BeginChild("LeftCol", ImVec2(leftW, totalH), false);
-    {
-        float outlinerH = totalH * 0.55f;
-        RenderOutlinerPanel(ImVec2(leftW, outlinerH));
-        RenderBehaviourScriptsPanel(ImVec2(leftW, totalH - outlinerH));
+        ImGuiID dockRight = 0;
+        ImGuiID dockCenterArea = 0;
+        ImGui::DockBuilderSplitNode(dockRemaining, ImGuiDir_Right, 0.26f, &dockRight, &dockCenterArea);
+
+        ImGuiID dockBottom = 0;
+        ImGuiID dockCenter = 0;
+        ImGui::DockBuilderSplitNode(dockCenterArea, ImGuiDir_Down, 0.30f, &dockBottom, &dockCenter);
+
+        ImGuiID dockOutliner = 0;
+        ImGuiID dockScripts = 0;
+        ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.40f, &dockScripts, &dockOutliner);
+
+        std::string winVp = "Blueprint Viewport##" + name;
+        std::string winOut = "Components##" + name;
+        std::string winScr = "Behaviour Scripts##" + name;
+        std::string winDet = "Details##" + name;
+        std::string winCb  = "Content Browser##" + name;
+
+        ImGui::DockBuilderDockWindow(winOut.c_str(), dockOutliner);
+        ImGui::DockBuilderDockWindow(winScr.c_str(), dockScripts);
+        ImGui::DockBuilderDockWindow(winVp.c_str(),  dockCenter);
+        ImGui::DockBuilderDockWindow(winCb.c_str(),  dockBottom);
+        ImGui::DockBuilderDockWindow(winDet.c_str(), dockRight);
+
+        ImGui::DockBuilderFinish(dockId);
     }
-    ImGui::EndChild();
 
-    ImGui::SameLine();
+    ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
 
-    // Center Column: 3D Viewport (Top) + Content Browser (Bottom)
-    ImGui::BeginChild("CenterCol", ImVec2(centerW, totalH), false);
-    {
-        RenderViewportPanel(ImVec2(centerW, centerH));
-        RenderContentBrowserPanel(ImVec2(centerW, bottomCBHeight));
-    }
-    ImGui::EndChild();
-
-    ImGui::SameLine();
-
-    // Right Column: Details Inspector
-    RenderDetailsPanel(ImVec2(rightW, totalH));
-
-    ImGui::PopStyleVar();
+    // 3. Render all 5 dockable windows
+    RenderOutlinerPanel();
+    RenderBehaviourScriptsPanel();
+    RenderViewportPanel();
+    RenderDetailsPanel();
+    RenderContentBrowserPanel();
 }
 
 void BehaviourEditorWindow::RenderTopToolbar() {
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 5.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 4.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 4.0f));
 
-    if (ImGui::BeginChild("TopToolbar", ImVec2(0, 40.0f), true, ImGuiWindowFlags_NoScrollbar)) {
+    if (ImGui::BeginChild("TopToolbar", ImVec2(0, 42.0f), true, ImGuiWindowFlags_NoScrollbar)) {
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
         ImGui::TextColored(ImVec4(0.0f, 0.65f, 1.0f, 1.0f), "[B] Blueprint:");
         ImGui::SameLine();
@@ -370,84 +420,182 @@ void BehaviourEditorWindow::RenderTopToolbar() {
         }
 
         ImGui::SameLine(0.0f, 20.0f);
-
-        // Gizmo Mode Switches (Loc, Rot, Scale)
-        const ImVec4 activeCol(0.0f, 0.40f, 1.0f, 1.0f);
-        const ImVec4 idleCol(0.12f, 0.12f, 0.14f, 1.0f);
-
-        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 0 ? activeCol : idleCol);
-        if (ImGui::Button("Loc", ImVec2(34.0f, 24.0f))) { currentGizmoOperation = 0; }
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate Mode (W)");
-
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 1 ? activeCol : idleCol);
-        if (ImGui::Button("Rot", ImVec2(34.0f, 24.0f))) { currentGizmoOperation = 1; }
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate Mode (E)");
-
-        ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 2 ? activeCol : idleCol);
-        if (ImGui::Button("Scale", ImVec2(42.0f, 24.0f))) { currentGizmoOperation = 2; }
-        ImGui::PopStyleColor();
-        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale Mode (R)");
-
-        ImGui::SameLine();
-        if (ImGui::Button(currentGizmoMode == 0 ? "Local" : "World", ImVec2(48.0f, 24.0f))) {
-            currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
+        if (ImGui::Button("Compile / Sync", ImVec2(110.0f, 26.0f))) {
+            SyncPreviewScene();
         }
-
-        ImGui::SameLine(0.0f, 15.0f);
-        // Shading Mode: Lit / Unlit / Wireframe
-        if (ImGui::Button(viewportShadingMode == 0 ? "Lit" : (viewportShadingMode == 1 ? "Unlit" : "Wireframe"), ImVec2(60.0f, 24.0f))) {
-            viewportShadingMode = (viewportShadingMode + 1) % 3;
-        }
-
-        // Right side controls
-        float availW = ImGui::GetContentRegionAvail().x;
-        float rightControlsW = 280.0f;
-        if (availW > rightControlsW) {
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - rightControlsW));
-        }
-
-        if (ImGui::Button("Reset View", ImVec2(80.0f, 24.0f))) {
-            camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
-            camera.distance = 5.0f;
-            camera.yaw = 45.0f;
-            camera.pitch = 22.0f;
-            if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rebuild components and sync preview scene");
 
         ImGui::SameLine();
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.40f, 1.0f, 1.0f));
-        if (ImGui::Button("Save", ImVec2(60.0f, 24.0f))) {
+        if (ImGui::Button("Save", ImVec2(70.0f, 26.0f))) {
             Save();
         }
         ImGui::PopStyleColor();
 
         ImGui::SameLine();
         ImGui::Checkbox("Autosave", &autoSave);
+
+        // Right side info
+        float avail = ImGui::GetContentRegionAvail().x;
+        if (avail > 260.0f) {
+            ImGui::SameLine(ImGui::GetWindowWidth() - 260.0f);
+            ImGui::TextDisabled("%d Components | %d Scripts", (int)asset.components.size(), (int)asset.attachedScripts.size());
+        }
     }
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
 }
 
-void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.082f, 0.082f, 0.102f, 1.0f));
-    if (ImGui::BeginChild("OutlinerPanel", size, true)) {
+void BehaviourEditorWindow::RenderOutlinerNode(int compId, const std::string& filterLower) {
+    BehaviourComponentDef* c = asset.FindComponent(compId);
+    if (!c) return;
+
+    // Filter check: matches if this component or any descendant matches
+    bool matchesFilter = filterLower.empty();
+    if (!matchesFilter) {
+        std::string nameLower = c->name;
+        std::transform(nameLower.begin(), nameLower.end(), nameLower.begin(), ::tolower);
+        if (nameLower.find(filterLower) != std::string::npos) {
+            matchesFilter = true;
+        } else {
+            std::function<bool(const BehaviourComponentDef*)> checkDescendant = [&](const BehaviourComponentDef* node) -> bool {
+                for (int chId : node->childIds) {
+                    const auto* ch = asset.FindComponent(chId);
+                    if (ch) {
+                        std::string chLower = ch->name;
+                        std::transform(chLower.begin(), chLower.end(), chLower.begin(), ::tolower);
+                        if (chLower.find(filterLower) != std::string::npos) return true;
+                        if (checkDescendant(ch)) return true;
+                    }
+                }
+                return false;
+            };
+            matchesFilter = checkDescendant(c);
+        }
+    }
+    if (!matchesFilter) return;
+
+    bool hasChildren = !c->childIds.empty();
+    bool isSelected = (!isSelectingScript && selectedComponentId == c->id);
+
+    ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
+    if (!hasChildren) {
+        flags |= ImGuiTreeNodeFlags_Leaf;
+    } else {
+        flags |= ImGuiTreeNodeFlags_DefaultOpen;
+    }
+    if (isSelected) {
+        flags |= ImGuiTreeNodeFlags_Selected;
+    }
+
+    const char* typeTag = "[M]";
+    if (c->type == PrimitiveType::Empty && c->id == 1) typeTag = "[R]";
+    else if (c->type == PrimitiveType::Empty) typeTag = "[S]";
+    else if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) typeTag = "[L]";
+    else if (c->type == PrimitiveType::Camera) typeTag = "[C]";
+
+    // Visibility eye toggle
+    std::string eyeId = (c->visible ? "O##Eye_" : "-##Eye_") + std::to_string(c->id);
+    if (ImGui::SmallButton(eyeId.c_str())) {
+        c->visible = !c->visible;
+        isDirty = true;
+        SyncPreviewScene();
+    }
+    if (ImGui::IsItemHovered()) ImGui::SetTooltip(c->visible ? "Hide Component" : "Show Component");
+
+    ImGui::SameLine(0.0f, 4.0f);
+
+    std::string label = std::string(typeTag) + " " + c->name;
+    bool nodeOpen = ImGui::TreeNodeEx((void*)(uintptr_t)c->id, flags, "%s", label.c_str());
+
+    if (ImGui::IsItemClicked(ImGuiMouseButton_Left)) {
+        selectedComponentId = c->id;
+        isSelectingScript = false;
+    }
+
+    // Drag source to reparent
+    if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+        int dragId = c->id;
+        ImGui::SetDragDropPayload("BEH_COMP_ID", &dragId, sizeof(int));
+        ImGui::Text("Reparent %s", c->name.c_str());
+        ImGui::EndDragDropSource();
+    }
+
+    // Drag target to receive child
+    if (ImGui::BeginDragDropTarget()) {
+        if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("BEH_COMP_ID")) {
+            int draggedId = *(const int*)payload->Data;
+            if (draggedId != c->id && !asset.IsDescendant(draggedId, c->id)) {
+                asset.SetParent(draggedId, c->id);
+                isDirty = true;
+                SyncPreviewScene();
+            }
+        }
+        ImGui::EndDragDropTarget();
+    }
+
+    // Context menu
+    if (ImGui::BeginPopupContextItem()) {
+        if (ImGui::MenuItem("Add Child Component...")) {
+            asset.AddComponent(PrimitiveType::Cube, "ChildMesh", c->id);
+            isDirty = true;
+            SyncPreviewScene();
+        }
+        if (c->id != 1 && ImGui::MenuItem("Duplicate")) {
+            auto* dup = asset.AddComponent(c->type, c->name + "_Copy", c->parentId);
+            if (dup) {
+                dup->localPosition = c->localPosition + glm::vec3(0.5f, 0.0f, 0.0f);
+                dup->localRotation = c->localRotation;
+                dup->localScale = c->localScale;
+                dup->meshPath = c->meshPath;
+                dup->materialPath = c->materialPath;
+                dup->color = c->color;
+                dup->lightColor = c->lightColor;
+                dup->lightIntensity = c->lightIntensity;
+                dup->lightRange = c->lightRange;
+                dup->innerConeAngle = c->innerConeAngle;
+                dup->outerConeAngle = c->outerConeAngle;
+                dup->castShadows = c->castShadows;
+                isDirty = true;
+                SyncPreviewScene();
+            }
+        }
+        if (c->id != 1 && ImGui::MenuItem("Delete Component")) {
+            asset.RemoveComponent(c->id);
+            selectedComponentId = 1;
+            isDirty = true;
+            SyncPreviewScene();
+            if (autoSave) Save();
+        }
+        ImGui::EndPopup();
+    }
+
+    // Render children recursively!
+    if (nodeOpen) {
+        for (int chId : c->childIds) {
+            RenderOutlinerNode(chId, filterLower);
+        }
+        ImGui::TreePop();
+    }
+}
+
+void BehaviourEditorWindow::RenderOutlinerPanel() {
+    std::string winTitle = "Components##" + name;
+    if (ImGui::Begin(winTitle.c_str())) {
         ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4(0.894f, 0.894f, 0.906f, 1.0f), "Outliner");
+        ImGui::TextColored(ImVec4(0.894f, 0.894f, 0.906f, 1.0f), "Components");
         ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
         if (ImGui::SmallButton("+ Add")) {
             ImGui::OpenPopup("AddComponentPopup");
         }
 
         if (ImGui::BeginPopup("AddComponentPopup")) {
-            if (ImGui::MenuItem("Static Mesh")) {
+            if (ImGui::MenuItem("Static Mesh (Imported)")) {
                 asset.AddComponent(PrimitiveType::Cube, "StaticMesh", selectedComponentId);
                 isDirty = true;
                 SyncPreviewScene();
             }
+            ImGui::Separator();
             if (ImGui::MenuItem("Cube")) {
                 asset.AddComponent(PrimitiveType::Cube, "Cube", selectedComponentId);
                 isDirty = true;
@@ -468,6 +616,7 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
                 isDirty = true;
                 SyncPreviewScene();
             }
+            ImGui::Separator();
             if (ImGui::MenuItem("Point Light")) {
                 asset.AddComponent(PrimitiveType::PointLight, "PointLight", selectedComponentId);
                 isDirty = true;
@@ -483,7 +632,7 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
                 isDirty = true;
                 SyncPreviewScene();
             }
-            if (ImGui::MenuItem("Empty Scene Component")) {
+            if (ImGui::MenuItem("Scene Component (Empty)")) {
                 asset.AddComponent(PrimitiveType::Empty, "SceneComponent", selectedComponentId);
                 isDirty = true;
                 SyncPreviewScene();
@@ -501,92 +650,14 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
         std::string filterLower = outlinerSearchBuf;
         std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
 
-        for (auto& c : asset.components) {
-            if (!filterLower.empty()) {
-                std::string compNameLower = c.name;
-                std::transform(compNameLower.begin(), compNameLower.end(), compNameLower.begin(), ::tolower);
-                if (compNameLower.find(filterLower) == std::string::npos) continue;
-            }
-
-            bool isSelected = (!isSelectingScript && selectedComponentId == c.id);
-            const char* typeTag = "[M]";
-            if (c.type == PrimitiveType::Empty) typeTag = "[R]";
-            else if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) typeTag = "[L]";
-            else if (c.type == PrimitiveType::Camera) typeTag = "[C]";
-
-            // Visibility eye button
-            std::string eyeId = (c.visible ? "O##Eye_" : "-##Eye_") + std::to_string(c.id);
-            if (ImGui::SmallButton(eyeId.c_str())) {
-                c.visible = !c.visible;
-                isDirty = true;
-                SyncPreviewScene();
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip(c.visible ? "Hide Component" : "Show Component");
-
-            ImGui::SameLine(0.0f, 4.0f);
-
-            std::string label = std::string(typeTag) + " " + c.name;
-            ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen;
-            if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
-
-            ImGui::TreeNodeEx((void*)(uintptr_t)c.id, flags, "%s", label.c_str());
-            if (ImGui::IsItemClicked()) {
-                selectedComponentId = c.id;
-                isSelectingScript = false;
-            }
-
-            // Drag source to reparent
-            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
-                int compId = c.id;
-                ImGui::SetDragDropPayload("BEH_COMP_ID", &compId, sizeof(int));
-                ImGui::Text("Reparent %s", c.name.c_str());
-                ImGui::EndDragDropSource();
-            }
-
-            // Drag target to receive child
-            if (ImGui::BeginDragDropTarget()) {
-                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("BEH_COMP_ID")) {
-                    int draggedId = *(const int*)payload->Data;
-                    if (draggedId != c.id) {
-                        asset.SetParent(draggedId, c.id);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                }
-                ImGui::EndDragDropTarget();
-            }
-
-            if (ImGui::BeginPopupContextItem()) {
-                if (ImGui::MenuItem("Add Child Component...")) {
-                    asset.AddComponent(PrimitiveType::Cube, "ChildMesh", c.id);
-                    isDirty = true;
-                    SyncPreviewScene();
-                }
-                if (c.id != asset.components.front().id && ImGui::MenuItem("Duplicate")) {
-                    auto* dup = asset.AddComponent(c.type, c.name + "_Copy", c.parentId);
-                    if (dup) {
-                        dup->localPosition = c.localPosition + glm::vec3(0.5f, 0.0f, 0.0f);
-                        dup->localRotation = c.localRotation;
-                        dup->localScale = c.localScale;
-                        dup->meshPath = c.meshPath;
-                        dup->materialPath = c.materialPath;
-                        dup->color = c.color;
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                }
-                if (c.id != asset.components.front().id && ImGui::MenuItem("Delete Component")) {
-                    asset.RemoveComponent(c.id);
-                    selectedComponentId = asset.components.front().id;
-                    isDirty = true;
-                    SyncPreviewScene();
-                    if (autoSave) Save();
-                }
-                ImGui::EndPopup();
+        // Hierarchical tree starting from root components (parentId == 0 or parent not in asset)
+        for (const auto& c : asset.components) {
+            if (c.parentId == 0 || asset.FindComponent(c.parentId) == nullptr) {
+                RenderOutlinerNode(c.id, filterLower);
             }
         }
 
-        // Accept Drag & Drop of 3D Models onto Outliner
+        // Accept Drag & Drop of 3D Models onto Outliner to add as components
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
                 std::string payloadData((const char*)payload->Data);
@@ -613,13 +684,12 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
             ImGui::EndDragDropTarget();
         }
     }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::End();
 }
 
-void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.070f, 0.070f, 0.088f, 1.0f));
-    if (ImGui::BeginChild("BehaviourScriptsPanel", size, true)) {
+void BehaviourEditorWindow::RenderBehaviourScriptsPanel() {
+    std::string winTitle = "Behaviour Scripts##" + name;
+    if (ImGui::Begin(winTitle.c_str())) {
         ImGui::AlignTextToFramePadding();
         ImGui::TextColored(ImVec4(0.85f, 0.45f, 1.0f, 1.0f), "Behaviour Scripts");
         ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
@@ -676,7 +746,6 @@ void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
                     isSelectingScript = true;
                 }
 
-                // Hover edit button for VS Code
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Click to inspect variables | Right-click to edit or delete");
                 }
@@ -701,18 +770,19 @@ void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
             }
         }
     }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::End();
 }
 
-void BehaviourEditorWindow::RenderViewportPanel(const ImVec2& size) {
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+void BehaviourEditorWindow::RenderViewportPanel() {
+    std::string winTitle = "Blueprint Viewport##" + name;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    if (ImGui::BeginChild("ViewportPanel", size, true, flags)) {
+
+    if (ImGui::Begin(winTitle.c_str(), nullptr, flags)) {
         ImVec2 vpScreenPos = ImGui::GetCursorScreenPos();
         ImVec2 vpAvailSize = ImGui::GetContentRegionAvail();
 
-        if (vpAvailSize.x > 10.0f && vpAvailSize.y > 10.0f) {
+        if (vpAvailSize.x > 20.0f && vpAvailSize.y > 20.0f) {
             ImGuiViewport* mainVp = ImGui::GetMainViewport();
             float rx = vpScreenPos.x - mainVp->Pos.x;
             float ry = vpScreenPos.y - mainVp->Pos.y;
@@ -738,16 +808,16 @@ void BehaviourEditorWindow::RenderViewportPanel(const ImVec2& size) {
                 if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
                     glm::vec3 right = camera.GetRight();
                     glm::vec3 up = camera.GetUp();
-                    camera.target -= (right * io.MouseDelta.x - up * io.MouseDelta.y) * 0.005f * camera.distance;
+                    camera.target -= (right * io.MouseDelta.x - up * io.MouseDelta.y) * 0.005f * camera.distance * cameraSpeed;
                     if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
                 }
                 if (std::abs(io.MouseWheel) > 0.01f) {
-                    camera.distance = std::clamp(camera.distance - io.MouseWheel * (camera.distance * 0.15f), 0.5f, 60.0f);
+                    camera.distance = std::clamp(camera.distance - io.MouseWheel * (camera.distance * 0.15f), 0.5f, 80.0f);
                     if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
                 }
             }
 
-            // Invisible drag & interaction surface
+            // Invisible drag & interaction surface for camera navigation
             ImGui::InvisibleButton("##ViewportSurface", vpAvailSize);
 
             // ImGuizmo 3D Transform Gizmo for Selected Component
@@ -785,6 +855,52 @@ void BehaviourEditorWindow::RenderViewportPanel(const ImVec2& size) {
                 }
             }
 
+            // Viewport Overlay Controls (Loc/Rot/Scale, Lit/Unlit, Reset View)
+            ImGui::SetCursorScreenPos(ImVec2(vpScreenPos.x + 10.0f, vpScreenPos.y + 10.0f));
+            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 0.75f));
+            if (ImGui::BeginChild("ViewportOverlayBar", ImVec2(340.0f, 32.0f), true, ImGuiWindowFlags_NoScrollbar)) {
+                const ImVec4 activeCol(0.0f, 0.40f, 1.0f, 1.0f);
+                const ImVec4 idleCol(0.15f, 0.15f, 0.18f, 1.0f);
+
+                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 0 ? activeCol : idleCol);
+                if (ImGui::Button("Loc", ImVec2(32.0f, 22.0f))) { currentGizmoOperation = 0; }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate (W)");
+
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 1 ? activeCol : idleCol);
+                if (ImGui::Button("Rot", ImVec2(32.0f, 22.0f))) { currentGizmoOperation = 1; }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate (E)");
+
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 2 ? activeCol : idleCol);
+                if (ImGui::Button("Scale", ImVec2(40.0f, 22.0f))) { currentGizmoOperation = 2; }
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale (R)");
+
+                ImGui::SameLine();
+                if (ImGui::Button(currentGizmoMode == 0 ? "Local" : "World", ImVec2(46.0f, 22.0f))) {
+                    currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button(viewportShadingMode == 0 ? "Lit" : (viewportShadingMode == 1 ? "Unlit" : "Wire"), ImVec2(44.0f, 22.0f))) {
+                    viewportShadingMode = (viewportShadingMode + 1) % 3;
+                }
+
+                ImGui::SameLine();
+                if (ImGui::Button("Reset View", ImVec2(75.0f, 22.0f))) {
+                    camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
+                    camera.distance = 5.0f;
+                    camera.yaw = 45.0f;
+                    camera.pitch = 22.0f;
+                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+                }
+            }
+            ImGui::EndChild();
+            ImGui::PopStyleColor();
+
             // Viewport Drop Target for 3D Meshes & Materials
             if (ImGui::BeginDragDropTarget()) {
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
@@ -821,20 +937,15 @@ void BehaviourEditorWindow::RenderViewportPanel(const ImVec2& size) {
             }
         }
     }
-    ImGui::EndChild();
+    ImGui::End();
     ImGui::PopStyleVar();
 }
 
-void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.082f, 0.082f, 0.102f, 1.0f));
-    if (ImGui::BeginChild("DetailsPanel", size, true)) {
-        ImGui::AlignTextToFramePadding();
-        ImGui::TextColored(ImVec4(0.894f, 0.894f, 0.906f, 1.0f), "Details");
-        ImGui::Separator();
-        ImGui::Spacing();
-
+void BehaviourEditorWindow::RenderDetailsPanel() {
+    std::string winTitle = "Details##" + name;
+    if (ImGui::Begin(winTitle.c_str())) {
         if (isSelectingScript) {
-            // Script Details
+            // Script Inspector
             AttachedBehaviourScript* s = asset.FindAttachedScript(selectedScriptId);
             if (!s) {
                 ImGui::TextDisabled("Select a script or component to inspect.");
@@ -847,7 +958,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                 }
 
                 ImGui::SameLine(0.0f, 15.0f);
-                if (ImGui::Button("Edit in VS Code", ImVec2(120.0f, 24.0f))) {
+                if (ImGui::Button("Edit in VS Code", ImVec2(130.0f, 24.0f))) {
                     LaunchCodeEditor(s->sourceCppPath);
                 }
 
@@ -867,7 +978,6 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     ImGui::SetNextItemWidth(-1.0f);
 
                     if (prop.typeName == "object_ref") {
-                        // Component reference picker strictly from this Behaviour!
                         std::string previewName = "(None)";
                         for (const auto& c : asset.components) {
                             if (c.id == prop.targetComponentId) {
@@ -920,7 +1030,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                 }
             }
         } else {
-            // Component Details
+            // Component Inspector
             BehaviourComponentDef* c = asset.FindComponent(selectedComponentId);
             if (!c) {
                 ImGui::TextDisabled("Select a component to inspect properties.");
@@ -940,6 +1050,16 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     isDirty = true;
                     SyncPreviewScene();
                 }
+
+                ImGui::SameLine(0.0f, 20.0f);
+                const char* typeName = "Static Mesh";
+                if (c->type == PrimitiveType::Empty && c->id == 1) typeName = "Root Scene Component";
+                else if (c->type == PrimitiveType::Empty) typeName = "Scene Component";
+                else if (c->type == PrimitiveType::PointLight) typeName = "Point Light";
+                else if (c->type == PrimitiveType::SpotLight) typeName = "Spot Light";
+                else if (c->type == PrimitiveType::Camera) typeName = "Camera";
+                ImGui::TextDisabled("Type: %s", typeName);
+
                 ImGui::Separator();
                 ImGui::Spacing();
 
@@ -998,44 +1118,88 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
 
                 ImGui::Spacing();
 
-                // 2. Visuals & Mesh Section
-                if (ImGui::CollapsingHeader("Visuals & Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    char meshBuf[256];
-                    strncpy_s(meshBuf, c->meshPath.c_str(), sizeof(meshBuf));
-                    ImGui::TextDisabled("Mesh Asset Path:");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::InputText("##MeshPath", meshBuf, sizeof(meshBuf))) {
-                        c->meshPath = meshBuf;
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
+                // 2. Visuals & Mesh Section (for mesh / primitive components)
+                if (c->type != PrimitiveType::PointLight && c->type != PrimitiveType::SpotLight && c->type != PrimitiveType::Camera) {
+                    if (ImGui::CollapsingHeader("Visuals & Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        // Primitive Shape Selector
+                        const char* primNames[] = { "Cube", "Plane", "Sphere", "Cylinder", "Cone", "Capsule", "Empty" };
+                        PrimitiveType primTypes[] = { PrimitiveType::Cube, PrimitiveType::Plane, PrimitiveType::Sphere, PrimitiveType::Cylinder, PrimitiveType::Cone, PrimitiveType::Capsule, PrimitiveType::Empty };
+                        int currentPrimIdx = 0;
+                        for (int pi = 0; pi < 7; ++pi) {
+                            if (c->type == primTypes[pi]) { currentPrimIdx = pi; break; }
+                        }
+                        ImGui::TextDisabled("Primitive Shape:");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::Combo("##PrimShape", &currentPrimIdx, primNames, 7)) {
+                            c->type = primTypes[currentPrimIdx];
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
 
-                    ImGui::Spacing();
-                    char matBuf[256];
-                    strncpy_s(matBuf, c->materialPath.c_str(), sizeof(matBuf));
-                    ImGui::TextDisabled("Material Assignment:");
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::InputText("##MatPath", matBuf, sizeof(matBuf))) {
-                        c->materialPath = matBuf;
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
+                        ImGui::Spacing();
+                        char meshBuf[256];
+                        strncpy_s(meshBuf, c->meshPath.c_str(), sizeof(meshBuf));
+                        ImGui::TextDisabled("Mesh Asset Path (FBX / OBJ / GLTF):");
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
+                        if (ImGui::InputText("##MeshPath", meshBuf, sizeof(meshBuf))) {
+                            c->meshPath = meshBuf;
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("X##ClearMesh")) {
+                            c->meshPath = "";
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear custom mesh (revert to primitive)");
 
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Tint Color:");
-                    float col[4] = { c->color.r, c->color.g, c->color.b, c->color.a };
-                    ImGui::SetNextItemWidth(-1.0f);
-                    if (ImGui::ColorEdit4("##Color", col)) {
-                        c->color = glm::vec4(col[0], col[1], col[2], col[3]);
-                        isDirty = true;
-                        SyncPreviewScene();
+                        ImGui::Spacing();
+                        char matBuf[256];
+                        strncpy_s(matBuf, c->materialPath.c_str(), sizeof(matBuf));
+                        ImGui::TextDisabled("Material Assignment:");
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
+                        if (ImGui::InputText("##MatPath", matBuf, sizeof(matBuf))) {
+                            c->materialPath = matBuf;
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("X##ClearMat")) {
+                            c->materialPath = "";
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear material assignment");
+
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Color Tint:");
+                        float col[4] = { c->color.r, c->color.g, c->color.b, c->color.a };
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::ColorEdit4("##Color", col)) {
+                            c->color = glm::vec4(col[0], col[1], col[2], col[3]);
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
                     }
                 }
 
-                // 3. Light Settings
+                // 3. Light Settings Section
                 if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) {
                     ImGui::Spacing();
                     if (ImGui::CollapsingHeader("Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        // Light Type toggle
+                        const char* lightTypes[] = { "Point Light", "Spot Light" };
+                        int lIdx = (c->type == PrimitiveType::SpotLight) ? 1 : 0;
+                        ImGui::TextDisabled("Light Type:");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::Combo("##LType", &lIdx, lightTypes, 2)) {
+                            c->type = (lIdx == 1) ? PrimitiveType::SpotLight : PrimitiveType::PointLight;
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+
+                        ImGui::Spacing();
                         float lCol[3] = { c->lightColor.r, c->lightColor.g, c->lightColor.b };
                         ImGui::TextDisabled("Light Color:");
                         if (ImGui::ColorEdit3("##LCol", lCol)) {
@@ -1045,15 +1209,71 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                         }
 
                         ImGui::Spacing();
-                        ImGui::TextDisabled("Intensity:");
+                        ImGui::TextDisabled("Intensity (Candela / Lux):");
                         if (ImGui::DragFloat("##LInt", &c->lightIntensity, 0.1f, 0.0f, 100.0f)) {
                             isDirty = true;
                             SyncPreviewScene();
                         }
 
                         ImGui::Spacing();
-                        ImGui::TextDisabled("Range:");
+                        ImGui::TextDisabled("Attenuation Radius / Range (m):");
                         if (ImGui::DragFloat("##LRng", &c->lightRange, 0.5f, 0.1f, 500.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+
+                        if (c->type == PrimitiveType::SpotLight) {
+                            ImGui::Spacing();
+                            ImGui::TextDisabled("Inner Cone Angle (deg):");
+                            if (ImGui::SliderFloat("##LInner", &c->innerConeAngle, 1.0f, 85.0f)) {
+                                if (c->innerConeAngle > c->outerConeAngle) c->outerConeAngle = c->innerConeAngle;
+                                isDirty = true;
+                                SyncPreviewScene();
+                            }
+
+                            ImGui::Spacing();
+                            ImGui::TextDisabled("Outer Cone Angle (deg):");
+                            if (ImGui::SliderFloat("##LOuter", &c->outerConeAngle, 1.0f, 89.0f)) {
+                                if (c->outerConeAngle < c->innerConeAngle) c->innerConeAngle = c->outerConeAngle;
+                                isDirty = true;
+                                SyncPreviewScene();
+                            }
+                        }
+
+                        ImGui::Spacing();
+                        if (ImGui::Checkbox("Cast Shadows", &c->castShadows)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+                    }
+                }
+
+                // 4. Camera Settings Section
+                if (c->type == PrimitiveType::Camera) {
+                    ImGui::Spacing();
+                    if (ImGui::CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::TextDisabled("Field of View (deg):");
+                        if (ImGui::SliderFloat("##CamFov", &c->cameraFov, 10.0f, 120.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Near Clip Plane (m):");
+                        if (ImGui::DragFloat("##CamNear", &c->cameraNear, 0.05f, 0.01f, 10.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("Far Clip Plane (m):");
+                        if (ImGui::DragFloat("##CamFar", &c->cameraFar, 10.0f, 10.0f, 10000.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
+
+                        ImGui::Spacing();
+                        if (ImGui::Checkbox("Orthographic", &c->isOrthographic)) {
                             isDirty = true;
                             SyncPreviewScene();
                         }
@@ -1062,19 +1282,17 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
             }
         }
     }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::End();
 }
 
-void BehaviourEditorWindow::RenderContentBrowserPanel(const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.065f, 0.065f, 0.080f, 1.0f));
-    if (ImGui::BeginChild("BehaviourContentBrowser", size, true)) {
+void BehaviourEditorWindow::RenderContentBrowserPanel() {
+    std::string winTitle = "Content Browser##" + name;
+    if (ImGui::Begin(winTitle.c_str())) {
         if (EngineUI::GetInstance()) {
             EngineUI::GetInstance()->RenderContentBrowserContent(previewScene);
         }
     }
-    ImGui::EndChild();
-    ImGui::PopStyleColor();
+    ImGui::End();
 }
 
 } // namespace Eunoia
