@@ -1,4 +1,5 @@
 #include "Behaviour/BehaviourAsset.h"
+#include <Editor/EngineUI.h>
 #include <EngineScene/Scene.h>
 #include <EngineScene/GameObject.h>
 #include <EngineScene/BehaviourRegistry.h>
@@ -190,6 +191,50 @@ bool BehaviourAsset::SaveToFile(const std::string& path) {
             cj["lightColor"] = { c.lightColor.r, c.lightColor.g, c.lightColor.b };
             cj["lightIntensity"] = c.lightIntensity;
             cj["lightRange"] = c.lightRange;
+            cj["innerConeAngle"] = c.innerConeAngle;
+            cj["outerConeAngle"] = c.outerConeAngle;
+            cj["coneFalloff"] = c.coneFalloff;
+            cj["rangeSmoothing"] = c.rangeSmoothing;
+            cj["attenuation"] = c.attenuation;
+            cj["radius"] = c.radius;
+            cj["length"] = c.length;
+            cj["useTemperature"] = c.useTemperature;
+            cj["temperature"] = c.temperature;
+            cj["castShadows"] = c.castShadows;
+
+            cj["metallic"] = c.metallic;
+            cj["roughness"] = c.roughness;
+            cj["specular"] = c.specular;
+            cj["normalStrength"] = c.normalStrength;
+            cj["smoothShading"] = c.smoothShading;
+            cj["autoSmoothAngle"] = c.autoSmoothAngle;
+            cj["uvScale"] = { c.uvScale.x, c.uvScale.y };
+
+            cj["cameraFov"] = c.cameraFov;
+            cj["cameraNear"] = c.cameraNear;
+            cj["cameraFar"] = c.cameraFar;
+            cj["isOrthographic"] = c.isOrthographic;
+            cj["orthoSize"] = c.orthoSize;
+
+            nlohmann::json pj;
+            pj["size"] = c.params.size;
+            pj["width"] = c.params.width;
+            pj["height"] = c.params.height;
+            pj["depth"] = c.params.depth;
+            pj["radius"] = c.params.radius;
+            pj["radius2"] = c.params.radius2;
+            pj["segmentsX"] = c.params.segmentsX;
+            pj["segmentsY"] = c.params.segmentsY;
+            pj["segmentsZ"] = c.params.segmentsZ;
+            pj["radialSegments"] = c.params.radialSegments;
+            pj["rings"] = c.params.rings;
+            pj["sectors"] = c.params.sectors;
+            pj["subdivisions"] = c.params.subdivisions;
+            pj["sides"] = c.params.sides;
+            pj["capTop"] = c.params.capTop;
+            pj["capBottom"] = c.params.capBottom;
+            cj["params"] = pj;
+
             cj["visible"] = c.visible;
             compArray.push_back(cj);
         }
@@ -282,6 +327,53 @@ bool BehaviourAsset::LoadFromFile(const std::string& path) {
                 }
                 if (cj.contains("lightIntensity")) c.lightIntensity = cj["lightIntensity"].get<float>();
                 if (cj.contains("lightRange")) c.lightRange = cj["lightRange"].get<float>();
+                if (cj.contains("innerConeAngle")) c.innerConeAngle = cj["innerConeAngle"].get<float>();
+                if (cj.contains("outerConeAngle")) c.outerConeAngle = cj["outerConeAngle"].get<float>();
+                if (cj.contains("coneFalloff")) c.coneFalloff = cj["coneFalloff"].get<float>();
+                if (cj.contains("rangeSmoothing")) c.rangeSmoothing = cj["rangeSmoothing"].get<float>();
+                if (cj.contains("attenuation")) c.attenuation = cj["attenuation"].get<float>();
+                if (cj.contains("radius")) c.radius = cj["radius"].get<float>();
+                if (cj.contains("length")) c.length = cj["length"].get<float>();
+                if (cj.contains("useTemperature")) c.useTemperature = cj["useTemperature"].get<bool>();
+                if (cj.contains("temperature")) c.temperature = cj["temperature"].get<float>();
+                if (cj.contains("castShadows")) c.castShadows = cj["castShadows"].get<bool>();
+
+                if (cj.contains("metallic")) c.metallic = cj["metallic"].get<float>();
+                if (cj.contains("roughness")) c.roughness = cj["roughness"].get<float>();
+                if (cj.contains("specular")) c.specular = cj["specular"].get<float>();
+                if (cj.contains("normalStrength")) c.normalStrength = cj["normalStrength"].get<float>();
+                if (cj.contains("smoothShading")) c.smoothShading = cj["smoothShading"].get<bool>();
+                if (cj.contains("autoSmoothAngle")) c.autoSmoothAngle = cj["autoSmoothAngle"].get<float>();
+                if (cj.contains("uvScale") && cj["uvScale"].size() >= 2) {
+                    c.uvScale = glm::vec2(cj["uvScale"][0].get<float>(), cj["uvScale"][1].get<float>());
+                }
+
+                if (cj.contains("cameraFov")) c.cameraFov = cj["cameraFov"].get<float>();
+                if (cj.contains("cameraNear")) c.cameraNear = cj["cameraNear"].get<float>();
+                if (cj.contains("cameraFar")) c.cameraFar = cj["cameraFar"].get<float>();
+                if (cj.contains("isOrthographic")) c.isOrthographic = cj["isOrthographic"].get<bool>();
+                if (cj.contains("orthoSize")) c.orthoSize = cj["orthoSize"].get<float>();
+
+                if (cj.contains("params") && cj["params"].is_object()) {
+                    const auto& pj = cj["params"];
+                    if (pj.contains("size")) c.params.size = pj["size"].get<float>();
+                    if (pj.contains("width")) c.params.width = pj["width"].get<float>();
+                    if (pj.contains("height")) c.params.height = pj["height"].get<float>();
+                    if (pj.contains("depth")) c.params.depth = pj["depth"].get<float>();
+                    if (pj.contains("radius")) c.params.radius = pj["radius"].get<float>();
+                    if (pj.contains("radius2")) c.params.radius2 = pj["radius2"].get<float>();
+                    if (pj.contains("segmentsX")) c.params.segmentsX = pj["segmentsX"].get<int>();
+                    if (pj.contains("segmentsY")) c.params.segmentsY = pj["segmentsY"].get<int>();
+                    if (pj.contains("segmentsZ")) c.params.segmentsZ = pj["segmentsZ"].get<int>();
+                    if (pj.contains("radialSegments")) c.params.radialSegments = pj["radialSegments"].get<int>();
+                    if (pj.contains("rings")) c.params.rings = pj["rings"].get<int>();
+                    if (pj.contains("sectors")) c.params.sectors = pj["sectors"].get<int>();
+                    if (pj.contains("subdivisions")) c.params.subdivisions = pj["subdivisions"].get<int>();
+                    if (pj.contains("sides")) c.params.sides = pj["sides"].get<int>();
+                    if (pj.contains("capTop")) c.params.capTop = pj["capTop"].get<bool>();
+                    if (pj.contains("capBottom")) c.params.capBottom = pj["capBottom"].get<bool>();
+                }
+
                 if (cj.contains("visible")) c.visible = cj["visible"].get<bool>();
 
                 components.push_back(c);
@@ -331,87 +423,188 @@ bool BehaviourAsset::LoadFromFile(const std::string& path) {
     }
 }
 
+std::filesystem::path BehaviourAsset::ResolveAssetMeshPath(const std::string& meshPath, const std::string& assetFilePath) {
+    if (meshPath.empty()) return {};
+    std::error_code ec;
+    std::filesystem::path p(meshPath);
+    if (std::filesystem::exists(p, ec) && !std::filesystem::is_directory(p, ec)) {
+        return p;
+    }
+
+    // 1. Try AssetManager resolution
+    std::filesystem::path resolved = AssetManager::Get().ResolvePhysicalOrCookedPath(meshPath);
+    if (!resolved.empty() && std::filesystem::exists(resolved, ec) && !std::filesystem::is_directory(resolved, ec)) {
+        return resolved;
+    }
+
+    // 2. Try EngineUI content root
+    if (EngineUI::GetInstance()) {
+        std::filesystem::path cRoot = EngineUI::GetInstance()->contentRootPath / meshPath;
+        if (std::filesystem::exists(cRoot, ec) && !std::filesystem::is_directory(cRoot, ec)) {
+            return cRoot;
+        }
+    }
+
+    // 3. Try relative to the behaviour asset's directory and project Content directory
+    if (!assetFilePath.empty()) {
+        std::filesystem::path assetDir = std::filesystem::path(assetFilePath).parent_path();
+        std::filesystem::path cand1 = assetDir / meshPath;
+        if (std::filesystem::exists(cand1, ec) && !std::filesystem::is_directory(cand1, ec)) {
+            return cand1;
+        }
+        std::filesystem::path contentDir = assetDir.parent_path();
+        std::filesystem::path cand2 = contentDir / meshPath;
+        if (std::filesystem::exists(cand2, ec) && !std::filesystem::is_directory(cand2, ec)) {
+            return cand2;
+        }
+        std::filesystem::path cand3 = contentDir / "Content" / meshPath;
+        if (std::filesystem::exists(cand3, ec) && !std::filesystem::is_directory(cand3, ec)) {
+            return cand3;
+        }
+    }
+
+    return meshPath;
+}
+
+static void TagDescendantsBehaviourRoot(Scene& scene, int actorId, int rootActorId) {
+    GameObject* obj = scene.FindObject(actorId);
+    if (!obj) return;
+    obj->behaviourRootId = rootActorId;
+    std::vector<int> children = obj->childIds;
+    for (int chId : children) {
+        TagDescendantsBehaviourRoot(scene, chId, rootActorId);
+    }
+}
+
 GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldPos, const glm::vec3& worldRot) {
     if (components.empty()) return nullptr;
 
     std::unordered_map<int, int> compIdToObjId;
-    GameObject* rootObj = nullptr;
 
     // 1. Spawn root actor
     const auto& rootComp = components.front();
     GameObject& spawnedRoot = scene.AddEmptyActor(worldPos + rootComp.localPosition);
+    int rootActorId = spawnedRoot.id;
     spawnedRoot.name = name.empty() ? "BP_Actor" : name;
     spawnedRoot.rotation = worldRot + rootComp.localRotation;
     spawnedRoot.scale = rootComp.localScale;
     spawnedRoot.isBehaviourInstance = true;
     spawnedRoot.behaviourAssetPath = filePath;
-    rootObj = &spawnedRoot;
-    compIdToObjId[rootComp.id] = spawnedRoot.id;
+    compIdToObjId[rootComp.id] = rootActorId;
 
     // 2. Spawn remaining components as children
     for (size_t i = 1; i < components.size(); ++i) {
         const auto& c = components[i];
 
-        GameObject* spawnedChild = nullptr;
+        int spawnedChildId = -1;
         if (!c.meshPath.empty()) {
-            std::error_code ec;
-            std::filesystem::path resolvedMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(c.meshPath);
-            if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
-                resolvedMesh = c.meshPath;
-            }
+            std::filesystem::path resolvedMesh = ResolveAssetMeshPath(c.meshPath, filePath);
             GameObject& mObj = scene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
-            spawnedChild = &mObj;
+            spawnedChildId = mObj.id;
         } else if (c.type == PrimitiveType::Empty) {
             GameObject& eObj = scene.AddEmptyActor(c.localPosition);
-            spawnedChild = &eObj;
+            spawnedChildId = eObj.id;
         } else {
             GameObject& pObj = scene.AddObject(c.type, c.localPosition);
-            spawnedChild = &pObj;
+            spawnedChildId = pObj.id;
         }
 
-        if (spawnedChild) {
-            spawnedChild->name = c.name;
-            spawnedChild->rotation = c.localRotation;
-            spawnedChild->scale = c.localScale;
-            spawnedChild->color = c.color;
-            spawnedChild->visible = c.visible;
-            if (!c.materialPath.empty()) {
-                spawnedChild->materialName = c.materialPath;
-            }
-            spawnedChild->behaviourRootId = spawnedRoot.id;
-            compIdToObjId[c.id] = spawnedChild->id;
+        if (spawnedChildId != -1) {
+            compIdToObjId[c.id] = spawnedChildId;
 
-            // Wire parenting
-            int pId = c.parentId;
-            if (compIdToObjId.find(pId) != compIdToObjId.end()) {
-                int parentObjId = compIdToObjId[pId];
-                GameObject* pObj = scene.FindObject(parentObjId);
-                if (pObj) {
-                    spawnedChild->parentId = parentObjId;
-                    pObj->childIds.push_back(spawnedChild->id);
+            GameObject* childObj = scene.FindObject(spawnedChildId);
+            if (childObj) {
+                childObj->name = c.name;
+                childObj->rotation = c.localRotation;
+                childObj->scale = c.localScale;
+                childObj->color = c.color;
+                childObj->visible = c.visible;
+                if (!c.materialPath.empty()) {
+                    childObj->materialName = c.materialPath;
                 }
-            } else if (rootObj) {
-                spawnedChild->parentId = rootObj->id;
-                rootObj->childIds.push_back(spawnedChild->id);
+                childObj->metallic = c.metallic;
+                childObj->roughness = c.roughness;
+                childObj->specular = c.specular;
+                childObj->normalStrength = c.normalStrength;
+                childObj->smoothShading = c.smoothShading;
+                childObj->autoSmoothAngle = c.autoSmoothAngle;
+                childObj->uvScale = c.uvScale;
+                childObj->params = c.params;
+
+                if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) {
+                    childObj->isLight = true;
+                    childObj->light.type = (c.type == PrimitiveType::SpotLight) ? LightType::Spot : LightType::Point;
+                    childObj->light.color = c.lightColor;
+                    childObj->light.intensity = c.lightIntensity;
+                    childObj->light.range = c.lightRange;
+                    childObj->light.enabled = c.visible;
+                    childObj->light.innerConeAngle = c.innerConeAngle;
+                    childObj->light.outerConeAngle = c.outerConeAngle;
+                    childObj->light.coneFalloff = c.coneFalloff;
+                    childObj->light.rangeSmoothing = c.rangeSmoothing;
+                    childObj->light.attenuation = c.attenuation;
+                    childObj->light.radius = c.radius;
+                    childObj->light.length = c.length;
+                    childObj->light.useTemperature = c.useTemperature;
+                    childObj->light.temperature = c.temperature;
+                    childObj->light.castShadows = c.castShadows;
+
+                    PointLight pl;
+                    pl.id = spawnedChildId;
+                    pl.name = c.name;
+                    pl.type = childObj->light.type;
+                    pl.position = worldPos + c.localPosition;
+                    pl.color = c.useTemperature ? (c.lightColor * ColorTemperatureToRGB(c.temperature)) : c.lightColor;
+                    pl.intensity = c.lightIntensity;
+                    pl.range = c.lightRange;
+                    pl.enabled = c.visible;
+                    pl.innerConeAngle = c.innerConeAngle;
+                    pl.outerConeAngle = c.outerConeAngle;
+                    pl.castShadows = c.castShadows;
+                    scene.pointLights.push_back(pl);
+                }
+
+                childObj->behaviourRootId = rootActorId;
+            }
+
+            TagDescendantsBehaviourRoot(scene, spawnedChildId, rootActorId);
+
+            int pId = c.parentId;
+            int parentObjId = rootActorId;
+            if (pId != 0 && compIdToObjId.find(pId) != compIdToObjId.end()) {
+                parentObjId = compIdToObjId[pId];
+            }
+
+            GameObject* pObj = scene.FindObject(parentObjId);
+            childObj = scene.FindObject(spawnedChildId);
+            if (pObj && childObj) {
+                childObj->parentId = parentObjId;
+                if (std::find(pObj->childIds.begin(), pObj->childIds.end(), spawnedChildId) == pObj->childIds.end()) {
+                    pObj->childIds.push_back(spawnedChildId);
+                }
             }
         }
     }
 
     // 3. Attach Behaviour Scripts to root actor
+    GameObject* rootObj = scene.FindObject(rootActorId);
+    if (!rootObj) return nullptr;
+
     for (const auto& s : attachedScripts) {
         if (!s.enabled) continue;
 
         std::string scriptClassName = s.scriptName;
-        // Strip file extension if present
         size_t dotPos = scriptClassName.rfind('.');
         if (dotPos != std::string::npos) scriptClassName = scriptClassName.substr(0, dotPos);
 
         auto beh = BehaviourRegistry::Get().Create(scriptClassName);
-        if (beh && rootObj) {
+        if (beh) {
+            rootObj = scene.FindObject(rootActorId);
+            if (!rootObj) break;
+
             beh->SetOwner(rootObj);
             beh->SetScene(&scene);
 
-            // Apply property overrides and remap component references
             for (const auto& prop : s.propertyOverrides) {
                 for (auto& propDesc : beh->GetProperties()) {
                     if (propDesc.name == prop.propertyName) {
@@ -446,15 +639,13 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
         }
     }
 
-    scene.selectedId = rootObj->id;
-    return rootObj;
+    scene.selectedId = rootActorId;
+    return scene.FindObject(rootActorId);
 }
-
 
 void BehaviourAsset::SyncInstancesInScene(Scene& scene) {
     if (filePath.empty()) return;
 
-    // 1. Identify all root actors placed in the scene that instantiate this behaviour asset
     std::vector<int> instanceRootIds;
     for (const auto& obj : scene.objects) {
         if (obj.isBehaviourInstance && obj.behaviourAssetPath == filePath) {
@@ -466,7 +657,6 @@ void BehaviourAsset::SyncInstancesInScene(Scene& scene) {
         GameObject* rootObj = scene.FindObject(rootId);
         if (!rootObj) continue;
 
-        // 2. Remove all existing child components associated with this root instance
         std::vector<int> oldChildIds;
         for (const auto& obj : scene.objects) {
             if (obj.behaviourRootId == rootId) {
@@ -477,67 +667,113 @@ void BehaviourAsset::SyncInstancesInScene(Scene& scene) {
             scene.RemoveObject(cid);
         }
 
-        // Re-find rootObj as vector may have reallocated
         rootObj = scene.FindObject(rootId);
         if (!rootObj) continue;
         rootObj->childIds.clear();
 
         std::unordered_map<int, int> compIdToObjId;
         if (!components.empty()) {
-            compIdToObjId[components.front().id] = rootObj->id;
+            compIdToObjId[components.front().id] = rootId;
         }
 
-        // 3. Re-spawn updated child components with current transforms, meshes, and materials
         for (size_t i = 1; i < components.size(); ++i) {
             const auto& c = components[i];
             if (!c.visible) continue;
 
-            GameObject* spawnedChild = nullptr;
+            int spawnedChildId = -1;
             if (!c.meshPath.empty()) {
-                std::error_code ec;
-                std::filesystem::path resolvedMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(c.meshPath);
-                if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
-                    resolvedMesh = c.meshPath;
-                }
+                std::filesystem::path resolvedMesh = ResolveAssetMeshPath(c.meshPath, filePath);
                 GameObject& mObj = scene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
-                spawnedChild = &mObj;
+                spawnedChildId = mObj.id;
             } else if (c.type == PrimitiveType::Empty) {
                 GameObject& eObj = scene.AddEmptyActor(c.localPosition);
-                spawnedChild = &eObj;
+                spawnedChildId = eObj.id;
             } else {
                 GameObject& pObj = scene.AddObject(c.type, c.localPosition);
-                spawnedChild = &pObj;
+                spawnedChildId = pObj.id;
             }
 
-            if (spawnedChild) {
-                spawnedChild->name = c.name;
-                spawnedChild->rotation = c.localRotation;
-                spawnedChild->scale = c.localScale;
-                spawnedChild->color = c.color;
-                spawnedChild->visible = c.visible;
-                if (!c.materialPath.empty()) {
-                    spawnedChild->materialName = c.materialPath;
+            if (spawnedChildId != -1) {
+                compIdToObjId[c.id] = spawnedChildId;
+
+                GameObject* childObj = scene.FindObject(spawnedChildId);
+                if (childObj) {
+                    childObj->name = c.name;
+                    childObj->rotation = c.localRotation;
+                    childObj->scale = c.localScale;
+                    childObj->color = c.color;
+                    childObj->visible = c.visible;
+                    if (!c.materialPath.empty()) {
+                        childObj->materialName = c.materialPath;
+                    }
+                    childObj->metallic = c.metallic;
+                    childObj->roughness = c.roughness;
+                    childObj->specular = c.specular;
+                    childObj->normalStrength = c.normalStrength;
+                    childObj->smoothShading = c.smoothShading;
+                    childObj->autoSmoothAngle = c.autoSmoothAngle;
+                    childObj->uvScale = c.uvScale;
+                    childObj->params = c.params;
+
+                    if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) {
+                        childObj->isLight = true;
+                        childObj->light.type = (c.type == PrimitiveType::SpotLight) ? LightType::Spot : LightType::Point;
+                        childObj->light.color = c.lightColor;
+                        childObj->light.intensity = c.lightIntensity;
+                        childObj->light.range = c.lightRange;
+                        childObj->light.enabled = c.visible;
+                        childObj->light.innerConeAngle = c.innerConeAngle;
+                        childObj->light.outerConeAngle = c.outerConeAngle;
+                        childObj->light.coneFalloff = c.coneFalloff;
+                        childObj->light.rangeSmoothing = c.rangeSmoothing;
+                        childObj->light.attenuation = c.attenuation;
+                        childObj->light.radius = c.radius;
+                        childObj->light.length = c.length;
+                        childObj->light.useTemperature = c.useTemperature;
+                        childObj->light.temperature = c.temperature;
+                        childObj->light.castShadows = c.castShadows;
+
+                        PointLight pl;
+                        pl.id = spawnedChildId;
+                        pl.name = c.name;
+                        pl.type = childObj->light.type;
+                        pl.position = rootObj ? (rootObj->position + c.localPosition) : c.localPosition;
+                        pl.color = c.useTemperature ? (c.lightColor * ColorTemperatureToRGB(c.temperature)) : c.lightColor;
+                        pl.intensity = c.lightIntensity;
+                        pl.range = c.lightRange;
+                        pl.enabled = c.visible;
+                        pl.innerConeAngle = c.innerConeAngle;
+                        pl.outerConeAngle = c.outerConeAngle;
+                        pl.castShadows = c.castShadows;
+                        scene.pointLights.push_back(pl);
+                    }
+
+                    childObj->behaviourRootId = rootId;
                 }
-                spawnedChild->behaviourRootId = rootObj->id;
-                compIdToObjId[c.id] = spawnedChild->id;
+
+                TagDescendantsBehaviourRoot(scene, spawnedChildId, rootId);
 
                 int pId = c.parentId;
-                if (compIdToObjId.find(pId) != compIdToObjId.end()) {
-                    int parentObjId = compIdToObjId[pId];
-                    GameObject* pObj = scene.FindObject(parentObjId);
-                    if (pObj) {
-                        spawnedChild->parentId = parentObjId;
-                        pObj->childIds.push_back(spawnedChild->id);
+                int parentObjId = rootId;
+                if (pId != 0 && compIdToObjId.find(pId) != compIdToObjId.end()) {
+                    parentObjId = compIdToObjId[pId];
+                }
+
+                GameObject* pObj = scene.FindObject(parentObjId);
+                childObj = scene.FindObject(spawnedChildId);
+                if (pObj && childObj) {
+                    childObj->parentId = parentObjId;
+                    if (std::find(pObj->childIds.begin(), pObj->childIds.end(), spawnedChildId) == pObj->childIds.end()) {
+                        pObj->childIds.push_back(spawnedChildId);
                     }
-                } else if (rootObj) {
-                    spawnedChild->parentId = rootObj->id;
-                    rootObj->childIds.push_back(spawnedChild->id);
                 }
             }
         }
 
-        // 4. Re-sync attached scripts and public property overrides
+        rootObj = scene.FindObject(rootId);
+        if (!rootObj) continue;
         rootObj->behaviours.clear();
+
         for (const auto& s : attachedScripts) {
             if (!s.enabled) continue;
 
@@ -546,7 +782,10 @@ void BehaviourAsset::SyncInstancesInScene(Scene& scene) {
             if (dotPos != std::string::npos) scriptClassName = scriptClassName.substr(0, dotPos);
 
             auto beh = BehaviourRegistry::Get().Create(scriptClassName);
-            if (beh && rootObj) {
+            if (beh) {
+                rootObj = scene.FindObject(rootId);
+                if (!rootObj) break;
+
                 beh->SetOwner(rootObj);
                 beh->SetScene(&scene);
 
