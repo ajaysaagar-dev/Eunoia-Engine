@@ -482,6 +482,16 @@ public:
         return m_registry;
     }
 
+    void ClearProjectScripts() {
+        for (auto it = m_registry.begin(); it != m_registry.end(); ) {
+            if (!it->second.isNative) {
+                it = m_registry.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
     std::vector<std::string> GetRegisteredClassNames() const {
         std::vector<std::string> names;
         for (const auto& pair : m_registry) {
