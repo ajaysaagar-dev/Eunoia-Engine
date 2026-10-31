@@ -930,34 +930,40 @@ static std::filesystem::path GetRecentProjectsConfigPath() {
 // Helper: Apply the same dark theme as the editor
 static void ApplyProjectBrowserTheme() {
     ImGuiStyle& style = ImGui::GetStyle();
-    style.WindowRounding = 0.0f;
-    style.FrameRounding = 0.0f;
-    style.GrabRounding = 0.0f;
-    style.ScrollbarRounding = 0.0f;
-    style.TabRounding = 0.0f;
-    style.WindowPadding = ImVec2(16.0f, 14.0f);
-    style.FramePadding = ImVec2(8.0f, 5.0f);
-    style.ItemSpacing = ImVec2(10.0f, 8.0f);
+    style.WindowRounding    = 10.0f;
+    style.ChildRounding     = 8.0f;
+    style.FrameRounding     = 7.0f;
+    style.PopupRounding     = 8.0f;
+    style.ScrollbarRounding = 8.0f;
+    style.GrabRounding      = 6.0f;
+    style.TabRounding       = 6.0f;
+    style.WindowBorderSize  = 1.0f;
+    style.ChildBorderSize   = 1.0f;
+    style.FrameBorderSize   = 1.0f;
+    style.PopupBorderSize   = 1.0f;
+    style.WindowPadding     = ImVec2(16.0f, 14.0f);
+    style.FramePadding      = ImVec2(10.0f, 6.0f);
+    style.ItemSpacing       = ImVec2(10.0f, 8.0f);
 
     ImVec4* colors = style.Colors;
-    colors[ImGuiCol_WindowBg]       = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1E1E1E
-    colors[ImGuiCol_ChildBg]        = ImVec4(0.118f, 0.118f, 0.118f, 1.00f); // #1E1E1E
-    colors[ImGuiCol_Border]         = ImVec4(0.180f, 0.180f, 0.180f, 0.85f);
-    colors[ImGuiCol_FrameBg]        = ImVec4(0.155f, 0.155f, 0.155f, 1.00f);
-    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
-    colors[ImGuiCol_FrameBgActive]  = ImVec4(0.240f, 0.240f, 0.240f, 1.00f);
-    colors[ImGuiCol_TitleBg]        = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
-    colors[ImGuiCol_TitleBgActive]  = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
-    colors[ImGuiCol_Button]         = ImVec4(0.160f, 0.160f, 0.160f, 1.00f);
-    colors[ImGuiCol_ButtonHovered]  = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);
-    colors[ImGuiCol_ButtonActive]   = ImVec4(0.122f, 0.600f, 0.949f, 1.00f);
-    colors[ImGuiCol_Header]         = ImVec4(0.180f, 0.180f, 0.180f, 0.90f);
-    colors[ImGuiCol_HeaderHovered]  = ImVec4(0.230f, 0.230f, 0.230f, 0.95f);
-    colors[ImGuiCol_HeaderActive]   = ImVec4(0.122f, 0.600f, 0.949f, 1.00f);
-    colors[ImGuiCol_Separator]      = ImVec4(0.220f, 0.220f, 0.220f, 1.00f);
-    colors[ImGuiCol_Text]           = ImVec4(0.92f, 0.93f, 0.95f, 1.00f);
-    colors[ImGuiCol_TextDisabled]   = ImVec4(0.482f, 0.482f, 0.482f, 1.00f);
-    colors[ImGuiCol_ScrollbarBg]    = ImVec4(0.118f, 0.118f, 0.118f, 1.00f);
+    colors[ImGuiCol_WindowBg]       = ImVec4(0.082f, 0.082f, 0.102f, 1.00f); // Atlas Surface #15151A
+    colors[ImGuiCol_ChildBg]        = ImVec4(0.082f, 0.082f, 0.102f, 1.00f);
+    colors[ImGuiCol_Border]         = ImVec4(1.0f, 1.0f, 1.0f, 0.08f);       // Atlas Outline
+    colors[ImGuiCol_FrameBg]        = ImVec4(0.125f, 0.125f, 0.153f, 1.00f); // Atlas Control #202027
+    colors[ImGuiCol_FrameBgHovered] = ImVec4(0.169f, 0.169f, 0.204f, 1.00f); // Atlas Hovered
+    colors[ImGuiCol_FrameBgActive]  = ImVec4(0.125f, 0.165f, 0.259f, 1.00f); // Atlas Selected
+    colors[ImGuiCol_TitleBg]        = ImVec4(0.102f, 0.102f, 0.125f, 1.00f); // Atlas Header
+    colors[ImGuiCol_TitleBgActive]  = ImVec4(0.102f, 0.102f, 0.125f, 1.00f);
+    colors[ImGuiCol_Button]         = ImVec4(0.125f, 0.125f, 0.153f, 1.00f);
+    colors[ImGuiCol_ButtonHovered]  = ImVec4(0.169f, 0.169f, 0.204f, 1.00f);
+    colors[ImGuiCol_ButtonActive]   = ImVec4(0.290f, 0.486f, 1.000f, 1.00f); // Atlas Accent #4A7CFF
+    colors[ImGuiCol_Header]         = ImVec4(0.290f, 0.486f, 1.000f, 0.18f);
+    colors[ImGuiCol_HeaderHovered]  = ImVec4(0.290f, 0.486f, 1.000f, 0.28f);
+    colors[ImGuiCol_HeaderActive]   = ImVec4(0.290f, 0.486f, 1.000f, 0.40f);
+    colors[ImGuiCol_Separator]      = ImVec4(1.0f, 1.0f, 1.0f, 0.08f);
+    colors[ImGuiCol_Text]           = ImVec4(0.929f, 0.933f, 0.953f, 1.00f); // Atlas Text #EDEEF3
+    colors[ImGuiCol_TextDisabled]   = ImVec4(0.541f, 0.553f, 0.600f, 1.00f); // Atlas Faint #8A8D99
+    colors[ImGuiCol_ScrollbarBg]    = ImVec4(0.039f, 0.039f, 0.051f, 0.50f);
     colors[ImGuiCol_ScrollbarGrab]  = ImVec4(0.25f, 0.25f, 0.30f, 1.00f);
     colors[ImGuiCol_Tab]            = ImVec4(0.145f, 0.145f, 0.145f, 1.00f);
     colors[ImGuiCol_TabHovered]     = ImVec4(0.200f, 0.200f, 0.200f, 1.00f);
@@ -3303,107 +3309,107 @@ void EngineUI::SetupTheme() {
 
     ImGui::StyleColorsDark(&style);
 
-    // Spartan-Engine command deck: graphite panels, crisp white readouts and electric cyan signal
-    style.WindowPadding        = ImVec2(10.0f, 8.0f);
-    style.FramePadding         = ImVec2(7.0f, 4.0f);
-    style.CellPadding          = ImVec2(7.0f, 4.0f);
-    style.ItemSpacing          = ImVec2(7.0f, 5.0f);
-    style.ItemInnerSpacing     = ImVec2(5.0f, 4.0f);
-    style.IndentSpacing        = 16.0f;
-    style.ScrollbarSize        = 8.0f;
-    style.GrabMinSize          = 8.0f;
+    // Atlas UI Theme: Deep dark obsidian backdrop, sleek rounded cards, crisp readouts, and vibrant electric royal blue (#4A7CFF)
+    style.WindowPadding        = ImVec2(12.0f, 10.0f);
+    style.FramePadding         = ImVec2(9.0f, 6.0f);
+    style.CellPadding          = ImVec2(8.0f, 5.0f);
+    style.ItemSpacing          = ImVec2(9.0f, 7.0f);
+    style.ItemInnerSpacing     = ImVec2(7.0f, 5.0f);
+    style.IndentSpacing        = 18.0f;
+    style.ScrollbarSize        = 9.0f;
+    style.GrabMinSize          = 10.0f;
 
-    // Border-free design with depth value separation (Spartan Engine style)
-    style.WindowBorderSize     = 0.0f;
-    style.ChildBorderSize      = 0.0f;
+    // Border-accented card architecture (matching image copy.png reference)
+    style.WindowBorderSize     = 1.0f;
+    style.ChildBorderSize      = 1.0f;
     style.PopupBorderSize      = 1.0f;
-    style.FrameBorderSize      = 0.0f;
+    style.FrameBorderSize      = 1.0f;
     style.TabBorderSize        = 0.0f;
-    style.TabBarBorderSize     = 0.0f;
-    style.TabBarOverlineSize   = 2.0f;
+    style.TabBarBorderSize     = 1.0f;
+    style.TabBarOverlineSize   = 2.5f;
 
-    style.WindowRounding       = 4.0f;
-    style.ChildRounding        = 4.0f;
-    style.FrameRounding        = 3.0f;
-    style.PopupRounding        = 5.0f;
-    style.ScrollbarRounding    = 4.0f;
-    style.GrabRounding         = 3.0f;
-    style.TabRounding          = 4.0f;
-    style.DockingSeparatorSize = 2.0f;
+    style.WindowRounding       = 10.0f;
+    style.ChildRounding        = 8.0f;
+    style.FrameRounding        = 7.0f;
+    style.PopupRounding        = 8.0f;
+    style.ScrollbarRounding    = 8.0f;
+    style.GrabRounding         = 6.0f;
+    style.TabRounding          = 6.0f;
+    style.DockingSeparatorSize = 3.0f;
 
-    // Spartan palette
-    const ImVec4 bg_color_1     = ImVec4(0.071f, 0.075f, 0.086f, 1.0f); // Graphite canvas #121316
-    const ImVec4 bg_color_2     = ImVec4(0.125f, 0.133f, 0.153f, 1.0f); // Surface #202227
-    const ImVec4 h_color_1      = ImVec4(0.925f, 0.945f, 0.965f, 1.0f); // Crisp white text #ecf1f6
-    const ImVec4 h_color_2      = ImVec4(0.580f, 0.615f, 0.660f, 1.0f); // Muted text #949da8
-    const ImVec4 color_accent_1 = ImVec4(0.161f, 0.827f, 1.000f, 1.0f); // Electric cyan #29d3ff
-    const ImVec4 color_accent_2 = ImVec4(0.039f, 0.431f, 0.588f, 1.0f); // Deep cyan #0a6e96
+    // Atlas color palette (matching Style.cpp and image copy.png)
+    const ImVec4 col_backdrop      = ImVec4(0.039f, 0.039f, 0.051f, 1.0f); // #0A0A0D deep backdrop
+    const ImVec4 col_surface       = ImVec4(0.082f, 0.082f, 0.102f, 1.0f); // #15151A surface card
+    const ImVec4 col_elevated      = ImVec4(0.118f, 0.118f, 0.145f, 1.0f); // #1E1E25 elevated panel
+    const ImVec4 col_header        = ImVec4(0.102f, 0.102f, 0.125f, 1.0f); // #1A1A20 header
+    const ImVec4 col_control       = ImVec4(0.125f, 0.125f, 0.153f, 1.0f); // #202027 input/button control
+    const ImVec4 col_hovered       = ImVec4(0.169f, 0.169f, 0.204f, 1.0f); // #2B2B34 hovered
+    const ImVec4 col_pressed       = ImVec4(0.102f, 0.102f, 0.125f, 1.0f); // #1A1A20 pressed
+    const ImVec4 col_selected      = ImVec4(0.125f, 0.165f, 0.259f, 1.0f); // #202A42 selected
+    const ImVec4 col_popup         = ImVec4(0.110f, 0.110f, 0.133f, 0.98f);// #1C1C22 popup
+    const ImVec4 col_tab           = ImVec4(0.063f, 0.063f, 0.078f, 1.0f); // #101014 inactive tab
+    const ImVec4 col_tab_active    = ImVec4(0.118f, 0.118f, 0.145f, 1.0f); // #1E1E25 active tab
+    const ImVec4 col_text          = ImVec4(0.929f, 0.933f, 0.953f, 1.0f); // #EDEEF3 crisp white text
+    const ImVec4 col_faint         = ImVec4(0.541f, 0.553f, 0.600f, 1.0f); // #8A8D99 muted text
+    const ImVec4 col_accent        = ImVec4(0.290f, 0.486f, 1.000f, 1.0f); // #4A7CFF Electric Royal Blue
+    const ImVec4 col_accent_soft   = ImVec4(0.510f, 0.651f, 1.000f, 1.0f); // #82A6FF
+    const ImVec4 col_border        = ImVec4(1.0f, 1.0f, 1.0f, 0.08f);       // Subtle Outline
+    const ImVec4 col_scroll_thumb  = ImVec4(0.243f, 0.243f, 0.290f, 1.0f); // #3E3E4A
+    const ImVec4 col_danger        = ImVec4(0.941f, 0.361f, 0.408f, 1.0f); // #F05C68
 
-    auto lerpCol = [](const ImVec4& a, const ImVec4& b, float t) -> ImVec4 {
-        return ImVec4(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t, a.w + (b.w - a.w) * t);
-    };
-    auto withAlpha = [](ImVec4 c, float a) -> ImVec4 { c.w = a; return c; };
-
-    ImVec4 color_canvas         = bg_color_1;
-    ImVec4 color_canvas_deep    = lerpCol(bg_color_1, ImVec4(0, 0, 0, 1), 0.40f);
-    ImVec4 color_surface        = bg_color_2;
-    ImVec4 color_surface_hover  = lerpCol(bg_color_2, h_color_1, 0.07f);
-    ImVec4 color_text           = h_color_1;
-    ImVec4 color_text_muted     = h_color_2;
-    ImVec4 color_accent_dim     = withAlpha(color_accent_1, 0.13f);
-    ImVec4 color_accent_line    = withAlpha(color_accent_1, 0.32f);
-
-    colors[ImGuiCol_Text]                  = color_text;
-    colors[ImGuiCol_TextDisabled]          = color_text_muted;
-    colors[ImGuiCol_WindowBg]              = color_canvas;
-    colors[ImGuiCol_ChildBg]               = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_PopupBg]               = withAlpha(lerpCol(color_canvas, color_surface, 0.35f), 0.97f);
-    colors[ImGuiCol_Border]                = withAlpha(color_text, 0.06f);
+    colors[ImGuiCol_Text]                  = col_text;
+    colors[ImGuiCol_TextDisabled]          = col_faint;
+    colors[ImGuiCol_WindowBg]              = col_surface;
+    colors[ImGuiCol_ChildBg]               = col_surface;
+    colors[ImGuiCol_PopupBg]               = col_popup;
+    colors[ImGuiCol_Border]                = col_border;
     colors[ImGuiCol_BorderShadow]          = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_FrameBg]               = color_canvas_deep;
-    colors[ImGuiCol_FrameBgHovered]        = lerpCol(color_canvas_deep, color_surface, 0.35f);
-    colors[ImGuiCol_FrameBgActive]         = lerpCol(color_canvas_deep, color_accent_2, 0.25f);
-    colors[ImGuiCol_TitleBg]               = color_canvas_deep;
-    colors[ImGuiCol_TitleBgActive]         = color_canvas_deep;
-    colors[ImGuiCol_TitleBgCollapsed]      = color_canvas_deep;
-    colors[ImGuiCol_MenuBarBg]             = lerpCol(color_canvas_deep, color_canvas, 0.55f);
-    colors[ImGuiCol_ScrollbarBg]           = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_ScrollbarGrab]         = withAlpha(color_text, 0.10f);
-    colors[ImGuiCol_ScrollbarGrabHovered]  = withAlpha(color_text, 0.22f);
-    colors[ImGuiCol_ScrollbarGrabActive]   = withAlpha(color_accent_1, 0.70f);
-    colors[ImGuiCol_CheckMark]             = color_accent_1;
-    colors[ImGuiCol_SliderGrab]            = color_accent_2;
-    colors[ImGuiCol_SliderGrabActive]      = color_accent_1;
-    colors[ImGuiCol_Button]                = color_surface;
-    colors[ImGuiCol_ButtonHovered]         = color_surface_hover;
-    colors[ImGuiCol_ButtonActive]          = withAlpha(color_accent_1, 0.30f);
-    colors[ImGuiCol_Header]                = color_accent_dim;
-    colors[ImGuiCol_HeaderHovered]         = withAlpha(color_text, 0.05f);
-    colors[ImGuiCol_HeaderActive]          = withAlpha(color_accent_1, 0.22f);
-    colors[ImGuiCol_Separator]             = withAlpha(color_text, 0.05f);
-    colors[ImGuiCol_SeparatorHovered]      = color_accent_line;
-    colors[ImGuiCol_SeparatorActive]       = color_accent_1;
+    colors[ImGuiCol_FrameBg]               = col_control;
+    colors[ImGuiCol_FrameBgHovered]        = col_hovered;
+    colors[ImGuiCol_FrameBgActive]         = col_selected;
+    colors[ImGuiCol_TitleBg]               = col_header;
+    colors[ImGuiCol_TitleBgActive]         = col_header;
+    colors[ImGuiCol_TitleBgCollapsed]      = col_header;
+    colors[ImGuiCol_MenuBarBg]             = col_backdrop;
+    colors[ImGuiCol_ScrollbarBg]           = ImVec4(0.118f, 0.118f, 0.145f, 0.40f);
+    colors[ImGuiCol_ScrollbarGrab]         = col_scroll_thumb;
+    colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(0.32f, 0.32f, 0.38f, 1.0f);
+    colors[ImGuiCol_ScrollbarGrabActive]   = col_accent;
+    colors[ImGuiCol_CheckMark]             = col_accent;
+    colors[ImGuiCol_SliderGrab]            = col_accent;
+    colors[ImGuiCol_SliderGrabActive]      = col_accent_soft;
+    colors[ImGuiCol_Button]                = col_control;
+    colors[ImGuiCol_ButtonHovered]         = col_hovered;
+    colors[ImGuiCol_ButtonActive]          = col_accent;
+    colors[ImGuiCol_Header]                = ImVec4(0.290f, 0.486f, 1.000f, 0.18f);
+    colors[ImGuiCol_HeaderHovered]         = ImVec4(0.290f, 0.486f, 1.000f, 0.28f);
+    colors[ImGuiCol_HeaderActive]          = ImVec4(0.290f, 0.486f, 1.000f, 0.40f);
+    colors[ImGuiCol_Separator]             = col_border;
+    colors[ImGuiCol_SeparatorHovered]      = col_accent;
+    colors[ImGuiCol_SeparatorActive]       = col_accent;
     colors[ImGuiCol_ResizeGrip]            = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_ResizeGripHovered]     = color_accent_line;
-    colors[ImGuiCol_ResizeGripActive]      = color_accent_1;
-    colors[ImGuiCol_Tab]                   = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_TabHovered]            = lerpCol(color_canvas_deep, color_canvas, 0.6f);
-    colors[ImGuiCol_TabActive]             = color_canvas;
-    colors[ImGuiCol_TabUnfocused]          = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_TabUnfocusedActive]   = color_canvas;
-    colors[ImGuiCol_TableHeaderBg]         = color_surface;
-    colors[ImGuiCol_TableBorderStrong]     = withAlpha(color_text, 0.08f);
-    colors[ImGuiCol_TableBorderLight]      = withAlpha(color_text, 0.04f);
+    colors[ImGuiCol_ResizeGripHovered]     = col_accent;
+    colors[ImGuiCol_ResizeGripActive]      = col_accent;
+    colors[ImGuiCol_Tab]                   = col_tab;
+    colors[ImGuiCol_TabHovered]            = col_elevated;
+    colors[ImGuiCol_TabActive]             = col_tab_active;
+    colors[ImGuiCol_TabUnfocused]          = col_tab;
+    colors[ImGuiCol_TabUnfocusedActive]   = col_tab_active;
+    colors[ImGuiCol_TabSelectedOverline]   = col_accent;
+    colors[ImGuiCol_TabDimmedSelectedOverline] = col_accent;
+    colors[ImGuiCol_TableHeaderBg]         = col_header;
+    colors[ImGuiCol_TableBorderStrong]     = col_border;
+    colors[ImGuiCol_TableBorderLight]      = ImVec4(1.0f, 1.0f, 1.0f, 0.04f);
     colors[ImGuiCol_TableRowBg]            = ImVec4(0, 0, 0, 0);
-    colors[ImGuiCol_TableRowBgAlt]         = withAlpha(color_text, 0.02f);
-    colors[ImGuiCol_TextSelectedBg]        = withAlpha(color_accent_1, 0.35f);
-    colors[ImGuiCol_DragDropTarget]        = color_accent_1;
-    colors[ImGuiCol_NavHighlight]          = color_accent_1;
-    colors[ImGuiCol_NavWindowingHighlight] = color_text;
+    colors[ImGuiCol_TableRowBgAlt]         = ImVec4(1.0f, 1.0f, 1.0f, 0.015f);
+    colors[ImGuiCol_TextSelectedBg]        = ImVec4(0.290f, 0.486f, 1.000f, 0.35f);
+    colors[ImGuiCol_DragDropTarget]        = col_accent;
+    colors[ImGuiCol_NavHighlight]          = col_accent;
+    colors[ImGuiCol_NavWindowingHighlight] = col_text;
     colors[ImGuiCol_NavWindowingDimBg]     = ImVec4(0, 0, 0, 0.60f);
     colors[ImGuiCol_ModalWindowDimBg]      = ImVec4(0, 0, 0, 0.75f);
-    colors[ImGuiCol_DockingPreview]        = withAlpha(color_accent_1, 0.30f);
-    colors[ImGuiCol_DockingEmptyBg]        = ImVec4(0, 0, 0, 0);
+    colors[ImGuiCol_DockingPreview]        = ImVec4(0.290f, 0.486f, 1.000f, 0.25f);
+    colors[ImGuiCol_DockingEmptyBg]        = col_backdrop;
 
     if (uiScale != 1.0f) {
         style.ScaleAllSizes(uiScale);
@@ -3772,25 +3778,62 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             ImGui::DockBuilderAddNode(dockId, ImGuiDockNodeFlags_DockSpace);
             ImGui::DockBuilderSetNodeSize(dockId, ImGui::GetContentRegionAvail());
 
-            ImGuiID dockRight  = 0;
-            ImGuiID dockLeft   = ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Left, 0.20f, nullptr, &dockRight);
+            ImGuiID dockRight = 0;
+            ImGuiID dockMain  = ImGui::DockBuilderSplitNode(dockId, ImGuiDir_Right, 0.22f, &dockRight, nullptr);
             ImGuiID dockBottom = 0;
-            ImGuiID dockCenter = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.28f, &dockBottom, nullptr);
+            ImGuiID dockCenter = ImGui::DockBuilderSplitNode(dockMain, ImGuiDir_Down, 0.28f, &dockBottom, nullptr);
             ImGuiID dockOutliner = 0;
-            ImGuiID dockDetails  = ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.50f, &dockDetails, &dockOutliner);
+            ImGuiID dockDetails  = ImGui::DockBuilderSplitNode(dockRight, ImGuiDir_Down, 0.50f, &dockDetails, &dockOutliner);
 
             ImGui::DockBuilderDockWindow("Outliner",        dockOutliner);
             ImGui::DockBuilderDockWindow("Details",         dockDetails);
             ImGui::DockBuilderDockWindow("Content Browser", dockBottom);
+            ImGui::DockBuilderDockWindow("Scene",           dockCenter);
             ImGui::DockBuilderFinish(dockId);
         }
 
-        ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f),
-            ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode);
+        ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+
+        ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId);
+        if (centralNode) {
+            m_dynamicViewportRect.x = centralNode->Pos.x - mainVp->Pos.x;
+            m_dynamicViewportRect.y = centralNode->Pos.y - mainVp->Pos.y;
+            m_dynamicViewportRect.width = std::max(20.0f, centralNode->Size.x);
+            m_dynamicViewportRect.height = std::max(20.0f, centralNode->Size.y);
+            m_hasDynamicViewportRect = true;
+        }
+
         ImGui::End();
     }
     // === END DOCKSPACE ===
-    // 2. Top Menu Bar (Matches UI_Ref.svg "Menu Bar" second row)
+
+    // Level Viewport "Scene" Dockable Window (matches Atlas UI reference image copy.png)
+    if (isMainEditor) {
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        bool sceneOpen = true;
+        ImGuiWindowFlags sceneFlags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoScrollbar |
+                                      ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
+        if (ImGui::Begin("Scene", &sceneOpen, sceneFlags)) {
+            ImVec2 vMin = ImGui::GetWindowContentRegionMin();
+            ImVec2 vMax = ImGui::GetWindowContentRegionMax();
+            ImVec2 wPos = ImGui::GetWindowPos();
+            ImGuiViewport* mainVp = ImGui::GetMainViewport();
+
+            m_dynamicViewportRect.x = wPos.x + vMin.x - mainVp->Pos.x;
+            m_dynamicViewportRect.y = wPos.y + vMin.y - mainVp->Pos.y;
+            m_dynamicViewportRect.width = std::max(20.0f, vMax.x - vMin.x);
+            m_dynamicViewportRect.height = std::max(20.0f, vMax.y - vMin.y);
+            m_hasDynamicViewportRect = true;
+
+            // Transparent hit area for mouse interaction & drop targets
+            ImGui::InvisibleButton("##SceneViewportHitArea", ImVec2(m_dynamicViewportRect.width, m_dynamicViewportRect.height));
+        }
+        ImGui::End();
+        ImGui::PopStyleVar(2);
+    }
+
+    // 2. Top Menu Bar
     RenderTopMenuBar(scene, camera, outShouldExit);
 
     if (isMainEditor) {
@@ -6747,17 +6790,10 @@ void EngineUI::RenderDetails(Scene& scene) {
     ImGuiViewport* vp = ImGui::GetMainViewport();
 
     float bottomBarH = bottomBarHeight * uiScale;
-    float sidebarsY = vp->Pos.y + GetTopBarsTotalHeight();
-    float sidebarsH = vp->Size.y - GetTopBarsTotalHeight() - bottomBarH;
-    float outlinerH = showOutliner ? std::round(sidebarsH * outlinerHeightRatio) : 0.0f;
-    float detailsY = sidebarsY + outlinerH;
-    float detailsH = sidebarsH - outlinerH;
+    // Dockable window: size hint for first launch, can be repositioned or tabbed via DockSpace
+    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, vp->Size.y * 0.45f), ImGuiCond_FirstUseEver);
 
-    // Docked flush as Bottom-Right Sidebar directly below Outliner (matching Frame.svg blueprint)
-    ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x - rightSidebarWidth, detailsY), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(rightSidebarWidth, detailsH), ImGuiCond_Always);
-
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
     if (ImGui::Begin("Details", &showDetails, flags)) {
         // Details Header (dev.md Details Header)
         ImGui::AlignTextToFramePadding();
@@ -10510,17 +10546,14 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
 }
 
 void EngineUI::RenderMaterialWorkspace(Scene& scene, const glm::vec2& wsPos, const glm::vec2& wsSize) {
-    ImGui::SetNextWindowPos(ImVec2(wsPos.x, wsPos.y), ImGuiCond_Always);
-    ImGui::SetNextWindowSize(ImVec2(wsSize.x, wsSize.y), ImGuiCond_Always);
+    ImGui::SetNextWindowSize(ImVec2(wsSize.x, wsSize.y), ImGuiCond_FirstUseEver);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
-                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoBringToFrontOnFocus;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoCollapse;
 
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(10.0f, 10.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(12.0f, 10.0f));
 
-    if (ImGui::Begin("MaterialWorkspaceView", nullptr, flags)) {
+    if (ImGui::Begin("Material Editor", &showMaterialEditor, flags)) {
         // Toolbar ("Existing Menu" across the top)
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
