@@ -1,4 +1,4 @@
-﻿#include "UISystem/UISystem.h"
+#include "UISystem/UISystem.h"
 #include <iostream>
 
 #if __has_include(<imgui.h>)
@@ -21,9 +21,6 @@
 namespace EunoiaUI {
 
 UISystemManager::UISystemManager() {
-    HtmlNode::SetTextureResolver([this](const std::string& path, const std::string& baseDir, int* outW, int* outH) -> uint64_t {
-        return this->ResolveTextureId(path, baseDir, outW, outH);
-    });
 }
 
 UISystemManager& UISystemManager::Get() {
@@ -57,7 +54,7 @@ uint64_t UISystemManager::ResolveTextureId(const std::string& rawPath, const std
 
     std::error_code ec;
 
-    // 1. Try relative to baseDir (HTML directory)
+    // 1. Try relative to baseDir
     if (!baseDir.empty()) {
         std::filesystem::path p = std::filesystem::path(baseDir) / clean;
         if (std::filesystem::exists(p, ec)) {
@@ -72,11 +69,11 @@ uint64_t UISystemManager::ResolveTextureId(const std::string& rawPath, const std
         if (id != 0) return id;
     }
 
-    // 3. Try passing directly to loader (which queries TextureManager / AssetRegistry)
+    // 3. Try passing directly to loader
     uint64_t id = LoadTexture(clean, outWidth, outHeight);
     if (id != 0) return id;
 
-    // 4. Try under Content/ if not already prefixed
+    // 4. Try under Content/
     if (clean.rfind("Content/", 0) != 0 && clean.rfind("content/", 0) != 0) {
         std::string withContent = "Content/" + clean;
         if (std::filesystem::exists(withContent, ec)) {
@@ -111,39 +108,26 @@ void UISystemManager::DispatchEvent(const UIEventBinding& binding) {
         }
     }
 
-    auto executeOnObj = [&](GameObject& obj) -> bool {
-        for (auto& b : obj.behaviours) {
+    if (targetObj) {
+        for (auto& b : targetObj->behaviours) {
             if (!b) continue;
             if (!binding.behaviourClass.empty() && b->GetClassName() != binding.behaviourClass) continue;
+            std::string funcName = binding.targetFunction;
+            size_t pPos = funcName.find('(');
+            if (pPos != std::string::npos) funcName = funcName.substr(0, pPos);
+            size_t nb = funcName.find_first_not_of(" \t\r\n");
+            size_t ne = funcName.find_last_not_of(" \t\r\n");
+            if (nb != std::string::npos) funcName = funcName.substr(nb, ne - nb + 1);
 
-            std::string fn = binding.targetFunction;
-            size_t p = fn.find('(');
-            std::string cleanFn = (p != std::string::npos) ? fn.substr(0, p) : fn;
-            size_t nb = cleanFn.find_first_not_of(" \t\r\n");
-            size_t ne = cleanFn.find_last_not_of(" \t\r\n");
-            if (nb != std::string::npos) cleanFn = cleanFn.substr(nb, ne - nb + 1);
-
-            if (cleanFn == "Start") {
+            if (funcName == "Start") {
                 b->Start();
-            } else if (cleanFn == "Update") {
+            } else if (funcName == "Update") {
                 b->Update(0.016f);
             } else {
-                b->InvokeFunction(cleanFn);
+                b->InvokeFunction(funcName);
             }
-
-            std::string logMsg = "UI Event [" + binding.eventName + "] triggered on " + obj.name + " (" + b->GetClassName() + ")::" + cleanFn;
-            AddEngineLog("LogUI", logMsg.c_str(), 2);
-            return true;
+            return;
         }
-        return false;
-    };
-
-    if (targetObj) {
-        if (executeOnObj(*targetObj)) return;
-    }
-
-    for (auto& obj : scene->objects) {
-        if (executeOnObj(obj)) return;
     }
 #endif
 }
@@ -184,40 +168,19 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
     std::error_code ec;
     if (std::filesystem::exists(path, ec) && !std::filesystem::is_directory(path, ec)) {
         auto ui = std::make_shared<UserInterface>();
-        bool loaded = false;
-        std::string lowerPath = path;
-        for (char& c : lowerPath) c = (char)tolower(c);
-        if (lowerPath.ends_with(".html") || lowerPath.ends_with(".htm")) {
-            loaded = ui->LoadFromHtml(path);
-        } else {
-            loaded = ui->LoadFromFile(path);
-            if (!loaded) {
-                loaded = ui->LoadFromHtml(path);
-            }
-        }
-        if (loaded) {
+        if (ui->LoadFromFile(path)) {
             UserInterface* ptr = ui.get();
             m_loadedUIs[path] = ui;
             return ptr;
         }
     }
 
-    // Try appending .html or .eui if missing
-    if (path.rfind(".eui") == std::string::npos && path.rfind(".html") == std::string::npos && path.rfind(".htm") == std::string::npos) {
-        std::string withHtml = path + ".html";
-        if (std::filesystem::exists(withHtml, ec)) {
-            auto ui = std::make_shared<UserInterface>();
-            if (ui->LoadFromHtml(withHtml)) {
-                UserInterface* ptr = ui.get();
-                m_loadedUIs[path] = ui;
-                m_loadedUIs[withHtml] = ui;
-                return ptr;
-            }
-        }
+    // Try appending .eui if missing
+    if (path.rfind(".eui") == std::string::npos) {
         std::string withEui = path + ".eui";
         if (std::filesystem::exists(withEui, ec)) {
             auto ui = std::make_shared<UserInterface>();
-            if (ui->LoadFromFile(withEui) || ui->LoadFromHtml(withEui)) {
+            if (ui->LoadFromFile(withEui)) {
                 UserInterface* ptr = ui.get();
                 m_loadedUIs[path] = ui;
                 m_loadedUIs[withEui] = ui;
@@ -233,10 +196,10 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
         }
     }
 
-    // If not found and path is a simple name (no slashes), check common content directories
+    // Check common content directories
     if (path.find('/') == std::string::npos && path.find('\\') == std::string::npos) {
         static const std::vector<std::string> prefixes = {
-            "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/", "Data/Content/UI/UI_"
+            "Content/", "Content/UI/", "Content/UI/UI_", "Content/UI_", "Data/Content/", "Data/Content/UI/"
         };
         for (const auto& pre : prefixes) {
             UserInterface* u = GetOrLoadUI(pre + path);
@@ -256,25 +219,16 @@ UserInterface* UISystemManager::GetOrLoadUI(const std::string& path) {
 
     return nullptr;
 }
+
 UserInterface* UISystemManager::CreateNewUI(const std::string& name, const std::string& path) {
     auto ui = std::make_shared<UserInterface>(name);
     ui->filePath = path;
-    ui->canvasResolution = glm::vec2(1920.0f, 1080.0f);
-    ui->elements.clear();
 
-    // Create the HTML file with modern CSS layout
-    std::string hPath = path;
-    size_t dotPos = hPath.rfind('.');
-    if (dotPos != std::string::npos) {
-        hPath = hPath.substr(0, dotPos) + ".html";
-    } else {
-        hPath += ".html";
-    }
-    ui->htmlPath = hPath;
-    ui->htmlSource = HtmlCssParser::GetDefaultHtml(name);
-    ui->SaveToHtml(hPath);
+    // Create a starter Atlas panel & heading
+    ui->AddElement(UIElementType::Panel, "MainPanel");
 
     ui->SaveToFile(path);
+
     UserInterface* ptr = ui.get();
     m_loadedUIs[path] = ui;
     return ptr;
@@ -290,39 +244,37 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
     glm::vec2 targetSize = screenMax - screenMin;
     if (targetSize.x <= 1.0f || targetSize.y <= 1.0f) return;
 
-    // Check for realtime updates from HTML file on disk
-    const_cast<UserInterface&>(ui).CheckAndReloadHtml();
-
     float scaleX = targetSize.x / ui.canvasResolution.x;
     float scaleY = targetSize.y / ui.canvasResolution.y;
-    // Uniform scale preserving aspect ratio
     float scale = std::min(scaleX, scaleY);
     if (scale <= 0.0f) scale = 1.0f;
 
-    // Center design canvas in viewport
     glm::vec2 canvasOrigin = screenMin + (targetSize - ui.canvasResolution * scale) * 0.5f;
 
-    // Process mouse interactivity (hover, click, scroll)
+    // Mouse input processing
     ImGuiIO& io = ImGui::GetIO();
     glm::vec2 mousePos(io.MousePos.x, io.MousePos.y);
     bool isMouseDown = io.MouseDown[0];
     bool isMousePressed = io.MouseClicked[0];
     bool isMouseReleased = io.MouseReleased[0];
     float mouseWheel = io.MouseWheel;
+
     auto eventDispatcher = [this](const UIEventBinding& binding) {
         this->DispatchEvent(binding);
     };
     const_cast<UserInterface&>(ui).ProcessInput(mousePos, isMouseDown, isMousePressed, isMouseReleased, mouseWheel, canvasOrigin, scale, eventDispatcher);
 
-    // 1. Render HTML + CSS structure
-    if (ui.htmlRoot) {
-        ui.RenderHtml(drawList, canvasOrigin, scale);
-    }
-
-    // 2. Render native elements if present
+    // Render native UI elements in ascending Z-order
+    std::vector<const UIElement*> sortedElements;
     for (const auto& el : ui.elements) {
-        if (!el.visible) continue;
+        if (el.visible) sortedElements.push_back(&el);
+    }
+    std::sort(sortedElements.begin(), sortedElements.end(), [](const UIElement* a, const UIElement* b) {
+        return a->zOrder < b->zOrder;
+    });
 
+    for (const UIElement* pEl : sortedElements) {
+        const auto& el = *pEl;
         glm::vec4 worldRect = ui.GetElementWorldRect(el);
         glm::vec2 elemPos = canvasOrigin + glm::vec2(worldRect.x, worldRect.y) * scale;
         glm::vec2 elemSize = glm::vec2(worldRect.z, worldRect.w) * scale;
@@ -331,49 +283,173 @@ void UISystemManager::RenderUI(void* imDrawListPtr, const glm::vec2& screenMin, 
         ImVec2 pMin(elemPos.x, elemPos.y);
         ImVec2 pMax(elemEnd.x, elemEnd.y);
 
-        if (el.type == UIElementType::Border) {
-            ImU32 bgCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
-            ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255), (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255));
+        bool isHovered = (mousePos.x >= elemPos.x && mousePos.x <= elemEnd.x &&
+                          mousePos.y >= elemPos.y && mousePos.y <= elemEnd.y);
+        bool isPressed = isHovered && isMouseDown;
+
+        // 1. Drop Shadow
+        if (el.hasShadow) {
+            ImVec2 sMin(pMin.x + el.shadowOffset.x * scale - el.shadowSpread * scale * 0.5f,
+                        pMin.y + el.shadowOffset.y * scale - el.shadowSpread * scale * 0.5f);
+            ImVec2 sMax(pMax.x + el.shadowOffset.x * scale + el.shadowSpread * scale * 0.5f,
+                        pMax.y + el.shadowOffset.y * scale + el.shadowSpread * scale * 0.5f);
+            ImU32 sCol = IM_COL32((int)(el.shadowColor.r * 255), (int)(el.shadowColor.g * 255),
+                                  (int)(el.shadowColor.b * 255), (int)(el.shadowColor.a * 255 * el.opacity));
+            drawList->AddRectFilled(sMin, sMax, sCol, (el.cornerRounding + el.shadowSpread * 0.5f) * scale);
+        }
+
+        // 2. Component-Specific Rendering
+        if (el.type == UIElementType::Panel) {
+            ImU32 bgCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255),
+                                   (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255 * el.opacity));
+            ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255),
+                                   (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255 * el.opacity));
             if (el.filled) {
                 drawList->AddRectFilled(pMin, pMax, bgCol, el.cornerRounding * scale);
             }
             if (el.borderThickness > 0.0f) {
                 drawList->AddRect(pMin, pMax, bdCol, el.cornerRounding * scale, 0, el.borderThickness * scale);
             }
+        } else if (el.type == UIElementType::Button) {
+            glm::vec4 curBg = isPressed ? el.pressedColor : (isHovered ? el.hoverColor : el.backgroundColor);
+            ImU32 bgCol = IM_COL32((int)(curBg.r * 255), (int)(curBg.g * 255),
+                                   (int)(curBg.g * 255), (int)(curBg.a * 255 * el.opacity));
+            ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255),
+                                   (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255 * el.opacity));
+            drawList->AddRectFilled(pMin, pMax, bgCol, el.cornerRounding * scale);
+            if (el.borderThickness > 0.0f) {
+                drawList->AddRect(pMin, pMax, bdCol, el.cornerRounding * scale, 0, el.borderThickness * scale);
+            }
+
+            // Button Label
+            if (!el.text.empty()) {
+                ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255),
+                                        (int)(el.textColor.b * 255), (int)(el.textColor.a * 255 * el.opacity));
+                float fSize = el.fontSize * scale;
+                ImVec2 tSize = ImGui::CalcTextSize(el.text.c_str());
+                ImVec2 tPos(pMin.x + (elemSize.x - tSize.x) * 0.5f, pMin.y + (elemSize.y - tSize.y) * 0.5f);
+                drawList->AddText(nullptr, fSize, tPos, txtCol, el.text.c_str());
+            }
         } else if (el.type == UIElementType::Text) {
-            ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255), (int)(el.textColor.b * 255), (int)(el.textColor.a * 255));
-            ImU32 shdCol = IM_COL32((int)(el.shadowColor.r * 255), (int)(el.shadowColor.g * 255), (int)(el.shadowColor.b * 255), (int)(el.shadowColor.a * 255));
-
-            float fontSize = el.fontSize * scale;
-            ImVec2 textSize = ImGui::CalcTextSize(el.text.c_str());
-            ImVec2 textPos = pMin;
-
+            ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255),
+                                    (int)(el.textColor.b * 255), (int)(el.textColor.a * 255 * el.opacity));
+            float fSize = el.fontSize * scale;
+            ImVec2 tSize = ImGui::CalcTextSize(el.text.c_str());
+            ImVec2 tPos = pMin;
             if (el.textAlignment == 1) { // Center
-                textPos.x = pMin.x + (elemSize.x - textSize.x) * 0.5f;
+                tPos.x = pMin.x + (elemSize.x - tSize.x) * 0.5f;
             } else if (el.textAlignment == 2) { // Right
-                textPos.x = pMax.x - textSize.x;
+                tPos.x = pMax.x - tSize.x;
+            }
+            if (el.textShadow) {
+                ImU32 shdCol = IM_COL32((int)(el.textShadowColor.r * 255), (int)(el.textShadowColor.g * 255),
+                                        (int)(el.textShadowColor.b * 255), (int)(el.textShadowColor.a * 255 * el.opacity));
+                ImVec2 sPos(tPos.x + el.textShadowOffset.x * scale, tPos.y + el.textShadowOffset.y * scale);
+                drawList->AddText(nullptr, fSize, sPos, shdCol, el.text.c_str());
+            }
+            drawList->AddText(nullptr, fSize, tPos, txtCol, el.text.c_str());
+        } else if (el.type == UIElementType::ProgressBar) {
+            // Track
+            ImU32 trkCol = IM_COL32((int)(el.progressTrackColor.r * 255), (int)(el.progressTrackColor.g * 255),
+                                    (int)(el.progressTrackColor.b * 255), (int)(el.progressTrackColor.a * 255 * el.opacity));
+            ImU32 filCol = IM_COL32((int)(el.progressFillColor.r * 255), (int)(el.progressFillColor.g * 255),
+                                    (int)(el.progressFillColor.b * 255), (int)(el.progressFillColor.a * 255 * el.opacity));
+            drawList->AddRectFilled(pMin, pMax, trkCol, el.cornerRounding * scale);
+
+            // Fill
+            float frac = (el.progressMax > el.progressMin) ?
+                std::clamp((el.progressValue - el.progressMin) / (el.progressMax - el.progressMin), 0.0f, 1.0f) : 0.0f;
+            ImVec2 fillMax(pMin.x + elemSize.x * frac, pMax.y);
+            if (frac > 0.01f) {
+                drawList->AddRectFilled(pMin, fillMax, filCol, el.cornerRounding * scale);
             }
 
-            if (el.shadow) {
-                ImVec2 shdPos(textPos.x + el.shadowOffset.x * scale, textPos.y + el.shadowOffset.y * scale);
-                drawList->AddText(nullptr, fontSize, shdPos, shdCol, el.text.c_str());
+            // Outline
+            if (el.borderThickness > 0.0f) {
+                ImU32 bdCol = IM_COL32((int)(el.borderColor.r * 255), (int)(el.borderColor.g * 255),
+                                       (int)(el.borderColor.b * 255), (int)(el.borderColor.a * 255 * el.opacity));
+                drawList->AddRect(pMin, pMax, bdCol, el.cornerRounding * scale, 0, el.borderThickness * scale);
             }
-            drawList->AddText(nullptr, fontSize, textPos, txtCol, el.text.c_str());
+
+            // Percentage Label
+            if (el.showPercentage) {
+                char buf[32];
+                snprintf(buf, sizeof(buf), "%d%%", (int)(frac * 100.0f));
+                ImVec2 tSize = ImGui::CalcTextSize(buf);
+                ImVec2 tPos(pMin.x + (elemSize.x - tSize.x) * 0.5f, pMin.y + (elemSize.y - tSize.y) * 0.5f);
+                drawList->AddText(nullptr, 12.0f * scale, tPos, IM_COL32(240, 240, 245, 240), buf);
+            }
+        } else if (el.type == UIElementType::Slider) {
+            // Track Bar
+            float barH = 6.0f * scale;
+            float barY = pMin.y + (elemSize.y - barH) * 0.5f;
+            ImVec2 tMin(pMin.x, barY);
+            ImVec2 tMax(pMax.x, barY + barH);
+            ImU32 trkCol = IM_COL32((int)(el.sliderTrackColor.r * 255), (int)(el.sliderTrackColor.g * 255),
+                                    (int)(el.sliderTrackColor.b * 255), (int)(el.sliderTrackColor.a * 255 * el.opacity));
+            drawList->AddRectFilled(tMin, tMax, trkCol, 3.0f * scale);
+
+            // Filled portion
+            float frac = (el.sliderMax > el.sliderMin) ?
+                std::clamp((el.sliderValue - el.sliderMin) / (el.sliderMax - el.sliderMin), 0.0f, 1.0f) : 0.0f;
+            ImVec2 fMax(pMin.x + elemSize.x * frac, barY + barH);
+            ImU32 thCol = IM_COL32((int)(el.sliderThumbColor.r * 255), (int)(el.sliderThumbColor.g * 255),
+                                   (int)(el.sliderThumbColor.b * 255), (int)(el.sliderThumbColor.a * 255 * el.opacity));
+            drawList->AddRectFilled(tMin, fMax, thCol, 3.0f * scale);
+
+            // Thumb
+            float thumbR = 8.0f * scale;
+            ImVec2 thumbCenter(pMin.x + elemSize.x * frac, pMin.y + elemSize.y * 0.5f);
+            drawList->AddCircleFilled(thumbCenter, thumbR, thCol);
+            drawList->AddCircle(thumbCenter, thumbR, IM_COL32(255, 255, 255, 120), 0, 1.5f * scale);
+        } else if (el.type == UIElementType::Checkbox) {
+            float boxSize = std::min(elemSize.y, 22.0f * scale);
+            ImVec2 bMin(pMin.x, pMin.y + (elemSize.y - boxSize) * 0.5f);
+            ImVec2 bMax(bMin.x + boxSize, bMin.y + boxSize);
+
+            ImU32 boxCol = IM_COL32((int)(el.checkboxBoxColor.r * 255), (int)(el.checkboxBoxColor.g * 255),
+                                    (int)(el.checkboxBoxColor.b * 255), (int)(el.checkboxBoxColor.a * 255 * el.opacity));
+            ImU32 chkCol = IM_COL32((int)(el.checkboxCheckColor.r * 255), (int)(el.checkboxCheckColor.g * 255),
+                                    (int)(el.checkboxCheckColor.b * 255), (int)(el.checkboxCheckColor.a * 255 * el.opacity));
+
+            drawList->AddRectFilled(bMin, bMax, boxCol, el.cornerRounding * scale);
+            drawList->AddRect(bMin, bMax, IM_COL32(255, 255, 255, 25), el.cornerRounding * scale, 0, 1.0f * scale);
+
+            if (el.isChecked) {
+                // Checkmark
+                float pad = 4.0f * scale;
+                ImVec2 p1(bMin.x + pad, bMin.y + boxSize * 0.5f);
+                ImVec2 p2(bMin.x + boxSize * 0.40f, bMax.y - pad);
+                ImVec2 p3(bMax.x - pad, bMin.y + pad);
+                drawList->AddLine(p1, p2, chkCol, 2.5f * scale);
+                drawList->AddLine(p2, p3, chkCol, 2.5f * scale);
+            }
+
+            // Checkbox Label
+            if (!el.text.empty()) {
+                ImU32 txtCol = IM_COL32((int)(el.textColor.r * 255), (int)(el.textColor.g * 255),
+                                        (int)(el.textColor.b * 255), (int)(el.textColor.a * 255 * el.opacity));
+                ImVec2 tPos(bMax.x + 8.0f * scale, pMin.y + (elemSize.y - ImGui::CalcTextSize(el.text.c_str()).y) * 0.5f);
+                drawList->AddText(nullptr, el.fontSize * scale, tPos, txtCol, el.text.c_str());
+            }
         } else if (el.type == UIElementType::Image) {
             uint64_t texId = 0;
             if (!el.texturePath.empty()) {
-                texId = ResolveTextureId(el.texturePath, ui.GetHtmlDirectory());
+                texId = ResolveTextureId(el.texturePath);
             }
             if (texId != 0) {
-                ImU32 tintCol = IM_COL32((int)(el.backgroundColor.r * 255), (int)(el.backgroundColor.g * 255), (int)(el.backgroundColor.b * 255), (int)(el.backgroundColor.a * 255));
-                if (el.backgroundColor.a <= 0.0f) {
-                    tintCol = IM_COL32(255, 255, 255, 255);
-                }
+                ImU32 tintCol = IM_COL32((int)(el.imageTint.r * 255), (int)(el.imageTint.g * 255),
+                                         (int)(el.imageTint.b * 255), (int)(el.imageTint.a * 255 * el.opacity));
                 if (el.cornerRounding > 0.0f) {
                     drawList->AddImageRounded((ImTextureID)texId, pMin, pMax, ImVec2(0, 0), ImVec2(1, 1), tintCol, el.cornerRounding * scale);
                 } else {
                     drawList->AddImage((ImTextureID)texId, pMin, pMax, ImVec2(0, 0), ImVec2(1, 1), tintCol);
                 }
+            } else {
+                // Placeholder image quad
+                drawList->AddRectFilled(pMin, pMax, IM_COL32(35, 38, 48, 200), el.cornerRounding * scale);
+                drawList->AddRect(pMin, pMax, IM_COL32(74, 124, 255, 120), el.cornerRounding * scale, 0, 1.0f);
+                drawList->AddText(nullptr, 12.0f * scale, ImVec2(pMin.x + 6.0f, pMin.y + 6.0f), IM_COL32(180, 185, 200, 200), "Image");
             }
         }
     }
