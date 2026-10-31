@@ -17,7 +17,9 @@ enum class AssetType {
     Font,
     Particle,
     Script,
+    BehaviourScript = Script,
     Behaviour,
+    Blueprint = Behaviour,
     VisualBehaviour,
     NodeBehaviour,
     Skybox,
@@ -49,8 +51,8 @@ inline const char* AssetTypeToString(AssetType type) {
         case AssetType::Shader:          return "Shader";
         case AssetType::Font:            return "Font";
         case AssetType::Particle:        return "Particle";
-        case AssetType::Script:          return "Script";
-        case AssetType::Behaviour:       return "Behavior Script";
+        case AssetType::Script:          return "Behaviour Script";
+        case AssetType::Behaviour:       return "Behaviour";
         case AssetType::VisualBehaviour: return "Visual Behaviour";
         case AssetType::NodeBehaviour:   return "Node Behaviour";
         case AssetType::Skybox:          return "Skybox";
@@ -80,10 +82,10 @@ inline AssetType StringToAssetType(const std::string& str) {
     if (s == "shader")       return AssetType::Shader;
     if (s == "font")         return AssetType::Font;
     if (s == "particle")     return AssetType::Particle;
-    if (s == "script")       return AssetType::Script;
+    if (s == "script" || s == "behaviourscript" || s == "behaviorscript" || s == "behaviour script" || s == "behavior script") return AssetType::Script;
     if (s == "visualbehaviour" || s == "visual-behaviour" || s == "visual behaviour" || s == "ebehaviour") return AssetType::VisualBehaviour;
     if (s == "nodebehaviour" || s == "node-behaviour" || s == "node behaviour" || s == "enb") return AssetType::NodeBehaviour;
-    if (s == "behaviour" || s == "behaviorscript" || s == "behavior script") return AssetType::Behaviour;
+    if (s == "behaviour" || s == "behavior" || s == "blueprint" || s == "actorblueprint") return AssetType::Behaviour;
     if (s == "skybox" || s == "hdrskybox") return AssetType::Skybox;
     if (s == "water")        return AssetType::Water;
     if (s == "userinterface3d" || s == "user_interface_3d" || s == "user interface 3d" || s == "ui3d" || s == "eui3d") return AssetType::UserInterface3D;
@@ -159,8 +161,11 @@ inline AssetType DetectAssetTypeFromExtension(const std::string& ext) {
     if (e == "anim" || e == "eanim") {
         return AssetType::Animation;
     }
-    if (e == "behaviour" || e == "cpp" || e == "h") {
+    if (e == "behaviour") {
         return AssetType::Behaviour;
+    }
+    if (e == "cpp" || e == "h") {
+        return AssetType::Script;
     }
     if (e == "euproject" || e == "eproject") {
         return AssetType::Project;
