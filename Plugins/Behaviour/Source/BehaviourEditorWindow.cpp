@@ -212,25 +212,22 @@ void BehaviourEditorWindow::SyncPreviewScene() {
         const auto& c = asset.components[i];
         if (!c.visible) continue;
 
-        GameObject* obj = nullptr;
+        int spawnedId = -1;
         if (!c.meshPath.empty()) {
-            std::filesystem::path resolvedMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(c.meshPath);
+            std::filesystem::path resolvedMesh = BehaviourAsset::ResolveAssetMeshPath(c.meshPath, filePath);
             std::error_code ec;
             if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
                 resolvedMesh = c.meshPath;
             }
-            GameObject& mObj = previewScene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
-            obj = &mObj;
+            spawnedId = previewScene.AddImportedMesh(resolvedMesh.string(), c.localPosition).id;
         } else if (c.type == PrimitiveType::Empty) {
-            GameObject& eObj = previewScene.AddEmptyActor(c.localPosition);
-            obj = &eObj;
+            spawnedId = previewScene.AddEmptyActor(c.localPosition).id;
         } else {
-            GameObject& pObj = previewScene.AddObject(c.type, c.localPosition);
-            obj = &pObj;
+            spawnedId = previewScene.AddObject(c.type, c.localPosition).id;
         }
 
+        GameObject* obj = previewScene.FindObject(spawnedId);
         if (obj) {
-            obj->id = c.id; // Preserve ID mapping
             obj->name = c.name;
             obj->rotation = c.localRotation;
             obj->scale = c.localScale;
@@ -239,6 +236,18 @@ void BehaviourEditorWindow::SyncPreviewScene() {
             if (!c.materialPath.empty()) {
                 obj->materialName = c.materialPath;
             }
+            obj->metallic = c.metallic;
+            obj->roughness = c.roughness;
+            obj->specular = c.specular;
+            obj->normalStrength = c.normalStrength;
+            obj->smoothShading = c.smoothShading;
+            obj->autoSmoothAngle = c.autoSmoothAngle;
+            obj->uvScale = c.uvScale;
+            obj->params = c.params;
+            if (c.type != PrimitiveType::Empty && c.meshPath.empty()) {
+                obj->RebuildMesh();
+            }
+
             if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) {
                 obj->isLight = true;
                 obj->light.type = (c.type == PrimitiveType::SpotLight) ? LightType::Spot : LightType::Point;
@@ -248,15 +257,22 @@ void BehaviourEditorWindow::SyncPreviewScene() {
                 obj->light.enabled = c.visible;
                 obj->light.innerConeAngle = c.innerConeAngle;
                 obj->light.outerConeAngle = c.outerConeAngle;
+                obj->light.coneFalloff = c.coneFalloff;
+                obj->light.rangeSmoothing = c.rangeSmoothing;
+                obj->light.attenuation = c.attenuation;
+                obj->light.radius = c.radius;
+                obj->light.length = c.length;
+                obj->light.useTemperature = c.useTemperature;
+                obj->light.temperature = c.temperature;
                 obj->light.castShadows = c.castShadows;
 
                 // Also populate in previewScene.pointLights so it illuminates the 3D viewport!
                 PointLight pl;
-                pl.id = c.id;
+                pl.id = spawnedId;
                 pl.name = c.name;
                 pl.type = obj->light.type;
                 pl.position = c.localPosition;
-                pl.color = c.lightColor;
+                pl.color = c.useTemperature ? (c.lightColor * ColorTemperatureToRGB(c.temperature)) : c.lightColor;
                 pl.intensity = c.lightIntensity;
                 pl.range = c.lightRange;
                 pl.enabled = c.visible;
@@ -266,14 +282,15 @@ void BehaviourEditorWindow::SyncPreviewScene() {
                 previewScene.pointLights.push_back(pl);
             }
 
-            compIdToObjId[c.id] = obj->id;
+            compIdToObjId[c.id] = spawnedId;
 
             // Reconstruct parenting inside previewScene
             if (c.parentId != 0 && compIdToObjId.find(c.parentId) != compIdToObjId.end()) {
-                obj->parentId = compIdToObjId[c.parentId];
-                GameObject* pObj = previewScene.FindObject(obj->parentId);
+                int pId = compIdToObjId[c.parentId];
+                obj->parentId = pId;
+                GameObject* pObj = previewScene.FindObject(pId);
                 if (pObj) {
-                    pObj->childIds.push_back(obj->id);
+                    pObj->childIds.push_back(spawnedId);
                 }
             }
         }
@@ -334,8 +351,9 @@ void BehaviourEditorWindow::CreateInternalScript(const std::string& scriptName) 
         std::ofstream cf(cppPath);
         if (cf.is_open()) {
             cf << "#include \"" << cleanName << ".h\"\n"
+               << "#include <EngineScene/BehaviourRegistry.h>\n"
                << "#include <EngineCore/EngineLogger.h>\n\n"
-               << "EUNOIA_REGISTER_BEHAVIOUR(" << cleanName << ");\n\n"
+               << "REGISTER_BEHAVIOUR(" << cleanName << ");\n\n"
                << "void " << cleanName << "::Start() {\n"
                << "    // Initialize logic here\n"
                << "}\n\n"
@@ -1080,98 +1098,211 @@ void BehaviourEditorWindow::RenderDetailsPanel() {
                 }
             }
         } else {
-            // Component Inspector
+            // Component Inspector matching Level Editor Details Panel
             BehaviourComponentDef* c = asset.FindComponent(selectedComponentId);
             if (!c) {
-                ImGui::TextDisabled("Select a component to inspect properties.");
+                ImGui::Spacing();
+                ImGui::Spacing();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.443f, 0.443f, 0.478f, 1.0f));
+                ImGui::TextWrapped("Select a component in the Outliner or Viewport to view details.");
+                ImGui::PopStyleColor();
             } else {
+                ImGui::PushID(c->id);
+
+                // 1. Actor / Component Header Banner
+                if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) {
+                    const char* lTypeName = (c->type == PrimitiveType::SpotLight) ? "SpotLightComponent" : "PointLightComponent";
+                    ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "[%s]", lTypeName);
+                } else if (c->type == PrimitiveType::Camera) {
+                    ImGui::TextColored(ImVec4(0.30f, 0.90f, 0.70f, 1.0f), "[CameraComponent]");
+                } else if (c->type == PrimitiveType::Empty) {
+                    ImGui::TextColored(ImVec4(0.60f, 0.60f, 0.60f, 1.0f), (c->id == 1 ? "[RootSceneComponent]" : "[SceneComponent]"));
+                } else {
+                    std::string smTag = "[StaticMeshActor (" + (!c->meshPath.empty() ? std::filesystem::path(c->meshPath).stem().string() : std::string(GetPrimitiveTypeName(c->type))) + ")]";
+                    ImGui::TextColored(ImVec4(0.20f, 0.65f, 1.00f, 1.0f), "%s", smTag.c_str());
+                }
+
+                ImGui::SameLine();
                 char nameBuf[128];
                 strncpy_s(nameBuf, c->name.c_str(), sizeof(nameBuf));
-                ImGui::TextDisabled("Component Name:");
-                ImGui::SetNextItemWidth(-1.0f);
+                ImGui::PushItemWidth(-80.0f);
                 if (ImGui::InputText("##CompName", nameBuf, sizeof(nameBuf))) {
                     c->name = nameBuf;
                     isDirty = true;
                     SyncPreviewScene();
                 }
+                ImGui::PopItemWidth();
+
+                ImGui::SameLine();
+                ImGui::TextDisabled("ID: %u", (uint32_t)c->id);
 
                 ImGui::Spacing();
                 if (ImGui::Checkbox("Visible", &c->visible)) {
                     isDirty = true;
                     SyncPreviewScene();
+                    if (autoSave) Save();
                 }
-
-                ImGui::SameLine(0.0f, 20.0f);
-                const char* typeName = "Static Mesh";
-                if (c->type == PrimitiveType::Empty && c->id == 1) typeName = "Root Scene Component";
-                else if (c->type == PrimitiveType::Empty) typeName = "Scene Component";
-                else if (c->type == PrimitiveType::PointLight) typeName = "Point Light";
-                else if (c->type == PrimitiveType::SpotLight) typeName = "Spot Light";
-                else if (c->type == PrimitiveType::Camera) typeName = "Camera";
-                ImGui::TextDisabled("Type: %s", typeName);
 
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                // 1. Transform Section
+                // 2. Transform Section (Exact Level Editor DrawVec3Row styling)
                 if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
-                    ImGui::TextDisabled("Location (X, Y, Z):");
-                    float pos[3] = { c->localPosition.x, c->localPosition.y, c->localPosition.z };
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
-                    if (ImGui::DragFloat3("##Loc", pos, 0.1f)) {
-                        c->localPosition = glm::vec3(pos[0], pos[1], pos[2]);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("0##ResetLoc")) {
-                        c->localPosition = glm::vec3(0.0f);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Location to 0,0,0");
+                    static bool s_lockAspectScale = false;
+                    bool transformChanged = false;
 
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Rotation (X, Y, Z):");
-                    float rot[3] = { c->localRotation.x, c->localRotation.y, c->localRotation.z };
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
-                    if (ImGui::DragFloat3("##Rot", rot, 1.0f)) {
-                        c->localRotation = glm::vec3(rot[0], rot[1], rot[2]);
-                        isDirty = true;
-                        SyncPreviewScene();
+                    if (EngineUI::GetInstance()) {
+                        transformChanged |= EngineUI::GetInstance()->DrawVec3Row("Location", c->localPosition, 0.0f, 0.05f);
+                        ImGui::Spacing();
+                        transformChanged |= EngineUI::GetInstance()->DrawVec3Row("Rotation", c->localRotation, 0.0f, 1.0f);
+                        ImGui::Spacing();
+                        transformChanged |= EngineUI::GetInstance()->DrawVec3Row("Scale", c->localScale, 1.0f, 0.02f, true, &s_lockAspectScale);
+                        ImGui::Spacing();
+                        ImGui::Checkbox("Lock Uniform Scale", &s_lockAspectScale);
+                    } else {
+                        transformChanged |= ImGui::DragFloat3("Location", &c->localPosition.x, 0.05f);
+                        transformChanged |= ImGui::DragFloat3("Rotation", &c->localRotation.x, 1.0f);
+                        transformChanged |= ImGui::DragFloat3("Scale", &c->localScale.x, 0.02f);
                     }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("0##ResetRot")) {
-                        c->localRotation = glm::vec3(0.0f);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Rotation to 0,0,0");
 
-                    ImGui::Spacing();
-                    ImGui::TextDisabled("Scale (X, Y, Z):");
-                    float scl[3] = { c->localScale.x, c->localScale.y, c->localScale.z };
-                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
-                    if (ImGui::DragFloat3("##Scl", scl, 0.05f)) {
-                        c->localScale = glm::vec3(scl[0], scl[1], scl[2]);
+                    if (transformChanged) {
                         isDirty = true;
                         SyncPreviewScene();
+                        if (autoSave) Save();
                     }
-                    ImGui::SameLine();
-                    if (ImGui::SmallButton("1##ResetScl")) {
-                        c->localScale = glm::vec3(1.0f);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Scale to 1,1,1");
                 }
 
-                ImGui::Spacing();
+                // 3. Light Component Category
+                if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) {
+                    ImGui::Spacing();
+                    char lightHeader[128];
+                    snprintf(lightHeader, sizeof(lightHeader), "%s Component", (c->type == PrimitiveType::SpotLight ? "Spot Light" : "Point Light"));
+                    if (ImGui::CollapsingHeader(lightHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
+                        // Light Type toggle
+                        const char* lightTypes[] = { "Point Light", "Spot Light" };
+                        int lIdx = (c->type == PrimitiveType::SpotLight) ? 1 : 0;
+                        ImGui::TextDisabled("Light Type:");
+                        ImGui::SetNextItemWidth(-1.0f);
+                        if (ImGui::Combo("##LType", &lIdx, lightTypes, 2)) {
+                            c->type = (lIdx == 1) ? PrimitiveType::SpotLight : PrimitiveType::PointLight;
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
 
-                // 2. Visuals & Mesh Section (for mesh / primitive components)
-                if (c->type != PrimitiveType::PointLight && c->type != PrimitiveType::SpotLight && c->type != PrimitiveType::Camera) {
-                    if (ImGui::CollapsingHeader("Visuals & Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        // Primitive Shape Selector
+                        ImGui::SameLine();
+                        if (ImGui::Checkbox("Light Enabled", &c->visible)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Light Settings");
+
+                        if (ImGui::ColorEdit3("Color##LightComponentColor", &c->lightColor.r,
+                                              ImGuiColorEditFlags_PickerHueBar | ImGuiColorEditFlags_DisplayRGB)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (ImGui::DragFloat("Intensity##LightIntensity", &c->lightIntensity, 1.0f, 0.0f, 100000.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (ImGui::Checkbox("Use Temperature (Kelvin)##UseTemp", &c->useTemperature)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (c->useTemperature) {
+                            if (ImGui::SliderFloat("Temperature##LightTemp", &c->temperature, 1000.0f, 12000.0f, "%.0f K")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            glm::vec3 kelvinCol = ColorTemperatureToRGB(c->temperature);
+                            ImGui::SameLine();
+                            ImGui::ColorButton("##KelvinPreview", ImVec4(kelvinCol.r, kelvinCol.g, kelvinCol.b, 1.0f),
+                                               ImGuiColorEditFlags_NoTooltip | ImGuiColorEditFlags_NoPicker, ImVec2(20, 20));
+                            ImGui::TextDisabled("Combined Tint: R:%.2f G:%.2f B:%.2f",
+                                                kelvinCol.r * c->lightColor.r,
+                                                kelvinCol.g * c->lightColor.g,
+                                                kelvinCol.b * c->lightColor.b);
+                        }
+
+                        if (ImGui::DragFloat("Range / Radius", &c->lightRange, 1.0f, 0.1f, 10000.0f, "%.1f m")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (ImGui::DragFloat("Attenuation Exp", &c->attenuation, 0.05f, 0.0f, 100.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (c->type == PrimitiveType::SpotLight) {
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Spot Cone & Falloff");
+                            if (ImGui::SliderFloat("Inner Cone Angle", &c->innerConeAngle, 0.0f, 89.0f, "%.1f deg")) {
+                                if (c->innerConeAngle > c->outerConeAngle) c->outerConeAngle = c->innerConeAngle;
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            if (ImGui::SliderFloat("Outer Cone Angle", &c->outerConeAngle, c->innerConeAngle, 89.9f, "%.1f deg")) {
+                                if (c->outerConeAngle < c->innerConeAngle) c->innerConeAngle = c->outerConeAngle;
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            if (ImGui::DragFloat("Cone Falloff", &c->coneFalloff, 0.05f, 0.1f, 10.0f, "%.2f")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            if (ImGui::SliderFloat("Range Smoothing", &c->rangeSmoothing, 0.01f, 1.0f, "%.2f")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        }
+
+                        if (c->type == PrimitiveType::PointLight) {
+                            ImGui::Separator();
+                            ImGui::TextDisabled("Punctual / Capsule Light");
+                            if (ImGui::DragFloat("Source Radius", &c->radius, 0.005f, 0.001f, 10.0f, "%.3f m")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            if (ImGui::DragFloat("Capsule Length", &c->length, 0.05f, 0.0f, 100.0f, "%.2f m")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        }
+
+                        ImGui::Separator();
+                        if (ImGui::Checkbox("Cast Shadows", &c->castShadows)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                    }
+                }
+
+                // 4. Primitive Shape Settings Category
+                if (c->type != PrimitiveType::PointLight && c->type != PrimitiveType::SpotLight && c->type != PrimitiveType::Camera && c->type != PrimitiveType::Empty && c->meshPath.empty()) {
+                    ImGui::Spacing();
+                    char shapeHeader[128];
+                    snprintf(shapeHeader, sizeof(shapeHeader), "%s Parameters", GetPrimitiveTypeName(c->type));
+                    if (ImGui::CollapsingHeader(shapeHeader, ImGuiTreeNodeFlags_DefaultOpen)) {
                         const char* primNames[] = { "Cube", "Plane", "Sphere", "Cylinder", "Cone", "Capsule", "Empty" };
                         PrimitiveType primTypes[] = { PrimitiveType::Cube, PrimitiveType::Plane, PrimitiveType::Sphere, PrimitiveType::Cylinder, PrimitiveType::Cone, PrimitiveType::Capsule, PrimitiveType::Empty };
                         int currentPrimIdx = 0;
@@ -1184,151 +1315,265 @@ void BehaviourEditorWindow::RenderDetailsPanel() {
                             c->type = primTypes[currentPrimIdx];
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
+
+                        bool paramChanged = false;
+                        if (c->type == PrimitiveType::Cube) {
+                            paramChanged |= ImGui::DragFloat("Size", &c->params.size, 0.05f, 0.05f, 20.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Subdivisions", &c->params.segmentsX, 1, 64);
+                        } else if (c->type == PrimitiveType::Plane) {
+                            paramChanged |= ImGui::DragFloat("Width", &c->params.width, 0.1f, 0.1f, 100.0f, "%.2f");
+                            paramChanged |= ImGui::DragFloat("Depth", &c->params.depth, 0.1f, 0.1f, 100.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Segments X", &c->params.segmentsX, 1, 64);
+                            paramChanged |= ImGui::SliderInt("Segments Z", &c->params.segmentsZ, 1, 64);
+                        } else if (c->type == PrimitiveType::Sphere) {
+                            paramChanged |= ImGui::DragFloat("Radius", &c->params.radius, 0.05f, 0.05f, 25.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Rings / Lat", &c->params.rings, 3, 64);
+                            paramChanged |= ImGui::SliderInt("Sectors / Long", &c->params.sectors, 3, 64);
+                        } else if (c->type == PrimitiveType::Cylinder) {
+                            paramChanged |= ImGui::DragFloat("Radius", &c->params.radius, 0.05f, 0.05f, 25.0f, "%.2f");
+                            paramChanged |= ImGui::DragFloat("Height", &c->params.height, 0.05f, 0.05f, 50.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Radial Segments", &c->params.radialSegments, 3, 64);
+                            paramChanged |= ImGui::SliderInt("Height Segments", &c->params.heightSegments, 1, 32);
+                            paramChanged |= ImGui::Checkbox("Cap Top", &c->params.capTop);
+                            paramChanged |= ImGui::Checkbox("Cap Bottom", &c->params.capBottom);
+                        } else if (c->type == PrimitiveType::Cone) {
+                            paramChanged |= ImGui::DragFloat("Bottom Radius", &c->params.radius, 0.05f, 0.0f, 25.0f, "%.2f");
+                            paramChanged |= ImGui::DragFloat("Top Radius", &c->params.radius2, 0.05f, 0.0f, 25.0f, "%.2f");
+                            paramChanged |= ImGui::DragFloat("Height", &c->params.height, 0.05f, 0.05f, 50.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Radial Segments", &c->params.radialSegments, 3, 64);
+                            paramChanged |= ImGui::SliderInt("Height Segments", &c->params.heightSegments, 1, 32);
+                        } else if (c->type == PrimitiveType::Capsule) {
+                            paramChanged |= ImGui::DragFloat("Radius", &c->params.radius, 0.05f, 0.05f, 20.0f, "%.2f");
+                            paramChanged |= ImGui::DragFloat("Height", &c->params.height, 0.05f, 0.05f, 40.0f, "%.2f");
+                            paramChanged |= ImGui::SliderInt("Radial Segments", &c->params.radialSegments, 3, 48);
+                            paramChanged |= ImGui::SliderInt("Height Segments", &c->params.heightSegments, 1, 24);
+                        }
+
+                        if (paramChanged) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                    }
+                }
+
+                // 5. Static Mesh Category (for custom meshes or primitives)
+                if (c->type != PrimitiveType::PointLight && c->type != PrimitiveType::SpotLight && c->type != PrimitiveType::Camera && c->type != PrimitiveType::Empty) {
+                    ImGui::Spacing();
+                    if (ImGui::CollapsingHeader("Static Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        std::string smLabel = "SM_" + (!c->meshPath.empty() ? std::filesystem::path(c->meshPath).stem().string() : std::string(GetPrimitiveTypeName(c->type)));
+                        ImGui::TextDisabled("Static Mesh Asset:");
+                        ImGui::TextColored(ImVec4(0.3f, 0.9f, 0.5f, 1.0f), "%s", smLabel.c_str());
 
                         ImGui::Spacing();
                         char meshBuf[256];
                         strncpy_s(meshBuf, c->meshPath.c_str(), sizeof(meshBuf));
-                        ImGui::TextDisabled("Mesh Asset Path (FBX / OBJ / GLTF):");
+                        ImGui::TextDisabled("Source Mesh File (FBX / OBJ / GLTF):");
                         ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
-                        if (ImGui::InputText("##MeshPath", meshBuf, sizeof(meshBuf))) {
+                        if (ImGui::InputText("##MeshPathInput", meshBuf, sizeof(meshBuf))) {
                             c->meshPath = meshBuf;
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("X##ClearMesh")) {
+                        if (ImGui::SmallButton("X##ClearMeshBtn")) {
                             c->meshPath = "";
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear custom mesh (revert to primitive)");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear custom mesh (revert to primitive shape)");
+
+                        // Mesh Drag & Drop Target
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                                std::string item((const char*)payload->Data);
+                                if (item.rfind("FILE:", 0) == 0) item = item.substr(5);
+                                if (item.rfind("ASSET:", 0) == 0) item = item.substr(6);
+                                c->meshPath = item;
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
 
                         ImGui::Spacing();
-                        char matBuf[256];
-                        strncpy_s(matBuf, c->materialPath.c_str(), sizeof(matBuf));
-                        ImGui::TextDisabled("Material Assignment:");
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
-                        if (ImGui::InputText("##MatPath", matBuf, sizeof(matBuf))) {
-                            c->materialPath = matBuf;
+                        ImGui::Separator();
+                        ImGui::TextDisabled("Shading (Blender Workflow):");
+
+                        float shadeBtnW = (ImGui::GetContentRegionAvail().x - 8.0f) * 0.5f;
+                        if (ImGui::Button("Shade Smooth", ImVec2(shadeBtnW, 24.0f))) {
+                            c->smoothShading = true;
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
                         ImGui::SameLine();
-                        if (ImGui::SmallButton("X##ClearMat")) {
+                        if (ImGui::Button("Shade Flat", ImVec2(shadeBtnW, 24.0f))) {
+                            c->smoothShading = false;
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (ImGui::Checkbox("Smooth Shading", &c->smoothShading)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        if (c->smoothShading) {
+                            if (ImGui::SliderFloat("Auto Smooth Angle", &c->autoSmoothAngle, 0.0f, 180.0f, "%.0f deg")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        }
+                    }
+                }
+
+                // 6. Materials Category
+                if (c->type != PrimitiveType::PointLight && c->type != PrimitiveType::SpotLight && c->type != PrimitiveType::Camera && c->type != PrimitiveType::Empty) {
+                    ImGui::Spacing();
+                    if (ImGui::CollapsingHeader("Materials", ImGuiTreeNodeFlags_DefaultOpen)) {
+                        ImGui::TextDisabled("Element 0: Material Slot");
+
+                        // Collect available materials from Content directory
+                        std::vector<std::string> availableMats;
+                        availableMats.push_back("Default_Material");
+                        if (EngineUI::GetInstance()) {
+                            std::filesystem::path crp = EngineUI::GetInstance()->contentRootPath;
+                            std::error_code ec;
+                            if (std::filesystem::exists(crp, ec)) {
+                                for (auto it = std::filesystem::recursive_directory_iterator(crp, ec);
+                                     it != std::filesystem::recursive_directory_iterator(); it.increment(ec)) {
+                                    if (ec) break;
+                                    if (it->is_regular_file() && it->path().extension() == ".emat") {
+                                        std::string rel = std::filesystem::relative(it->path(), crp, ec).string();
+                                        availableMats.push_back(rel);
+                                    }
+                                }
+                            }
+                        }
+
+                        std::string matPreview = c->materialPath.empty() ? "Default_Material" : c->materialPath;
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
+                        if (ImGui::BeginCombo("##MaterialSlotCombo", matPreview.c_str())) {
+                            for (const auto& matNameStr : availableMats) {
+                                bool isCur = (c->materialPath == matNameStr || (c->materialPath.empty() && matNameStr == "Default_Material"));
+                                if (ImGui::Selectable(matNameStr.c_str(), isCur)) {
+                                    c->materialPath = (matNameStr == "Default_Material") ? "" : matNameStr;
+                                    isDirty = true;
+                                    SyncPreviewScene();
+                                    if (autoSave) Save();
+                                }
+                            }
+                            ImGui::EndCombo();
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::SmallButton("X##ClearMatSlot")) {
                             c->materialPath = "";
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear material assignment");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Clear material assignment (revert to default)");
+
+                        // Drag & drop material asset
+                        if (ImGui::BeginDragDropTarget()) {
+                            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                                std::string item((const char*)payload->Data);
+                                if (item.rfind("FILE:", 0) == 0) item = item.substr(5);
+                                if (item.rfind("ASSET:", 0) == 0) item = item.substr(6);
+                                if (item.ends_with(".emat")) {
+                                    c->materialPath = item;
+                                    isDirty = true;
+                                    SyncPreviewScene();
+                                    if (autoSave) Save();
+                                }
+                            }
+                            ImGui::EndDragDropTarget();
+                        }
 
                         ImGui::Spacing();
-                        ImGui::TextDisabled("Color Tint:");
+                        ImGui::TextDisabled("Base Color Tint:");
                         float col[4] = { c->color.r, c->color.g, c->color.b, c->color.a };
-                        ImGui::SetNextItemWidth(-1.0f);
-                        if (ImGui::ColorEdit4("##Color", col)) {
+                        if (ImGui::ColorEdit4("##ColorTint", col)) {
                             c->color = glm::vec4(col[0], col[1], col[2], col[3]);
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+
+                        ImGui::Spacing();
+                        ImGui::TextDisabled("PBR Surface Properties:");
+                        if (ImGui::SliderFloat("Metallic", &c->metallic, 0.0f, 1.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (ImGui::SliderFloat("Roughness", &c->roughness, 0.0f, 1.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (ImGui::SliderFloat("Specular", &c->specular, 0.0f, 1.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (ImGui::SliderFloat("Normal Strength", &c->normalStrength, 0.0f, 5.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (ImGui::DragFloat2("UV Scale", &c->uvScale.x, 0.1f, 0.01f, 100.0f, "%.2f")) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
                         }
                     }
                 }
 
-                // 3. Light Settings Section
-                if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) {
-                    ImGui::Spacing();
-                    if (ImGui::CollapsingHeader("Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        // Light Type toggle
-                        const char* lightTypes[] = { "Point Light", "Spot Light" };
-                        int lIdx = (c->type == PrimitiveType::SpotLight) ? 1 : 0;
-                        ImGui::TextDisabled("Light Type:");
-                        ImGui::SetNextItemWidth(-1.0f);
-                        if (ImGui::Combo("##LType", &lIdx, lightTypes, 2)) {
-                            c->type = (lIdx == 1) ? PrimitiveType::SpotLight : PrimitiveType::PointLight;
-                            isDirty = true;
-                            SyncPreviewScene();
-                        }
-
-                        ImGui::Spacing();
-                        float lCol[3] = { c->lightColor.r, c->lightColor.g, c->lightColor.b };
-                        ImGui::TextDisabled("Light Color:");
-                        if (ImGui::ColorEdit3("##LCol", lCol)) {
-                            c->lightColor = glm::vec3(lCol[0], lCol[1], lCol[2]);
-                            isDirty = true;
-                            SyncPreviewScene();
-                        }
-
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Intensity (Candela / Lux):");
-                        if (ImGui::DragFloat("##LInt", &c->lightIntensity, 0.1f, 0.0f, 100.0f)) {
-                            isDirty = true;
-                            SyncPreviewScene();
-                        }
-
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Attenuation Radius / Range (m):");
-                        if (ImGui::DragFloat("##LRng", &c->lightRange, 0.5f, 0.1f, 500.0f)) {
-                            isDirty = true;
-                            SyncPreviewScene();
-                        }
-
-                        if (c->type == PrimitiveType::SpotLight) {
-                            ImGui::Spacing();
-                            ImGui::TextDisabled("Inner Cone Angle (deg):");
-                            if (ImGui::SliderFloat("##LInner", &c->innerConeAngle, 1.0f, 85.0f)) {
-                                if (c->innerConeAngle > c->outerConeAngle) c->outerConeAngle = c->innerConeAngle;
-                                isDirty = true;
-                                SyncPreviewScene();
-                            }
-
-                            ImGui::Spacing();
-                            ImGui::TextDisabled("Outer Cone Angle (deg):");
-                            if (ImGui::SliderFloat("##LOuter", &c->outerConeAngle, 1.0f, 89.0f)) {
-                                if (c->outerConeAngle < c->innerConeAngle) c->innerConeAngle = c->outerConeAngle;
-                                isDirty = true;
-                                SyncPreviewScene();
-                            }
-                        }
-
-                        ImGui::Spacing();
-                        if (ImGui::Checkbox("Cast Shadows", &c->castShadows)) {
-                            isDirty = true;
-                            SyncPreviewScene();
-                        }
-                    }
-                }
-
-                // 4. Camera Settings Section
+                // 7. Camera Component Category
                 if (c->type == PrimitiveType::Camera) {
                     ImGui::Spacing();
                     if (ImGui::CollapsingHeader("Camera Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
-                        ImGui::TextDisabled("Field of View (deg):");
-                        if (ImGui::SliderFloat("##CamFov", &c->cameraFov, 10.0f, 120.0f)) {
+                        if (ImGui::SliderFloat("Field of View", &c->cameraFov, 10.0f, 120.0f, "%.1f deg")) {
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
-
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Near Clip Plane (m):");
-                        if (ImGui::DragFloat("##CamNear", &c->cameraNear, 0.05f, 0.01f, 10.0f)) {
+                        if (ImGui::DragFloat("Near Clip Plane", &c->cameraNear, 0.05f, 0.01f, 10.0f, "%.2f m")) {
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
-
-                        ImGui::Spacing();
-                        ImGui::TextDisabled("Far Clip Plane (m):");
-                        if (ImGui::DragFloat("##CamFar", &c->cameraFar, 10.0f, 10.0f, 10000.0f)) {
+                        if (ImGui::DragFloat("Far Clip Plane", &c->cameraFar, 10.0f, 10.0f, 10000.0f, "%.1f m")) {
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
                         }
-
-                        ImGui::Spacing();
                         if (ImGui::Checkbox("Orthographic", &c->isOrthographic)) {
                             isDirty = true;
                             SyncPreviewScene();
+                            if (autoSave) Save();
+                        }
+                        if (c->isOrthographic) {
+                            if (ImGui::DragFloat("Ortho Size", &c->orthoSize, 0.5f, 0.1f, 500.0f, "%.1f m")) {
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
                         }
                     }
                 }
+
+                ImGui::PopID();
             }
         }
     }

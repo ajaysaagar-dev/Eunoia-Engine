@@ -846,9 +846,12 @@ private:
     void RenderLoadingModal();
     void RenderProjectBrowser(Scene& scene, OrbitCamera& camera);
 
+public:
     // Custom UE5-style UI widgets
     bool DrawTransformPill(const char* label, float& value, const glm::vec4& color, float resetValue = 0.0f, float speed = 0.05f);
     bool DrawVec3Row(const char* rowLabel, glm::vec3& values, float resetValue = 0.0f, float speed = 0.05f, bool isScale = false, bool* lockAspect = nullptr);
+
+private:
 
     int m_pendingReparentChild = -1;
     int m_pendingReparentParent = -1;

@@ -3395,6 +3395,8 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                             GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
                             if (spawned) {
                                 level.selectedId = spawned->id;
+                                selectedActorIds.clear();
+                                selectedActorIds.insert(spawned->id);
                                 RequestViewportRedraw(15);
                                 AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + cleanKey + "' into Level at cursor", 2);
                             }
