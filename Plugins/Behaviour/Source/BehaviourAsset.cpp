@@ -604,6 +604,9 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
 
             beh->SetOwner(rootObj);
             beh->SetScene(&scene);
+            if (!s.sourceCppPath.empty()) {
+                beh->SetSourceCppPath(s.sourceCppPath);
+            }
 
             for (const auto& prop : s.propertyOverrides) {
                 for (auto& propDesc : beh->GetProperties()) {
