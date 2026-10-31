@@ -5,6 +5,8 @@
 #include <sstream>
 #include <unordered_map>
 #include <mutex>
+#include <future>
+#include <thread>
 #include <glm/gtc/type_ptr.hpp>
 
 static std::unordered_map<std::string, ImportedModel> s_modelCache;
@@ -660,6 +662,30 @@ ImportedModel MeshImporter::LoadGLTF(const std::string& filePath) {
 
 #include "ufbx.h"
 
+struct UfbxThreadPoolData {
+    std::vector<std::future<void>> futures[UFBX_THREAD_GROUP_COUNT];
+};
+
+static void UfbxRunFn(void* user, ufbx_thread_pool_context ctx, uint32_t group, uint32_t start_index, uint32_t count) {
+    auto* poolData = (UfbxThreadPoolData*)user;
+    if (group >= UFBX_THREAD_GROUP_COUNT) return;
+    for (uint32_t i = 0; i < count; ++i) {
+        uint32_t taskIdx = start_index + i;
+        poolData->futures[group].push_back(std::async(std::launch::async, [ctx, taskIdx]() {
+            ufbx_thread_pool_run_task(ctx, taskIdx);
+        }));
+    }
+}
+
+static void UfbxWaitFn(void* user, ufbx_thread_pool_context ctx, uint32_t group, uint32_t max_index) {
+    auto* poolData = (UfbxThreadPoolData*)user;
+    if (group >= UFBX_THREAD_GROUP_COUNT) return;
+    for (auto& f : poolData->futures[group]) {
+        if (f.valid()) f.wait();
+    }
+    poolData->futures[group].clear();
+}
+
 static std::string ResolveFbxTexturePath(ufbx_texture* tex, const std::filesystem::path& fbxDir,
                                           const std::filesystem::path& texturesDir, const std::string& matName,
                                           const std::string& slotName, const std::string& modelStem = "") {
@@ -772,6 +798,11 @@ ImportedModel MeshImporter::LoadFBX(const std::string& filePath) {
     opts.target_axes = ufbx_axes_right_handed_y_up;
     opts.target_unit_meters = 1.0f;
     opts.generate_missing_normals = true;
+
+    UfbxThreadPoolData poolData;
+    opts.thread_opts.pool.run_fn = UfbxRunFn;
+    opts.thread_opts.pool.wait_fn = UfbxWaitFn;
+    opts.thread_opts.pool.user = &poolData;
 
     ufbx_error error;
     ufbx_scene* scene = ufbx_load_file(filePath.c_str(), &opts, &error);
@@ -1041,18 +1072,24 @@ ImportedModel MeshImporter::Load(const std::string& filePath) {
             return model;
         }
 
-        // Cache successfully loaded models
+        // Cache successfully loaded models with multi-core parallel optimization & LOD generation
         if (model.valid) {
+            std::vector<std::future<void>> futures;
             for (auto& mesh : model.meshes) {
                 if (mesh.valid && !mesh.vertices.empty() && !mesh.indices.empty()) {
-                    GeometryBuilder::OptimizeMesh(mesh.vertices, mesh.indices);
-                    // Generate LODs for imported meshes
-                    PrimitiveMesh pm;
-                    pm.vertices = mesh.vertices;
-                    pm.indices = mesh.indices;
-                    pm.GenerateLODs();
-                    mesh.lodIndices = std::move(pm.lodIndices);
+                    futures.push_back(std::async(std::launch::async, [&mesh]() {
+                        GeometryBuilder::OptimizeMesh(mesh.vertices, mesh.indices);
+                        // Generate LODs for imported meshes
+                        PrimitiveMesh pm;
+                        pm.vertices = mesh.vertices;
+                        pm.indices = mesh.indices;
+                        pm.GenerateLODs();
+                        mesh.lodIndices = std::move(pm.lodIndices);
+                    }));
                 }
+            }
+            for (auto& fut : futures) {
+                fut.wait();
             }
             std::lock_guard<std::mutex> lock(s_modelCacheMutex);
             s_modelCache[filePath] = model;
