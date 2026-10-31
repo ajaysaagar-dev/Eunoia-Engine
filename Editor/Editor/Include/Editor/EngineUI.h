@@ -359,9 +359,15 @@ public:
         float x, y, width, height;
     };
 
+    mutable ViewportRect m_dynamicViewportRect = { 0.0f, 0.0f, 0.0f, 0.0f };
+    mutable bool m_hasDynamicViewportRect = false;
+
     ViewportRect GetViewportRect(float windowWidth, float windowHeight) const {
         if (isImmersiveMode || isGameOnlyWindow || isPlayModeActive) {
             return { 0.0f, 0.0f, windowWidth, windowHeight };
+        }
+        if (m_hasDynamicViewportRect && m_dynamicViewportRect.width > 20.0f && m_dynamicViewportRect.height > 20.0f) {
+            return m_dynamicViewportRect;
         }
         float topH = GetTopBarsTotalHeight();
         float bottomBarH = bottomBarHeight * uiScale;
