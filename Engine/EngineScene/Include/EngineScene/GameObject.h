@@ -1440,7 +1440,18 @@ struct GameObject {
 
     // Character Mechanics
     Eunoia::CharacterMechanics::CharacterMechanicsHandle AssumeAsCharacter() {
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetActiveCharacter(this);
         return Eunoia::CharacterMechanics::CharacterMechanicsHandle{ this, nullptr };
+    }
+
+    float GetVelocity(const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f)) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(this, directionMask);
+    }
+    float GetVelocity(const TransformVector3& directionMask) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(this, directionMask);
+    }
+    float GetVelocity(float dirX, float dirY, float dirZ) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(this, dirX, dirY, dirZ);
     }
 
     void Update(float dt);

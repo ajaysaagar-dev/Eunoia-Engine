@@ -1591,6 +1591,49 @@ static std::string NormalizePropName(const std::string& name) {
 
 float DynamicScriptBehaviour::GetFloat(const std::string& name, float defaultVal) const {
     if (name.empty()) return defaultVal;
+    if (name.find("GetVelocity") != std::string::npos) {
+        glm::vec3 mask(1.0f, 1.0f, 1.0f);
+        size_t gvPos = name.find("GetVelocity");
+        size_t pOpen = name.find('(', gvPos);
+        size_t pClose = name.rfind(')');
+        if (pOpen != std::string::npos && pClose != std::string::npos && pClose > pOpen) {
+            std::string argStr = name.substr(pOpen + 1, pClose - pOpen - 1);
+            size_t innerOpen = argStr.find('(');
+            size_t innerClose = argStr.rfind(')');
+            if (innerOpen != std::string::npos && innerClose != std::string::npos && innerClose > innerOpen) {
+                argStr = argStr.substr(innerOpen + 1, innerClose - innerOpen - 1);
+            }
+            std::stringstream ss(argStr);
+            std::string item;
+            int idx = 0;
+            while (std::getline(ss, item, ',') && idx < 3) {
+                size_t s1 = item.find_first_not_of(" \t\r\n");
+                size_t s2 = item.find_last_not_of(" \t\r\n;fF");
+                if (s1 != std::string::npos && s2 != std::string::npos && s2 >= s1) {
+                    try {
+                        float v = std::stof(item.substr(s1, s2 - s1 + 1));
+                        if (idx == 0) mask.x = v;
+                        else if (idx == 1) mask.y = v;
+                        else if (idx == 2) mask.z = v;
+                    } catch (...) {}
+                }
+                idx++;
+            }
+        }
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(m_owner, mask);
+    }
+
+    try {
+        std::string s = name;
+        size_t s1 = s.find_first_not_of(" \t\r\n");
+        size_t s2 = s.find_last_not_of(" \t\r\n;fF");
+        if (s1 != std::string::npos && s2 != std::string::npos && s2 >= s1) {
+            std::string trimmed = s.substr(s1, s2 - s1 + 1);
+            size_t processed = 0;
+            float val = std::stof(trimmed, &processed);
+            if (processed == trimmed.length()) return val;
+        }
+    } catch (...) {}
     auto it = m_floatStorage.find(name);
     if (it != m_floatStorage.end()) return it->second;
 

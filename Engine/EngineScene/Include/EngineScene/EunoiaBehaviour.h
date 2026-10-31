@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <string>
 #include <vector>
 #include <memory>
@@ -502,6 +502,9 @@ public:
         cursorState.behaviour = this;
         RayTrace.behaviour = this;
         rayTrace.behaviour = this;
+        if (owner) {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetActiveCharacter(owner);
+        }
     }
 
     Scene* GetScene() const { return m_scene; }
@@ -748,7 +751,20 @@ public:
 
     // Character Mechanics
     Eunoia::CharacterMechanics::CharacterMechanicsHandle AssumeAsCharacter() {
+        if (m_owner) {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetActiveCharacter(m_owner);
+        }
         return Eunoia::CharacterMechanics::CharacterMechanicsHandle{ m_owner, this };
+    }
+
+    float GetVelocity(const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f)) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(m_owner, directionMask);
+    }
+    float GetVelocity(const TransformVector3& directionMask) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(m_owner, directionMask);
+    }
+    float GetVelocity(float dirX, float dirY, float dirZ) {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(m_owner, dirX, dirY, dirZ);
     }
 
     // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)

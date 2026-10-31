@@ -87,6 +87,7 @@ inline std::ostream& operator<<(std::ostream& os, const TransformVector3& v) {
 
 // Global Vector3 alias
 using Vector3 = TransformVector3;
+using vector3 = TransformVector3;
 
 // ============================================================================
 // TransformState
