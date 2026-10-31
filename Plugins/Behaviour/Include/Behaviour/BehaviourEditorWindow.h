@@ -63,7 +63,7 @@ public:
     void RenderOutlinerPanel();
     void RenderOutlinerNode(int compId, const std::string& filterLower);
     void RenderBehaviourScriptsPanel();
-    void RenderViewportPanel();
+    void RenderViewportOverlayAndControls(const ImVec2& vpScreenPos, const ImVec2& vpAvailSize);
     void RenderDetailsPanel();
     void RenderContentBrowserPanel();
 

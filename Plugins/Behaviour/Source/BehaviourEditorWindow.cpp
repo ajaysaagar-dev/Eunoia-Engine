@@ -369,7 +369,7 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
     RenderTopToolbar();
 
     // 2. Full ImGui DockSpace across the workspace area
-    std::string dockSpaceName = "BehaviourDockSpace_" + name;
+    std::string dockSpaceName = "BehaviourDockSpace_" + name + "_v5";
     ImGuiID dockId = ImGui::GetID(dockSpaceName.c_str());
 
     // Build default layout on first use or reset
@@ -394,7 +394,6 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
         ImGuiID dockScripts = 0;
         ImGui::DockBuilderSplitNode(dockLeft, ImGuiDir_Down, 0.40f, &dockScripts, &dockOutliner);
 
-        std::string winVp = "Blueprint Viewport##" + name;
         std::string winOut = "Components##" + name;
         std::string winScr = "Behaviour Scripts##" + name;
         std::string winDet = "Details##" + name;
@@ -402,19 +401,36 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
 
         ImGui::DockBuilderDockWindow(winOut.c_str(), dockOutliner);
         ImGui::DockBuilderDockWindow(winScr.c_str(), dockScripts);
-        ImGui::DockBuilderDockWindow(winVp.c_str(),  dockCenter);
         ImGui::DockBuilderDockWindow(winCb.c_str(),  dockBottom);
         ImGui::DockBuilderDockWindow(winDet.c_str(), dockRight);
+        // Central node remains completely empty to guarantee 100% hardware passthrough to D3D12!
 
         ImGui::DockBuilderFinish(dockId);
     }
 
-    ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode);
+    ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f), ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode);
 
-    // 3. Render all 5 dockable windows
+    ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId);
+    if (centralNode && centralNode->Size.x > 20.0f && centralNode->Size.y > 20.0f) {
+        ImGuiViewport* mainVp = ImGui::GetMainViewport();
+        float rx = centralNode->Pos.x - mainVp->Pos.x;
+        float ry = centralNode->Pos.y - mainVp->Pos.y;
+        float rw = centralNode->Size.x;
+        float rh = centralNode->Size.y;
+
+        // Transmit exact dynamic hardware viewport bounds to the D3D12 pipeline
+        if (EngineUI::GetInstance()) {
+            EngineUI::GetInstance()->SetDynamicViewportRect(rx, ry, rw, rh);
+            EngineUI::GetInstance()->RequestViewportRedraw(2);
+        }
+
+        // Render viewport overlay controls, gizmo, and drag-drop target
+        RenderViewportOverlayAndControls(centralNode->Pos, centralNode->Size);
+    }
+
+    // 3. Render all 4 dockable windows
     RenderOutlinerPanel();
     RenderBehaviourScriptsPanel();
-    RenderViewportPanel();
     RenderDetailsPanel();
     RenderContentBrowserPanel();
 }
@@ -787,170 +803,129 @@ void BehaviourEditorWindow::RenderBehaviourScriptsPanel() {
     ImGui::End();
 }
 
-void BehaviourEditorWindow::RenderViewportPanel() {
-    std::string winTitle = "Blueprint Viewport##" + name;
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
-    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+void BehaviourEditorWindow::RenderViewportOverlayAndControls(const ImVec2& vpScreenPos, const ImVec2& vpAvailSize) {
+    ImGuiIO& io = ImGui::GetIO();
 
-    if (ImGui::Begin(winTitle.c_str(), nullptr, flags)) {
-        ImGuiDockNode* node = ImGui::GetWindowDockNode();
-        if (node) {
-            node->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode;
+    // Hotkeys for Gizmos (W: Translate, E: Rotate, R: Scale, Q: Local/World)
+    if (!io.WantTextInput) {
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false)) currentGizmoOperation = 0;
+        if (ImGui::IsKeyPressed(ImGuiKey_E, false)) currentGizmoOperation = 1;
+        if (ImGui::IsKeyPressed(ImGuiKey_R, false)) currentGizmoOperation = 2;
+        if (ImGui::IsKeyPressed(ImGuiKey_Q, false)) currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
+    }
+
+    // 1. ImGuizmo 3D Transform Gizmo for Selected Component
+    if (!isSelectingScript) {
+        BehaviourComponentDef* comp = asset.FindComponent(selectedComponentId);
+        if (comp) {
+            ImGuizmo::SetDrawlist(ImGui::GetForegroundDrawList());
+            ImGuizmo::SetRect(vpScreenPos.x, vpScreenPos.y, vpAvailSize.x, vpAvailSize.y);
+
+            float aspect = vpAvailSize.x / std::max(1.0f, vpAvailSize.y);
+            glm::mat4 view = camera.GetViewMatrix();
+            glm::mat4 proj = camera.GetProjectionMatrix(aspect);
+
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), comp->localPosition);
+            model = glm::rotate(model, glm::radians(comp->localRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+            model = glm::rotate(model, glm::radians(comp->localRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+            model = glm::rotate(model, glm::radians(comp->localRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+            model = glm::scale(model, comp->localScale);
+
+            ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
+            if (currentGizmoOperation == 1) op = ImGuizmo::ROTATE;
+            else if (currentGizmoOperation == 2) op = ImGuizmo::SCALE;
+
+            ImGuizmo::MODE mode = (currentGizmoMode == 0) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+            if (ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), op, mode, glm::value_ptr(model))) {
+                float matrixTranslation[3], matrixRotation[3], matrixScale[3];
+                ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), matrixTranslation, matrixRotation, matrixScale);
+                comp->localPosition = glm::vec3(matrixTranslation[0], matrixTranslation[1], matrixTranslation[2]);
+                comp->localRotation = glm::vec3(matrixRotation[0], matrixRotation[1], matrixRotation[2]);
+                comp->localScale = glm::vec3(matrixScale[0], matrixScale[1], matrixScale[2]);
+                isDirty = true;
+                SyncPreviewScene();
+            }
         }
-        ImVec2 vpScreenPos = ImGui::GetCursorScreenPos();
-        ImVec2 vpAvailSize = ImGui::GetContentRegionAvail();
+    }
 
-        if (vpAvailSize.x > 20.0f && vpAvailSize.y > 20.0f) {
-            ImGuiViewport* mainVp = ImGui::GetMainViewport();
-            float rx = vpScreenPos.x - mainVp->Pos.x;
-            float ry = vpScreenPos.y - mainVp->Pos.y;
-            float rw = vpAvailSize.x;
-            float rh = vpAvailSize.y;
+    // 2. Viewport HUD Controls Floating Overlay Bar
+    ImGui::SetNextWindowPos(ImVec2(vpScreenPos.x + 12.0f, vpScreenPos.y + 12.0f));
+    ImGuiWindowFlags hudFlags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                               ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                               ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoDocking;
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.08f, 0.08f, 0.10f, 0.85f));
+    ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.20f, 0.22f, 0.28f, 0.80f));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 4.0f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, 4.0f));
 
-            // Transmit exact dynamic hardware viewport bounds to the D3D12 pipeline!
-            if (EngineUI::GetInstance()) {
-                EngineUI::GetInstance()->SetDynamicViewportRect(rx, ry, rw, rh);
-                EngineUI::GetInstance()->RequestViewportRedraw(2);
-            }
+    std::string hudWinName = "##VpHud_" + name;
+    if (ImGui::Begin(hudWinName.c_str(), nullptr, hudFlags)) {
+        const ImVec4 activeCol(0.0f, 0.45f, 0.90f, 1.0f);
+        const ImVec4 idleCol(0.18f, 0.19f, 0.22f, 1.0f);
 
-            ImGuiIO& io = ImGui::GetIO();
-            bool isHovered = ImGui::IsWindowHovered();
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 0 ? activeCol : idleCol);
+        if (ImGui::Button("Loc", ImVec2(34.0f, 22.0f))) { currentGizmoOperation = 0; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate (W)");
 
-            // Camera Flycam & Orbit Navigation (WASDQE Parity with Level Viewport)
-            bool isRMBDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
-            if (isHovered && isRMBDown) {
-                camera.isFlying = true;
-                if (std::abs(io.MouseDelta.x) > 0.001f || std::abs(io.MouseDelta.y) > 0.001f) {
-                    camera.LookAround(io.MouseDelta.x, io.MouseDelta.y);
-                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-                }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 1 ? activeCol : idleCol);
+        if (ImGui::Button("Rot", ImVec2(34.0f, 22.0f))) { currentGizmoOperation = 1; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate (E)");
 
-                // Flycam keyboard movement: WASDQE with Shift boost
-                float dt = (io.DeltaTime > 0.0f && io.DeltaTime < 0.2f) ? io.DeltaTime : (1.0f / 60.0f);
-                float speed = camera.moveSpeed;
-                if (io.KeyShift) speed *= 2.5f;
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 2 ? activeCol : idleCol);
+        if (ImGui::Button("Scale", ImVec2(42.0f, 22.0f))) { currentGizmoOperation = 2; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale (R)");
 
-                glm::vec3 moveDir(0.0f);
-                glm::vec3 forward = camera.GetForward();
-                glm::vec3 right   = camera.GetRight();
-                glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+        ImGui::SameLine();
+        if (ImGui::Button(currentGizmoMode == 0 ? "Local" : "World", ImVec2(48.0f, 22.0f))) {
+            currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle Local / World (Q)");
 
-                if (ImGui::IsKeyDown(ImGuiKey_W)) moveDir += forward;
-                if (ImGui::IsKeyDown(ImGuiKey_S)) moveDir -= forward;
-                if (ImGui::IsKeyDown(ImGuiKey_D)) moveDir += right;
-                if (ImGui::IsKeyDown(ImGuiKey_A)) moveDir -= right;
-                if (ImGui::IsKeyDown(ImGuiKey_E)) moveDir += worldUp;
-                if (ImGui::IsKeyDown(ImGuiKey_Q)) moveDir -= worldUp;
+        ImGui::SameLine();
+        if (ImGui::Button(viewportShadingMode == 0 ? "Lit" : (viewportShadingMode == 1 ? "Unlit" : "Wire"), ImVec2(44.0f, 22.0f))) {
+            viewportShadingMode = (viewportShadingMode + 1) % 3;
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Shading Mode");
 
-                if (glm::length(moveDir) > 0.001f) {
-                    camera.Move(glm::normalize(moveDir) * speed * dt);
-                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-                }
-            } else {
-                camera.isFlying = false;
-            }
+        ImGui::SameLine();
+        if (ImGui::Button("Reset View", ImVec2(78.0f, 22.0f))) {
+            camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
+            camera.distance = 5.0f;
+            camera.yaw = 45.0f;
+            camera.pitch = 22.0f;
+            if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+        }
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset camera to center");
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+    ImGui::PopStyleColor(2);
 
-            if (isHovered) {
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
-                    glm::vec3 right = camera.GetRight();
-                    glm::vec3 up = camera.GetUp();
-                    camera.target -= (right * io.MouseDelta.x - up * io.MouseDelta.y) * 0.005f * camera.distance * cameraSpeed;
-                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-                }
-                if (std::abs(io.MouseWheel) > 0.01f) {
-                    camera.distance = std::clamp(camera.distance - io.MouseWheel * (camera.distance * 0.15f), 0.5f, 80.0f);
-                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-                }
-            }
-
-            // Invisible drag & interaction surface for camera navigation
-            ImGui::InvisibleButton("##ViewportSurface", vpAvailSize);
-
-            // ImGuizmo 3D Transform Gizmo for Selected Component
-            if (!isSelectingScript) {
-                BehaviourComponentDef* comp = asset.FindComponent(selectedComponentId);
-                if (comp) {
-                    ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
-                    ImGuizmo::SetRect(vpScreenPos.x, vpScreenPos.y, vpAvailSize.x, vpAvailSize.y);
-
-                    float aspect = vpAvailSize.x / std::max(1.0f, vpAvailSize.y);
-                    glm::mat4 view = camera.GetViewMatrix();
-                    glm::mat4 proj = camera.GetProjectionMatrix(aspect);
-
-                    glm::mat4 model = glm::translate(glm::mat4(1.0f), comp->localPosition);
-                    model = glm::rotate(model, glm::radians(comp->localRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
-                    model = glm::rotate(model, glm::radians(comp->localRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
-                    model = glm::rotate(model, glm::radians(comp->localRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
-                    model = glm::scale(model, comp->localScale);
-
-                    ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
-                    if (currentGizmoOperation == 1) op = ImGuizmo::ROTATE;
-                    else if (currentGizmoOperation == 2) op = ImGuizmo::SCALE;
-
-                    ImGuizmo::MODE mode = (currentGizmoMode == 0) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
-
-                    if (ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), op, mode, glm::value_ptr(model))) {
-                        float matrixTranslation[3], matrixRotation[3], matrixScale[3];
-                        ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), matrixTranslation, matrixRotation, matrixScale);
-                        comp->localPosition = glm::vec3(matrixTranslation[0], matrixTranslation[1], matrixTranslation[2]);
-                        comp->localRotation = glm::vec3(matrixRotation[0], matrixRotation[1], matrixRotation[2]);
-                        comp->localScale = glm::vec3(matrixScale[0], matrixScale[1], matrixScale[2]);
-                        isDirty = true;
-                        SyncPreviewScene();
-                    }
-                }
-            }
-
-            // Viewport Overlay Controls (Loc/Rot/Scale, Lit/Unlit, Reset View)
-            ImGui::SetCursorScreenPos(ImVec2(vpScreenPos.x + 10.0f, vpScreenPos.y + 10.0f));
-            ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.08f, 0.10f, 0.75f));
-            if (ImGui::BeginChild("ViewportOverlayBar", ImVec2(340.0f, 32.0f), true, ImGuiWindowFlags_NoScrollbar)) {
-                const ImVec4 activeCol(0.0f, 0.40f, 1.0f, 1.0f);
-                const ImVec4 idleCol(0.15f, 0.15f, 0.18f, 1.0f);
-
-                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 0 ? activeCol : idleCol);
-                if (ImGui::Button("Loc", ImVec2(32.0f, 22.0f))) { currentGizmoOperation = 0; }
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate (W)");
-
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 1 ? activeCol : idleCol);
-                if (ImGui::Button("Rot", ImVec2(32.0f, 22.0f))) { currentGizmoOperation = 1; }
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate (E)");
-
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 2 ? activeCol : idleCol);
-                if (ImGui::Button("Scale", ImVec2(40.0f, 22.0f))) { currentGizmoOperation = 2; }
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale (R)");
-
-                ImGui::SameLine();
-                if (ImGui::Button(currentGizmoMode == 0 ? "Local" : "World", ImVec2(46.0f, 22.0f))) {
-                    currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
-                }
-
-                ImGui::SameLine();
-                if (ImGui::Button(viewportShadingMode == 0 ? "Lit" : (viewportShadingMode == 1 ? "Unlit" : "Wire"), ImVec2(44.0f, 22.0f))) {
-                    viewportShadingMode = (viewportShadingMode + 1) % 3;
-                }
-
-                ImGui::SameLine();
-                if (ImGui::Button("Reset View", ImVec2(75.0f, 22.0f))) {
-                    camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
-                    camera.distance = 5.0f;
-                    camera.yaw = 45.0f;
-                    camera.pitch = 22.0f;
-                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
-                }
-            }
-            ImGui::EndChild();
-            ImGui::PopStyleColor();
-
-            // Viewport Drop Target for 3D Meshes & Materials
+    // 3. Viewport Drag & Drop Target for meshes and materials onto the 3D scene
+    // Only opened when a drag-and-drop operation is active to keep central area completely passthrough!
+    const ImGuiPayload* curPayload = ImGui::GetDragDropPayload();
+    if (curPayload && (curPayload->IsDataType("CONTENT_DRAG") || curPayload->IsDataType("ASSET_ID"))) {
+        ImGui::SetNextWindowPos(vpScreenPos);
+        ImGui::SetNextWindowSize(vpAvailSize);
+        ImGui::SetNextWindowBgAlpha(0.0f);
+        ImGuiWindowFlags dropFlags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                                     ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                                     ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing;
+        std::string dropAreaName = "##BehaviourViewportDropArea_" + name;
+        if (ImGui::Begin(dropAreaName.c_str(), nullptr, dropFlags)) {
+            ImGui::InvisibleButton("##BehaviourViewportDropBtn", vpAvailSize);
             if (ImGui::BeginDragDropTarget()) {
+                ImDrawList* dl = ImGui::GetForegroundDrawList();
+                dl->AddRect(ImVec2(vpScreenPos.x + 4.0f, vpScreenPos.y + 4.0f),
+                            ImVec2(vpScreenPos.x + vpAvailSize.x - 4.0f, vpScreenPos.y + vpAvailSize.y - 4.0f),
+                            IM_COL32(50, 180, 255, 180), 0.0f, 0, 2.5f);
+
                 if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
                     std::string payloadData((const char*)payload->Data);
                     std::stringstream ss(payloadData);
@@ -980,14 +955,40 @@ void BehaviourEditorWindow::RenderViewportPanel() {
                             }
                         }
                     }
+                } else if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("ASSET_ID")) {
+                    std::string idStr = (const char*)payload->Data;
+                    AssetID id = AssetID::FromString(idStr);
+                    const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
+                    if (meta) {
+                        std::string ext = std::filesystem::path(meta->sourcePath).extension().string();
+                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                        if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh ||
+                            ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+                            auto* comp = asset.AddComponent(PrimitiveType::Cube, meta->objectName.empty() ? "Mesh" : meta->objectName, selectedComponentId);
+                            if (comp) {
+                                comp->meshPath = meta->sourcePath;
+                                selectedComponentId = comp->id;
+                                isSelectingScript = false;
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        } else if (meta->type == AssetType::Material || ext == ".emat") {
+                            BehaviourComponentDef* comp = asset.FindComponent(selectedComponentId);
+                            if (comp) {
+                                comp->materialPath = meta->sourcePath;
+                                isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        }
+                    }
                 }
                 ImGui::EndDragDropTarget();
             }
         }
+        ImGui::End();
     }
-    ImGui::End();
-    ImGui::PopStyleColor(2);
-    ImGui::PopStyleVar();
 }
 
 void BehaviourEditorWindow::RenderDetailsPanel() {
