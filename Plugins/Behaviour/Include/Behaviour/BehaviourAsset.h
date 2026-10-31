@@ -48,6 +48,7 @@ public:
     BehaviourComponentDef* FindComponent(int id);
     const BehaviourComponentDef* FindComponent(int id) const;
     bool SetParent(int childId, int newParentId);
+    bool IsDescendant(int ancestorId, int childId) const;
 
     // Attached Behaviour Script Operations
     AttachedBehaviourScript* AddAttachedScript(const std::string& scriptName, const std::string& sourceCppPath);

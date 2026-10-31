@@ -28,6 +28,16 @@ struct BehaviourComponentDef {
     glm::vec3 lightColor{1.0f, 1.0f, 1.0f};
     float lightIntensity = 1.0f;
     float lightRange = 10.0f;
+    float innerConeAngle = 15.0f;
+    float outerConeAngle = 45.0f;
+    bool castShadows = true;
+
+    // Camera Attributes
+    float cameraFov = 45.0f;
+    float cameraNear = 0.1f;
+    float cameraFar = 1000.0f;
+    bool isOrthographic = false;
+    float orthoSize = 5.0f;
 
     bool visible = true;
 };

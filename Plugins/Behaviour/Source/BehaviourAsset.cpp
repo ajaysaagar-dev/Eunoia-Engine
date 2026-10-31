@@ -97,6 +97,15 @@ const BehaviourComponentDef* BehaviourAsset::FindComponent(int id) const {
     return nullptr;
 }
 
+bool BehaviourAsset::IsDescendant(int ancestorId, int childId) const {
+    const BehaviourComponentDef* child = FindComponent(childId);
+    while (child && child->parentId > 0) {
+        if (child->parentId == ancestorId) return true;
+        child = FindComponent(child->parentId);
+    }
+    return false;
+}
+
 bool BehaviourAsset::SetParent(int childId, int newParentId) {
     if (childId == newParentId || childId <= 0) return false;
     BehaviourComponentDef* child = FindComponent(childId);
