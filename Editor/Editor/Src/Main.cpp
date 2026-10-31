@@ -5268,11 +5268,11 @@ void updateConstantBuffer()
 	g_frameLightShadowSlot.clear();
 	g_frameLightEffectiveRes.clear();
 
-	if (g_scene.enableShadows)
+	if (activeScene.enableShadows)
 	{
-		for (size_t i = 0; i < g_scene.pointLights.size(); ++i)
+		for (size_t i = 0; i < activeScene.pointLights.size(); ++i)
 		{
-			const auto& pl = g_scene.pointLights[i];
+			const auto& pl = activeScene.pointLights[i];
 			if (!pl.enabled || !pl.castShadows) continue;
 
 			float distToCam = glm::distance(activeCamPos, pl.position);
@@ -5378,7 +5378,7 @@ void updateConstantBuffer()
 	}
 
 	// Light View-Projection for Directional Sun Light
-	glm::vec3 lightDir = g_scene.lightDirection;
+	glm::vec3 lightDir = activeScene.lightDirection;
 	float lLen = glm::length(lightDir);
 	if (lLen > 0.0001f && !std::isnan(lLen) && std::isfinite(lLen)) {
 		lightDir /= lLen;
@@ -5399,7 +5399,7 @@ void updateConstantBuffer()
 	if (!std::isfinite(camUp.x) || !std::isfinite(camUp.y) || !std::isfinite(camUp.z) || glm::length(camUp) < 1e-4f) camUp = glm::vec3(0.0f, 1.0f, 0.0f);
 	if (!std::isfinite(camRight.x) || !std::isfinite(camRight.y) || !std::isfinite(camRight.z) || glm::length(camRight) < 1e-4f) camRight = glm::vec3(1.0f, 0.0f, 0.0f);
 
-	float maxDist = (g_scene.shadowDistance > 1.0f) ? g_scene.shadowDistance : 60.0f;
+	float maxDist = (activeScene.shadowDistance > 1.0f) ? activeScene.shadowDistance : 60.0f;
 	float shadowDist = std::clamp(maxDist, 5.0f, g_camera.farPlane);
 	float nearZ = std::max(0.1f, g_camera.nearPlane);
 
@@ -5505,26 +5505,26 @@ void updateConstantBuffer()
 	cb.mvp = proj * view * model;
 	cb.lightSpaceMatrix = lightSpaceMatrix;
 	cb.cameraPos = g_camera.GetPosition();
-	cb.ambientIntensity = g_scene.ambientIntensity;
-	cb.ambientColor = glm::vec4(g_scene.ambientColor, 1.0f);
-	if (g_scene.enableSkybox && g_scene.enableSkyboxLighting)
+	cb.ambientIntensity = activeScene.ambientIntensity;
+	cb.ambientColor = glm::vec4(activeScene.ambientColor, 1.0f);
+	if (activeScene.enableSkybox && activeScene.enableSkyboxLighting)
 	{
-		float skyAmbient = g_scene.skyboxAmbientContribution +
-		                   (g_scene.skyboxLightingIntensity * g_scene.skyboxLightingDiffuse * (g_scene.skyboxExposure * 0.5f));
-		cb.ambientIntensity = g_scene.ambientIntensity + skyAmbient;
-		glm::vec3 tintLight = g_scene.skyboxTint * g_scene.skyboxLightingColor;
+		float skyAmbient = activeScene.skyboxAmbientContribution +
+		                   (activeScene.skyboxLightingIntensity * activeScene.skyboxLightingDiffuse * (activeScene.skyboxExposure * 0.5f));
+		cb.ambientIntensity = activeScene.ambientIntensity + skyAmbient;
+		glm::vec3 tintLight = activeScene.skyboxTint * activeScene.skyboxLightingColor;
 
-		if (!g_scene.skyboxTexturePath.empty() && g_scene.skyboxTexturePath != "none")
+		if (!activeScene.skyboxTexturePath.empty() && activeScene.skyboxTexturePath != "none")
 		{
-			std::string resolvedSky = g_scene.skyboxTexturePath;
-			const AssetMetadata* meta = AssetRegistry::Get().FindByVirtualPath(g_scene.skyboxTexturePath);
+			std::string resolvedSky = activeScene.skyboxTexturePath;
+			const AssetMetadata* meta = AssetRegistry::Get().FindByVirtualPath(activeScene.skyboxTexturePath);
 			if (!meta) {
 				AssetID id = AssetID::FromString(g_scene.skyboxTexturePath);
 				if (id.IsValid()) meta = AssetRegistry::Get().FindById(id);
 			}
 			if (meta && !meta->sourcePath.empty()) resolvedSky = meta->sourcePath;
 			else {
-				std::string tm = TextureManager::Get().ResolvePath(g_scene.skyboxTexturePath);
+				std::string tm = TextureManager::Get().ResolvePath(activeScene.skyboxTexturePath);
 				if (!tm.empty()) resolvedSky = tm;
 			}
 			CachedTexture* skyTex = TextureManager::Get().GetTexture(resolvedSky, TextureUsageSlot::BaseColor);
@@ -5534,56 +5534,56 @@ void updateConstantBuffer()
 			}
 		}
 
-		cb.ambientColor = glm::vec4(glm::mix(g_scene.ambientColor, tintLight, 0.75f), 1.0f);
+		cb.ambientColor = glm::vec4(glm::mix(activeScene.ambientColor, tintLight, 0.75f), 1.0f);
 	}
 	cb.lightDir = lightDir;
-	cb.shadowBias = g_scene.shadowBias;
-	cb.lightColor = g_scene.lightColor * g_scene.lightIntensity;
-	cb.shadowStrength = g_scene.shadowStrength;
-	cb.pcfRadius = g_scene.pcfRadius;
-	cb.enableShadows = g_scene.enableShadows ? 1.0f : 0.0f;
+	cb.shadowBias = activeScene.shadowBias;
+	cb.lightColor = activeScene.lightColor * activeScene.lightIntensity;
+	cb.shadowStrength = activeScene.shadowStrength;
+	cb.pcfRadius = activeScene.pcfRadius;
+	cb.enableShadows = activeScene.enableShadows ? 1.0f : 0.0f;
 	cb.shadowMapSize = (float)g_currentDirShadowRes;
 
 	// Post Processing parameters (Color Grading & Exposure)
-	cb.enablePostProcessing = g_scene.enablePostProcessing ? 1.0f : 0.0f;
-	cb.postExposureEV = g_scene.postExposureEV;
-	cb.postExposureMultiplier = g_scene.postExposureMultiplier;
-	cb.postTonemapper = (float)g_scene.postTonemapper;
-	cb.postSaturation = g_scene.postSaturation;
-	cb.postContrast = g_scene.postContrast;
-	cb.postGamma = g_scene.postGamma;
+	cb.enablePostProcessing = activeScene.enablePostProcessing ? 1.0f : 0.0f;
+	cb.postExposureEV = activeScene.postExposureEV;
+	cb.postExposureMultiplier = activeScene.postExposureMultiplier;
+	cb.postTonemapper = (float)activeScene.postTonemapper;
+	cb.postSaturation = activeScene.postSaturation;
+	cb.postContrast = activeScene.postContrast;
+	cb.postGamma = activeScene.postGamma;
 	cb.padPost = (float)g_currentSpotShadowRes; // Pass spot shadow buffer allocation size to HLSL for distance-adaptive viewport scaling
 
 	// Calculate white balance adjusted color filter
-	glm::vec3 ppFilter = g_scene.postColorFilter;
-	float tempDelta = (g_scene.postColorTemperature - 6500.0f) / 6500.0f;
+	glm::vec3 ppFilter = activeScene.postColorFilter;
+	float tempDelta = (activeScene.postColorTemperature - 6500.0f) / 6500.0f;
 	ppFilter.r *= (1.0f - tempDelta * 0.35f);
 	ppFilter.b *= (1.0f + tempDelta * 0.35f);
-	ppFilter.g *= (1.0f + g_scene.postColorTint * 0.20f);
+	ppFilter.g *= (1.0f + activeScene.postColorTint * 0.20f);
 	ppFilter = glm::max(ppFilter, glm::vec3(0.0f));
 	cb.postColorFilter = glm::vec4(ppFilter, 1.0f);
-	cb.maxShadowDistance = (g_scene.shadowDistance > 1.0f) ? g_scene.shadowDistance : 60.0f;
+	cb.maxShadowDistance = (activeScene.shadowDistance > 1.0f) ? activeScene.shadowDistance : 60.0f;
 	cb.enableAO = 0.0f; // Handled cleanly by dedicated PASS 2.55 (Wicked Engine Screen Space Ambient Occlusion)
-	cb.aoPower = g_scene.aoPower;
-	cb.aoRange = g_scene.aoRange;
+	cb.aoPower = activeScene.aoPower;
+	cb.aoRange = activeScene.aoRange;
 
 	// Volumetric Fog (Wicked Engine fogHF)
-	cb.enableFog = g_scene.enableFog ? 1.0f : 0.0f;
-	cb.fogStart = g_scene.fogStart;
-	cb.fogDensity = g_scene.fogDensity;
-	cb.fogHeightStart = g_scene.fogHeightStart;
-	cb.fogHeightEnd = g_scene.fogHeightEnd;
+	cb.enableFog = activeScene.enableFog ? 1.0f : 0.0f;
+	cb.fogStart = activeScene.fogStart;
+	cb.fogDensity = activeScene.fogDensity;
+	cb.fogHeightStart = activeScene.fogHeightStart;
+	cb.fogHeightEnd = activeScene.fogHeightEnd;
 	cb.padFog0 = 0.0f;
 	cb.padFog1 = 0.0f;
 	cb.padFog2 = 0.0f;
-	cb.fogColor = glm::vec4(g_scene.fogColor, 1.0f);
+	cb.fogColor = glm::vec4(activeScene.fogColor, 1.0f);
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;
 
-	for (size_t i = 0; i < g_scene.pointLights.size() && activePointLights < MAX_POINT_LIGHTS; ++i)
+	for (size_t i = 0; i < activeScene.pointLights.size() && activePointLights < MAX_POINT_LIGHTS; ++i)
 	{
-		const auto& pl = g_scene.pointLights[i];
+		const auto& pl = activeScene.pointLights[i];
 		if (!pl.enabled) continue;
 
 		float effectiveIntensity = pl.intensity;
@@ -5796,10 +5796,12 @@ void renderFrame()
 	// Update the lightmap SRV descriptor slot (t9) each frame
 	UpdateLightmapSrv();
 
+	Scene& activeRenderScene = g_engineUI.GetActiveRenderScene(g_scene);
+
 	// ----------------------------------------------------
 	// PASS 1: Directional Shadow Depth Map Pass (2048x2048 D32)
 	// ----------------------------------------------------
-	bool canRender3DScene = (g_engineUI.isGameOnlyWindow || g_engineUI.isInitialSceneLoaded);
+	bool canRender3DScene = (g_engineUI.isGameOnlyWindow || g_engineUI.isInitialSceneLoaded || (&g_engineUI.GetActiveRenderScene(g_scene) != &g_scene));
 	bool need3DSceneRender = (canRender3DScene && (g_engineUI.isGameOnlyWindow ||
 	                                              g_scene.isPlayMode ||
 	                                              g_engineUI.isPlayModeActive ||
@@ -5807,7 +5809,7 @@ void renderFrame()
 	                                              g_engineUI.viewportRedrawCountdown > 0 ||
 	                                              (&g_engineUI.GetActiveRenderScene(g_scene) != &g_scene)));
 
-	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows)
+	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && activeRenderScene.enableShadows)
 	{
 		D3D12_RESOURCE_BARRIER shadowBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,
@@ -6039,7 +6041,7 @@ void renderFrame()
 
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
 
-	Scene& activeRenderScene = g_engineUI.GetActiveRenderScene(g_scene);
+	// activeRenderScene already declared
 	const float clearColor[4] = {
 		activeRenderScene.clearColor.r,
 		activeRenderScene.clearColor.g,
@@ -6241,7 +6243,7 @@ void renderFrame()
 	// ----------------------------------------------------
 	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
 	// ----------------------------------------------------
-	if (need3DSceneRender && !g_deviceLost && g_scene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
+	if (need3DSceneRender && !g_deviceLost && activeRenderScene.enableSkybox && g_skyboxRootSignature && g_skyboxPipelineState)
 	{
 		RecordGpuBreadcrumbOp("[Skybox Pass] Render HDR Skybox");
 		g_commandList->SetGraphicsRootSignature(g_skyboxRootSignature);
