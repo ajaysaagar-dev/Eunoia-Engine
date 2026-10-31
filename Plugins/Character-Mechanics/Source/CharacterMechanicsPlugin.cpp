@@ -17,6 +17,12 @@ public:
     GameObject* GetActiveCharacter() const override {
         return CharacterMechanicsSystem::Get().GetActiveCharacter();
     }
+    float GetVelocity(GameObject* target, const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f)) override {
+        return CharacterMechanicsSystem::Get().GetVelocity(target, directionMask);
+    }
+    float GetVelocity(const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f)) override {
+        return CharacterMechanicsSystem::Get().GetVelocity(directionMask);
+    }
 };
 
 } // namespace CharacterMechanics
