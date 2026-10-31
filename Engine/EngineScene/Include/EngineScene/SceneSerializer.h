@@ -280,6 +280,9 @@ public:
             file << "      \"meshFilePath\": " << QuoteStr(obj.meshFilePath) << ",\n";
             file << "      \"submeshIndex\": " << obj.submeshIndex << ",\n";
             file << "      \"parentId\": " << obj.parentId << ",\n";
+            file << "      \"isBehaviourInstance\": " << BoolStr(obj.isBehaviourInstance) << ",\n";
+            file << "      \"behaviourAssetPath\": " << QuoteStr(obj.behaviourAssetPath) << ",\n";
+            file << "      \"behaviourRootId\": " << obj.behaviourRootId << ",\n";
             file << "      \"isLight\": " << BoolStr(obj.isLight) << ",\n";
             file << "      \"lightId\": " << obj.lightId << ",\n";
 
@@ -1552,6 +1555,9 @@ public:
         p = actorBlock.find("\"meshFilePath\""); if (p != std::string::npos) obj.meshFilePath = ParseStringAt(actorBlock, p, "");
         p = actorBlock.find("\"submeshIndex\""); if (p != std::string::npos) obj.submeshIndex = ParseIntAt(actorBlock, p, -1);
         p = actorBlock.find("\"parentId\""); if (p != std::string::npos) obj.parentId = ParseIntAt(actorBlock, p, -1);
+        p = actorBlock.find("\"isBehaviourInstance\""); if (p != std::string::npos) obj.isBehaviourInstance = ParseBoolAt(actorBlock, p, false);
+        p = actorBlock.find("\"behaviourAssetPath\""); if (p != std::string::npos) obj.behaviourAssetPath = ParseStringAt(actorBlock, p, "");
+        p = actorBlock.find("\"behaviourRootId\""); if (p != std::string::npos) obj.behaviourRootId = ParseIntAt(actorBlock, p, -1);
         p = actorBlock.find("\"isLight\""); if (p != std::string::npos) obj.isLight = ParseBoolAt(actorBlock, p, false);
         p = actorBlock.find("\"lightId\""); if (p != std::string::npos) obj.lightId = ParseIntAt(actorBlock, p, -1);
 
@@ -2142,9 +2148,45 @@ public:
 
             // Restore mesh geometry for imported meshes, or empty mesh for empty/light actors
             if (obj.isImportedMesh && !obj.meshFilePath.empty()) {
+                std::string resolvedMeshPath = obj.meshFilePath;
+                std::error_code ec;
+                if (!std::filesystem::exists(resolvedMeshPath, ec)) {
+                    // Try relative to behaviour asset path if present
+                    if (!obj.behaviourAssetPath.empty()) {
+                        std::filesystem::path bDir = std::filesystem::path(obj.behaviourAssetPath).parent_path();
+                        if (std::filesystem::exists(bDir / obj.meshFilePath, ec)) {
+                            resolvedMeshPath = (bDir / obj.meshFilePath).string();
+                        } else if (std::filesystem::exists(bDir.parent_path() / obj.meshFilePath, ec)) {
+                            resolvedMeshPath = (bDir.parent_path() / obj.meshFilePath).string();
+                        } else if (std::filesystem::exists(bDir.parent_path() / "Content" / obj.meshFilePath, ec)) {
+                            resolvedMeshPath = (bDir.parent_path() / "Content" / obj.meshFilePath).string();
+                        }
+                    }
+                }
+                if (!std::filesystem::exists(resolvedMeshPath, ec)) {
+                    // Try AssetManager resolution
+                    std::filesystem::path amRes = AssetManager::Get().ResolvePhysicalOrCookedPath(obj.meshFilePath);
+                    if (!amRes.empty() && std::filesystem::exists(amRes, ec)) {
+                        resolvedMeshPath = amRes.string();
+                    }
+                }
+                if (!std::filesystem::exists(resolvedMeshPath, ec)) {
+                    // Try Projects root scan
+                    std::filesystem::path projectsDir = "Projects";
+                    if (std::filesystem::exists(projectsDir, ec)) {
+                        for (const auto& entry : std::filesystem::recursive_directory_iterator(projectsDir, ec)) {
+                            if (!entry.is_directory(ec) && entry.path().filename() == std::filesystem::path(obj.meshFilePath).filename()) {
+                                resolvedMeshPath = entry.path().string();
+                                break;
+                            }
+                        }
+                    }
+                }
+
                 ImportedModel model;
                 try {
-                    model = MeshImporter::Load(obj.meshFilePath);
+                    model = MeshImporter::Load(resolvedMeshPath);
+                    obj.meshFilePath = resolvedMeshPath;
                 } catch (const std::exception& e) {
                     std::cout << "[SceneSerializer] Error loading mesh for " << obj.name << ": " << e.what() << " (neglecting, forcing open)\n";
                 } catch (...) {
@@ -2287,6 +2329,25 @@ public:
                 }
             }
         }
+        // Ensure all descendants of any behaviour instance root have behaviourRootId set properly
+        for (const auto& o : scene.objects) {
+            if (o.isBehaviourInstance) {
+                int rootId = o.id;
+                std::function<void(int)> tagDescendants = [&](int curId) {
+                    GameObject* cur = scene.FindObject(curId);
+                    if (!cur) return;
+                    for (int chId : cur->childIds) {
+                        GameObject* ch = scene.FindObject(chId);
+                        if (ch) {
+                            ch->behaviourRootId = rootId;
+                            tagDescendants(chId);
+                        }
+                    }
+                };
+                tagDescendants(rootId);
+            }
+        }
+
         scene.SyncLightActors();
         scene.SyncLightPositionsFromActors();
         scene.ResolveAllBehaviourReferences();
