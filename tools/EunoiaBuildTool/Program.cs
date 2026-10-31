@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -756,6 +756,7 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "Animation-Blending", "Include"),
                 Path.Combine(s_projectDir, "Plugins", "Level-Animation", "Include"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Include"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Include"),
                 Path.Combine(s_projectDir, "Editor", "Editor", "Include"),
                 Path.Combine(s_projectDir, "deps", "tinyobj"),
                 Path.Combine(s_projectDir, "deps", "cgltf"),
@@ -820,6 +821,10 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "Level-Animation", "Source", "LevelAnimationPlugin.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Source", "CharacterMechanicsSystem.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Source", "CharacterMechanicsPlugin.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourAsset.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourManager.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourEditorWindow.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourPlugin.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "TextureManager.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "DirectXTex.cpp"),
                 Path.Combine(s_projectDir, "Engine", "EngineAssets", "Src", "DirectXTexD3D12.cpp"),
@@ -1197,6 +1202,7 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "Animation-Blending", "Include"),
                 Path.Combine(s_projectDir, "Plugins", "Level-Animation", "Include"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Include"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Include"),
                 Path.Combine(s_projectDir, "deps", "tinyobj"),
                 Path.Combine(s_projectDir, "deps", "cgltf"),
                 Path.Combine(s_projectDir, "deps", "ufbx"),
@@ -1244,6 +1250,10 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "Level-Animation", "Source", "LevelAnimationPlugin.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Source", "CharacterMechanicsSystem.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Source", "CharacterMechanicsPlugin.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourAsset.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourManager.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourEditorWindow.cpp"),
+                Path.Combine(s_projectDir, "Plugins", "Behaviour", "Source", "BehaviourPlugin.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Graphics", "Source", "GraphicsSystem.cpp"),
                 Path.Combine(s_projectDir, "Plugins", "Graphics", "Source", "GraphicsPlugin.cpp"),
                 Path.Combine(s_projectDir, "Runtime", "Src", "Main.cpp")
