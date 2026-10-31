@@ -153,6 +153,7 @@ public:
     float directionalVolumetricMaxDistance = 120.0f;
 
     // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
+    bool isStudioPreview = false;
     bool enableShadows = true;
     float shadowStrength = 0.85f;
     float shadowBias = 0.0012f;
@@ -993,6 +994,39 @@ public:
 
     // Keep all lights synced from their GameObjects (called each frame)
     void SyncLightPositionsFromActors() {
+        if (isStudioPreview) {
+            std::vector<PointLight> studioLights;
+            for (const auto& pl : pointLights) {
+                if (pl.name.rfind("__Studio", 0) == 0) {
+                    studioLights.push_back(pl);
+                }
+            }
+            pointLights = studioLights;
+
+            for (auto& obj : objects) {
+                if (obj.isLight || IsLightPrimitive(obj.type)) {
+                    glm::vec3 worldPos = GetWorldPosition(obj);
+                    if (obj.light.enabled) {
+                        PointLight pl;
+                        pl.id = obj.id;
+                        pl.name = obj.name;
+                        pl.type = obj.light.type;
+                        pl.position = worldPos;
+                        pl.direction = obj.light.direction;
+                        pl.color = obj.light.color;
+                        pl.intensity = obj.light.intensity;
+                        pl.range = obj.light.range;
+                        pl.enabled = obj.light.enabled;
+                        pl.castShadows = obj.light.castShadows;
+                        pl.shadowStrength = obj.light.shadowStrength;
+                        pl.shadowBias = obj.light.shadowBias;
+                        pl.shadowResolution = obj.light.shadowResolution;
+                        pointLights.push_back(pl);
+                    }
+                }
+            }
+            return;
+        }
         ambientIntensity = 0.0f;
         ambientColor = glm::vec3(0.0f);
         bool hasDirectional = false;
