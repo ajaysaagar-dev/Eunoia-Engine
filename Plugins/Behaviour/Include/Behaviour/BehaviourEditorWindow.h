@@ -1,6 +1,8 @@
 #pragma once
 
 #include "BehaviourAsset.h"
+#include <EngineScene/Scene.h>
+#include <EngineRenderer/Camera.h>
 #include <imgui.h>
 #include <imgui_internal.h>
 #include <string>
@@ -24,6 +26,20 @@ public:
 
     const std::string& GetName() const { return name; }
     bool IsDirty() const { return isDirty; }
+
+    // Development Preview Stage & Isolated Studio Lights
+    Scene previewScene;
+    OrbitCamera camera;
+    bool previewSceneInitialized = false;
+    int currentGizmoOperation = 0; // 0=Translate, 1=Rotate, 2=Scale
+    int currentGizmoMode = 0; // 0=Local, 1=World
+    int viewportShadingMode = 0; // 0=Lit, 1=Unlit, 2=Wireframe
+    char outlinerSearchBuf[128] = "";
+
+    Scene& GetPreviewScene() { return previewScene; }
+    OrbitCamera& GetCamera() { return camera; }
+    void SyncPreviewScene();
+    void SetupStudioLighting();
 
     // Selection States
     int selectedComponentId = 1; // Default to root

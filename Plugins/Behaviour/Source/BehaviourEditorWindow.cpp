@@ -1,7 +1,10 @@
 #include "Behaviour/BehaviourEditorWindow.h"
+#include <Editor/EngineUI.h>
 #include <EngineScene/Scene.h>
 #include <EngineAssets/AssetRegistry.h>
 #include <EngineAssets/AssetManager.h>
+#include <ImGuizmo.h>
+#include <glm/gtc/type_ptr.hpp>
 #include <fstream>
 #include <sstream>
 #include <iostream>
@@ -114,12 +117,140 @@ BehaviourEditorWindow::BehaviourEditorWindow(const std::string& path, const std:
     if (!asset.components.empty()) {
         selectedComponentId = asset.components.front().id;
     }
+
+    // Initialize Orbit Camera for Preview Viewport
+    camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
+    camera.distance = 5.0f;
+    camera.yaw = 45.0f;
+    camera.pitch = 22.0f;
+    camera.fov = 45.0f;
+
+    SetupStudioLighting();
+    SyncPreviewScene();
+}
+
+void BehaviourEditorWindow::SetupStudioLighting() {
+    previewScene.Clear();
+    previewScene.enableSkybox = false;
+    previewScene.clearColor = glm::vec4(0.055f, 0.058f, 0.072f, 1.0f);
+    previewScene.enableShadows = true;
+    previewScene.shadowStrength = 0.85f;
+
+    // 1. Directional Key Sunlight
+    previewScene.lightDirection = glm::normalize(glm::vec3(0.55f, -1.0f, 0.65f));
+    previewScene.lightColor = glm::vec3(1.0f, 0.98f, 0.94f);
+    previewScene.lightIntensity = 1.4f;
+    previewScene.ambientIntensity = 0.35f;
+
+    // 2. Multi-point Studio Lights (Isolated strictly inside previewScene, never shown in Outliner)
+    PointLight keyLight;
+    keyLight.id = 10001;
+    keyLight.name = "__StudioKeyLight";
+    keyLight.position = glm::vec3(3.5f, 4.5f, 3.5f);
+    keyLight.color = glm::vec3(1.0f, 0.96f, 0.90f);
+    keyLight.intensity = 2.2f;
+    keyLight.range = 30.0f;
+    keyLight.castShadows = true;
+    previewScene.pointLights.push_back(keyLight);
+
+    PointLight fillLight;
+    fillLight.id = 10002;
+    fillLight.name = "__StudioFillLight";
+    fillLight.position = glm::vec3(-3.5f, 3.0f, -2.5f);
+    fillLight.color = glm::vec3(0.85f, 0.92f, 1.0f);
+    fillLight.intensity = 1.3f;
+    fillLight.range = 25.0f;
+    fillLight.castShadows = false;
+    previewScene.pointLights.push_back(fillLight);
+
+    PointLight rimLight;
+    rimLight.id = 10003;
+    rimLight.name = "__StudioRimLight";
+    rimLight.position = glm::vec3(0.0f, 4.5f, -4.5f);
+    rimLight.color = glm::vec3(0.95f, 0.97f, 1.0f);
+    rimLight.intensity = 1.6f;
+    rimLight.range = 25.0f;
+    rimLight.castShadows = false;
+    previewScene.pointLights.push_back(rimLight);
+
+    previewSceneInitialized = true;
+}
+
+void BehaviourEditorWindow::SyncPreviewScene() {
+    if (!previewSceneInitialized) {
+        SetupStudioLighting();
+    }
+
+    // Keep the 3 studio lights, remove all user object components
+    previewScene.objects.clear();
+
+    // Rebuild user components from asset into previewScene
+    std::unordered_map<int, int> compIdToObjId;
+
+    for (size_t i = 0; i < asset.components.size(); ++i) {
+        const auto& c = asset.components[i];
+        if (!c.visible) continue;
+
+        GameObject* obj = nullptr;
+        if (!c.meshPath.empty()) {
+            std::filesystem::path resolvedMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(c.meshPath);
+            std::error_code ec;
+            if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
+                resolvedMesh = c.meshPath;
+            }
+            GameObject& mObj = previewScene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
+            obj = &mObj;
+        } else if (c.type == PrimitiveType::Empty) {
+            GameObject& eObj = previewScene.AddEmptyActor(c.localPosition);
+            obj = &eObj;
+        } else {
+            GameObject& pObj = previewScene.AddObject(c.type, c.localPosition);
+            obj = &pObj;
+        }
+
+        if (obj) {
+            obj->id = c.id; // Preserve ID mapping
+            obj->name = c.name;
+            obj->rotation = c.localRotation;
+            obj->scale = c.localScale;
+            obj->color = c.color;
+            obj->visible = c.visible;
+            if (!c.materialPath.empty()) {
+                obj->materialName = c.materialPath;
+            }
+            if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) {
+                obj->isLight = true;
+                obj->light.type = (c.type == PrimitiveType::SpotLight) ? LightType::Spot : LightType::Point;
+                obj->light.color = c.lightColor;
+                obj->light.intensity = c.lightIntensity;
+                obj->light.range = c.lightRange;
+            }
+
+            compIdToObjId[c.id] = obj->id;
+
+            // Reconstruct parenting inside previewScene
+            if (c.parentId != 0 && compIdToObjId.find(c.parentId) != compIdToObjId.end()) {
+                obj->parentId = compIdToObjId[c.parentId];
+                GameObject* pObj = previewScene.FindObject(obj->parentId);
+                if (pObj) {
+                    pObj->childIds.push_back(obj->id);
+                }
+            }
+        }
+    }
+
+    if (EngineUI::GetInstance()) {
+        EngineUI::GetInstance()->RequestViewportRedraw(10);
+    }
 }
 
 void BehaviourEditorWindow::Save() {
     if (!filePath.empty()) {
         asset.SaveToFile(filePath);
         isDirty = false;
+        if (EngineUI::GetInstance()) {
+            EngineUI::GetInstance()->AddLog("LogBehaviour", "Saved Behaviour Blueprint to: " + filePath, 2);
+        }
     }
 }
 
@@ -156,8 +287,8 @@ void BehaviourEditorWindow::CreateInternalScript(const std::string& scriptName) 
         std::ofstream cf(cppPath);
         if (cf.is_open()) {
             cf << "#include \"" << cleanName << ".h\"\n"
-               << "#include <iostream>\n\n"
-               << "REGISTER_BEHAVIOUR(" << cleanName << ")\n\n"
+               << "#include <EngineCore/EngineLogger.h>\n\n"
+               << "EUNOIA_REGISTER_BEHAVIOUR(" << cleanName << ");\n\n"
                << "void " << cleanName << "::Start() {\n"
                << "    // Initialize logic here\n"
                << "}\n\n"
@@ -193,7 +324,7 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
     float rightW = 340.0f;
     float centerW = std::max(200.0f, totalW - leftW - rightW);
 
-    float bottomCBHeight = 180.0f;
+    float bottomCBHeight = 220.0f;
     float centerH = std::max(150.0f, totalH - bottomCBHeight);
 
     // Left Column: Outliner (Top) + Behaviour Scripts (Bottom)
@@ -225,12 +356,12 @@ void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
 }
 
 void BehaviourEditorWindow::RenderTopToolbar() {
-    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 6.0f));
-    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 6.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 5.0f));
+    ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(6.0f, 4.0f));
 
-    if (ImGui::BeginChild("TopToolbar", ImVec2(0, 44.0f), true, ImGuiWindowFlags_NoScrollbar)) {
+    if (ImGui::BeginChild("TopToolbar", ImVec2(0, 40.0f), true, ImGuiWindowFlags_NoScrollbar)) {
         ImGui::SetCursorPosY(ImGui::GetCursorPosY() + 2.0f);
-        ImGui::TextColored(ImVec4(0.0f, 0.82f, 1.0f, 1.0f), "🔷 Blueprint:");
+        ImGui::TextColored(ImVec4(0.0f, 0.65f, 1.0f, 1.0f), "[B] Blueprint:");
         ImGui::SameLine();
         ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", asset.name.c_str());
         if (isDirty) {
@@ -238,29 +369,64 @@ void BehaviourEditorWindow::RenderTopToolbar() {
             ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.20f, 1.0f), "*");
         }
 
+        ImGui::SameLine(0.0f, 20.0f);
+
+        // Gizmo Mode Switches (Loc, Rot, Scale)
+        const ImVec4 activeCol(0.0f, 0.40f, 1.0f, 1.0f);
+        const ImVec4 idleCol(0.12f, 0.12f, 0.14f, 1.0f);
+
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 0 ? activeCol : idleCol);
+        if (ImGui::Button("Loc", ImVec2(34.0f, 24.0f))) { currentGizmoOperation = 0; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Translate Mode (W)");
+
         ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 1 ? activeCol : idleCol);
+        if (ImGui::Button("Rot", ImVec2(34.0f, 24.0f))) { currentGizmoOperation = 1; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Rotate Mode (E)");
+
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, currentGizmoOperation == 2 ? activeCol : idleCol);
+        if (ImGui::Button("Scale", ImVec2(42.0f, 24.0f))) { currentGizmoOperation = 2; }
+        ImGui::PopStyleColor();
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Scale Mode (R)");
+
+        ImGui::SameLine();
+        if (ImGui::Button(currentGizmoMode == 0 ? "Local" : "World", ImVec2(48.0f, 24.0f))) {
+            currentGizmoMode = (currentGizmoMode == 0) ? 1 : 0;
+        }
+
+        ImGui::SameLine(0.0f, 15.0f);
+        // Shading Mode: Lit / Unlit / Wireframe
+        if (ImGui::Button(viewportShadingMode == 0 ? "Lit" : (viewportShadingMode == 1 ? "Unlit" : "Wireframe"), ImVec2(60.0f, 24.0f))) {
+            viewportShadingMode = (viewportShadingMode + 1) % 3;
+        }
+
+        // Right side controls
         float availW = ImGui::GetContentRegionAvail().x;
-        float btnW = 320.0f;
-        if (availW > btnW) {
-            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - btnW));
+        float rightControlsW = 280.0f;
+        if (availW > rightControlsW) {
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + (availW - rightControlsW));
         }
 
-        if (ImGui::Button("↺ Reset View", ImVec2(95.0f, 26.0f))) {
-            cameraTarget = glm::vec3(0.0f, 1.0f, 0.0f);
-            cameraYaw = 45.0f;
-            cameraPitch = 25.0f;
-            cameraDistance = 5.0f;
+        if (ImGui::Button("Reset View", ImVec2(80.0f, 24.0f))) {
+            camera.target = glm::vec3(0.0f, 0.4f, 0.0f);
+            camera.distance = 5.0f;
+            camera.yaw = 45.0f;
+            camera.pitch = 22.0f;
+            if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
         }
 
         ImGui::SameLine();
-        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.50f, 0.85f, 1.0f));
-        if (ImGui::Button("💾 Save", ImVec2(75.0f, 26.0f))) {
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.0f, 0.40f, 1.0f, 1.0f));
+        if (ImGui::Button("Save", ImVec2(60.0f, 24.0f))) {
             Save();
         }
         ImGui::PopStyleColor();
 
         ImGui::SameLine();
-        ImGui::Checkbox("⚡ Autosave", &autoSave);
+        ImGui::Checkbox("Autosave", &autoSave);
     }
     ImGui::EndChild();
     ImGui::PopStyleVar(2);
@@ -269,7 +435,8 @@ void BehaviourEditorWindow::RenderTopToolbar() {
 void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.082f, 0.082f, 0.102f, 1.0f));
     if (ImGui::BeginChild("OutlinerPanel", size, true)) {
-        ImGui::TextColored(ImVec4(0.290f, 0.486f, 1.0f, 1.0f), "🌳 Components");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.894f, 0.894f, 0.906f, 1.0f), "Outliner");
         ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
         if (ImGui::SmallButton("+ Add")) {
             ImGui::OpenPopup("AddComponentPopup");
@@ -279,53 +446,86 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
             if (ImGui::MenuItem("Static Mesh")) {
                 asset.AddComponent(PrimitiveType::Cube, "StaticMesh", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Cube")) {
                 asset.AddComponent(PrimitiveType::Cube, "Cube", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Sphere")) {
                 asset.AddComponent(PrimitiveType::Sphere, "Sphere", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Cylinder")) {
                 asset.AddComponent(PrimitiveType::Cylinder, "Cylinder", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Plane")) {
                 asset.AddComponent(PrimitiveType::Plane, "Plane", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Point Light")) {
                 asset.AddComponent(PrimitiveType::PointLight, "PointLight", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Spot Light")) {
                 asset.AddComponent(PrimitiveType::SpotLight, "SpotLight", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Camera")) {
                 asset.AddComponent(PrimitiveType::Camera, "Camera", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             if (ImGui::MenuItem("Empty Scene Component")) {
                 asset.AddComponent(PrimitiveType::Empty, "SceneComponent", selectedComponentId);
                 isDirty = true;
+                SyncPreviewScene();
             }
             ImGui::EndPopup();
         }
 
+        // Search Filter
+        ImGui::SetNextItemWidth(-1.0f);
+        ImGui::InputTextWithHint("##OutlinerFilter", "Filter components...", outlinerSearchBuf, sizeof(outlinerSearchBuf));
+
         ImGui::Separator();
         ImGui::Spacing();
 
-        for (auto& c : asset.components) {
-            bool isSelected = (!isSelectingScript && selectedComponentId == c.id);
-            const char* icon = "📦";
-            if (c.type == PrimitiveType::Empty) icon = "⚓";
-            else if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) icon = "💡";
-            else if (c.type == PrimitiveType::Camera) icon = "🎥";
+        std::string filterLower = outlinerSearchBuf;
+        std::transform(filterLower.begin(), filterLower.end(), filterLower.begin(), ::tolower);
 
-            std::string label = std::string(icon) + " " + c.name;
+        for (auto& c : asset.components) {
+            if (!filterLower.empty()) {
+                std::string compNameLower = c.name;
+                std::transform(compNameLower.begin(), compNameLower.end(), compNameLower.begin(), ::tolower);
+                if (compNameLower.find(filterLower) == std::string::npos) continue;
+            }
+
+            bool isSelected = (!isSelectingScript && selectedComponentId == c.id);
+            const char* typeTag = "[M]";
+            if (c.type == PrimitiveType::Empty) typeTag = "[R]";
+            else if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) typeTag = "[L]";
+            else if (c.type == PrimitiveType::Camera) typeTag = "[C]";
+
+            // Visibility eye button
+            std::string eyeId = (c.visible ? "O##Eye_" : "-##Eye_") + std::to_string(c.id);
+            if (ImGui::SmallButton(eyeId.c_str())) {
+                c.visible = !c.visible;
+                isDirty = true;
+                SyncPreviewScene();
+            }
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip(c.visible ? "Hide Component" : "Show Component");
+
+            ImGui::SameLine(0.0f, 4.0f);
+
+            std::string label = std::string(typeTag) + " " + c.name;
             ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen;
             if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
 
@@ -335,11 +535,51 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
                 isSelectingScript = false;
             }
 
+            // Drag source to reparent
+            if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_None)) {
+                int compId = c.id;
+                ImGui::SetDragDropPayload("BEH_COMP_ID", &compId, sizeof(int));
+                ImGui::Text("Reparent %s", c.name.c_str());
+                ImGui::EndDragDropSource();
+            }
+
+            // Drag target to receive child
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("BEH_COMP_ID")) {
+                    int draggedId = *(const int*)payload->Data;
+                    if (draggedId != c.id) {
+                        asset.SetParent(draggedId, c.id);
+                        isDirty = true;
+                        SyncPreviewScene();
+                    }
+                }
+                ImGui::EndDragDropTarget();
+            }
+
             if (ImGui::BeginPopupContextItem()) {
-                if (c.id != asset.components.front().id && ImGui::MenuItem("🗑 Delete Component")) {
+                if (ImGui::MenuItem("Add Child Component...")) {
+                    asset.AddComponent(PrimitiveType::Cube, "ChildMesh", c.id);
+                    isDirty = true;
+                    SyncPreviewScene();
+                }
+                if (c.id != asset.components.front().id && ImGui::MenuItem("Duplicate")) {
+                    auto* dup = asset.AddComponent(c.type, c.name + "_Copy", c.parentId);
+                    if (dup) {
+                        dup->localPosition = c.localPosition + glm::vec3(0.5f, 0.0f, 0.0f);
+                        dup->localRotation = c.localRotation;
+                        dup->localScale = c.localScale;
+                        dup->meshPath = c.meshPath;
+                        dup->materialPath = c.materialPath;
+                        dup->color = c.color;
+                        isDirty = true;
+                        SyncPreviewScene();
+                    }
+                }
+                if (c.id != asset.components.front().id && ImGui::MenuItem("Delete Component")) {
                     asset.RemoveComponent(c.id);
                     selectedComponentId = asset.components.front().id;
                     isDirty = true;
+                    SyncPreviewScene();
                     if (autoSave) Save();
                 }
                 ImGui::EndPopup();
@@ -349,23 +589,23 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
         // Accept Drag & Drop of 3D Models onto Outliner
         if (ImGui::BeginDragDropTarget()) {
             if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
-                std::string pStr((const char*)payload->Data);
-                std::stringstream ss(pStr);
+                std::string payloadData((const char*)payload->Data);
+                std::stringstream ss(payloadData);
                 std::string item;
                 while (std::getline(ss, item, '\n')) {
-                    if (item.rfind("ASSET:", 0) == 0) {
-                        std::string aPath = item.substr(6);
-                        std::string ext = std::filesystem::path(aPath).extension().string();
-                        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                        if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
-                            auto* comp = asset.AddComponent(PrimitiveType::Cube, std::filesystem::path(aPath).stem().string(), selectedComponentId);
-                            if (comp) {
-                                comp->meshPath = aPath;
-                                selectedComponentId = comp->id;
-                                isSelectingScript = false;
-                                isDirty = true;
-                                if (autoSave) Save();
-                            }
+                    if (item.rfind("FILE:", 0) == 0) item = item.substr(5);
+                    if (item.rfind("ASSET:", 0) == 0) item = item.substr(6);
+                    std::string ext = std::filesystem::path(item).extension().string();
+                    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+                    if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
+                        auto* comp = asset.AddComponent(PrimitiveType::Cube, std::filesystem::path(item).stem().string(), selectedComponentId);
+                        if (comp) {
+                            comp->meshPath = item;
+                            selectedComponentId = comp->id;
+                            isSelectingScript = false;
+                            isDirty = true;
+                            SyncPreviewScene();
+                            if (autoSave) Save();
                         }
                     }
                 }
@@ -378,21 +618,38 @@ void BehaviourEditorWindow::RenderOutlinerPanel(const ImVec2& size) {
 }
 
 void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
-    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.075f, 0.075f, 0.095f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.070f, 0.070f, 0.088f, 1.0f));
     if (ImGui::BeginChild("BehaviourScriptsPanel", size, true)) {
-        ImGui::TextColored(ImVec4(0.85f, 0.45f, 1.0f, 1.0f), "⚡ Behaviour Scripts");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.85f, 0.45f, 1.0f, 1.0f), "Behaviour Scripts");
         ImGui::SameLine(ImGui::GetWindowWidth() - 75.0f);
         if (ImGui::SmallButton("+ Add")) {
-            ImGui::OpenPopup("AddScriptModal");
+            ImGui::OpenPopup("AddBehaviourScriptPopup");
         }
 
-        static char newScriptNameBuf[64] = "MyMechanic";
-        if (ImGui::BeginPopup("AddScriptModal")) {
-            ImGui::Text("New Behaviour Script Name:");
+        if (ImGui::BeginPopup("AddBehaviourScriptPopup")) {
+            static char newScriptNameBuf[64] = "NewScript";
+            ImGui::Text("Create New Behaviour Script:");
             ImGui::InputText("##NewScrName", newScriptNameBuf, sizeof(newScriptNameBuf));
-            if (ImGui::Button("Create & Open", ImVec2(120, 0))) {
+            if (ImGui::Button("Create & Open in VS Code", ImVec2(-1, 24))) {
                 CreateInternalScript(newScriptNameBuf);
                 ImGui::CloseCurrentPopup();
+            }
+            ImGui::Separator();
+            ImGui::Text("Or attach existing Behaviour Script:");
+            const auto& regList = BehaviourRegistry::Get().GetRegisteredClassNames();
+            for (const auto& rName : regList) {
+                if (ImGui::MenuItem(rName.c_str())) {
+                    std::string autoPath = "Content/Behaviours/" + rName + ".cpp";
+                    AttachedBehaviourScript* s = asset.AddAttachedScript(rName, autoPath);
+                    if (s) {
+                        selectedScriptId = s->id;
+                        isSelectingScript = true;
+                    }
+                    isDirty = true;
+                    if (autoSave) Save();
+                    ImGui::CloseCurrentPopup();
+                }
             }
             ImGui::EndPopup();
         }
@@ -401,38 +658,43 @@ void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
         ImGui::Spacing();
 
         if (asset.attachedScripts.empty()) {
-            ImGui::TextDisabled("No scripts attached.\nClick '+ Add' to attach a script.");
+            ImGui::TextDisabled("No scripts attached.");
+            ImGui::TextDisabled("Click '+ Add' to attach a script.");
         } else {
             for (size_t i = 0; i < asset.attachedScripts.size(); ++i) {
                 auto& s = asset.attachedScripts[i];
-                bool isSelected = (isSelectingScript && selectedScriptId == s.id);
-
                 ImGui::PushID(s.id.c_str());
 
-                // Enable/disable checkbox
-                ImGui::Checkbox("##ScriptEn", &s.enabled);
-                ImGui::SameLine();
+                bool isSelected = (isSelectingScript && selectedScriptId == s.id);
+                ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags_Leaf | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_NoTreePushOnOpen;
+                if (isSelected) flags |= ImGuiTreeNodeFlags_Selected;
 
-                // Selectable row
-                std::string itemText = "📜 " + s.scriptName;
-                if (!s.enabled) itemText += " (Disabled)";
-
-                if (ImGui::Selectable(itemText.c_str(), isSelected, 0, ImVec2(ImGui::GetContentRegionAvail().x - 45.0f, 20.0f))) {
+                std::string sLabel = (s.enabled ? "[ON] " : "[OFF] ") + s.scriptName;
+                ImGui::TreeNodeEx((void*)(uintptr_t)i, flags, "%s", sLabel.c_str());
+                if (ImGui::IsItemClicked()) {
                     selectedScriptId = s.id;
                     isSelectingScript = true;
                 }
 
-                // Show Edit button on hover
+                // Hover edit button for VS Code
                 if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Click to inspect variables in Details panel.");
+                    ImGui::SetTooltip("Click to inspect variables | Right-click to edit or delete");
                 }
 
-                ImGui::SameLine(ImGui::GetWindowWidth() - 48.0f);
-                if (ImGui::SmallButton("✏")) {
-                    LaunchCodeEditor(s.sourceCppPath);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Open %s in VS Code", s.scriptName.c_str());
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Edit in VS Code")) {
+                        LaunchCodeEditor(s.sourceCppPath);
+                    }
+                    if (ImGui::MenuItem("Delete Script from Blueprint")) {
+                        asset.RemoveAttachedScript(s.id);
+                        if (selectedScriptId == s.id) {
+                            selectedScriptId = "";
+                            isSelectingScript = false;
+                        }
+                        isDirty = true;
+                        if (autoSave) Save();
+                    }
+                    ImGui::EndPopup();
                 }
 
                 ImGui::PopID();
@@ -445,206 +707,156 @@ void BehaviourEditorWindow::RenderBehaviourScriptsPanel(const ImVec2& size) {
 
 void BehaviourEditorWindow::RenderViewportPanel(const ImVec2& size) {
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse;
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
     if (ImGui::BeginChild("ViewportPanel", size, true, flags)) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
-        ImVec2 vpPos = ImGui::GetCursorScreenPos();
-        ImVec2 vpSize = ImGui::GetContentRegionAvail();
+        ImVec2 vpScreenPos = ImGui::GetCursorScreenPos();
+        ImVec2 vpAvailSize = ImGui::GetContentRegionAvail();
 
-        if (vpSize.x <= 10.0f || vpSize.y <= 10.0f) {
-            ImGui::EndChild();
-            return;
-        }
+        if (vpAvailSize.x > 10.0f && vpAvailSize.y > 10.0f) {
+            ImGuiViewport* mainVp = ImGui::GetMainViewport();
+            float rx = vpScreenPos.x - mainVp->Pos.x;
+            float ry = vpScreenPos.y - mainVp->Pos.y;
+            float rw = vpAvailSize.x;
+            float rh = vpAvailSize.y;
 
-        // Viewport Background
-        ImU32 bgCol = IM_COL32(16, 18, 24, 255);
-        dl->AddRectFilled(vpPos, ImVec2(vpPos.x + vpSize.x, vpPos.y + vpSize.y), bgCol);
-
-        // Clip to viewport
-        dl->PushClipRect(vpPos, ImVec2(vpPos.x + vpSize.x, vpPos.y + vpSize.y), true);
-
-        // Orbit Camera & Projection Math
-        float radYaw = glm::radians(cameraYaw);
-        float radPitch = glm::radians(cameraPitch);
-        glm::vec3 camPos = cameraTarget + glm::vec3(
-            cameraDistance * std::cos(radPitch) * std::sin(radYaw),
-            cameraDistance * std::sin(radPitch),
-            cameraDistance * std::cos(radPitch) * std::cos(radYaw)
-        );
-
-        glm::mat4 view = glm::lookAt(camPos, cameraTarget, glm::vec3(0.0f, 1.0f, 0.0f));
-        float aspect = vpSize.x / std::max(1.0f, vpSize.y);
-        glm::mat4 proj = glm::perspective(glm::radians(45.0f), aspect, 0.1f, 500.0f);
-        glm::mat4 vpMat = proj * view;
-
-        auto project = [&](const glm::vec3& worldPos, ImVec2& outScreen) -> bool {
-            glm::vec4 clip = vpMat * glm::vec4(worldPos, 1.0f);
-            if (clip.w <= 0.01f) return false;
-            glm::vec3 ndc = glm::vec3(clip) / clip.w;
-            if (ndc.z < -1.0f || ndc.z > 1.0f) return false;
-            outScreen.x = vpPos.x + (ndc.x * 0.5f + 0.5f) * vpSize.x;
-            outScreen.y = vpPos.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * vpSize.y;
-            return true;
-        };
-
-        // Grid Lines on XZ plane
-        float gridExtent = 5.0f;
-        float gridStep = 0.5f;
-        for (float g = -gridExtent; g <= gridExtent; g += gridStep) {
-            ImVec2 p0, p1;
-            ImU32 gridCol = (std::abs(g) < 0.01f) ? IM_COL32(70, 80, 100, 200) : IM_COL32(35, 40, 52, 120);
-            if (project(glm::vec3(g, 0.0f, -gridExtent), p0) && project(glm::vec3(g, 0.0f, gridExtent), p1)) {
-                dl->AddLine(p0, p1, gridCol, 1.0f);
+            // Transmit exact dynamic hardware viewport bounds to the D3D12 pipeline!
+            if (EngineUI::GetInstance()) {
+                EngineUI::GetInstance()->SetDynamicViewportRect(rx, ry, rw, rh);
+                EngineUI::GetInstance()->RequestViewportRedraw(2);
             }
-            if (project(glm::vec3(-gridExtent, 0.0f, g), p0) && project(glm::vec3(gridExtent, 0.0f, g), p1)) {
-                dl->AddLine(p0, p1, gridCol, 1.0f);
+
+            ImGuiIO& io = ImGui::GetIO();
+            bool isHovered = ImGui::IsWindowHovered();
+
+            // Camera Orbit & Pan Navigation
+            if (isHovered) {
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
+                    camera.yaw -= io.MouseDelta.x * 0.35f;
+                    camera.pitch = std::clamp(camera.pitch + io.MouseDelta.y * 0.35f, -89.0f, 89.0f);
+                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+                }
+                if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
+                    glm::vec3 right = camera.GetRight();
+                    glm::vec3 up = camera.GetUp();
+                    camera.target -= (right * io.MouseDelta.x - up * io.MouseDelta.y) * 0.005f * camera.distance;
+                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+                }
+                if (std::abs(io.MouseWheel) > 0.01f) {
+                    camera.distance = std::clamp(camera.distance - io.MouseWheel * (camera.distance * 0.15f), 0.5f, 60.0f);
+                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+                }
             }
-        }
 
-        // Render Components in 3D
-        for (const auto& c : asset.components) {
-            if (!c.visible) continue;
-            glm::vec3 center = c.localPosition;
-            bool isSelected = (!isSelectingScript && selectedComponentId == c.id);
-            ImU32 compCol = isSelected ? IM_COL32(0, 180, 255, 255) : IM_COL32(200, 205, 220, 200);
+            // Invisible drag & interaction surface
+            ImGui::InvisibleButton("##ViewportSurface", vpAvailSize);
 
-            ImVec2 cScreen;
-            if (project(center, cScreen)) {
-                if (c.type == PrimitiveType::PointLight || c.type == PrimitiveType::SpotLight) {
-                    dl->AddCircleFilled(cScreen, 8.0f, IM_COL32((int)(c.lightColor.r * 255), (int)(c.lightColor.g * 255), (int)(c.lightColor.b * 255), 255));
-                    dl->AddCircle(cScreen, 10.0f, compCol, 0, 1.5f);
-                } else if (c.type == PrimitiveType::Empty) {
-                    dl->AddCircleFilled(cScreen, 4.0f, compCol);
-                } else {
-                    // Draw 3D Bounding Wireframe Box
-                    glm::vec3 h = c.localScale * 0.5f;
-                    glm::vec3 corners[8] = {
-                        center + glm::vec3(-h.x, -h.y, -h.z),
-                        center + glm::vec3( h.x, -h.y, -h.z),
-                        center + glm::vec3( h.x,  h.y, -h.z),
-                        center + glm::vec3(-h.x,  h.y, -h.z),
-                        center + glm::vec3(-h.x, -h.y,  h.z),
-                        center + glm::vec3( h.x, -h.y,  h.z),
-                        center + glm::vec3( h.x,  h.y,  h.z),
-                        center + glm::vec3(-h.x,  h.y,  h.z),
-                    };
+            // ImGuizmo 3D Transform Gizmo for Selected Component
+            if (!isSelectingScript) {
+                BehaviourComponentDef* comp = asset.FindComponent(selectedComponentId);
+                if (comp) {
+                    ImGuizmo::SetDrawlist(ImGui::GetWindowDrawList());
+                    ImGuizmo::SetRect(vpScreenPos.x, vpScreenPos.y, vpAvailSize.x, vpAvailSize.y);
 
-                    ImVec2 sc[8];
-                    bool allProj = true;
-                    for (int i = 0; i < 8; ++i) {
-                        if (!project(corners[i], sc[i])) { allProj = false; break; }
-                    }
+                    float aspect = vpAvailSize.x / std::max(1.0f, vpAvailSize.y);
+                    glm::mat4 view = camera.GetViewMatrix();
+                    glm::mat4 proj = camera.GetProjectionMatrix(aspect);
 
-                    if (allProj) {
-                        dl->AddLine(sc[0], sc[1], compCol, 1.5f);
-                        dl->AddLine(sc[1], sc[2], compCol, 1.5f);
-                        dl->AddLine(sc[2], sc[3], compCol, 1.5f);
-                        dl->AddLine(sc[3], sc[0], compCol, 1.5f);
-                        dl->AddLine(sc[4], sc[5], compCol, 1.5f);
-                        dl->AddLine(sc[5], sc[6], compCol, 1.5f);
-                        dl->AddLine(sc[6], sc[7], compCol, 1.5f);
-                        dl->AddLine(sc[7], sc[4], compCol, 1.5f);
-                        dl->AddLine(sc[0], sc[4], compCol, 1.5f);
-                        dl->AddLine(sc[1], sc[5], compCol, 1.5f);
-                        dl->AddLine(sc[2], sc[6], compCol, 1.5f);
-                        dl->AddLine(sc[3], sc[7], compCol, 1.5f);
+                    glm::mat4 model = glm::translate(glm::mat4(1.0f), comp->localPosition);
+                    model = glm::rotate(model, glm::radians(comp->localRotation.x), glm::vec3(1.0f, 0.0f, 0.0f));
+                    model = glm::rotate(model, glm::radians(comp->localRotation.y), glm::vec3(0.0f, 1.0f, 0.0f));
+                    model = glm::rotate(model, glm::radians(comp->localRotation.z), glm::vec3(0.0f, 0.0f, 1.0f));
+                    model = glm::scale(model, comp->localScale);
+
+                    ImGuizmo::OPERATION op = ImGuizmo::TRANSLATE;
+                    if (currentGizmoOperation == 1) op = ImGuizmo::ROTATE;
+                    else if (currentGizmoOperation == 2) op = ImGuizmo::SCALE;
+
+                    ImGuizmo::MODE mode = (currentGizmoMode == 0) ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
+
+                    if (ImGuizmo::Manipulate(glm::value_ptr(view), glm::value_ptr(proj), op, mode, glm::value_ptr(model))) {
+                        float matrixTranslation[3], matrixRotation[3], matrixScale[3];
+                        ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(model), matrixTranslation, matrixRotation, matrixScale);
+                        comp->localPosition = glm::vec3(matrixTranslation[0], matrixTranslation[1], matrixTranslation[2]);
+                        comp->localRotation = glm::vec3(matrixRotation[0], matrixRotation[1], matrixRotation[2]);
+                        comp->localScale = glm::vec3(matrixScale[0], matrixScale[1], matrixScale[2]);
+                        isDirty = true;
+                        SyncPreviewScene();
                     }
                 }
-                dl->AddText(ImVec2(cScreen.x + 8.0f, cScreen.y - 8.0f), compCol, c.name.c_str());
             }
-        }
 
-        // Viewport Overlay Info
-        dl->AddText(ImVec2(vpPos.x + 10.0f, vpPos.y + 10.0f), IM_COL32(160, 180, 200, 200), "RMB+Drag: Orbit  |  Wheel: Zoom  |  Drag Model to Spawn");
-
-        dl->PopClipRect();
-
-        // Mouse Orbit Navigation
-        ImGuiIO& io = ImGui::GetIO();
-        bool isHovered = ImGui::IsWindowHovered();
-        if (isHovered && io.MouseWheel != 0.0f) {
-            cameraDistance = std::clamp(cameraDistance - io.MouseWheel * 0.5f, 1.0f, 50.0f);
-        }
-
-        if (isHovered && ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
-            isOrbiting = true;
-            mousePrevPos = io.MousePos;
-        }
-
-        if (isOrbiting) {
-            if (ImGui::IsMouseDown(ImGuiMouseButton_Right)) {
-                float dx = io.MousePos.x - mousePrevPos.x;
-                float dy = io.MousePos.y - mousePrevPos.y;
-                cameraYaw += dx * 0.4f;
-                cameraPitch = std::clamp(cameraPitch + dy * 0.4f, -85.0f, 85.0f);
-                mousePrevPos = io.MousePos;
-            } else {
-                isOrbiting = false;
-            }
-        }
-
-        // Drag & Drop of 3D Models directly into Viewport
-        if (ImGui::BeginDragDropTarget()) {
-            if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
-                std::string pStr((const char*)payload->Data);
-                std::stringstream ss(pStr);
-                std::string item;
-                while (std::getline(ss, item, '\n')) {
-                    if (item.rfind("ASSET:", 0) == 0) {
-                        std::string aPath = item.substr(6);
-                        std::string ext = std::filesystem::path(aPath).extension().string();
+            // Viewport Drop Target for 3D Meshes & Materials
+            if (ImGui::BeginDragDropTarget()) {
+                if (const ImGuiPayload* payload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                    std::string payloadData((const char*)payload->Data);
+                    std::stringstream ss(payloadData);
+                    std::string item;
+                    while (std::getline(ss, item, '\n')) {
+                        if (item.rfind("FILE:", 0) == 0) item = item.substr(5);
+                        if (item.rfind("ASSET:", 0) == 0) item = item.substr(6);
+                        std::string ext = std::filesystem::path(item).extension().string();
                         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
                         if (ext == ".obj" || ext == ".fbx" || ext == ".gltf" || ext == ".glb") {
-                            auto* comp = asset.AddComponent(PrimitiveType::Cube, std::filesystem::path(aPath).stem().string(), selectedComponentId);
+                            auto* comp = asset.AddComponent(PrimitiveType::Cube, std::filesystem::path(item).stem().string(), selectedComponentId);
                             if (comp) {
-                                comp->meshPath = aPath;
+                                comp->meshPath = item;
                                 selectedComponentId = comp->id;
                                 isSelectingScript = false;
                                 isDirty = true;
+                                SyncPreviewScene();
+                                if (autoSave) Save();
+                            }
+                        } else if (ext == ".emat" || ext == ".png" || ext == ".jpg" || ext == ".dds") {
+                            BehaviourComponentDef* comp = asset.FindComponent(selectedComponentId);
+                            if (comp) {
+                                comp->materialPath = item;
+                                isDirty = true;
+                                SyncPreviewScene();
                                 if (autoSave) Save();
                             }
                         }
                     }
                 }
+                ImGui::EndDragDropTarget();
             }
-            ImGui::EndDragDropTarget();
         }
     }
     ImGui::EndChild();
+    ImGui::PopStyleVar();
 }
 
 void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.082f, 0.082f, 0.102f, 1.0f));
     if (ImGui::BeginChild("DetailsPanel", size, true)) {
-        ImGui::TextColored(ImVec4(0.290f, 0.486f, 1.0f, 1.0f), "⚡ Details Inspector");
+        ImGui::AlignTextToFramePadding();
+        ImGui::TextColored(ImVec4(0.894f, 0.894f, 0.906f, 1.0f), "Details");
         ImGui::Separator();
         ImGui::Spacing();
 
         if (isSelectingScript) {
-            // ================================================================
-            // CASE B: BEHAVIOUR SCRIPT SELECTED
-            // ================================================================
+            // Script Details
             AttachedBehaviourScript* s = asset.FindAttachedScript(selectedScriptId);
             if (!s) {
                 ImGui::TextDisabled("Select a script or component to inspect.");
             } else {
-                ImGui::TextColored(ImVec4(0.85f, 0.45f, 1.0f, 1.0f), "📜 Script: %s", s->scriptName.c_str());
+                ImGui::TextColored(ImVec4(0.85f, 0.45f, 1.0f, 1.0f), "Script: %s", s->scriptName.c_str());
                 ImGui::Spacing();
 
                 if (ImGui::Checkbox("Enabled", &s->enabled)) {
                     isDirty = true;
                 }
 
-                ImGui::SameLine();
-                if (ImGui::SmallButton("Open in VS Code")) {
+                ImGui::SameLine(0.0f, 15.0f);
+                if (ImGui::Button("Edit in VS Code", ImVec2(120.0f, 24.0f))) {
                     LaunchCodeEditor(s->sourceCppPath);
                 }
 
                 ImGui::Spacing();
-                ImGui::TextDisabled("Source: %s", s->sourceCppPath.c_str());
+                ImGui::TextDisabled("Source File: %s", s->sourceCppPath.c_str());
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                ImGui::TextColored(ImVec4(0.290f, 0.486f, 1.0f, 1.0f), "Configured Public Variables:");
+                ImGui::TextColored(ImVec4(0.290f, 0.486f, 1.0f, 1.0f), "Public Script Variables & Properties:");
                 ImGui::Spacing();
 
                 for (size_t pIdx = 0; pIdx < s->propertyOverrides.size(); ++pIdx) {
@@ -655,7 +867,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     ImGui::SetNextItemWidth(-1.0f);
 
                     if (prop.typeName == "object_ref") {
-                        // Component Reference Picker strictly listing THIS Behaviour's components!
+                        // Component reference picker strictly from this Behaviour!
                         std::string previewName = "(None)";
                         for (const auto& c : asset.components) {
                             if (c.id == prop.targetComponentId) {
@@ -686,7 +898,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     } else if (prop.typeName == "bool") {
                         if (ImGui::Checkbox("##BoolVal", &prop.boolVal)) isDirty = true;
                     } else if (prop.typeName == "string") {
-                        char sBuf[128];
+                        char sBuf[256];
                         strncpy_s(sBuf, prop.stringVal.c_str(), sizeof(sBuf));
                         if (ImGui::InputText("##StrVal", sBuf, sizeof(sBuf))) {
                             prop.stringVal = sBuf;
@@ -698,8 +910,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     ImGui::Spacing();
                 }
 
-                // Add Property Override Field
-                if (ImGui::Button("+ Add Property Variable")) {
+                if (ImGui::Button("+ Add Property Variable Field")) {
                     ScriptPropertyOverride newP;
                     newP.propertyName = "targetComponent";
                     newP.typeName = "object_ref";
@@ -709,9 +920,7 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                 }
             }
         } else {
-            // ================================================================
-            // CASE A: COMPONENT SELECTED
-            // ================================================================
+            // Component Details
             BehaviourComponentDef* c = asset.FindComponent(selectedComponentId);
             if (!c) {
                 ImGui::TextDisabled("Select a component to inspect properties.");
@@ -723,46 +932,74 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                 if (ImGui::InputText("##CompName", nameBuf, sizeof(nameBuf))) {
                     c->name = nameBuf;
                     isDirty = true;
+                    SyncPreviewScene();
                 }
 
                 ImGui::Spacing();
-                ImGui::Checkbox("Visible", &c->visible);
+                if (ImGui::Checkbox("Visible", &c->visible)) {
+                    isDirty = true;
+                    SyncPreviewScene();
+                }
                 ImGui::Separator();
                 ImGui::Spacing();
 
-                // Transform
-                if (ImGui::CollapsingHeader("📐 Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
+                // 1. Transform Section
+                if (ImGui::CollapsingHeader("Transform", ImGuiTreeNodeFlags_DefaultOpen)) {
                     ImGui::TextDisabled("Location (X, Y, Z):");
                     float pos[3] = { c->localPosition.x, c->localPosition.y, c->localPosition.z };
-                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
                     if (ImGui::DragFloat3("##Loc", pos, 0.1f)) {
                         c->localPosition = glm::vec3(pos[0], pos[1], pos[2]);
                         isDirty = true;
+                        SyncPreviewScene();
                     }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("0##ResetLoc")) {
+                        c->localPosition = glm::vec3(0.0f);
+                        isDirty = true;
+                        SyncPreviewScene();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Location to 0,0,0");
 
                     ImGui::Spacing();
                     ImGui::TextDisabled("Rotation (X, Y, Z):");
                     float rot[3] = { c->localRotation.x, c->localRotation.y, c->localRotation.z };
-                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
                     if (ImGui::DragFloat3("##Rot", rot, 1.0f)) {
                         c->localRotation = glm::vec3(rot[0], rot[1], rot[2]);
                         isDirty = true;
+                        SyncPreviewScene();
                     }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("0##ResetRot")) {
+                        c->localRotation = glm::vec3(0.0f);
+                        isDirty = true;
+                        SyncPreviewScene();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Rotation to 0,0,0");
 
                     ImGui::Spacing();
                     ImGui::TextDisabled("Scale (X, Y, Z):");
                     float scl[3] = { c->localScale.x, c->localScale.y, c->localScale.z };
-                    ImGui::SetNextItemWidth(-1.0f);
+                    ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 30.0f);
                     if (ImGui::DragFloat3("##Scl", scl, 0.05f)) {
                         c->localScale = glm::vec3(scl[0], scl[1], scl[2]);
                         isDirty = true;
+                        SyncPreviewScene();
                     }
+                    ImGui::SameLine();
+                    if (ImGui::SmallButton("1##ResetScl")) {
+                        c->localScale = glm::vec3(1.0f);
+                        isDirty = true;
+                        SyncPreviewScene();
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset Scale to 1,1,1");
                 }
 
                 ImGui::Spacing();
 
-                // Mesh / Visuals
-                if (ImGui::CollapsingHeader("📦 Visuals & Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
+                // 2. Visuals & Mesh Section
+                if (ImGui::CollapsingHeader("Visuals & Mesh", ImGuiTreeNodeFlags_DefaultOpen)) {
                     char meshBuf[256];
                     strncpy_s(meshBuf, c->meshPath.c_str(), sizeof(meshBuf));
                     ImGui::TextDisabled("Mesh Asset Path:");
@@ -770,6 +1007,18 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     if (ImGui::InputText("##MeshPath", meshBuf, sizeof(meshBuf))) {
                         c->meshPath = meshBuf;
                         isDirty = true;
+                        SyncPreviewScene();
+                    }
+
+                    ImGui::Spacing();
+                    char matBuf[256];
+                    strncpy_s(matBuf, c->materialPath.c_str(), sizeof(matBuf));
+                    ImGui::TextDisabled("Material Assignment:");
+                    ImGui::SetNextItemWidth(-1.0f);
+                    if (ImGui::InputText("##MatPath", matBuf, sizeof(matBuf))) {
+                        c->materialPath = matBuf;
+                        isDirty = true;
+                        SyncPreviewScene();
                     }
 
                     ImGui::Spacing();
@@ -779,26 +1028,35 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
                     if (ImGui::ColorEdit4("##Color", col)) {
                         c->color = glm::vec4(col[0], col[1], col[2], col[3]);
                         isDirty = true;
+                        SyncPreviewScene();
                     }
                 }
 
+                // 3. Light Settings
                 if (c->type == PrimitiveType::PointLight || c->type == PrimitiveType::SpotLight) {
                     ImGui::Spacing();
-                    if (ImGui::CollapsingHeader("💡 Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                    if (ImGui::CollapsingHeader("Light Settings", ImGuiTreeNodeFlags_DefaultOpen)) {
                         float lCol[3] = { c->lightColor.r, c->lightColor.g, c->lightColor.b };
                         ImGui::TextDisabled("Light Color:");
                         if (ImGui::ColorEdit3("##LCol", lCol)) {
                             c->lightColor = glm::vec3(lCol[0], lCol[1], lCol[2]);
                             isDirty = true;
+                            SyncPreviewScene();
                         }
 
                         ImGui::Spacing();
                         ImGui::TextDisabled("Intensity:");
-                        if (ImGui::DragFloat("##LInt", &c->lightIntensity, 0.1f, 0.0f, 100.0f)) isDirty = true;
+                        if (ImGui::DragFloat("##LInt", &c->lightIntensity, 0.1f, 0.0f, 100.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
 
                         ImGui::Spacing();
                         ImGui::TextDisabled("Range:");
-                        if (ImGui::DragFloat("##LRng", &c->lightRange, 0.5f, 0.1f, 500.0f)) isDirty = true;
+                        if (ImGui::DragFloat("##LRng", &c->lightRange, 0.5f, 0.1f, 500.0f)) {
+                            isDirty = true;
+                            SyncPreviewScene();
+                        }
                     }
                 }
             }
@@ -810,39 +1068,9 @@ void BehaviourEditorWindow::RenderDetailsPanel(const ImVec2& size) {
 
 void BehaviourEditorWindow::RenderContentBrowserPanel(const ImVec2& size) {
     ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.065f, 0.065f, 0.080f, 1.0f));
-    if (ImGui::BeginChild("MiniContentBrowser", size, true)) {
-        ImGui::TextColored(ImVec4(0.6f, 0.7f, 0.85f, 1.0f), "📁 Asset Browser (Drag & drop models to Outliner or Viewport)");
-        ImGui::Separator();
-        ImGui::Spacing();
-
-        const auto& allAssets = AssetRegistry::Get().GetAllAssets();
-        for (const auto& pair : allAssets) {
-            const auto& meta = pair.second;
-            // Exclude internal scripts
-            if (meta.virtualPath.find(".internal") != std::string::npos) continue;
-
-            if (meta.type == AssetType::Mesh || meta.type == AssetType::SkeletalMesh ||
-                meta.type == AssetType::Material || meta.type == AssetType::Texture) {
-
-                ImGui::PushID(meta.id.ToString().c_str());
-
-                const char* icon = (meta.type == AssetType::Mesh || meta.type == AssetType::SkeletalMesh) ? "📦" : "🎨";
-                std::string itemText = std::string(icon) + " " + meta.objectName;
-
-                ImGui::Selectable(itemText.c_str(), false, 0, ImVec2(160.0f, 24.0f));
-
-                if (ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
-                    std::string dragStr = "ASSET:" + meta.sourcePath + "\n";
-                    ImGui::SetDragDropPayload("CONTENT_DRAG", dragStr.c_str(), dragStr.length() + 1);
-                    std::string idStr = meta.id.ToString();
-                    ImGui::SetDragDropPayload("ASSET_ID", idStr.c_str(), idStr.length() + 1);
-                    ImGui::Text("%s %s", icon, meta.objectName.c_str());
-                    ImGui::EndDragDropSource();
-                }
-
-                ImGui::SameLine();
-                ImGui::PopID();
-            }
+    if (ImGui::BeginChild("BehaviourContentBrowser", size, true)) {
+        if (EngineUI::GetInstance()) {
+            EngineUI::GetInstance()->RenderContentBrowserContent(previewScene);
         }
     }
     ImGui::EndChild();
