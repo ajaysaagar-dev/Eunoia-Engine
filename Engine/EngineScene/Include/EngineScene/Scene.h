@@ -1415,11 +1415,26 @@ public:
             if (onPreChange) onPreChange("Delete Actor");
         }
 
-        // First recursively remove children
         GameObject* obj = FindObject(id);
+        if (obj && obj->behaviourRootId != -1) {
+            int rootId = obj->behaviourRootId;
+            RemoveObject(rootId);
+            if (isRootRemove) s_inRemove = false;
+            return;
+        }
+
+        // First recursively remove children
         if (obj) {
             std::vector<int> children = obj->childIds; // copy before mutating
             for (int cid : children) RemoveObject(cid);
+            // Cascade delete any Behaviour components bound to this root instance
+            if (obj->isBehaviourInstance) {
+                std::vector<int> bpChildren;
+                for (const auto& o : objects) {
+                    if (o.behaviourRootId == id) bpChildren.push_back(o.id);
+                }
+                for (int cid : bpChildren) RemoveObject(cid);
+            }
             // Remove from parent's childIds
             if (obj->parentId != -1) {
                 GameObject* parent = FindObject(obj->parentId);
