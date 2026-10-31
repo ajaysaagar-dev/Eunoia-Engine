@@ -3301,6 +3301,8 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                         GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
                         if (spawned) {
                             level.selectedId = spawned->id;
+                            selectedActorIds.clear();
+                            selectedActorIds.insert(spawned->id);
                             RequestViewportRedraw(15);
                             AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
                         }
@@ -3375,6 +3377,8 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                             GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
                             if (spawned) {
                                 level.selectedId = spawned->id;
+                                selectedActorIds.clear();
+                                selectedActorIds.insert(spawned->id);
                                 RequestViewportRedraw(15);
                                 AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
                             }
@@ -6158,11 +6162,12 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
 
     // Type badge matching Old Eunoia Engine
     const char* typeBadge = "[T]";
-    if (obj.isLight || IsLightPrimitive(obj.type)) typeBadge = "[L]";
+    if (obj.isBehaviourInstance) typeBadge = "[BP]";
+    else if (obj.isLight || IsLightPrimitive(obj.type)) typeBadge = "[L]";
     else if (obj.isCamera || obj.type == PrimitiveType::Camera) typeBadge = "[C]";
     else if (obj.type != PrimitiveType::Empty) typeBadge = "[M]";
 
-    bool hasChildren = !obj.childIds.empty();
+    bool hasChildren = !obj.childIds.empty() && !obj.isBehaviourInstance;
     ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
     if (!hasChildren) {
         nodeFlags |= ImGuiTreeNodeFlags_Leaf;
@@ -6744,7 +6749,7 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 std::unordered_set<int> visitedIds;
                 std::vector<int> rootIds;
                 for (const auto& obj : scene.objects) {
-                    if (obj.parentId == -1) {
+                    if (obj.parentId == -1 && obj.behaviourRootId == -1) {
                         rootIds.push_back(obj.id);
                     }
                 }
@@ -7100,7 +7105,9 @@ void EngineUI::RenderDetails(Scene& scene) {
         ImGui::PushID(obj->id);
 
         // Actor Header Banner
-        if (obj->isLight || IsLightPrimitive(obj->type)) {
+        if (obj->isBehaviourInstance) {
+            ImGui::TextColored(ImVec4(0.00f, 0.65f, 1.00f, 1.0f), "[BehaviourBlueprintActor]");
+        } else if (obj->isLight || IsLightPrimitive(obj->type)) {
             char lightTypeStr[64];
             snprintf(lightTypeStr, sizeof(lightTypeStr), "[%sComponent]", GetLightTypeName(obj->light.type));
             ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "%s", lightTypeStr);
@@ -7148,6 +7155,15 @@ void EngineUI::RenderDetails(Scene& scene) {
 
         ImGui::SameLine();
         ImGui::TextDisabled("ID: %u", (uint32_t)obj->id);
+
+        if (obj->isBehaviourInstance && !obj->behaviourAssetPath.empty()) {
+            ImGui::Spacing();
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.45f, 0.85f, 1.0f));
+            if (ImGui::Button("Edit in Behaviour Editor", ImVec2(180.0f, 24.0f))) {
+                OpenBehaviourEditor(obj->behaviourAssetPath);
+            }
+            ImGui::PopStyleColor();
+        }
         ImGui::Separator();
 
         // Add Component Button (matching Old Eunoia Engine)

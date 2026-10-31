@@ -47,6 +47,7 @@
 #include <Graphics/GraphicsSystem.h>
 #include <EngineRenderer/TextureStreamingSystem.h>
 #include <UISystem/UISystem.h>
+#include <Behaviour/BehaviourManager.h>
 // Standalone CustomUI removed - purely Dear ImGui for maximum performance
 #include <sstream>
 
@@ -5389,10 +5390,10 @@ void updateConstantBuffer()
 	// Calculate Camera Frustum Focused Directional Shadow Frustum
 	// This bounds the shadow map strictly around the active player/camera view area,
 	// maintaining high, stable shadow texel resolution regardless of falling objects or physics motion.
-	glm::vec3 camPos = g_camera.GetPosition();
-	glm::vec3 camForward = g_camera.GetForward();
-	glm::vec3 camUp = g_camera.GetUp();
-	glm::vec3 camRight = g_camera.GetRight();
+	glm::vec3 camPos = activeCam.GetPosition();
+	glm::vec3 camForward = activeCam.GetForward();
+	glm::vec3 camUp = activeCam.GetUp();
+	glm::vec3 camRight = activeCam.GetRight();
 
 	if (!std::isfinite(camPos.x) || !std::isfinite(camPos.y) || !std::isfinite(camPos.z)) camPos = glm::vec3(0.0f);
 	if (!std::isfinite(camForward.x) || !std::isfinite(camForward.y) || !std::isfinite(camForward.z) || glm::length(camForward) < 1e-4f) camForward = glm::vec3(0.0f, 0.0f, -1.0f);
@@ -5400,10 +5401,10 @@ void updateConstantBuffer()
 	if (!std::isfinite(camRight.x) || !std::isfinite(camRight.y) || !std::isfinite(camRight.z) || glm::length(camRight) < 1e-4f) camRight = glm::vec3(1.0f, 0.0f, 0.0f);
 
 	float maxDist = (activeScene.shadowDistance > 1.0f) ? activeScene.shadowDistance : 60.0f;
-	float shadowDist = std::clamp(maxDist, 5.0f, g_camera.farPlane);
-	float nearZ = std::max(0.1f, g_camera.nearPlane);
+	float shadowDist = std::clamp(maxDist, 5.0f, activeCam.farPlane);
+	float nearZ = std::max(0.1f, activeCam.nearPlane);
 
-	float fovY = glm::radians(std::clamp(g_camera.fov, 10.0f, 120.0f));
+	float fovY = glm::radians(std::clamp(activeCam.fov, 10.0f, 120.0f));
 	float tanHalfFovY = std::tan(fovY * 0.5f);
 
 	float nearH = 2.0f * tanHalfFovY * nearZ;
@@ -5411,8 +5412,8 @@ void updateConstantBuffer()
 	float farH = 2.0f * tanHalfFovY * shadowDist;
 	float farW = farH * aspect;
 
-	if (g_camera.isOrthographic) {
-		nearH = (g_camera.orthoSize > 0.01f ? g_camera.orthoSize : 5.0f) * 2.0f;
+	if (activeCam.isOrthographic) {
+		nearH = (activeCam.orthoSize > 0.01f ? activeCam.orthoSize : 5.0f) * 2.0f;
 		nearW = nearH * aspect;
 		farH = nearH;
 		farW = nearW;
@@ -5504,7 +5505,7 @@ void updateConstantBuffer()
 	SceneConstantBuffer cb = {};
 	cb.mvp = proj * view * model;
 	cb.lightSpaceMatrix = lightSpaceMatrix;
-	cb.cameraPos = g_camera.GetPosition();
+	cb.cameraPos = activeCamPos;
 	cb.ambientIntensity = activeScene.ambientIntensity;
 	cb.ambientColor = glm::vec4(activeScene.ambientColor, 1.0f);
 	if (activeScene.enableSkybox && activeScene.enableSkyboxLighting)
@@ -7364,7 +7365,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	for (const auto& obj : pickScene.objects)
 	{
 		if (!obj.visible || !obj.isLight) continue;
-		glm::vec3 worldPos = g_scene.GetWorldPosition(obj);
+		glm::vec3 worldPos = pickScene.GetWorldPosition(obj);
 		glm::vec4 clip = vp * glm::vec4(worldPos, 1.0f);
 		if (clip.w <= 0.05f) continue;
 		glm::vec3 ndcLight = glm::vec3(clip) / clip.w;
@@ -7404,7 +7405,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	{
 		if (!obj.visible || obj.mesh.vertices.empty()) continue;
 
-		glm::mat4 model = g_scene.GetWorldMatrix(obj);
+		glm::mat4 model = pickScene.GetWorldMatrix(obj);
 		float modelDet = glm::determinant(model);
 		if (std::abs(modelDet) < 1e-6f || std::isnan(modelDet)) continue;
 		glm::mat4 invModel = glm::inverse(model);
@@ -7488,24 +7489,47 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 		}
 	}
 
-	if (closestId != -1)
+	if (&pickScene == &g_scene)
 	{
-		g_scene.selectedId = closestId;
-		g_engineUI.selectedActorIds.clear();
-		g_engineUI.selectedActorIds.insert(closestId);
-		GameObject* hitObj = g_scene.FindObject(closestId);
-		if (hitObj)
+		if (closestId != -1)
 		{
-			g_engineUI.AddLog("LogActor", "Selected Actor: " + hitObj->name, 0);
-			EngineLogger::Get().LogAction("OBJECT_SELECTED", hitObj->name, "ID: " + std::to_string(closestId));
+			// Redirect Behaviour component children to their root instance actor
+			GameObject* hitObj = g_scene.FindObject(closestId);
+			if (hitObj && hitObj->behaviourRootId != -1)
+			{
+				closestId = hitObj->behaviourRootId;
+				hitObj = g_scene.FindObject(closestId);
+			}
+
+			g_scene.selectedId = closestId;
+			g_engineUI.selectedActorIds.clear();
+			g_engineUI.selectedActorIds.insert(closestId);
+			if (hitObj)
+			{
+				g_engineUI.AddLog("LogActor", "Selected Actor: " + hitObj->name, 0);
+				EngineLogger::Get().LogAction("OBJECT_SELECTED", hitObj->name, "ID: " + std::to_string(closestId));
+			}
+		}
+		else
+		{
+			// Clicked empty background: deselect
+			g_scene.selectedId = -1;
+		g_engineUI.selectedActorIds.clear();
+			EngineLogger::Get().LogAction("DESELECT_ALL", "None", "Clicked background");
 		}
 	}
 	else
 	{
-		// Clicked empty background: deselect
-		g_scene.selectedId = -1;
-		g_engineUI.selectedActorIds.clear();
-		EngineLogger::Get().LogAction("DESELECT_ALL", "None", "Clicked background");
+		// Active preview scene (e.g. Behaviour Editor preview)
+		auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
+		if (activeEditor)
+		{
+			if (closestId != -1)
+			{
+				activeEditor->selectedComponentId = closestId;
+				activeEditor->isSelectingScript = false;
+			}
+		}
 	}
 }
 
@@ -7636,10 +7660,11 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 	              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
 
 	// 1. Fly Camera (Hold RMB + Mouse Movement -> Look around)
-	if (g_camera.isFlying && s_isRightMouseDown && !isAlt)
+	OrbitCamera& activeFlyLookCam = g_engineUI.GetActiveRenderCamera(g_camera);
+	if (activeFlyLookCam.isFlying && s_isRightMouseDown && !isAlt)
 	{
-		g_camera.LookAround((float)deltaX, (float)deltaY);
-		SyncViewportCameraToLevelCamera();
+		activeFlyLookCam.LookAround((float)deltaX, (float)deltaY);
+		if (&activeFlyLookCam == &g_camera) SyncViewportCameraToLevelCamera();
 		g_engineUI.RequestViewportRedraw(10);
 		return;
 	}
@@ -8703,9 +8728,10 @@ int main(int argc, char** argv)
 		{
 			glm::vec3 targetVelocity(0.0f);
 
-			if (s_isRightMouseDown && g_camera.isFlying)
+			OrbitCamera& activeFlyMoveCam = g_engineUI.GetActiveRenderCamera(g_camera);
+			if (s_isRightMouseDown && activeFlyMoveCam.isFlying)
 			{
-				float speed = g_camera.moveSpeed;
+				float speed = activeFlyMoveCam.moveSpeed;
 				if (glfwGetKey(g_window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
 				    glfwGetKey(g_window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS)
 				{
@@ -8713,8 +8739,8 @@ int main(int argc, char** argv)
 				}
 
 				glm::vec3 moveDir(0.0f);
-				glm::vec3 forward = g_camera.GetForward();
-				glm::vec3 right   = g_camera.GetRight();
+				glm::vec3 forward = activeFlyMoveCam.GetForward();
+				glm::vec3 right   = activeFlyMoveCam.GetRight();
 				glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 				if (glfwGetKey(g_window, GLFW_KEY_W) == GLFW_PRESS) moveDir += forward;
@@ -8744,8 +8770,8 @@ int main(int argc, char** argv)
 
 			if (glm::length(s_camVelocity) > 0.0001f)
 			{
-				g_camera.Move(s_camVelocity * deltaTime);
-				SyncViewportCameraToLevelCamera();
+				activeFlyMoveCam.Move(s_camVelocity * deltaTime);
+				if (&activeFlyMoveCam == &g_camera) SyncViewportCameraToLevelCamera();
 				g_engineUI.RequestViewportRedraw(10);
 			}
 		}
