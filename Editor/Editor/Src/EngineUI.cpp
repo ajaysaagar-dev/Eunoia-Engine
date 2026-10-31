@@ -3258,7 +3258,7 @@ glm::vec3 EngineUI::CalculateDropSpawnPosition(OrbitCamera& camera, float mouseX
 
 void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
     const ImGuiPayload* curPayload = ImGui::GetDragDropPayload();
-    if (!curPayload || !curPayload->IsDataType("ASSET_ID")) return;
+    if (!curPayload || (!curPayload->IsDataType("ASSET_ID") && !curPayload->IsDataType("CONTENT_DRAG"))) return;
 
     ImGuiViewport* vp = ImGui::GetMainViewport();
     auto vpRect = GetViewportRect(vp->Size.x, vp->Size.y);
@@ -3359,11 +3359,31 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                 while (std::getline(pss, itemKey, '\n')) {
                     if (itemKey.empty() || itemKey.rfind("DIR:", 0) == 0) continue;
                     if (itemKey.rfind("FILE:", 0) == 0) itemKey = itemKey.substr(5);
-                    if (itemKey.ends_with(".behaviour")) {
-                        std::filesystem::path fullBeh = contentRootPath / itemKey;
+                    std::string cleanKey = itemKey;
+                    if (cleanKey.rfind("FILE:", 0) == 0) cleanKey = cleanKey.substr(5);
+                    const AssetMetadata* meta = nullptr;
+                    if (cleanKey.rfind("ASSET:", 0) == 0) {
+                        meta = AssetRegistry::Get().FindByVirtualPath(cleanKey.substr(6));
+                    }
+                    if (meta && (meta->type == AssetType::Behaviour || meta->sourcePath.find(".behaviour") != std::string::npos)) {
+                        std::filesystem::path fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
+                        std::error_code ec;
+                        if (fullBeh.empty() || !std::filesystem::exists(fullBeh, ec)) fullBeh = contentRootPath / meta->sourcePath;
+                        if (std::filesystem::exists(fullBeh, ec)) {
+                            ImVec2 mousePos = ImGui::GetMousePos();
+                            glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
+                            GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
+                            if (spawned) {
+                                level.selectedId = spawned->id;
+                                RequestViewportRedraw(15);
+                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
+                            }
+                        }
+                    } else if (cleanKey.ends_with(".behaviour")) {
+                        std::filesystem::path fullBeh = contentRootPath / cleanKey;
                         std::error_code ec;
                         if (!std::filesystem::exists(fullBeh, ec)) {
-                            fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(itemKey);
+                            fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(cleanKey);
                         }
                         if (std::filesystem::exists(fullBeh, ec)) {
                             ImVec2 mousePos = ImGui::GetMousePos();
@@ -3372,7 +3392,7 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                             if (spawned) {
                                 level.selectedId = spawned->id;
                                 RequestViewportRedraw(15);
-                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + itemKey + "' into Level at cursor", 2);
+                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + cleanKey + "' into Level at cursor", 2);
                             }
                         }
                     }
@@ -3886,13 +3906,15 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         ImGui::DockSpace(dockId, ImVec2(0.0f, 0.0f),
             ImGuiDockNodeFlags_PassthruCentralNode | ImGuiDockNodeFlags_NoDockingInCentralNode);
 
-        ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId);
-        if (centralNode && centralNode->Size.x > 20.0f && centralNode->Size.y > 20.0f) {
-            m_dynamicViewportRect.x = centralNode->Pos.x - mainVp->Pos.x;
-            m_dynamicViewportRect.y = centralNode->Pos.y - mainVp->Pos.y;
-            m_dynamicViewportRect.width = centralNode->Size.x;
-            m_dynamicViewportRect.height = centralNode->Size.y;
-            m_hasDynamicViewportRect = true;
+        if (isMainEditor) {
+            ImGuiDockNode* centralNode = ImGui::DockBuilderGetCentralNode(dockId);
+            if (centralNode && centralNode->Size.x > 20.0f && centralNode->Size.y > 20.0f) {
+                m_dynamicViewportRect.x = centralNode->Pos.x - mainVp->Pos.x;
+                m_dynamicViewportRect.y = centralNode->Pos.y - mainVp->Pos.y;
+                m_dynamicViewportRect.width = centralNode->Size.x;
+                m_dynamicViewportRect.height = centralNode->Size.y;
+                m_hasDynamicViewportRect = true;
+            }
         }
 
         ImGui::End();
