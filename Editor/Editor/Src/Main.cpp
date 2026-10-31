@@ -7555,7 +7555,8 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 			bool isAlt = (glfwGetKey(window, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
 			              glfwGetKey(window, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS);
 			bool isPopupOpen = ImGui::IsPopupOpen(nullptr, ImGuiPopupFlags_AnyPopupId);
-			if (!g_scene.isPlayMode && !isAlt && !g_camera.isFlying && !io.WantCaptureMouse && !isPopupOpen && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
+			OrbitCamera& activeCam = g_engineUI.GetActiveRenderCamera(g_camera);
+			if (!g_scene.isPlayMode && !isAlt && !activeCam.isFlying && !io.WantCaptureMouse && !isPopupOpen && !ImGuizmo::IsOver() && !ImGuizmo::IsUsing())
 			{
 				s_pendingPickClick = true;
 			}
@@ -7583,6 +7584,8 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 			// Right click on viewport: lock and hide cursor for looking
 			if (!isAlt && !isPopupOpen && inViewport)
 			{
+				OrbitCamera& activeFlyCam = g_engineUI.GetActiveRenderCamera(g_camera);
+				activeFlyCam.isFlying = true;
 				g_camera.isFlying = true;
 				s_firstMouseAfterCapture = true;
 				glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
@@ -7597,6 +7600,8 @@ static void mouseButtonCallback(GLFWwindow* window, int button, int action, int 
 		else if (action == GLFW_RELEASE)
 		{
 			s_isRightMouseDown = false;
+			OrbitCamera& activeFlyCam = g_engineUI.GetActiveRenderCamera(g_camera);
+			activeFlyCam.isFlying = false;
 			g_camera.isFlying = false;
 			if (glfwRawMouseMotionSupported())
 			{
@@ -7673,27 +7678,28 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 	if (wantCapture || ImGuizmo::IsOver()) return;
 
 	// 2. Alt Navigation (Unreal Engine Maya-style viewport controls)
+	OrbitCamera& activeNavCam = g_engineUI.GetActiveRenderCamera(g_camera);
 	if (isAlt)
 	{
 		if (s_isLeftMouseDown)
 		{
 			// Alt + LMB + Drag: Orbit around pivot/selected object
-			g_camera.Orbit((float)deltaX, (float)deltaY);
-			SyncViewportCameraToLevelCamera();
+			activeNavCam.Orbit((float)deltaX, (float)deltaY);
+			if (&activeNavCam == &g_camera) SyncViewportCameraToLevelCamera();
 			g_engineUI.RequestViewportRedraw(10);
 		}
 		else if (s_isRightMouseDown)
 		{
 			// Alt + RMB + Drag: Dolly/zoom
-			g_camera.Dolly((float)(deltaX - deltaY));
-			SyncViewportCameraToLevelCamera();
+			activeNavCam.Dolly((float)(deltaX - deltaY));
+			if (&activeNavCam == &g_camera) SyncViewportCameraToLevelCamera();
 			g_engineUI.RequestViewportRedraw(10);
 		}
 		else if (s_isMiddleMouseDown)
 		{
 			// Alt + MMB + Drag: Pan/track
-			g_camera.Pan((float)deltaX, (float)deltaY);
-			SyncViewportCameraToLevelCamera();
+			activeNavCam.Pan((float)deltaX, (float)deltaY);
+			if (&activeNavCam == &g_camera) SyncViewportCameraToLevelCamera();
 			g_engineUI.RequestViewportRedraw(10);
 		}
 	}
@@ -7702,8 +7708,8 @@ static void cursorPosCallback(GLFWwindow* window, double xpos, double ypos)
 		// Non-Alt navigation
 		if (s_isMiddleMouseDown)
 		{
-			g_camera.Pan((float)deltaX, (float)deltaY);
-			SyncViewportCameraToLevelCamera();
+			activeNavCam.Pan((float)deltaX, (float)deltaY);
+			if (&activeNavCam == &g_camera) SyncViewportCameraToLevelCamera();
 			g_engineUI.RequestViewportRedraw(10);
 		}
 	}
@@ -7727,27 +7733,28 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 	bool inViewport = (mx >= vpRect.x && mx <= vpRect.x + vpRect.width &&
 	                   my >= vpRect.y && my <= vpRect.y + vpRect.height);
 
+	OrbitCamera& activeScrollCam = g_engineUI.GetActiveRenderCamera(g_camera);
 	// Mouse wheel on viewport (or during fly camera): increase / decrease fly camera speed
-	if ((s_isRightMouseDown && g_camera.isFlying) || (inViewport && s_isRightMouseDown))
+	if ((s_isRightMouseDown && activeScrollCam.isFlying) || (inViewport && s_isRightMouseDown))
 	{
-		g_camera.AdjustSpeed((float)yoffset);
-		g_engineUI.ShowCameraSpeedOverlay(g_camera.moveSpeed);
+		activeScrollCam.AdjustSpeed((float)yoffset);
+		g_engineUI.ShowCameraSpeedOverlay(activeScrollCam.moveSpeed);
 		g_engineUI.RequestViewportRedraw(10);
 	}
 	else if (inViewport)
 	{
 		if (io.KeyCtrl)
 		{
-			g_camera.AdjustSpeed((float)yoffset);
-			g_engineUI.ShowCameraSpeedOverlay(g_camera.moveSpeed);
+			activeScrollCam.AdjustSpeed((float)yoffset);
+			g_engineUI.ShowCameraSpeedOverlay(activeScrollCam.moveSpeed);
 			g_engineUI.RequestViewportRedraw(10);
 		}
 		else
 		{
 			bool wantCapture = io.WantCaptureMouse;
 			if (wantCapture) return;
-			g_camera.Zoom((float)yoffset);
-			SyncViewportCameraToLevelCamera();
+			activeScrollCam.Zoom((float)yoffset);
+			if (&activeScrollCam == &g_camera) SyncViewportCameraToLevelCamera();
 			g_engineUI.RequestViewportRedraw(10);
 		}
 	}
@@ -7755,8 +7762,8 @@ static void scrollCallback(GLFWwindow* window, double xoffset, double yoffset)
 	{
 		bool wantCapture = io.WantCaptureMouse;
 		if (wantCapture) return;
-		g_camera.Zoom((float)yoffset);
-		SyncViewportCameraToLevelCamera();
+		activeScrollCam.Zoom((float)yoffset);
+		if (&activeScrollCam == &g_camera) SyncViewportCameraToLevelCamera();
 		g_engineUI.RequestViewportRedraw(10);
 	}
 }
