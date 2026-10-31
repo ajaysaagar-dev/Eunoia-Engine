@@ -62,6 +62,7 @@ public:
 
     // Spawning into Level Scene
     GameObject* SpawnIntoScene(Scene& scene, const glm::vec3& worldPos, const glm::vec3& worldRot = glm::vec3(0.0f));
+    void SyncInstancesInScene(Scene& scene);
 };
 
 } // namespace Eunoia

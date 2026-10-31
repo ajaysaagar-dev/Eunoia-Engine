@@ -139,6 +139,10 @@ void BehaviourEditorWindow::SetupStudioLighting() {
     previewScene.clearColor = glm::vec4(0.055f, 0.058f, 0.072f, 1.0f);
     previewScene.enableShadows = true;
     previewScene.shadowStrength = 0.85f;
+    previewScene.showGrid = true;
+    previewScene.gridSize = 16.0f;
+    previewScene.gridDivisions = 16;
+    previewScene.gridColor = glm::vec3(0.28f, 0.30f, 0.36f);
 
     // 1. Directional Key Sunlight
     previewScene.lightDirection = glm::normalize(glm::vec3(0.55f, -1.0f, 0.65f));
@@ -275,6 +279,9 @@ void BehaviourEditorWindow::SyncPreviewScene() {
         }
     }
 
+    if (m_mainLevelScene && !filePath.empty()) {
+        asset.SyncInstancesInScene(*m_mainLevelScene);
+    }
     if (EngineUI::GetInstance()) {
         EngineUI::GetInstance()->RequestViewportRedraw(10);
     }
@@ -284,8 +291,12 @@ void BehaviourEditorWindow::Save() {
     if (!filePath.empty()) {
         asset.SaveToFile(filePath);
         isDirty = false;
+        if (m_mainLevelScene) {
+            asset.SyncInstancesInScene(*m_mainLevelScene);
+        }
         if (EngineUI::GetInstance()) {
             EngineUI::GetInstance()->AddLog("LogBehaviour", "Saved Behaviour Blueprint to: " + filePath, 2);
+            EngineUI::GetInstance()->RequestViewportRedraw(15);
         }
     }
 }
@@ -346,6 +357,9 @@ void BehaviourEditorWindow::CreateInternalScript(const std::string& scriptName) 
 }
 
 void BehaviourEditorWindow::RenderContent(Scene* mainLevelScene) {
+    if (mainLevelScene) {
+        m_mainLevelScene = mainLevelScene;
+    }
     ImGuiIO& io = ImGui::GetIO();
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
         Save();
@@ -777,8 +791,14 @@ void BehaviourEditorWindow::RenderViewportPanel() {
     std::string winTitle = "Blueprint Viewport##" + name;
     ImGuiWindowFlags flags = ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse | ImGuiWindowFlags_NoBackground;
     ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
+    ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.0f, 0.0f, 0.0f, 0.0f));
 
     if (ImGui::Begin(winTitle.c_str(), nullptr, flags)) {
+        ImGuiDockNode* node = ImGui::GetWindowDockNode();
+        if (node) {
+            node->LocalFlags |= ImGuiDockNodeFlags_PassthruCentralNode;
+        }
         ImVec2 vpScreenPos = ImGui::GetCursorScreenPos();
         ImVec2 vpAvailSize = ImGui::GetContentRegionAvail();
 
@@ -798,13 +818,41 @@ void BehaviourEditorWindow::RenderViewportPanel() {
             ImGuiIO& io = ImGui::GetIO();
             bool isHovered = ImGui::IsWindowHovered();
 
-            // Camera Orbit & Pan Navigation
-            if (isHovered) {
-                if (ImGui::IsMouseDragging(ImGuiMouseButton_Right)) {
-                    camera.yaw -= io.MouseDelta.x * 0.35f;
-                    camera.pitch = std::clamp(camera.pitch + io.MouseDelta.y * 0.35f, -89.0f, 89.0f);
+            // Camera Flycam & Orbit Navigation (WASDQE Parity with Level Viewport)
+            bool isRMBDown = ImGui::IsMouseDown(ImGuiMouseButton_Right);
+            if (isHovered && isRMBDown) {
+                camera.isFlying = true;
+                if (std::abs(io.MouseDelta.x) > 0.001f || std::abs(io.MouseDelta.y) > 0.001f) {
+                    camera.LookAround(io.MouseDelta.x, io.MouseDelta.y);
                     if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
                 }
+
+                // Flycam keyboard movement: WASDQE with Shift boost
+                float dt = (io.DeltaTime > 0.0f && io.DeltaTime < 0.2f) ? io.DeltaTime : (1.0f / 60.0f);
+                float speed = camera.moveSpeed;
+                if (io.KeyShift) speed *= 2.5f;
+
+                glm::vec3 moveDir(0.0f);
+                glm::vec3 forward = camera.GetForward();
+                glm::vec3 right   = camera.GetRight();
+                glm::vec3 worldUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+                if (ImGui::IsKeyDown(ImGuiKey_W)) moveDir += forward;
+                if (ImGui::IsKeyDown(ImGuiKey_S)) moveDir -= forward;
+                if (ImGui::IsKeyDown(ImGuiKey_D)) moveDir += right;
+                if (ImGui::IsKeyDown(ImGuiKey_A)) moveDir -= right;
+                if (ImGui::IsKeyDown(ImGuiKey_E)) moveDir += worldUp;
+                if (ImGui::IsKeyDown(ImGuiKey_Q)) moveDir -= worldUp;
+
+                if (glm::length(moveDir) > 0.001f) {
+                    camera.Move(glm::normalize(moveDir) * speed * dt);
+                    if (EngineUI::GetInstance()) EngineUI::GetInstance()->RequestViewportRedraw(10);
+                }
+            } else {
+                camera.isFlying = false;
+            }
+
+            if (isHovered) {
                 if (ImGui::IsMouseDragging(ImGuiMouseButton_Middle)) {
                     glm::vec3 right = camera.GetRight();
                     glm::vec3 up = camera.GetUp();
@@ -938,6 +986,7 @@ void BehaviourEditorWindow::RenderViewportPanel() {
         }
     }
     ImGui::End();
+    ImGui::PopStyleColor(2);
     ImGui::PopStyleVar();
 }
 

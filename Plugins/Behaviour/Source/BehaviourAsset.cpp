@@ -343,13 +343,14 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
     spawnedRoot.name = name.empty() ? "BP_Actor" : name;
     spawnedRoot.rotation = worldRot + rootComp.localRotation;
     spawnedRoot.scale = rootComp.localScale;
+    spawnedRoot.isBehaviourInstance = true;
+    spawnedRoot.behaviourAssetPath = filePath;
     rootObj = &spawnedRoot;
     compIdToObjId[rootComp.id] = spawnedRoot.id;
 
     // 2. Spawn remaining components as children
     for (size_t i = 1; i < components.size(); ++i) {
         const auto& c = components[i];
-        glm::vec3 cWorldPos = worldPos + c.localPosition;
 
         GameObject* spawnedChild = nullptr;
         if (!c.meshPath.empty()) {
@@ -358,13 +359,13 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
             if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
                 resolvedMesh = c.meshPath;
             }
-            GameObject& mObj = scene.AddImportedMesh(resolvedMesh.string(), cWorldPos);
+            GameObject& mObj = scene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
             spawnedChild = &mObj;
         } else if (c.type == PrimitiveType::Empty) {
-            GameObject& eObj = scene.AddEmptyActor(cWorldPos);
+            GameObject& eObj = scene.AddEmptyActor(c.localPosition);
             spawnedChild = &eObj;
         } else {
-            GameObject& pObj = scene.AddObject(c.type, cWorldPos);
+            GameObject& pObj = scene.AddObject(c.type, c.localPosition);
             spawnedChild = &pObj;
         }
 
@@ -373,6 +374,11 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
             spawnedChild->rotation = c.localRotation;
             spawnedChild->scale = c.localScale;
             spawnedChild->color = c.color;
+            spawnedChild->visible = c.visible;
+            if (!c.materialPath.empty()) {
+                spawnedChild->materialName = c.materialPath;
+            }
+            spawnedChild->behaviourRootId = spawnedRoot.id;
             compIdToObjId[c.id] = spawnedChild->id;
 
             // Wire parenting
@@ -444,4 +450,139 @@ GameObject* BehaviourAsset::SpawnIntoScene(Scene& scene, const glm::vec3& worldP
     return rootObj;
 }
 
+
+void BehaviourAsset::SyncInstancesInScene(Scene& scene) {
+    if (filePath.empty()) return;
+
+    // 1. Identify all root actors placed in the scene that instantiate this behaviour asset
+    std::vector<int> instanceRootIds;
+    for (const auto& obj : scene.objects) {
+        if (obj.isBehaviourInstance && obj.behaviourAssetPath == filePath) {
+            instanceRootIds.push_back(obj.id);
+        }
+    }
+
+    for (int rootId : instanceRootIds) {
+        GameObject* rootObj = scene.FindObject(rootId);
+        if (!rootObj) continue;
+
+        // 2. Remove all existing child components associated with this root instance
+        std::vector<int> oldChildIds;
+        for (const auto& obj : scene.objects) {
+            if (obj.behaviourRootId == rootId) {
+                oldChildIds.push_back(obj.id);
+            }
+        }
+        for (int cid : oldChildIds) {
+            scene.RemoveObject(cid);
+        }
+
+        // Re-find rootObj as vector may have reallocated
+        rootObj = scene.FindObject(rootId);
+        if (!rootObj) continue;
+        rootObj->childIds.clear();
+
+        std::unordered_map<int, int> compIdToObjId;
+        if (!components.empty()) {
+            compIdToObjId[components.front().id] = rootObj->id;
+        }
+
+        // 3. Re-spawn updated child components with current transforms, meshes, and materials
+        for (size_t i = 1; i < components.size(); ++i) {
+            const auto& c = components[i];
+            if (!c.visible) continue;
+
+            GameObject* spawnedChild = nullptr;
+            if (!c.meshPath.empty()) {
+                std::error_code ec;
+                std::filesystem::path resolvedMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(c.meshPath);
+                if (resolvedMesh.empty() || !std::filesystem::exists(resolvedMesh, ec)) {
+                    resolvedMesh = c.meshPath;
+                }
+                GameObject& mObj = scene.AddImportedMesh(resolvedMesh.string(), c.localPosition);
+                spawnedChild = &mObj;
+            } else if (c.type == PrimitiveType::Empty) {
+                GameObject& eObj = scene.AddEmptyActor(c.localPosition);
+                spawnedChild = &eObj;
+            } else {
+                GameObject& pObj = scene.AddObject(c.type, c.localPosition);
+                spawnedChild = &pObj;
+            }
+
+            if (spawnedChild) {
+                spawnedChild->name = c.name;
+                spawnedChild->rotation = c.localRotation;
+                spawnedChild->scale = c.localScale;
+                spawnedChild->color = c.color;
+                spawnedChild->visible = c.visible;
+                if (!c.materialPath.empty()) {
+                    spawnedChild->materialName = c.materialPath;
+                }
+                spawnedChild->behaviourRootId = rootObj->id;
+                compIdToObjId[c.id] = spawnedChild->id;
+
+                int pId = c.parentId;
+                if (compIdToObjId.find(pId) != compIdToObjId.end()) {
+                    int parentObjId = compIdToObjId[pId];
+                    GameObject* pObj = scene.FindObject(parentObjId);
+                    if (pObj) {
+                        spawnedChild->parentId = parentObjId;
+                        pObj->childIds.push_back(spawnedChild->id);
+                    }
+                } else if (rootObj) {
+                    spawnedChild->parentId = rootObj->id;
+                    rootObj->childIds.push_back(spawnedChild->id);
+                }
+            }
+        }
+
+        // 4. Re-sync attached scripts and public property overrides
+        rootObj->behaviours.clear();
+        for (const auto& s : attachedScripts) {
+            if (!s.enabled) continue;
+
+            std::string scriptClassName = s.scriptName;
+            size_t dotPos = scriptClassName.rfind('.');
+            if (dotPos != std::string::npos) scriptClassName = scriptClassName.substr(0, dotPos);
+
+            auto beh = BehaviourRegistry::Get().Create(scriptClassName);
+            if (beh && rootObj) {
+                beh->SetOwner(rootObj);
+                beh->SetScene(&scene);
+
+                for (const auto& prop : s.propertyOverrides) {
+                    for (auto& propDesc : beh->GetProperties()) {
+                        if (propDesc.name == prop.propertyName) {
+                            if (prop.typeName == "object_ref" && prop.targetComponentId > 0) {
+                                auto mapIt = compIdToObjId.find(prop.targetComponentId);
+                                if (mapIt != compIdToObjId.end()) {
+                                    propDesc.targetId = mapIt->second;
+                                }
+                            } else if (propDesc.dataPtr) {
+                                switch (propDesc.type) {
+                                    case BehaviourPropertyType::Float:
+                                        *reinterpret_cast<float*>(propDesc.dataPtr) = prop.floatVal;
+                                        break;
+                                    case BehaviourPropertyType::Int:
+                                        *reinterpret_cast<int*>(propDesc.dataPtr) = prop.intVal;
+                                        break;
+                                    case BehaviourPropertyType::Bool:
+                                        *reinterpret_cast<bool*>(propDesc.dataPtr) = prop.boolVal;
+                                        break;
+                                    case BehaviourPropertyType::String:
+                                        *reinterpret_cast<std::string*>(propDesc.dataPtr) = prop.stringVal;
+                                        break;
+                                    default: break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+
+                rootObj->AddBehaviour(std::move(beh));
+            }
+        }
+    }
+}
 } // namespace Eunoia

@@ -68,6 +68,7 @@ public:
     void RenderContentBrowserPanel();
 
     void CreateInternalScript(const std::string& scriptName);
+    Scene* m_mainLevelScene = nullptr;
 };
 
 } // namespace Eunoia
