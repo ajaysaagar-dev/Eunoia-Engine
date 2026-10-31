@@ -5140,18 +5140,22 @@ void updateSceneGeometry()
 
 	EngineUI::ViewportRect vpRect = g_engineUI.GetViewportRect((float)g_currentWidth, (float)g_currentHeight);
 	float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
-	glm::mat4 view = g_camera.GetViewMatrix();
-	glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
+
+	Scene& activeScene = g_engineUI.GetActiveRenderScene(g_scene);
+	OrbitCamera& activeCam = g_engineUI.GetActiveRenderCamera(g_camera);
+
+	glm::mat4 view = activeCam.GetViewMatrix();
+	glm::mat4 proj = activeCam.GetProjectionMatrix(aspect);
 	glm::mat4 viewProj = proj * view;
 
 	Eunoia::ViewportOnlyRenderer::Get().BeginFrame();
 	Eunoia::ViewportOnlyRenderer::Get().UpdateFrustum(viewProj);
 
-	g_scene.BuildSceneMesh(sceneVertices, sceneIndices, g_sceneBatches, g_camera.GetPosition(), &viewProj);
+	activeScene.BuildSceneMesh(sceneVertices, sceneIndices, g_sceneBatches, activeCam.GetPosition(), &viewProj);
 	g_numPureSceneBatches = g_sceneBatches.size();
 
 	// Light & Camera Editor Gizmos (dev.md)
-	Eunoia::EditorGizmoSystem::Get().RenderGizmos(g_scene, g_camera.GetPosition(), sceneVertices, sceneIndices, g_sceneBatches);
+	Eunoia::EditorGizmoSystem::Get().RenderGizmos(activeScene, activeCam.GetPosition(), sceneVertices, sceneIndices, g_sceneBatches);
 
 	g_currentVertexCount = (uint32_t)std::min(sceneVertices.size(), MAX_SCENE_VERTICES);
 	g_currentIndexCount  = (uint32_t)std::min(sceneIndices.size(), MAX_SCENE_INDICES);
@@ -5250,9 +5254,11 @@ void updateConstantBuffer()
 	if (!g_pConstantMapped) return;
 
 	SyncLevelCameraToViewportCamera();
-	g_scene.SyncLightPositionsFromActors();
+	Scene& activeScene = g_engineUI.GetActiveRenderScene(g_scene);
+	OrbitCamera& activeCam = g_engineUI.GetActiveRenderCamera(g_camera);
+	activeScene.SyncLightPositionsFromActors();
 
-	glm::vec3 activeCamPos = GetActiveCameraPosition();
+	glm::vec3 activeCamPos = (&activeScene == &g_scene) ? GetActiveCameraPosition() : activeCam.GetPosition();
 
 	// Distance-Adaptive Shadow Resolution (WickedEngine Distance LOD Reference)
 	// Prioritize shadow-casting lights by proximity to active camera (viewport camera or game camera)
@@ -5332,8 +5338,8 @@ void updateConstantBuffer()
 	if (aspect <= 0.01f || std::isnan(aspect)) aspect = 1.777f;
 
 	glm::mat4 model = glm::mat4(1.0f);
-	glm::mat4 view  = g_camera.GetViewMatrix();
-	glm::mat4 proj  = g_camera.GetProjectionMatrix(aspect);
+	glm::mat4 view  = activeCam.GetViewMatrix();
+	glm::mat4 proj  = activeCam.GetProjectionMatrix(aspect);
 
 	g_currentJitter = glm::vec2(0.0f, 0.0f);
 	auto currentAaMethod = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
@@ -5798,7 +5804,8 @@ void renderFrame()
 	                                              g_scene.isPlayMode ||
 	                                              g_engineUI.isPlayModeActive ||
 	                                              g_engineUI.realtimeViewport ||
-	                                              g_engineUI.viewportRedrawCountdown > 0));
+	                                              g_engineUI.viewportRedrawCountdown > 0 ||
+	                                              (&g_engineUI.GetActiveRenderScene(g_scene) != &g_scene)));
 
 	if (need3DSceneRender && !g_deviceLost && g_currentIndexCount > 0 && g_shadowDepthBuffer && g_shadowPipelineState && g_scene.enableShadows)
 	{
@@ -6032,10 +6039,11 @@ void renderFrame()
 
 	D3D12_CPU_DESCRIPTOR_HANDLE dsvHandle = g_dsvDescHeap->GetCPUDescriptorHandleForHeapStart();
 
+	Scene& activeRenderScene = g_engineUI.GetActiveRenderScene(g_scene);
 	const float clearColor[4] = {
-		g_scene.enableSkybox ? g_scene.clearColor.r : 0.0f,
-		g_scene.enableSkybox ? g_scene.clearColor.g : 0.0f,
-		g_scene.enableSkybox ? g_scene.clearColor.b : 0.0f,
+		activeRenderScene.clearColor.r,
+		activeRenderScene.clearColor.g,
+		activeRenderScene.clearColor.b,
 		1.0f
 	};
 	char bufClearRtv[64];
@@ -7326,9 +7334,11 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	float ndcX = (2.0f * localMouseX) / vpRect.width - 1.0f;
 	float ndcY = 1.0f - (2.0f * localMouseY) / vpRect.height;
 
+	Scene& pickScene = g_engineUI.GetActiveRenderScene(g_scene);
+	OrbitCamera& pickCamera = g_engineUI.GetActiveRenderCamera(g_camera);
 	float aspect = (vpRect.width > 0 && vpRect.height > 0) ? (vpRect.width / vpRect.height) : 1.777f;
-	glm::mat4 proj = g_camera.GetProjectionMatrix(aspect);
-	glm::mat4 view = g_camera.GetViewMatrix();
+	glm::mat4 proj = pickCamera.GetProjectionMatrix(aspect);
+	glm::mat4 view = pickCamera.GetViewMatrix();
 	glm::mat4 vp = proj * view;
 	float vpDet = glm::determinant(vp);
 	if (std::abs(vpDet) < 1e-6f || std::isnan(vpDet)) return;
@@ -7349,7 +7359,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	// 1. Check if user clicked on a Light Sprite Billboard in screen space
 	int closestLightId = -1;
 	float closestLightDist2D = 25.0f; // pixel tolerance for clicking icon
-	for (const auto& obj : g_scene.objects)
+	for (const auto& obj : pickScene.objects)
 	{
 		if (!obj.visible || !obj.isLight) continue;
 		glm::vec3 worldPos = g_scene.GetWorldPosition(obj);
@@ -7388,7 +7398,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	};
 	std::vector<HitCandidate> hits;
 
-	for (const auto& obj : g_scene.objects)
+	for (const auto& obj : pickScene.objects)
 	{
 		if (!obj.visible || obj.mesh.vertices.empty()) continue;
 
@@ -8965,7 +8975,8 @@ int main(int argc, char** argv)
 				                          g_engineUI.isPlayModeActive ||
 				                          g_engineUI.realtimeViewport ||
 				                          g_engineUI.showMaterialEditor ||
-				                          g_engineUI.viewportRedrawCountdown > 0);
+				                          g_engineUI.viewportRedrawCountdown > 0 ||
+				                          (&g_engineUI.GetActiveRenderScene(g_scene) != &g_scene));
 
 				if (need3DSceneRender)
 				{

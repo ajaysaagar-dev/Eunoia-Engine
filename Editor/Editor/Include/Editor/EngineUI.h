@@ -546,6 +546,11 @@ public:
     void RenderViewportDropTarget(Scene& level, OrbitCamera& camera);
     glm::vec3 CalculateDropSpawnPosition(OrbitCamera& camera, float mouseX, float mouseY, float screenW, float screenH);
 
+    static EngineUI* GetInstance();
+    void RenderContentBrowserContent(Scene& scene);
+    Scene& GetActiveRenderScene(Scene& defaultScene);
+    OrbitCamera& GetActiveRenderCamera(OrbitCamera& defaultCamera);
+    void SetDynamicViewportRect(float x, float y, float width, float height) { m_dynamicViewportRect = { x, y, width, height }; m_hasDynamicViewportRect = true; }
     EngineUI();
     ~EngineUI();
 
@@ -828,7 +833,6 @@ private:
     void RenderContentBrowserWindow(Scene& scene);
     void RenderAnimationTimelineWindow(Scene& scene);
     void RenderOutputLogWindow();
-    void RenderContentBrowserContent(Scene& scene);
     void OpenBehaviourEditor(const std::string& path);
     void RenderMaterialEditor(Scene& scene);
     void RenderSkyboxEditor(Scene& scene);

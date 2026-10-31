@@ -85,6 +85,10 @@ inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
 }
 
 static EngineUI* g_pEngineUI = nullptr;
+
+EngineUI* EngineUI::GetInstance() {
+    return g_pEngineUI;
+}
 extern bool g_pendingPickClick;
 static bool s_justExitedPlayMode = false;
 
@@ -3286,7 +3290,21 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                 AssetID id = AssetID::FromString(idStr);
                 const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
                 if (meta) {
-                    if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh) {
+                    if (meta->type == AssetType::Behaviour || meta->sourcePath.find(".behaviour") != std::string::npos) {
+                        std::filesystem::path fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
+                        std::error_code ec;
+                        if (fullBeh.empty() || !std::filesystem::exists(fullBeh, ec) || std::filesystem::file_size(fullBeh, ec) == 0) {
+                            fullBeh = contentRootPath / meta->sourcePath;
+                        }
+                        ImVec2 mousePos = ImGui::GetMousePos();
+                        glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
+                        GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
+                        if (spawned) {
+                            level.selectedId = spawned->id;
+                            RequestViewportRedraw(15);
+                            AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
+                        }
+                    } else if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh) {
                         std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
                         std::error_code ec;
                         if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
@@ -3331,6 +3349,32 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                             Eunoia::LevelAnimationEditor::Get().SetActiveAnimation(newObj.levelAnimation.animation);
                         }
                         AddLog("LogLevelAnimation", "Spawned Level Animation '" + newObj.name + "' into Level", 2);
+                    }
+                }
+            }
+            if (const ImGuiPayload* cPayload = ImGui::AcceptDragDropPayload("CONTENT_DRAG")) {
+                std::string payloadData((const char*)cPayload->Data);
+                std::stringstream pss(payloadData);
+                std::string itemKey;
+                while (std::getline(pss, itemKey, '\n')) {
+                    if (itemKey.empty() || itemKey.rfind("DIR:", 0) == 0) continue;
+                    if (itemKey.rfind("FILE:", 0) == 0) itemKey = itemKey.substr(5);
+                    if (itemKey.ends_with(".behaviour")) {
+                        std::filesystem::path fullBeh = contentRootPath / itemKey;
+                        std::error_code ec;
+                        if (!std::filesystem::exists(fullBeh, ec)) {
+                            fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(itemKey);
+                        }
+                        if (std::filesystem::exists(fullBeh, ec)) {
+                            ImVec2 mousePos = ImGui::GetMousePos();
+                            glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
+                            GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
+                            if (spawned) {
+                                level.selectedId = spawned->id;
+                                RequestViewportRedraw(15);
+                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + itemKey + "' into Level at cursor", 2);
+                            }
+                        }
                     }
                 }
             }
@@ -12238,6 +12282,26 @@ void EngineUI::RenderOutputLogWindow() {
         ImGui::PopItemWidth();
     }
     ImGui::End();
+}
+
+Scene& EngineUI::GetActiveRenderScene(Scene& defaultScene) {
+    if (Eunoia::BehaviourManager::Get().IsActive()) {
+        auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
+        if (activeEditor) {
+            return activeEditor->GetPreviewScene();
+        }
+    }
+    return defaultScene;
+}
+
+OrbitCamera& EngineUI::GetActiveRenderCamera(OrbitCamera& defaultCamera) {
+    if (Eunoia::BehaviourManager::Get().IsActive()) {
+        auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
+        if (activeEditor) {
+            return activeEditor->GetCamera();
+        }
+    }
+    return defaultCamera;
 }
 
 void EngineUI::RenderContentBrowserContent(Scene& scene) {
