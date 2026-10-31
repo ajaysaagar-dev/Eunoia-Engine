@@ -5502,6 +5502,16 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                     showNewBehaviourAssetPopup = true;
                     snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
                 }
+                if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
+                    showNewBehaviourPopup = true;
+                    std::string defName = "NewBehaviour";
+                    if (IsBehaviourNameAlreadyExists(defName)) {
+                        int bIdx = 1;
+                        while (IsBehaviourNameAlreadyExists("NewBehaviour_" + std::to_string(bIdx))) bIdx++;
+                        defName = "NewBehaviour_" + std::to_string(bIdx);
+                    }
+                    snprintf(newBehaviourNameBuf, sizeof(newBehaviourNameBuf), "%s", defName.c_str());
+                }
                 if (ImGui::MenuItem("New Node Behaviour (.enb)...")) {
                 showNewNodeBehaviourPopup = true;
                 snprintf(newNodeBehaviourNameBuf, sizeof(newNodeBehaviourNameBuf), "NB_NewBehaviour");
@@ -12453,7 +12463,12 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                         showNewLevelAnimationPopup = true;
                         snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                     }
-                    if (ImGui::MenuItem("New Behavior (.eubeh)...")) {
+                    if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
+                        popupTargetVirtualDir = currentVirtualDir;
+                        showNewBehaviourAssetPopup = true;
+                        snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
+                    }
+                    if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
                         std::string defName = "NewBehaviour";
@@ -12703,14 +12718,14 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                 }
 
                 if (showNewBehaviourAssetPopup) {
-                    ImGui::OpenPopup("Create Behaviour##Modal");
+                    ImGui::OpenPopup("Create Behaviour Asset (.behaviour)##Modal");
                     showNewBehaviourAssetPopup = false;
                 }
-                if (ImGui::BeginPopupModal("Create Behaviour##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (ImGui::BeginPopupModal("Create Behaviour Asset (.behaviour)##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                     std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Creating Behaviour Asset in: %s", targetDir.c_str());
+                    ImGui::Text("Creating Behaviour Asset (.behaviour) in: %s", targetDir.c_str());
                     ImGui::Spacing();
-                    ImGui::Text("Enter behaviour asset name:");
+                    ImGui::Text("Enter behaviour asset name (creates composite Actor blueprint with 3D viewport):");
                     ImGui::SetNextItemWidth(260.0f);
                     ImGui::InputText("##BehAssetNameInput", newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf));
                     ImGui::Spacing();
@@ -12793,12 +12808,14 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                 }
 
                 if (showNewBehaviourPopup) {
-                    ImGui::OpenPopup("Create Behaviour##Modal");
+                    ImGui::OpenPopup("Create Behaviour Script (.cpp)##Modal");
                     showNewBehaviourPopup = false;
                 }
-                if (ImGui::BeginPopupModal("Create Behaviour##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (ImGui::BeginPopupModal("Create Behaviour Script (.cpp)##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
                     std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Enter Behaviour Class Name (inherits EunoiaBehaviour):");
+                    ImGui::Text("Creating Standalone Behaviour Script (.cpp) in: %s", targetDir.c_str());
+                    ImGui::Spacing();
+                    ImGui::Text("Enter Behaviour Class Name (C++ class inheriting EunoiaBehaviour):");
                     ImGui::SetNextItemWidth(300.0f);
                     ImGui::InputText("##BehNameInput", newBehaviourNameBuf, sizeof(newBehaviourNameBuf));
 
