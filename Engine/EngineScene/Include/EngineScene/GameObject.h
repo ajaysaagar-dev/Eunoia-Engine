@@ -1443,6 +1443,13 @@ struct GameObject {
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(this, dirX, dirY, dirZ);
     }
 
+    void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f) {
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(this, enable, rotationRate);
+    }
+    bool IsOrientationToMovementDirectionEnabled() const {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(const_cast<GameObject*>(this));
+    }
+
     void Update(float dt);
 
     // Runtime Lifecycle & Destruction (dev.md & user request: GameObject.Destroy())

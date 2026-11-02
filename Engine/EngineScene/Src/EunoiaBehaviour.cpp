@@ -1118,6 +1118,10 @@ TransformVector3 GameObjectTransform::GetUpVector() const {
 void GameObjectTransform::WorldTranslate(const glm::vec3& delta) {
     if (!gameObject) return;
     SetWorldLocationInternal(GetWorldLocationInternal() + delta);
+    if (Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(gameObject)) {
+        float dt = (::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f;
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().OrientToDirection(gameObject, delta, dt);
+    }
 }
 
 void GameObjectTransform::WorldTranslate(const glm::vec3& fromPoint, const glm::vec3& toLocation) {
@@ -1151,6 +1155,11 @@ void GameObjectTransform::RelativeTranslate(const glm::vec3& delta) {
     glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
     glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
     SetRelativeLocationInternal(GetRelativeLocationInternal() + localDelta);
+
+    if (gameObject && Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(gameObject)) {
+        float dt = (::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f;
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().OrientToDirection(gameObject, localDelta, dt);
+    }
 }
 
 void GameObjectTransform::RelativeTranslate(const glm::vec3& fromPoint, const glm::vec3& toLocation) {
@@ -1186,6 +1195,14 @@ void BehaviourTransform::RelativeTranslate(const glm::vec3& delta) {
     glm::vec3 up      = glm::vec3(0.0f, 1.0f, 0.0f);
     glm::vec3 localDelta = delta.x * forward + delta.y * up + delta.z * right;
     Location.LocalSpace(Location.LocalSpace() + localDelta);
+
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        GameObject* owner = m_behaviour->GetOwner();
+        if (owner && Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(owner)) {
+            float dt = (::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f;
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().OrientToDirection(owner, localDelta, dt);
+        }
+    }
 }
 
 // BehaviourTransform::AxisProxy implementations

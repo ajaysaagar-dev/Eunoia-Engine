@@ -767,6 +767,13 @@ public:
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().GetVelocity(m_owner, dirX, dirY, dirZ);
     }
 
+    void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f) {
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(m_owner, enable, rotationRate);
+    }
+    bool IsOrientationToMovementDirectionEnabled() const {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(m_owner);
+    }
+
     // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
     double GetMouseX(bool negate = false) const;
     double GetMouseY(bool negate = false) const;
