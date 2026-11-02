@@ -502,10 +502,14 @@ void AssetRegistry::ReadOrGenerateSidecar(const std::filesystem::path& diskFileP
         }
     }
 
+    std::string ext = diskFilePath.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if (ext == ".cpp" || ext == ".h" || ext == ".hpp") {
+        meta.type = AssetType::Script;
+    }
+
     // If it's an FBX mesh and has bones, automatically promote to Skeletal Mesh
     if (meta.type == AssetType::Mesh) {
-        std::string ext = diskFilePath.extension().string();
-        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         if (ext == ".fbx") {
             bool hasAnim = false;
             if (Eunoia::SkeletalAnimationManager::FileHasBones(diskFilePath.string(), &hasAnim)) {
