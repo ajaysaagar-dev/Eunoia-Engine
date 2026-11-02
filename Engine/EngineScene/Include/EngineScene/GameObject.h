@@ -737,11 +737,6 @@ struct GameObject {
     int parentId = -1;               // -1 = root
     std::vector<int> childIds;       // ordered child IDs
 
-    // Behaviour Instance Tracking
-    bool isBehaviourInstance = false;
-    std::string behaviourAssetPath = "";
-    int behaviourRootId = -1;        // -1 if not a child of a Behaviour instance, otherwise points to the root actor id
-
     // Scene & Transform accessors (dev.md)
     Scene* scene = nullptr;
     GameObjectTransform Transform{this};
@@ -1060,9 +1055,6 @@ struct GameObject {
         submeshIndex = other.submeshIndex;
         parentId = other.parentId;
         childIds = std::move(other.childIds);
-        isBehaviourInstance = other.isBehaviourInstance;
-        behaviourAssetPath = std::move(other.behaviourAssetPath);
-        behaviourRootId = other.behaviourRootId;
         isLight = other.isLight;
         lightId = other.lightId;
         light = other.light;
@@ -1165,9 +1157,6 @@ struct GameObject {
         submeshIndex = other.submeshIndex;
         parentId = other.parentId;
         childIds = other.childIds;
-        isBehaviourInstance = other.isBehaviourInstance;
-        behaviourAssetPath = other.behaviourAssetPath;
-        behaviourRootId = other.behaviourRootId;
         isLight = other.isLight;
         lightId = other.lightId;
         light = other.light;
