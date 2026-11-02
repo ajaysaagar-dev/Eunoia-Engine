@@ -277,9 +277,6 @@ public:
     bool showNewMaterialPopup = false;
     char newMaterialNameBuf[64] = "M_NewMaterial";
 
-    bool showNewBehaviourAssetPopup = false;
-    char newBehaviourAssetNameBuf[64] = "B_NewActor";
-
     // Item / Folder Renaming State & Methods
     bool showRenameAssetPopup = false;
     AssetID renameTargetAssetId;
@@ -772,7 +769,6 @@ public:
             case AssetType::Skybox:          return cbSkyboxIconGpuHandle;
             case AssetType::Texture:         return cbTextureIconGpuHandle;
             case AssetType::Level:           return cbLevelIconGpuHandle;
-            case AssetType::Behaviour:
             case AssetType::Script:          return cbBehaviourIconGpuHandle;
             case AssetType::UserInterface:   return cbMaterialIconGpuHandle ? cbMaterialIconGpuHandle : cbBehaviourIconGpuHandle;
             default:                         return 0;
@@ -833,7 +829,6 @@ private:
     void RenderContentBrowserWindow(Scene& scene);
     void RenderAnimationTimelineWindow(Scene& scene);
     void RenderOutputLogWindow();
-    void OpenBehaviourEditor(const std::string& path);
     void RenderMaterialEditor(Scene& scene);
     void RenderSkyboxEditor(Scene& scene);
     void RenderWaterEditor(Scene& scene);

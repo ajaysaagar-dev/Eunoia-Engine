@@ -47,7 +47,6 @@
 #include <Graphics/GraphicsSystem.h>
 #include <EngineRenderer/TextureStreamingSystem.h>
 #include <UISystem/UISystem.h>
-#include <Behaviour/BehaviourManager.h>
 // Standalone CustomUI removed - purely Dear ImGui for maximum performance
 #include <sstream>
 
@@ -7493,13 +7492,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 	{
 		if (closestId != -1)
 		{
-			// Redirect Behaviour component children to their root instance actor
 			GameObject* hitObj = g_scene.FindObject(closestId);
-			if (hitObj && hitObj->behaviourRootId != -1)
-			{
-				closestId = hitObj->behaviourRootId;
-				hitObj = g_scene.FindObject(closestId);
-			}
 
 			g_scene.selectedId = closestId;
 			g_engineUI.selectedActorIds.clear();
@@ -7518,19 +7511,7 @@ static void PickObjectAtCursor(float mouseX, float mouseY)
 			EngineLogger::Get().LogAction("DESELECT_ALL", "None", "Clicked background");
 		}
 	}
-	else
-	{
-		// Active preview scene (e.g. Behaviour Editor preview)
-		auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
-		if (activeEditor)
-		{
-			if (closestId != -1)
-			{
-				activeEditor->selectedComponentId = closestId;
-				activeEditor->isSelectingScript = false;
-			}
-		}
-	}
+
 }
 
 static void mouseButtonCallback(GLFWwindow* window, int button, int action, int mods)

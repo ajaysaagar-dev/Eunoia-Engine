@@ -47,8 +47,6 @@
 #include <Level-Animation/LevelAnimation.h>
 #include <Level-Animation/LevelAnimationEditor.h>
 #include <Level-Animation/LevelAnimationManager.h>
-#include <Behaviour/BehaviourManager.h>
-#include <Behaviour/BehaviourAsset.h>
 
 inline bool HasSceneStateChanged(const Scene& a, const Scene& b) {
     if (a.objects.size() != b.objects.size()) return true;
@@ -427,7 +425,7 @@ bool EngineUI::RenameContentAsset(const AssetID& id, const std::string& newName)
             water.filePath = dstDisk.string();
             SaveWaterFile(dstDisk.string(), water);
         }
-    } else if (meta->type == AssetType::Behaviour || meta->type == AssetType::Script) {
+    } else if (meta->type == AssetType::Script) {
         std::string scriptExt = dstDisk.extension().string();
         std::transform(scriptExt.begin(), scriptExt.end(), scriptExt.begin(), ::tolower);
         if (scriptExt == ".cpp") {
@@ -3290,23 +3288,7 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                 AssetID id = AssetID::FromString(idStr);
                 const AssetMetadata* meta = AssetRegistry::Get().GetMetadata(id);
                 if (meta) {
-                    if (meta->type == AssetType::Behaviour || meta->sourcePath.find(".behaviour") != std::string::npos) {
-                        std::filesystem::path fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
-                        std::error_code ec;
-                        if (fullBeh.empty() || !std::filesystem::exists(fullBeh, ec) || std::filesystem::file_size(fullBeh, ec) == 0) {
-                            fullBeh = contentRootPath / meta->sourcePath;
-                        }
-                        ImVec2 mousePos = ImGui::GetMousePos();
-                        glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
-                        GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
-                        if (spawned) {
-                            level.selectedId = spawned->id;
-                            selectedActorIds.clear();
-                            selectedActorIds.insert(spawned->id);
-                            RequestViewportRedraw(15);
-                            AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
-                        }
-                    } else if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh) {
+                    if (meta->type == AssetType::Mesh || meta->type == AssetType::SkeletalMesh) {
                         std::filesystem::path fullMesh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
                         std::error_code ec;
                         if (fullMesh.empty() || !std::filesystem::exists(fullMesh, ec) || std::filesystem::file_size(fullMesh, ec) == 0) {
@@ -3367,41 +3349,7 @@ void EngineUI::RenderViewportDropTarget(Scene& level, OrbitCamera& camera) {
                     if (cleanKey.rfind("ASSET:", 0) == 0) {
                         meta = AssetRegistry::Get().FindByVirtualPath(cleanKey.substr(6));
                     }
-                    if (meta && (meta->type == AssetType::Behaviour || meta->sourcePath.find(".behaviour") != std::string::npos)) {
-                        std::filesystem::path fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(meta->sourcePath);
-                        std::error_code ec;
-                        if (fullBeh.empty() || !std::filesystem::exists(fullBeh, ec)) fullBeh = contentRootPath / meta->sourcePath;
-                        if (std::filesystem::exists(fullBeh, ec)) {
-                            ImVec2 mousePos = ImGui::GetMousePos();
-                            glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
-                            GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
-                            if (spawned) {
-                                level.selectedId = spawned->id;
-                                selectedActorIds.clear();
-                                selectedActorIds.insert(spawned->id);
-                                RequestViewportRedraw(15);
-                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + meta->objectName + "' into Level at cursor", 2);
-                            }
-                        }
-                    } else if (cleanKey.ends_with(".behaviour")) {
-                        std::filesystem::path fullBeh = contentRootPath / cleanKey;
-                        std::error_code ec;
-                        if (!std::filesystem::exists(fullBeh, ec)) {
-                            fullBeh = AssetManager::Get().ResolvePhysicalOrCookedPath(cleanKey);
-                        }
-                        if (std::filesystem::exists(fullBeh, ec)) {
-                            ImVec2 mousePos = ImGui::GetMousePos();
-                            glm::vec3 spawnPos = CalculateDropSpawnPosition(camera, mousePos.x - vpX, mousePos.y - vpY, vpW, vpH);
-                            GameObject* spawned = Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(level, fullBeh.string(), spawnPos);
-                            if (spawned) {
-                                level.selectedId = spawned->id;
-                                selectedActorIds.clear();
-                                selectedActorIds.insert(spawned->id);
-                                RequestViewportRedraw(15);
-                                AddLog("LogBehaviour", "Spawned Behaviour Blueprint '" + cleanKey + "' into Level at cursor", 2);
-                            }
-                        }
-                    }
+
                 }
             }
             ImGui::EndDragDropTarget();
@@ -3853,11 +3801,10 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     ImGuiViewport* vp = ImGui::GetMainViewport();
     matPreviewPipRect.active = false;
     bool isMainEditor = EunoiaUI::UIEditorManager::Get().IsMainEditorActive() && 
-                        !(showMaterialEditor && materialWorkspaceActive) &&
-                        !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() &&
+                                                !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() &&
                         !Eunoia::AnimatorGraphManager::Get().IsActive() &&
                         !Eunoia::AnimationBlendManager::Get().IsActive() &&
-                        !Eunoia::BehaviourManager::Get().IsActive() && (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size());
+                        (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size());
 
     // 1. Top Document Tab Switches (Level Editor, Material Editor, UI Editor) at the very top!
     RenderWorkspaceTabBar(scene, outShouldExit);
@@ -3980,6 +3927,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         if (showOutputLogWindow && !IsWindowPromotedTab("Output Log")) {
             RenderOutputLogWindow();
         }
+        if (showMaterialEditor && !IsWindowPromotedTab("Material Editor")) {
+            RenderMaterialEditor(scene);
+        }
 
         // Dynamic splitters to resize Left Sidebar, Right Sidebar, and Bottom Content Browser
         RenderLayoutSplitters();
@@ -3996,16 +3946,7 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         glm::vec2 wsPos(vpWorkspace->Pos.x, vpWorkspace->Pos.y + topBarH);
         glm::vec2 wsSize(vpWorkspace->Size.x, vpWorkspace->Size.y - topBarH);
 
-        if (showMaterialEditor && materialWorkspaceActive) {
-            float cbH = showBottomDrawer ? (bottomDrawerOpen ? bottomDockHeight : 26.0f) : 0.0f;
-            glm::vec2 matWsSize(wsSize.x, wsSize.y - cbH);
-            RenderMaterialWorkspace(scene, wsPos, matWsSize);
-            if (showBottomDrawer) {
-                RenderContentBrowser(scene);
-            }
-        } else if (Eunoia::BehaviourManager::Get().IsActive()) {
-            Eunoia::BehaviourManager::Get().RenderActiveTabWorkspace(wsPos, wsSize, &scene);
-        } else if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
+        if (Eunoia::AnimatorGraphManager::Get().IsActive()) {
             Eunoia::AnimatorGraphManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
         } else if (Eunoia::AnimationBlendManager::Get().IsActive()) {
             Eunoia::AnimationBlendManager::Get().RenderActiveTabWorkspace(ImVec2(wsPos.x, wsPos.y), ImVec2(wsSize.x, wsSize.y));
@@ -4059,6 +4000,8 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
                     RenderOutliner(scene);
                 } else if (pName == "Details") {
                     RenderDetails(scene);
+                } else if (pName == "Material Editor") {
+                    RenderMaterialEditor(scene);
                 }
             }
             ImGui::End();
@@ -5150,7 +5093,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
         ImGui::SameLine(0.0f, 6.0f * uiScale);
 
         // 1. Level Editor Tab (Always open, permanent root switch)
-        bool isLevelActive = (!materialWorkspaceActive && uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive() && !Eunoia::AnimationBlendManager::Get().IsActive() && !Eunoia::BehaviourManager::Get().IsActive() && (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size()));
+        bool isLevelActive = (uiMgr.IsMainEditorActive() && !Eunoia::NodeBehaviour::NodeBehaviourManager::Get().IsActive() && !Eunoia::AnimatorGraphManager::Get().IsActive() && !Eunoia::AnimationBlendManager::Get().IsActive() && (s_activePromotedTabIndex < 0 || s_activePromotedTabIndex >= (int)s_promotedTabs.size()));
         std::string levelTabName = "Level Editor";
         if (levelUnsaved) levelTabName += "*";
         levelTabName += "##Tab_Level";
@@ -5161,52 +5104,10 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
             uiMgr.SwitchToMainEditor();
-            Eunoia::BehaviourManager::Get().SwitchToMainEditor();
             s_activePromotedTabIndex = -1;
             if (activeMaterialDocIdx >= 0 && activeMaterialDocIdx < (int)openMaterialDocs.size()) {
                 PropagateMaterialChangesToScene(scene, openMaterialDocs[activeMaterialDocIdx].material);
             }
-        }
-
-        // 2. Material Editor Tabs (Multiple open material editors)
-        int matToClose = -1;
-        for (size_t i = 0; i < openMaterialDocs.size(); ++i) {
-            ImGui::SameLine(0.0f, 4.0f * uiScale);
-            bool isMatActive = (materialWorkspaceActive && activeMaterialDocIdx == (int)i);
-            std::string matLabel = "[M] " + openMaterialDocs[i].material.name;
-            if (openMaterialDocs[i].isDirty) matLabel += "*";
-            matLabel += "##MatTab_" + std::to_string(i);
-
-            if (RenderTabWithSaveProgress(matLabel.c_str(), isMatActive, openMaterialDocs[i].saveState, tabBtnH)) {
-                Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
-            Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
-            Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
-                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
-                s_activePromotedTabIndex = -1;
-                SwitchToMaterialEditor((int)i);
-            }
-
-            // Close button ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢
-            ImGui::SameLine(0.0f, 2.0f * uiScale);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
-
-            std::string closeBtnId = "ÃƒÂ¢Ã…â€œÃ¢â‚¬Â¢##CloseMatTab_" + std::to_string(i);
-            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
-                matToClose = (int)i;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", openMaterialDocs[i].material.name.c_str());
-
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(4);
-        }
-
-        if (matToClose >= 0) {
-            CloseMaterialEditor(matToClose);
         }
 
         // 3. UI Editor Tabs (Multiple open UI editors)
@@ -5225,7 +5126,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
             Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
-                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
                 s_activePromotedTabIndex = -1;
                 uiMgr.SwitchToEditor(tabIdx);
             }
@@ -5270,7 +5170,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 uiMgr.SwitchToMainEditor();
                 Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
             Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
-                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
                 s_activePromotedTabIndex = -1;
                 nbMgr.SwitchToEditor((int)i);
             }
@@ -5314,7 +5213,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 materialWorkspaceActive = false;
                 uiMgr.SwitchToMainEditor();
                 nbMgr.SwitchToMainEditor();
-                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
                 s_activePromotedTabIndex = -1;
                 agMgr.SwitchToEditor((int)i);
             }
@@ -5359,7 +5257,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 uiMgr.SwitchToMainEditor();
                 nbMgr.SwitchToMainEditor();
                 agMgr.SwitchToMainEditor();
-                Eunoia::BehaviourManager::Get().SwitchToMainEditor();
                 s_activePromotedTabIndex = -1;
                 blendMgr.SwitchToEditor((int)i);
             }
@@ -5387,51 +5284,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
             blendMgr.Close((size_t)blendToClose);
         }
 
-        // 3.8 Behaviour Blueprint Tabs (Unreal Engine Blueprint Actor editors)
-        auto& behMgr = Eunoia::BehaviourManager::Get();
-        const auto& behEditors = behMgr.GetEditors();
-        int behToClose = -1;
-        for (size_t i = 0; i < behEditors.size(); ++i) {
-            ImGui::SameLine(0.0f, 4.0f * uiScale);
-            bool isBehActive = (behMgr.IsActive() && behMgr.GetActiveEditorIndex() == (int)i);
-            std::string behLabel = "[B] " + behEditors[i]->GetName();
-            if (behEditors[i]->IsDirty()) behLabel += "*";
-            behLabel += "##BehTab_" + std::to_string(i);
-
-            TabSaveProgressState dummyBehSaveState;
-            if (RenderTabWithSaveProgress(behLabel.c_str(), isBehActive, dummyBehSaveState, tabBtnH)) {
-                materialWorkspaceActive = false;
-                uiMgr.SwitchToMainEditor();
-                nbMgr.SwitchToMainEditor();
-                agMgr.SwitchToMainEditor();
-                blendMgr.SwitchToMainEditor();
-                s_activePromotedTabIndex = -1;
-                behMgr.SwitchToEditor((int)i);
-            }
-
-            // Close button
-            ImGui::SameLine(0.0f, 2.0f * uiScale);
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.863f, 0.149f, 0.149f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.70f, 0.10f, 0.10f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.631f, 0.631f, 0.667f, 1.0f));
-            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 2.0f);
-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * uiScale, 1.0f * uiScale));
-
-            std::string closeBtnId = "x##CloseBehTab_" + std::to_string(i);
-            if (ImGui::Button(closeBtnId.c_str(), ImVec2(16.0f * uiScale, tabBtnH))) {
-                behToClose = (int)i;
-            }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Close %s", behEditors[i]->GetName().c_str());
-
-            ImGui::PopStyleVar(2);
-            ImGui::PopStyleColor(4);
-        }
-
-        if (behToClose >= 0) {
-            behMgr.Close((size_t)behToClose);
-        }
-
                 // 3.9 Promoted Workspace Tabs (Dockable windows dragged to top tab switcher bar)
         int promotedToClose = -1;
         for (size_t i = 0; i < s_promotedTabs.size(); ++i) {
@@ -5445,7 +5297,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 nbMgr.SwitchToMainEditor();
                 agMgr.SwitchToMainEditor();
                 blendMgr.SwitchToMainEditor();
-                behMgr.SwitchToMainEditor();
                 s_activePromotedTabIndex = (int)i;
             }
 
@@ -5498,10 +5349,7 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                 showNewAnimationBlendPopup = true;
                 snprintf(newAnimationBlendNameBuf, sizeof(newAnimationBlendNameBuf), "BS_NewBlend");
             }
-                        if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
-                    showNewBehaviourAssetPopup = true;
-                    snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
-                }
+
                 if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                     showNewBehaviourPopup = true;
                     std::string defName = "NewBehaviour";
@@ -5651,7 +5499,6 @@ void EngineUI::RenderWorkspaceTabBar(Scene& scene, bool& outShouldExit) {
                         nbMgr.SwitchToMainEditor();
                         agMgr.SwitchToMainEditor();
                         blendMgr.SwitchToMainEditor();
-                        behMgr.SwitchToMainEditor();
                         AddLog("LogUI", "Promoted window to workspace tab: " + winName, 0);
                     }
                 }
@@ -6174,12 +6021,11 @@ void EngineUI::DrawOutlinerNode(GameObject& obj, Scene& scene, std::unordered_se
 
     // Type badge matching Old Eunoia Engine
     const char* typeBadge = "[T]";
-    if (obj.isBehaviourInstance) typeBadge = "[BP]";
-    else if (obj.isLight || IsLightPrimitive(obj.type)) typeBadge = "[L]";
+    if (obj.isLight || IsLightPrimitive(obj.type)) typeBadge = "[L]";
     else if (obj.isCamera || obj.type == PrimitiveType::Camera) typeBadge = "[C]";
     else if (obj.type != PrimitiveType::Empty) typeBadge = "[M]";
 
-    bool hasChildren = !obj.childIds.empty() && !obj.isBehaviourInstance;
+    bool hasChildren = !obj.childIds.empty();
     ImGuiTreeNodeFlags nodeFlags = ImGuiTreeNodeFlags_OpenOnArrow | ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_AllowOverlap;
     if (!hasChildren) {
         nodeFlags |= ImGuiTreeNodeFlags_Leaf;
@@ -6761,7 +6607,7 @@ void EngineUI::RenderOutliner(Scene& scene) {
                 std::unordered_set<int> visitedIds;
                 std::vector<int> rootIds;
                 for (const auto& obj : scene.objects) {
-                    if (obj.parentId == -1 && obj.behaviourRootId == -1) {
+                    if (obj.parentId == -1) {
                         rootIds.push_back(obj.id);
                     }
                 }
@@ -7117,9 +6963,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         ImGui::PushID(obj->id);
 
         // Actor Header Banner
-        if (obj->isBehaviourInstance) {
-            ImGui::TextColored(ImVec4(0.00f, 0.65f, 1.00f, 1.0f), "[BehaviourBlueprintActor]");
-        } else if (obj->isLight || IsLightPrimitive(obj->type)) {
+        if (obj->isLight || IsLightPrimitive(obj->type)) {
             char lightTypeStr[64];
             snprintf(lightTypeStr, sizeof(lightTypeStr), "[%sComponent]", GetLightTypeName(obj->light.type));
             ImGui::TextColored(ImVec4(1.00f, 0.85f, 0.20f, 1.0f), "%s", lightTypeStr);
@@ -7168,14 +7012,7 @@ void EngineUI::RenderDetails(Scene& scene) {
         ImGui::SameLine();
         ImGui::TextDisabled("ID: %u", (uint32_t)obj->id);
 
-        if (obj->isBehaviourInstance && !obj->behaviourAssetPath.empty()) {
-            ImGui::Spacing();
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.45f, 0.85f, 1.0f));
-            if (ImGui::Button("Edit in Behaviour Editor", ImVec2(180.0f, 24.0f))) {
-                OpenBehaviourEditor(obj->behaviourAssetPath);
-            }
-            ImGui::PopStyleColor();
-        }
+
         ImGui::Separator();
 
         // Add Component Button (matching Old Eunoia Engine)
@@ -10415,8 +10252,7 @@ void EngineUI::SwitchToMaterialEditor(int docIdx) {
     activeMaterial = openMaterialDocs[docIdx].material;
     materialDirty = openMaterialDocs[docIdx].isDirty;
     showMaterialEditor = true;
-    materialWorkspaceActive = true;
-    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
+    materialWorkspaceActive = false;
     RequestViewportRedraw(10);
 }
 
@@ -10445,6 +10281,30 @@ void EngineUI::RenderMaterialEditor(Scene& scene) {
     ImGui::SetNextWindowSize(ImVec2(800, 640), ImGuiCond_FirstUseEver);
     std::string winTitle = "Material Editor - " + activeMaterial.name + (materialDirty ? "*" : "") + "###MaterialEditorWin";
     if (ImGui::Begin(winTitle.c_str(), &showMaterialEditor, ImGuiWindowFlags_NoCollapse)) {
+        if (openMaterialDocs.size() > 1) {
+            int closeDocIdx = -1;
+            for (size_t d = 0; d < openMaterialDocs.size(); ++d) {
+                if (d > 0) ImGui::SameLine();
+                bool isCur = (activeMaterialDocIdx == (int)d);
+                std::string docLabel = openMaterialDocs[d].material.name;
+                if (openMaterialDocs[d].isDirty) docLabel += "*";
+                docLabel += "##MatDocTab_" + std::to_string(d);
+                if (isCur) ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.12f, 0.45f, 0.85f, 1.0f));
+                if (ImGui::Button(docLabel.c_str())) {
+                    SwitchToMaterialEditor((int)d);
+                }
+                if (isCur) ImGui::PopStyleColor();
+                ImGui::SameLine(0, 2.0f);
+                std::string closeDocId = "x##CloseDoc_" + std::to_string(d);
+                if (ImGui::SmallButton(closeDocId.c_str())) {
+                    closeDocIdx = (int)d;
+                }
+            }
+            if (closeDocIdx >= 0) {
+                CloseMaterialEditor(closeDocIdx);
+            }
+            ImGui::Separator();
+        }
         // Toolbar
         if (ImGui::Button("Save Material") || (ImGui::GetIO().KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S))) {
             if (SaveMaterialFile(activeMaterial.filePath, activeMaterial)) {
@@ -11438,15 +11298,6 @@ void EngineUI::OpenLevelAnimationEditor(const std::string& path) {
     }
 }
 
-void EngineUI::OpenBehaviourEditor(const std::string& path) {
-    materialWorkspaceActive = false;
-    EunoiaUI::UIEditorManager::Get().SwitchToMainEditor();
-    Eunoia::NodeBehaviour::NodeBehaviourManager::Get().SwitchToMainEditor();
-    Eunoia::AnimatorGraphManager::Get().SwitchToMainEditor();
-    Eunoia::AnimationBlendManager::Get().SwitchToMainEditor();
-    Eunoia::BehaviourManager::Get().Open(path);
-    AddLog("LogContent", "Opened Behaviour Blueprint Editor: " + path, 0);
-}
 
 void EngineUI::OpenAnimationBlendEditor(const std::string& path) {
     materialWorkspaceActive = false;
@@ -12215,7 +12066,7 @@ bool EngineUI::IsBehaviourNameAlreadyExists(const std::string& rawName) const {
                 if (!it->is_directory(ec)) {
                     std::string ext = it->path().extension().string();
                     std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".behaviour" || ext == ".ebehaviour") {
+                    if (ext == ".cpp" || ext == ".h" || ext == ".hpp" || ext == ".ebehaviour") {
                         std::string fileStem = it->path().stem().string();
                         std::transform(fileStem.begin(), fileStem.end(), fileStem.begin(), ::tolower);
                         if (fileStem == nameLower) {
@@ -12335,22 +12186,10 @@ void EngineUI::RenderOutputLogWindow() {
 }
 
 Scene& EngineUI::GetActiveRenderScene(Scene& defaultScene) {
-    if (Eunoia::BehaviourManager::Get().IsActive()) {
-        auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
-        if (activeEditor) {
-            return activeEditor->GetPreviewScene();
-        }
-    }
     return defaultScene;
 }
 
 OrbitCamera& EngineUI::GetActiveRenderCamera(OrbitCamera& defaultCamera) {
-    if (Eunoia::BehaviourManager::Get().IsActive()) {
-        auto activeEditor = Eunoia::BehaviourManager::Get().GetActiveEditor();
-        if (activeEditor) {
-            return activeEditor->GetCamera();
-        }
-    }
     return defaultCamera;
 }
 
@@ -12463,11 +12302,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                         showNewLevelAnimationPopup = true;
                         snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                     }
-                    if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewBehaviourAssetPopup = true;
-                        snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
-                    }
+
                     if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
@@ -12717,46 +12552,6 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                     ImGui::EndPopup();
                 }
 
-                if (showNewBehaviourAssetPopup) {
-                    ImGui::OpenPopup("Create Behaviour Asset (.behaviour)##Modal");
-                    showNewBehaviourAssetPopup = false;
-                }
-                if (ImGui::BeginPopupModal("Create Behaviour Asset (.behaviour)##Modal", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
-                    std::string targetDir = popupTargetVirtualDir.empty() ? currentVirtualDir : popupTargetVirtualDir;
-                    ImGui::Text("Creating Behaviour Asset (.behaviour) in: %s", targetDir.c_str());
-                    ImGui::Spacing();
-                    ImGui::Text("Enter behaviour asset name (creates composite Actor blueprint with 3D viewport):");
-                    ImGui::SetNextItemWidth(260.0f);
-                    ImGui::InputText("##BehAssetNameInput", newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf));
-                    ImGui::Spacing();
-                    if (ImGui::Button("Create", ImVec2(120, 0)) || ImGui::IsKeyPressed(ImGuiKey_Enter)) {
-                        if (strlen(newBehaviourAssetNameBuf) > 0) {
-                            std::string behFileName = newBehaviourAssetNameBuf;
-                            if (behFileName.find(".behaviour") == std::string::npos) behFileName += ".behaviour";
-                            std::string diskSub = targetDir;
-                            if (diskSub.rfind("/Game", 0) == 0) diskSub = diskSub.substr(5);
-                            if (!diskSub.empty() && diskSub[0] == '/') diskSub.erase(0, 1);
-                            std::filesystem::path dstDir = diskSub.empty() ? contentRootPath : (contentRootPath / diskSub);
-                            std::error_code ec;
-                            std::filesystem::create_directories(dstDir, ec);
-                            std::filesystem::path behFilePath = dstDir / behFileName;
-
-                            Eunoia::BehaviourManager::Get().CreateNewBehaviour(behFilePath.string());
-                            TriggerBackgroundRegistrySync(contentRootPath);
-                            AddLog("LogContent", "Created Behaviour asset: " + behFilePath.string(), 2);
-                            OpenBehaviourEditor(behFilePath.string());
-                        }
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Cancel", ImVec2(120, 0))) {
-                        popupTargetVirtualDir = "";
-                        ImGui::CloseCurrentPopup();
-                    }
-                    ImGui::EndPopup();
-                }
-
                 if (showNewMaterialPopup) {
                     ImGui::OpenPopup("Create Material##Modal");
                     showNewMaterialPopup = false;
@@ -12912,7 +12707,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                                 ("/" + behName) : (targetDir + "/" + behName);
                             metaFile << "# Eunoia-Editor Asset Sidecar Metadata\n"
                                      << "assetId: " << aid.ToString() << "\n"
-                                     << "type: Behaviour\n"
+                                     << "type: Behaviour Script\n"
                                      << "baseClass: EunoiaBehaviour\n"
                                      << "virtualPath: " << vPath << "\n";
                         }
@@ -13621,11 +13416,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                             showNewLevelAnimationPopup = true;
                             snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                         }
-                        if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
-                            popupTargetVirtualDir = vDir;
-                            showNewBehaviourAssetPopup = true;
-                            snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
-                        }
+
                         if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                             popupTargetVirtualDir = vDir;
                             showNewBehaviourPopup = true;
@@ -14065,10 +13856,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                                         fullLevel = contentRootPath / item.meta.sourcePath;
                                     }
                                     OpenLevelFromPath(scene, fullLevel.string());
-                                } else if (item.meta.type == AssetType::Behaviour || item.meta.sourcePath.find(".behaviour") != std::string::npos) {
-                                    std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
-                                    OpenBehaviourEditor(fullBeh.string());
-                                    AddLog("LogContent", "Opened Behaviour Blueprint: " + item.meta.objectName, 2);
+
                                 } else if (item.meta.type == AssetType::Script) {
                                     std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
                                     OpenScriptInCodeEditor(fullScript.string());
@@ -14176,11 +13964,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                                     showNewLevelAnimationPopup = true;
                                     snprintf(newLevelAnimationNameBuf, sizeof(newLevelAnimationNameBuf), "LA_NewAnimation");
                                 }
-                                if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
-                                    popupTargetVirtualDir = item.subDir;
-                                    showNewBehaviourAssetPopup = true;
-                                    snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
-                                }
+
                                 if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                                     popupTargetVirtualDir = item.subDir;
                                     showNewBehaviourPopup = true;
@@ -14343,17 +14127,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                                     }
                                     ImGui::Separator();
                                 }
-                                if (item.meta.type == AssetType::Behaviour || item.meta.sourcePath.find(".behaviour") != std::string::npos) {
-                                    if (ImGui::MenuItem("Open in Behaviour Editor")) {
-                                        std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
-                                        OpenBehaviourEditor(fullBeh.string());
-                                    }
-                                    if (ImGui::MenuItem("Spawn Actor in Level")) {
-                                        std::filesystem::path fullBeh = contentRootPath / item.meta.sourcePath;
-                                        Eunoia::BehaviourManager::Get().SpawnBehaviourIntoScene(scene, fullBeh.string(), glm::vec3(0.0f, 0.0f, 0.0f));
-                                    }
-                                    ImGui::Separator();
-                                }
+
                                 if (item.meta.type == AssetType::Script) {
                                     if (ImGui::MenuItem("Edit Script in VS Code")) {
                                         std::filesystem::path fullScript = contentRootPath / item.meta.sourcePath;
@@ -14530,7 +14304,6 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                                 case AssetType::Texture:         iconTag = "TEX";   accentCol = IM_COL32(51, 217, 128, 255);  break; // Emerald
                                 case AssetType::VisualBehaviour: iconTag = "VBEH";  accentCol = IM_COL32(230, 89, 153, 255);  break; // Magenta
                                 case AssetType::NodeBehaviour:   iconTag = "NB";    accentCol = IM_COL32(0, 210, 255, 255);   break; // Blueprint Cyan
-                                case AssetType::Behaviour:
                                 case AssetType::Script:          iconTag = "BEH";   accentCol = IM_COL32(217, 102, 242, 255); break; // Purple
                                 case AssetType::Level:           iconTag = "LEVEL"; accentCol = IM_COL32(51, 217, 242, 255);  break; // Cyan
                                 case AssetType::Project:         iconTag = "PROJ";  accentCol = IM_COL32(255, 204, 0, 255);   break; // Gold
@@ -14674,11 +14447,7 @@ void EngineUI::RenderContentBrowserContent(Scene& scene) {
                         ImGui::EndMenu();
                     }
                     ImGui::Separator();
-                    if (ImGui::MenuItem("New Behaviour (.behaviour)...")) {
-                        popupTargetVirtualDir = currentVirtualDir;
-                        showNewBehaviourAssetPopup = true;
-                        snprintf(newBehaviourAssetNameBuf, sizeof(newBehaviourAssetNameBuf), "B_NewActor");
-                    }
+
                     if (ImGui::MenuItem("New Behaviour Script (.cpp)...")) {
                         popupTargetVirtualDir = currentVirtualDir;
                         showNewBehaviourPopup = true;
