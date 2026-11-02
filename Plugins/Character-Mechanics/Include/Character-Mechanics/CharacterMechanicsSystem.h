@@ -19,6 +19,11 @@ struct ObjectVelocityTracker {
     bool initialized = false;
 };
 
+struct CharacterMechanicsSettings {
+    bool orientToMovement = false;
+    float rotationRate = 720.0f; // degrees per second (0 = instant snap)
+};
+
 class CharacterMechanicsSystem {
 public:
     static CharacterMechanicsSystem& Get();
@@ -40,8 +45,6 @@ public:
     void AddMovement(float speed, float dirX, float dirY, float dirZ, bool negate = false);
 
     // Velocity APIs:
-    // Calculates the float current velocity of the object based on world movement comparing last transform and current transform.
-    // The vector3 parameter is an axis mask: 1 (or true/non-zero) selects that direction, 0 (false) neglects it.
     float GetVelocity(GameObject* target, const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f));
     float GetVelocity(GameObject* target, const TransformVector3& directionMask);
     float GetVelocity(GameObject* target, float dirX, float dirY, float dirZ);
@@ -55,12 +58,20 @@ public:
     void UpdateObjectVelocity(GameObject* target, float dt = 0.0f);
     void ClearTrackers();
 
+    // Orientation to Movement Direction APIs
+    void SetOrientationToMovementDirection(GameObject* target, bool enable, float rotationRate = 720.0f);
+    void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f);
+    bool IsOrientationToMovementDirectionEnabled(GameObject* target = nullptr) const;
+    float GetRotationRate(GameObject* target = nullptr) const;
+    void OrientToDirection(GameObject* target, const glm::vec3& worldDirection, float dt = 0.0f);
+
 private:
     CharacterMechanicsSystem() = default;
     ~CharacterMechanicsSystem() = default;
 
     GameObject* m_activeCharacter = nullptr;
     std::unordered_map<int, ObjectVelocityTracker> m_velocityTrackers;
+    std::unordered_map<int, CharacterMechanicsSettings> m_settings;
 };
 
 } // namespace CharacterMechanics

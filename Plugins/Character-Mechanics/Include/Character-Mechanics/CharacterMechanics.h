@@ -23,6 +23,8 @@ struct CharacterMechanicsHandle {
     float GetVelocity(const TransformVector3& directionMask);
     float GetVelocity(float dirX, float dirY, float dirZ);
     glm::vec3 GetVelocityVector(const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f));
+
+    void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f);
 };
 
 // Static & instance proxy for CharacterMechanics
@@ -74,12 +76,24 @@ struct CharacterMechanicsProxy {
     static glm::vec3 GetVelocityVector(GameObject* target, const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f)) {
         return CharacterMechanicsSystem::Get().GetVelocityVector(target, directionMask);
     }
+
+    // Orientation to Movement Direction APIs:
+    static void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f) {
+        CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(enable, rotationRate);
+    }
+    static void SetOrientationToMovementDirection(GameObject* target, bool enable, float rotationRate = 720.0f) {
+        CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(target, enable, rotationRate);
+    }
+    static bool IsOrientationToMovementDirectionEnabled(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(target);
+    }
 };
 
 } // namespace CharacterMechanics
 } // namespace Eunoia
 
 // Top-level EngineSystem struct and global aliases matching user request:
+// EngineSystem::CharacterMechanics::SetOrientationToMovementDirection(true | false)
 // EngineSystem::CharacterMechanics::AddMovement(...)
 // CharacterMechanics::AddMovement(...)
 // AssumeAsCharacter().AddMovement(...)
