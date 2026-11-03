@@ -53,6 +53,7 @@ int main() {
 
     // Test: Behaviour Object Reference & Selection Persistence across Play Mode
     int lightId = scene.AddObject(PrimitiveType::PointLight, glm::vec3(5.0f, 5.0f, 5.0f)).id;
+    parent = scene.FindObject(parentId);
     auto flicker = std::make_shared<LightFlickerBehaviour>();
     parent->AddBehaviour(flicker);
     scene.selectedId = parentId;

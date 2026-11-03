@@ -5,29 +5,28 @@ add_library(EngineAssets STATIC
     Src/AssetRegistry.cpp
     Src/AssetManager.cpp
     Src/MeshImporter.cpp
-    Src/SkeletalAnimation.cpp
-    Src/AnimatorGraphEditor.cpp
     Src/TextureManager.cpp
-    ${EUNOIA_DEPS}/ufbx/ufbx.c
+    ${EUNOIA_ROOT}/Plugins/Animation-Graph/Source/SkeletalAnimation.cpp
 )
 
 target_include_directories(EngineAssets PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
     $<INSTALL_INTERFACE:Include>
     ${EUNOIA_DEPS}/glm
-    ${EUNOIA_DEPS}/imgui
-)
-
-target_include_directories(EngineAssets PRIVATE
     ${EUNOIA_DEPS}/tinyobj
     ${EUNOIA_DEPS}/cgltf
     ${EUNOIA_DEPS}/ufbx
+    ${EUNOIA_DEPS}/meshoptimizer
+    ${EUNOIA_ROOT}/Plugins/Animation-Graph/Include
 )
 
 target_link_libraries(EngineAssets PUBLIC
     EngineRHI
     EnginePlatform
     EngineCore
+    ufbx_vendor
+    meshoptimizer_vendor
+    directxtex_vendor
 )
 
-target_compile_features(EngineAssets PUBLIC cxx_std_17)
+target_compile_features(EngineAssets PUBLIC cxx_std_20)

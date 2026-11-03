@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.15)
 project(Eunoia LANGUAGES CXX C)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -12,37 +12,35 @@ set(EUNOIA_DEPS        ${EUNOIA_ROOT}/deps)
 set(EUNOIA_GLFW_ROOT   ${EUNOIA_DEPS}/glfw-3.5.1.bin.WIN64)
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Strict Layered Engine Modules (Layer 1 -> Layer 6)
-# Each layer depends ONLY on layers defined below it.
+# Vendored Third-Party Targets (Compiled as isolated static libraries)
 # ──────────────────────────────────────────────────────────────────────────────
-# Layer 1: Zero dependencies, STL only
+include(CMake/EunoiaThirdParty.cmake)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Strict Layered Engine Modules (Layer 1 -> Layer 6)
+# ──────────────────────────────────────────────────────────────────────────────
 add_subdirectory(Engine/EngineCore)
-
-# Layer 2: Windowing & Input (depends on Core)
 add_subdirectory(Engine/EnginePlatform)
-
-# Layer 3: Render Hardware Interface / D3D12 (depends on Core)
 add_subdirectory(Engine/EngineRHI)
-
-# Layer 4: Asset import/cook/load & Geometry (depends on RHI, Platform, Core)
 add_subdirectory(Engine/EngineAssets)
-
-# Layer 5: Render passes, materials, camera, lighting (depends on Assets, RHI, Core)
 add_subdirectory(Engine/EngineRenderer)
-
-# Layer 6: ECS, Scene graph, Behaviours, Serialization (depends on Renderer, Assets, Platform, Core)
 add_subdirectory(Engine/EngineScene)
-
-# Plugin Core System (depends on Core)
 add_subdirectory(Engine/EunoiaPluginCore)
+
+# Optional standalone UI Framework
+if(EXISTS "${EUNOIA_ROOT}/EunoiaUI-Framework/CMakeLists.txt")
+    add_subdirectory(EunoiaUI-Framework)
+endif()
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Core Plugins
+# ──────────────────────────────────────────────────────────────────────────────
+include(CMake/EunoiaPlugins.cmake)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Application Targets
 # ──────────────────────────────────────────────────────────────────────────────
-# Layer 7: Editor executable with ImGui / ImGuizmo
 add_subdirectory(Editor/Editor)
-
-# Standalone Runtime executable (no ImGui dependency)
 add_subdirectory(Runtime)
 
 # ──────────────────────────────────────────────────────────────────────────────

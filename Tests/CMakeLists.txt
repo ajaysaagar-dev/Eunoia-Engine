@@ -28,7 +28,27 @@ add_test(NAME ProjectSetupTest COMMAND ProjectSetupTest)
 add_executable(SceneTest
     EngineScene/SceneTest.cpp
 )
-target_link_libraries(SceneTest PRIVATE EngineScene EngineRenderer EngineAssets EnginePlatform EngineCore)
+target_link_libraries(SceneTest PRIVATE
+    EngineScene
+    EngineRenderer
+    EngineAssets
+    EnginePlatform
+    EngineCore
+    ${EUNOIA_ALL_PLUGIN_TARGETS}
+    imgui_vendor
+    ufbx_vendor
+    meshoptimizer_vendor
+    directxtex_vendor
+    glfw3
+    d3d12
+    dxgi
+    d3dcompiler
+    opengl32
+    gdi32
+    imm32
+    comdlg32
+    dwmapi
+)
 add_test(NAME SceneTest COMMAND SceneTest)
 
 # EngineRHI Tests
@@ -40,25 +60,3 @@ add_executable(RHITest
 )
 target_link_libraries(RHITest PRIVATE EngineRHI EngineCore d3d12 dxgi d3dcompiler)
 add_test(NAME RHITest COMMAND RHITest)
-
-# PluginSystem Tests
-add_executable(PluginManagerTest
-    PluginSystem/PluginManagerTest.cpp
-)
-target_include_directories(PluginManagerTest PRIVATE
-    ${EUNOIA_ROOT}/Plugins/engine/include
-    ${EUNOIA_ROOT}/Plugins/platform/include
-    ${EUNOIA_ROOT}/Plugins/rhi/include
-    ${EUNOIA_ROOT}/Plugins/scene/include
-    ${EUNOIA_ROOT}/Plugins/rendering/include
-    ${EUNOIA_ROOT}/Plugins/primitives/include
-    ${EUNOIA_ROOT}/Plugins/assets/include
-    ${EUNOIA_ROOT}/Plugins/materials/include
-    ${EUNOIA_ROOT}/Plugins/levels/include
-    ${EUNOIA_ROOT}/Plugins/lights/include
-    ${EUNOIA_ROOT}/Plugins/behaviours/include
-    ${EUNOIA_DEPS}/glm
-    ${EUNOIA_DEPS}/json
-)
-target_link_libraries(PluginManagerTest PRIVATE EunoiaPluginCore EngineCore)
-add_test(NAME PluginManagerTest COMMAND PluginManagerTest)

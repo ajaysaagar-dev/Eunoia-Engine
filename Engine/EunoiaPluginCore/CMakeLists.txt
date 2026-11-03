@@ -8,10 +8,11 @@ add_library(EunoiaPluginCore STATIC
 target_include_directories(EunoiaPluginCore PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Include>
     $<INSTALL_INTERFACE:Include>
+    ${EUNOIA_DEPS}/json
 )
 
 target_link_libraries(EunoiaPluginCore PUBLIC
     EngineCore
 )
 
-target_compile_features(EunoiaPluginCore PUBLIC cxx_std_17)
+target_compile_features(EunoiaPluginCore PUBLIC cxx_std_20)

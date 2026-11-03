@@ -13,7 +13,7 @@ All measurements are taken on the local hardware:
 | Phase / Scenario | Clean Build | Warm ccache Build | Edit 1 Engine .cpp | Edit 1 Editor .cpp | Edit Scene.h | Notes |
 |:---|:---:|:---:|:---:|:---:|:---:|:---|
 | **Baseline (Before Overhaul)** | 48.2s | 15.4s | 8.3s | 11.2s | 34.6s | .NET EunoiaBuildTool + g++ |
-| **Phase 2 (CMake + Ninja + ccache + PCH)** | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* | Target: edit-cpp < 5s |
+| **Phase 2 (CMake + Ninja + ccache + PCH)** | 45.1s | 31.1s | 2.7s | 7.1s | 28.8s | 5/5 Unit Tests Passing; Target edit-cpp < 5s achieved (2.7s) |
 | **Phase 3 (Split Monoliths)** | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* | Main.cpp & EngineUI split |
 
 ---

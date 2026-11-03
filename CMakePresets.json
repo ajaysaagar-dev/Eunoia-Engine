@@ -1,0 +1,86 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 15,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/Build/${presetName}",
+      "environment": {
+        "PATH": "${sourceDir}/tools/w64devkit/bin;$penv{PATH}"
+      },
+      "cacheVariables": {
+        "CMAKE_C_COMPILER": "${sourceDir}/tools/w64devkit/bin/gcc.exe",
+        "CMAKE_CXX_COMPILER": "${sourceDir}/tools/w64devkit/bin/g++.exe",
+        "CMAKE_MAKE_PROGRAM": "${sourceDir}/tools/w64devkit/bin/ninja.exe",
+        "CMAKE_C_COMPILER_LAUNCHER": "${sourceDir}/tools/w64devkit/bin/ccache.exe",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "${sourceDir}/tools/w64devkit/bin/ccache.exe",
+        "CMAKE_CXX_STANDARD": "20",
+        "CMAKE_CXX_STANDARD_REQUIRED": "ON"
+      }
+    },
+    {
+      "name": "dev",
+      "displayName": "Development Build (Fast iteration)",
+      "description": "Ninja + ccache + O0/Og for rapid debugging and live code iteration",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS_DEBUG": "-Og -g1 -pipe"
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "Shipping Release Build",
+      "description": "Optimized release build with LTO and gc-sections",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_CXX_FLAGS_RELEASE": "-O2 -DNDEBUG -ffunction-sections -fdata-sections -pipe",
+        "CMAKE_EXE_LINKER_FLAGS_RELEASE": "-Wl,--gc-sections -static -static-libgcc -static-libstdc++"
+      }
+    },
+    {
+      "name": "asan",
+      "displayName": "AddressSanitizer / UBSan Build",
+      "description": "Build with memory and undefined behavior sanitizers enabled",
+      "inherits": "base",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_CXX_FLAGS_DEBUG": "-Og -g -fsanitize=address,undefined -fno-omit-frame-pointer -pipe"
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "CI Automation Preset",
+      "description": "Continuous Integration build configuration",
+      "inherits": "dev",
+      "cacheVariables": {
+        "EUNOIA_BUILD_TESTS": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "dev",
+      "configurePreset": "dev"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    }
+  ]
+}

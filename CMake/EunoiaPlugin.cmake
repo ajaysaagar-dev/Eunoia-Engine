@@ -51,7 +51,7 @@ function(eunoia_add_plugin)
         ${PLUGIN_PLUGIN_DIR}/include
     )
     target_include_directories(${PLUGIN_NAME} PRIVATE
-        ${CMAKE_SOURCE_DIR}/EunoiaPluginCore
+        ${CMAKE_SOURCE_DIR}/Engine/EunoiaPluginCore
         ${CMAKE_SOURCE_DIR}/deps/json
     )
     target_link_libraries(${PLUGIN_NAME} PRIVATE EunoiaPluginCore)
@@ -62,7 +62,7 @@ function(eunoia_add_plugin)
     endif()
 
     # C++17
-    target_compile_features(${PLUGIN_NAME} PRIVATE cxx_std_17)
+    target_compile_features(${PLUGIN_NAME} PRIVATE cxx_std_20)
 
     message(STATUS "[Eunoia] Plugin: ${PLUGIN_NAME} (${PLUGIN_CORE}core)")
 endfunction()

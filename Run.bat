@@ -1,27 +1,33 @@
 @echo off
 setlocal enabledelayedexpansion
-cd /d "%~dp0"
+set "PROJECT_DIR=%~dp0"
+if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
-set "TARGET_EXE=..\Build\Engine\Eunoia-Editor.exe"
-if not exist "!TARGET_EXE!" set "TARGET_EXE=Build\Engine\Eunoia-Editor.exe"
+:: Prepend pinned w64devkit toolchain to PATH if present
+if exist "%PROJECT_DIR%\tools\w64devkit\bin" (
+    set "PATH=%PROJECT_DIR%\tools\w64devkit\bin;!PATH!"
+)
+
+set "TARGET_EXE=%PROJECT_DIR%\Build\dev\Editor\Editor\Eunoia-Editor.exe"
+if not exist "!TARGET_EXE!" set "TARGET_EXE=%PROJECT_DIR%\Build\dev\bin\Eunoia-Editor.exe"
+if not exist "!TARGET_EXE!" set "TARGET_EXE=%PROJECT_DIR%\Build\Engine\Eunoia-Editor.exe"
 
 if not exist "!TARGET_EXE!" (
     echo [INFO] Eunoia-Editor.exe not found. Building first...
-    call Build.bat
-    if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
+    call "%PROJECT_DIR%\Build.bat" dev
+    if !ERRORLEVEL! neq 0 (
+        echo [ERROR] Build step failed.
+        exit /b !ERRORLEVEL!
+    )
 )
 
-if exist "..\Build\Engine\Eunoia-Editor.exe" (
-    echo [INFO] Starting Eunoia-Editor from ..\Build\Engine...
-    cd /d "%~dp0..\Build\Engine"
-    start "" "Eunoia-Editor.exe" %*
-    exit /b 0
-)
+if not exist "!TARGET_EXE!" set "TARGET_EXE=%PROJECT_DIR%\Build\dev\Editor\Editor\Eunoia-Editor.exe"
+if not exist "!TARGET_EXE!" set "TARGET_EXE=%PROJECT_DIR%\Build\dev\bin\Eunoia-Editor.exe"
 
-if exist "Build\Engine\Eunoia-Editor.exe" (
-    echo [INFO] Starting Eunoia-Editor from Build\Engine...
-    cd /d "%~dp0Build\Engine"
-    start "" "Eunoia-Editor.exe" %*
+if exist "!TARGET_EXE!" (
+    echo [INFO] Starting Eunoia-Editor from !TARGET_EXE!...
+    cd /d "%PROJECT_DIR%"
+    start "" "!TARGET_EXE!" %*
     exit /b 0
 )
 

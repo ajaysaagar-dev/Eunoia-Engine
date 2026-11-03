@@ -5,23 +5,50 @@ set(EDITOR_SOURCES
     Src/Main.cpp
     Src/EngineUI.cpp
     Src/EditorGizmoSystem.cpp
-    ${EUNOIA_ROOT}/Plugins/Post-Process-System/Source/PostProcessSystem.cpp
-    ${EUNOIA_ROOT}/Plugins/Post-Process-System/Source/PostProcessPlugin.cpp
-    # ImGui
-    ${EUNOIA_DEPS}/imgui/imgui.cpp
-    ${EUNOIA_DEPS}/imgui/imgui_draw.cpp
-    ${EUNOIA_DEPS}/imgui/imgui_tables.cpp
-    ${EUNOIA_DEPS}/imgui/imgui_widgets.cpp
-    ${EUNOIA_DEPS}/imgui/backends/imgui_impl_glfw.cpp
-    ${EUNOIA_DEPS}/imgui/backends/imgui_impl_dx12.cpp
-    ${EUNOIA_DEPS}/imgui/ImGuizmo.cpp
 )
 
 add_executable(Eunoia-Editor ${EDITOR_SOURCES})
 
+# Precompiled headers for fast incremental compiles
+target_precompile_headers(Eunoia-Editor PRIVATE
+    <windows.h>
+    <d3d12.h>
+    <dxgi1_6.h>
+    <wrl/client.h>
+    <vector>
+    <string>
+    <unordered_map>
+    <memory>
+    <functional>
+    <algorithm>
+    <filesystem>
+    <glm/glm.hpp>
+    <imgui.h>
+)
+
 target_include_directories(Eunoia-Editor PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/Include
     ${EUNOIA_ROOT}/Plugins/Post-Process-System/Include
+    ${EUNOIA_ROOT}/Plugins/Water/Include
+    ${EUNOIA_ROOT}/Plugins/Graphics/Include
+    ${EUNOIA_ROOT}/Plugins/UISystem/Include
+    ${EUNOIA_ROOT}/Plugins/Collisions/Include
+    ${EUNOIA_ROOT}/Plugins/Physics/Include
+    ${EUNOIA_ROOT}/Plugins/RayTrace/Include
+    ${EUNOIA_ROOT}/Plugins/SaveSystem/Include
+    ${EUNOIA_ROOT}/Plugins/Texture-Streaming/Include
+    ${EUNOIA_ROOT}/Plugins/Node-Behaviour/Include
+    ${EUNOIA_ROOT}/Plugins/Node-Behaviour/ThirdParty
+    ${EUNOIA_ROOT}/Plugins/SFLOD/Include
+    ${EUNOIA_ROOT}/Plugins/Animation-Graph/Include
+    ${EUNOIA_ROOT}/Plugins/Animation-Blending/Include
+    ${EUNOIA_ROOT}/Plugins/Level-Animation/Include
+    ${EUNOIA_ROOT}/Plugins/Character-Mechanics/Include
+    ${EUNOIA_ROOT}/EunoiaUI-Framework/Include
+    ${EUNOIA_DEPS}/tinyobj
+    ${EUNOIA_DEPS}/cgltf
+    ${EUNOIA_DEPS}/ufbx
+    ${EUNOIA_DEPS}/meshoptimizer
     ${EUNOIA_DEPS}/imgui
     ${EUNOIA_DEPS}/imgui/backends
     ${EUNOIA_GLFW_ROOT}/include
@@ -39,14 +66,20 @@ target_link_libraries(Eunoia-Editor PRIVATE
     EnginePlatform
     EngineCore
     EunoiaPluginCore
+    ${EUNOIA_ALL_PLUGIN_TARGETS}
+    imgui_vendor
+    ufbx_vendor
+    meshoptimizer_vendor
+    directxtex_vendor
     glfw3
     d3d12
     dxgi
     d3dcompiler
+    opengl32
     gdi32
     imm32
     comdlg32
     dwmapi
 )
 
-target_compile_features(Eunoia-Editor PRIVATE cxx_std_17)
+target_compile_features(Eunoia-Editor PRIVATE cxx_std_20)
