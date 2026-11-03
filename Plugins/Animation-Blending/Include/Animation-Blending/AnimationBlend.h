@@ -180,15 +180,15 @@ public:
 
         // If only 1 active sample, sample directly
         if (activeSamples.size() == 1) {
-            float time = normalizedTime * activeSamples[0].clip->duration * activeSamples[0].speed;
+            float time = normalizedTime * activeSamples[0].clip->duration;
             activeSamples[0].clip->SamplePose(time, skeleton, outTransforms, activeSamples[0].loop);
             return;
         }
 
-        // Multi-sample pose blending
+        // Multi-sample pose blending (synchronized phase across all blend samples)
         std::vector<std::vector<BoneTransform>> samplePoses(activeSamples.size());
         for (size_t s = 0; s < activeSamples.size(); ++s) {
-            float time = normalizedTime * activeSamples[s].clip->duration * activeSamples[s].speed;
+            float time = normalizedTime * activeSamples[s].clip->duration;
             activeSamples[s].clip->SamplePose(time, skeleton, samplePoses[s], activeSamples[s].loop);
         }
 
