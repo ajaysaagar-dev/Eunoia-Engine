@@ -102,8 +102,27 @@ struct AnimationTrack {
             time = glm::clamp(time, 0.0f, duration);
         }
 
-        if (time <= keys.front().time) return keys.front().transform;
-        if (time >= keys.back().time) return keys.back().transform;
+        // Seamless wrap handling for looping animations between last key and first key
+        if (loop && duration > 0.0001f) {
+            float firstTime = keys.front().time;
+            float lastTime = keys.back().time;
+
+            if (time >= lastTime) {
+                // Interpolate from last keyframe across boundary to first keyframe at (duration + firstTime)
+                float span = (duration + firstTime) - lastTime;
+                float factor = (span > 0.00001f) ? (time - lastTime) / span : 0.0f;
+                return BoneTransform::Lerp(keys.back().transform, keys.front().transform, factor);
+            }
+            if (time <= firstTime) {
+                // Time before the first key wraps back to last keyframe
+                float span = (duration + firstTime) - lastTime;
+                float factor = (span > 0.00001f) ? (time + duration - lastTime) / span : 1.0f;
+                return BoneTransform::Lerp(keys.back().transform, keys.front().transform, factor);
+            }
+        } else {
+            if (time <= keys.front().time) return keys.front().transform;
+            if (time >= keys.back().time) return keys.back().transform;
+        }
 
         // Binary search for key pair
         size_t low = 0;
