@@ -97,14 +97,14 @@ For complete documentation on architectural rules, layer definitions, and modula
 │   ├── Intermediates/         # Intermediate compilation cache
 │   ├── Runtime/               # Engine runtime artifacts
 │   └── Tests/                 # Unit test binaries
-├── Deps/                      # Third-party libraries (glm, glfw, imgui, etc.)
+├── deps/                      # Third-party libraries (glm, glfw, imgui, etc.)
 ├── Projects/                  # Projects & custom scripts
 │   └── <ProjectName>/
 │       ├── Build/             # Game build outputs (binaries & launch scripts)
 │       └── Cooked/            # Project-specific cooked content
 ├── Resources/                 # Editor icons and default assets
 ├── Shaders/                   # HLSL DirectX 12 shaders
-├── Tools/                     # Toolchain compilers & scripts
+├── tools/                     # Toolchain compilers & scripts
 ├── CMakeLists.txt             # Modular root CMakeLists
 ├── Build.bat                  # Compilation & packaging script
 └── Run.bat                    # Engine launcher

@@ -1,8 +1,35 @@
 # Eunoia-Engine gitignore
 /EunoiaUI-Framework/
+
+# Toolchain (pinned download via tools/Get-Toolchain.ps1)
+tools/w64devkit/
+
+# Build outputs and intermediate binaries
 Build/
 bin/
 obj/
 *.res.o
 *.o
+*.obj
 *.a
+*.lib
+*.pdb
+*.cso
+*.dxil
+
+# Shaders cache
+Shaders/Cache/
+**/Shaders/Cache/
+
+# IDE and Editor files
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Temporary and log files
+*.log
+*.elogs
+log_out.txt
+log_err.txt
+editor_layout.ini
