@@ -5,6 +5,12 @@ set(EDITOR_SOURCES
     Src/Main.cpp
     Src/EngineUI.cpp
     Src/EditorGizmoSystem.cpp
+    Src/Panels/OutlinerPanel.cpp
+    Src/Panels/DetailsPanel.cpp
+    Src/Panels/MaterialEditorPanel.cpp
+    Src/Panels/EnvironmentPanel.cpp
+    Src/Panels/ContentBrowserPanel.cpp
+    Src/Panels/ProjectBrowserPanel.cpp
 )
 
 add_executable(Eunoia-Editor ${EDITOR_SOURCES})

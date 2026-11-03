@@ -240,12 +240,13 @@ public:
     }
 
     void Stop() {
-        m_stop.store(true);
+        bool expected = false;
+        if (!m_stop.compare_exchange_strong(expected, true)) return;
         m_condition.notify_all();
         m_waitCondition.notify_all();
         for (std::thread& worker : m_workers) {
             if (worker.joinable()) {
-                worker.detach();
+                worker.join();
             }
         }
         m_workers.clear();

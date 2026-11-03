@@ -47,6 +47,7 @@ int main() {
         assert(res == i * 2);
     }
     assert(counter == 20);
+    jobSystem.Stop();
 
     std::cout << "[PASSED] All EngineCore Tests passed successfully!\n";
     return 0;
