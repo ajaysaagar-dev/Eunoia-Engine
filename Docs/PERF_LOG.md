@@ -14,7 +14,7 @@ All measurements are taken on the local hardware:
 |:---|:---:|:---:|:---:|:---:|:---:|:---|
 | **Baseline (Before Overhaul)** | 48.2s | 15.4s | 8.3s | 11.2s | 34.6s | .NET EunoiaBuildTool + g++ |
 | **Phase 2 (CMake + Ninja + ccache + PCH)** | 45.1s | 31.1s | 2.7s | 7.1s | 28.8s | 5/5 Unit Tests Passing; Target edit-cpp < 5s achieved (2.7s) |
-| **Phase 3 (Split Monoliths)** | *TBD* | *TBD* | *TBD* | *TBD* | *TBD* | Main.cpp & EngineUI split |
+| **Phase 3 (Split Monoliths - Panels & Deps)** | 42.0s | 28.4s | 2.5s | 5.8s | 25.1s | EngineUI cut 18.2k -> 8.8k across 6 panel modules; Stb/DirectXTex in deps/ |
 
 ---
 
