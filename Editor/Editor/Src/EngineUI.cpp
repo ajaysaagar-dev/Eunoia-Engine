@@ -41,7 +41,7 @@
 #include <Node-Behaviour/NodeBehaviourManager.h>
 #include <Node-Behaviour/NodeBehaviourInstance.h>
 #include <SFLOD/SFLODSystem.h>
-#include <EngineAssets/AnimatorGraphEditor.h>
+#include <Animation-Graph/AnimatorGraphEditor.h>
 #include <Animation-Blending/AnimationBlendManager.h>
 #include <EngineAssets/SkeletalAnimation.h>
 #include <Level-Animation/LevelAnimation.h>

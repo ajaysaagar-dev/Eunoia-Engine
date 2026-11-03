@@ -17,6 +17,8 @@ target_include_directories(EngineAssets PUBLIC
     ${EUNOIA_DEPS}/cgltf
     ${EUNOIA_DEPS}/ufbx
     ${EUNOIA_DEPS}/meshoptimizer
+    ${EUNOIA_DEPS}/stb
+    ${EUNOIA_DEPS}/DirectXTex
     ${EUNOIA_ROOT}/Plugins/Animation-Graph/Include
 )
 

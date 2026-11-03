@@ -40,11 +40,11 @@ endif()
 
 # 4. DirectXTex
 add_library(directxtex_vendor STATIC
-    "${EUNOIA_ROOT}/Engine/EngineAssets/Src/DirectXTex.cpp"
-    "${EUNOIA_ROOT}/Engine/EngineAssets/Src/DirectXTexD3D12.cpp"
+    "${EUNOIA_DEPS}/DirectXTex/DirectXTex.cpp"
+    "${EUNOIA_DEPS}/DirectXTex/DirectXTexD3D12.cpp"
 )
 target_include_directories(directxtex_vendor PUBLIC
-    "${EUNOIA_ROOT}/Engine/EngineAssets/Include"
+    "${EUNOIA_DEPS}/DirectXTex"
     "${EUNOIA_DEPS}/glm"
 )
 target_compile_features(directxtex_vendor PUBLIC cxx_std_20)
