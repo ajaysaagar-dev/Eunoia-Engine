@@ -17,7 +17,7 @@
      - Workflow: Once the engine is built via `Build.bat`, update `Eunoia-Editor.exe` and distribution files in this repository, commit with build details, and push to `origin/main`.
 - **GitHub Authentication**:
   - Remote Base: `https://github.com/ajaysaagar-dev/`
-  - Token: `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`
+  - Credentials are read from the environment/credential manager; never stored in the repo.
 
 ## 3. Strict Project Constraints
 - **Preserve Player Script**: Under NO circumstances modify `Projects/GameTest/Content/Behaviours/BS_Player.cpp`.
