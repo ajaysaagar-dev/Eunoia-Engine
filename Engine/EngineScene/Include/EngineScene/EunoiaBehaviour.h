@@ -15,6 +15,7 @@
 #include <SaveSystem/SaveSystem.h>
 #include <EngineScene/AnimationGraphModifier.h>
 #include <CharacterMechanics/CharacterMechanics.h>
+#include <EunoiaUI/EunoiaUI.h>
 
 // Forward declarations
 struct GameObject;
@@ -773,6 +774,9 @@ public:
     bool IsOrientationToMovementDirectionEnabled() const {
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(m_owner);
     }
+
+    // Unified Custom EunoiaUI Framework Accessor
+    EunoiaUI::EunoiaUIManager& UI() { return EunoiaUI::EunoiaUIManager::Get(); }
 
     // Direct Mouse Input Helpers (Docs/Behaviours/InputSystem.md)
     double GetMouseX(bool negate = false) const;

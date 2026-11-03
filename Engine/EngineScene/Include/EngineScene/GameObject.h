@@ -15,6 +15,7 @@
 #include <EngineScene/TerrainComponent.h>
 #include <EngineScene/AnimationGraphModifier.h>
 #include <EngineScene/LevelAnimationComponent.h>
+#include <EunoiaUI/EunoiaUI.h>
 
 // Wicked Engine Light System Alignment
 enum class LightType : uint32_t {
@@ -1449,6 +1450,9 @@ struct GameObject {
     bool IsOrientationToMovementDirectionEnabled() const {
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(const_cast<GameObject*>(this));
     }
+
+    // Unified Custom EunoiaUI Framework Accessor
+    EunoiaUI::EunoiaUIManager& UI() { return EunoiaUI::EunoiaUIManager::Get(); }
 
     void Update(float dt);
 
