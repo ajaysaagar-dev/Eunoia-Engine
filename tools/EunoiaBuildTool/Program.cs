@@ -757,6 +757,7 @@ Options:
                 Path.Combine(s_projectDir, "Plugins", "Level-Animation", "Include"),
                 Path.Combine(s_projectDir, "Plugins", "Character-Mechanics", "Include"),
                 Path.Combine(s_projectDir, "Editor", "Editor", "Include"),
+                Path.Combine(s_projectDir, "EunoiaUI-Framework", "Include"),
                 Path.Combine(s_projectDir, "deps", "tinyobj"),
                 Path.Combine(s_projectDir, "deps", "cgltf"),
                 Path.Combine(s_projectDir, "deps", "ufbx"),
@@ -848,6 +849,20 @@ Options:
                 Path.Combine(s_projectDir, "deps", "imgui", "backends", "imgui_impl_opengl3.cpp"),
                 Path.Combine(s_projectDir, "deps", "imgui", "ImGuizmo.cpp")
             };
+
+            // EunoiaUI-Framework Custom UI Files
+            string uiFrameworkDir = Path.Combine(s_projectDir, "EunoiaUI-Framework");
+            if (Directory.Exists(uiFrameworkDir))
+            {
+                string uiSource = Path.Combine(uiFrameworkDir, "Source");
+                if (Directory.Exists(uiSource))
+                {
+                    foreach (string f in Directory.GetFiles(uiSource, "*.cpp", SearchOption.AllDirectories))
+                    {
+                        if (!sourceFiles.Contains(f)) sourceFiles.Add(f);
+                    }
+                }
+            }
 
             sourceFiles.AddRange(s_projectScripts);
 
@@ -1250,6 +1265,24 @@ Options:
             };
 
             // Add project specific scripts
+            string uiFrameworkDirGame = Path.Combine(s_projectDir, "EunoiaUI-Framework");
+            if (Directory.Exists(uiFrameworkDirGame))
+            {
+                string uiInclude = Path.Combine(uiFrameworkDirGame, "Include");
+                if (Directory.Exists(uiInclude) && !includes.Contains(uiInclude))
+                {
+                    includes.Add(uiInclude);
+                }
+                string uiSource = Path.Combine(uiFrameworkDirGame, "Source");
+                if (Directory.Exists(uiSource))
+                {
+                    foreach (string f in Directory.GetFiles(uiSource, "*.cpp", SearchOption.AllDirectories))
+                    {
+                        if (!sources.Contains(f)) sources.Add(f);
+                    }
+                }
+            }
+
             string contentDir = Path.Combine(targetProj, "Content");
             if (Directory.Exists(contentDir))
             {

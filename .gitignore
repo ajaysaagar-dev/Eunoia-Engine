@@ -1,0 +1,8 @@
+# Eunoia-Engine gitignore
+/EunoiaUI-Framework/
+Build/
+bin/
+obj/
+*.res.o
+*.o
+*.a
