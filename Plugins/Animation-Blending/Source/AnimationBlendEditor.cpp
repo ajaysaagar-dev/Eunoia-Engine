@@ -66,13 +66,6 @@ void AnimationBlendEditor::Update(float deltaTime) {
         m_saveNotificationTimer -= deltaTime;
     }
 
-    if (m_isPlaying) {
-        m_previewNormalizedTime += deltaTime * m_playbackSpeed * 0.8f;
-        if (m_previewNormalizedTime >= 1.0f) {
-            m_previewNormalizedTime = std::fmod(m_previewNormalizedTime, 1.0f);
-        }
-    }
-
     if (!m_blend || !m_previewMesh || !m_previewMesh->valid || m_previewMesh->skeleton.bones.empty()) {
         return;
     }
@@ -82,6 +75,15 @@ void AnimationBlendEditor::Update(float deltaTime) {
     float stY = (m_blend->smoothTimeY > 0.0001f) ? m_blend->smoothTimeY : m_blend->smoothingTime;
     m_smoothedX = AnimationBlend::SmoothDamp(m_smoothedX, m_cursorX, deltaTime, stX);
     m_smoothedY = AnimationBlend::SmoothDamp(m_smoothedY, m_cursorY, deltaTime, stY);
+
+    if (m_isPlaying) {
+        float effectiveDuration = m_blend->GetBlendedDuration(m_smoothedX, m_smoothedY, m_loadedClips);
+        if (effectiveDuration <= 0.001f) effectiveDuration = 1.0f;
+        m_previewNormalizedTime += (deltaTime * m_playbackSpeed) / effectiveDuration;
+        if (m_previewNormalizedTime >= 1.0f) {
+            m_previewNormalizedTime = std::fmod(m_previewNormalizedTime, 1.0f);
+        }
+    }
 
     // Evaluate 2D blend space pose at smoothed coordinates
     std::vector<BoneTransform> blendedTransforms;

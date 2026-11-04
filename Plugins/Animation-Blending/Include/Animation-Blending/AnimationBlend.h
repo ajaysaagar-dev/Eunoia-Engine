@@ -134,6 +134,31 @@ public:
         return weights;
     }
 
+    // Calculates the effective blended duration in seconds at coordinates (x, y)
+    // taking into account each sample's clip duration and playback speed.
+    float GetBlendedDuration(float x, float y, const std::unordered_map<std::string, std::shared_ptr<AnimationClip>>& loadedClips) const {
+        if (samplePoints.empty()) return 1.0f;
+        std::vector<float> weights = CalculateWeights(x, y);
+        float blendedDur = 0.0f;
+        float totalW = 0.0f;
+        for (size_t i = 0; i < samplePoints.size(); ++i) {
+            if (weights[i] > 1e-4f) {
+                auto it = loadedClips.find(samplePoints[i].animationClipPath);
+                if (it != loadedClips.end() && it->second) {
+                    float clipDur = it->second->duration;
+                    float spd = std::max(0.01f, samplePoints[i].speed);
+                    float effectiveDur = clipDur / spd;
+                    blendedDur += effectiveDur * weights[i];
+                    totalW += weights[i];
+                }
+            }
+        }
+        if (totalW > 1e-4f) {
+            return std::max(0.01f, blendedDur / totalW);
+        }
+        return 1.0f;
+    }
+
     // Evaluates the blended pose at coordinates (x, y) and phase normalizedTime [0..1]
     void EvaluatePose(float x, float y, float normalizedTime, const Skeleton& skeleton,
                       const std::unordered_map<std::string, std::shared_ptr<AnimationClip>>& loadedClips,

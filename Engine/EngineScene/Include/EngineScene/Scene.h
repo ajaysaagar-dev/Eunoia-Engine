@@ -2926,7 +2926,10 @@ inline void Eunoia::AnimationGraphModifier::Update(float dt, ::GameObject* owner
                     coordIt->second.y = AnimationBlend::SmoothDamp(coordIt->second.y, targetY, dt, stY);
                 }
 
-                float normTime = std::fmod(timeInState, 1.0f);
+                float blendDur = blend->GetBlendedDuration(coordIt->second.x, coordIt->second.y, loadedClips);
+                if (blendDur <= 0.001f) blendDur = 1.0f;
+                float normTime = std::fmod(timeInState / blendDur, 1.0f);
+                if (normTime < 0.0f) normTime += 1.0f;
                 blend->EvaluatePose(coordIt->second.x, coordIt->second.y, normTime, skeleton, loadedClips, outPose);
                 if (state->rootMotion || blend->rootMotion) {
                     ApplyRootMotionInPlace(outPose, skeleton);
