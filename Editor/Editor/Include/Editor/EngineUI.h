@@ -687,6 +687,22 @@ public:
     void SetupProjectDependencies(const std::filesystem::path& projectRoot);
     void OpenScriptInCodeEditor(const std::string& path);
     void RenderCodeEditor();
+
+    // Documentation Viewer Window (Docs button in Top Menu next to Build)
+    bool showDocsWindow = false;
+    std::string activeDocPath = "";
+    std::string activeDocFilename = "";
+    std::string activeDocContent = "";
+    char docSearchFilter[128] = "";
+    int docScrollToHeaderIndex = -1;
+    void OpenDocViewer(const std::string& path);
+    void RenderDocsViewerWindow();
+    void RenderMarkdownContent(const std::string& content, const std::string& searchFilter);
+
+    // Code Editor Suggestions & Intelligence Support
+    bool showApiIntelligence = true;
+    char apiFilterBuffer[128] = "";
+    void RenderApiIntelligencePanel(std::string& codeContent, bool& dirty);
     void RenderBehavioursSection(Scene& scene, GameObject* obj);
     void EnterPlayMode(Scene& scene, OrbitCamera* camera = nullptr);
     void ExitPlayMode(Scene& scene, OrbitCamera* camera = nullptr);

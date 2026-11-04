@@ -1,4 +1,4 @@
-﻿#include <Editor/EngineUI.h>
+#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
@@ -4060,6 +4060,11 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
         RenderCodeEditor();
     }
 
+    // 9b. Documentation Viewer Window (Docs Top Menu)
+    if (showDocsWindow) {
+        RenderDocsViewerWindow();
+    }
+
     // 10. Behaviour Script Change & Compilation Prompt (User Request: ask as compile or later)
     RenderScriptCompileModal(scene);
 
@@ -5037,6 +5042,43 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     std::filesystem::path projectBase = activeProjectRoot.empty() ? contentRootPath.parent_path() : activeProjectRoot;
                     std::filesystem::path gameBuildDir = projectBase / "Build";
                     ShellExecuteA(NULL, "open", gameBuildDir.string().c_str(), NULL, NULL, SW_SHOW);
+                }
+                ImGui::EndMenu();
+            }
+
+            // Top-level Docs Menu (User Request: next to Build as Docs)
+            if (ImGui::BeginMenu("Docs")) {
+                std::filesystem::path docsDir = "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine\\Docs";
+                if (!std::filesystem::exists(docsDir)) {
+                    docsDir = std::filesystem::current_path() / "Docs";
+                }
+
+                if (std::filesystem::exists(docsDir) && std::filesystem::is_directory(docsDir)) {
+                    std::vector<std::filesystem::directory_entry> mdFiles;
+                    for (const auto& entry : std::filesystem::directory_iterator(docsDir)) {
+                        if (entry.is_regular_file() && entry.path().extension() == ".md") {
+                            mdFiles.push_back(entry);
+                        }
+                    }
+                    std::sort(mdFiles.begin(), mdFiles.end(), [](const auto& a, const auto& b) {
+                        return a.path().filename().string() < b.path().filename().string();
+                    });
+
+                    for (const auto& entry : mdFiles) {
+                        std::string fname = entry.path().filename().string();
+                        std::string label = fname;
+                        if (fname == "Behaviuor.md") label = fname + "  [API Reference]";
+                        if (ImGui::MenuItem(label.c_str())) {
+                            OpenDocViewer(entry.path().string());
+                        }
+                    }
+                } else {
+                    ImGui::TextDisabled("No Docs folder found");
+                }
+
+                ImGui::Separator();
+                if (ImGui::MenuItem("Open Docs Folder in Explorer")) {
+                    ShellExecuteA(NULL, "open", docsDir.string().c_str(), NULL, NULL, SW_SHOW);
                 }
                 ImGui::EndMenu();
             }
@@ -8828,8 +8870,8 @@ void EngineUI::OpenScriptInCodeEditor(const std::string& path) {
 void EngineUI::RenderCodeEditor() {
     if (!showCodeEditor) return;
 
-    std::string title = "Code Editor ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
-    ImGui::SetNextWindowSize(ImVec2(740, 540), ImGuiCond_FirstUseEver);
+    std::string title = "Code Editor â€” " + activeCodeEditorFilename + (codeEditorDirty ? "*" : "") + "###CodeEditorWin";
+    ImGui::SetNextWindowSize(ImVec2(1000, 640), ImGuiCond_FirstUseEver);
     if (ImGui::Begin(title.c_str(), &showCodeEditor, ImGuiWindowFlags_MenuBar)) {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::MenuItem("Save File", "Ctrl+S")) {
@@ -8844,8 +8886,11 @@ void EngineUI::RenderCodeEditor() {
                 LaunchVSCodeWorkspace(activeCodeEditorPath);
                 AddLog("LogContent", "Launched VS Code workspace for: " + activeCodeEditorFilename, 0);
             }
-            if (ImGui::MenuItem("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Compile Script", "F7", false, !isCompilingScripts)) {
+            if (ImGui::MenuItem("âš¡ Compile Script", "F7", false, !isCompilingScripts)) {
                 TriggerCompileScripts(nullptr);
+            }
+            if (ImGui::MenuItem(showApiIntelligence ? "Hide API Intelligence" : "Show API Intelligence")) {
+                showApiIntelligence = !showApiIntelligence;
             }
             ImGui::EndMenuBar();
         }
@@ -8866,12 +8911,16 @@ void EngineUI::RenderCodeEditor() {
         }
         ImGui::SameLine();
         if (isCompilingScripts) {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "ÃƒÂ¢Ã‚ÂÃ‚Â³ Compiling...");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.2f, 1.0f), "â³ Compiling...");
         } else {
-            if (ImGui::Button("ÃƒÂ¢Ã…Â¡Ã‚Â¡ Compile")) {
+            if (ImGui::Button("âš¡ Compile")) {
                 TriggerCompileScripts(nullptr);
             }
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Compile this behaviour script and rebuild standalone game");
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(showApiIntelligence ? "Hide API Panel" : "ðŸ’¡ API Suggestions & Intelligence")) {
+            showApiIntelligence = !showApiIntelligence;
         }
         ImGui::SameLine();
         ImGui::TextDisabled("| %s", activeCodeEditorPath.c_str());
@@ -8886,10 +8935,23 @@ void EngineUI::RenderCodeEditor() {
         }
 
         ImVec2 avail = ImGui::GetContentRegionAvail();
-        if (ImGui::InputTextMultiline("##CodeEditorText", buffer.data(), buffer.size(), avail,
+        float editorWidth = showApiIntelligence ? (avail.x - 320.0f) : avail.x;
+        if (editorWidth < 300.0f) editorWidth = 300.0f;
+
+        // Code Editor text area
+        ImGui::BeginChild("CodeEditorTextPane", ImVec2(editorWidth, avail.y), false);
+        if (ImGui::InputTextMultiline("##CodeEditorText", buffer.data(), buffer.size(), ImVec2(-1, -1),
             ImGuiInputTextFlags_AllowTabInput)) {
             activeCodeEditorContent = buffer.data();
             codeEditorDirty = true;
+        }
+        ImGui::EndChild();
+
+        if (showApiIntelligence) {
+            ImGui::SameLine();
+            ImGui::BeginChild("CodeEditorApiPane", ImVec2(0, avail.y), true);
+            RenderApiIntelligencePanel(activeCodeEditorContent, codeEditorDirty);
+            ImGui::EndChild();
         }
 
         // Ctrl+S hotkey
@@ -8907,11 +8969,444 @@ void EngineUI::RenderCodeEditor() {
 }
 
 // ============================================================================
+// API Suggestions & Intelligence Panel (Docs/Behaviuor.md)
+// ============================================================================
+
+struct ApiSnippet {
+    std::string category;
+    std::string name;
+    std::string description;
+    std::string code;
+};
+
+void EngineUI::RenderApiIntelligencePanel(std::string& codeContent, bool& dirty) {
+    ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "ðŸ’¡ API INTELLIGENCE");
+    ImGui::TextDisabled("Click [Insert] to insert snippet into code");
+    ImGui::Separator();
+
+    ImGui::SetNextItemWidth(-1.0f);
+    ImGui::InputTextWithHint("##ApiFilter", "Filter APIs...", apiFilterBuffer, sizeof(apiFilterBuffer));
+    std::string filter = apiFilterBuffer;
+    std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
+
+    static const std::vector<ApiSnippet> s_snippets = {
+        // Lifecycle
+        { "Lifecycle", "Start()", "Initialisation hook called once before first Update", "void Start() override {\n    // Initialize\n}\n" },
+        { "Lifecycle", "Update(dt)", "Frame tick logic", "void Update(float dt) override {\n    // Per-frame logic\n}\n" },
+        { "Lifecycle", "FixedUpdate(fixedDt)", "Physics timestep logic", "void FixedUpdate(float fixedDt) override {\n    // Physics logic\n}\n" },
+        { "Lifecycle", "OnTriggerEnter(other)", "Overlap trigger callback", "void OnTriggerEnter(GameObject* other) override {\n    if (other && other->HasTag(\"Player\")) {\n        // Handle trigger\n    }\n}\n" },
+        { "Lifecycle", "OnCollisionEnter(hit)", "Rigid collision callback", "void OnCollisionEnter(const CollisionInfo& hit) override {\n    // Handle collision\n}\n" },
+
+        // Transform
+        { "Transform", "WorldRotation(x, y, z)", "Sets world Euler rotation in degrees", "Transform.WorldRotation(0.0f, 90.0f, 0.0f);\n" },
+        { "Transform", "WorldLocation(x, y, z)", "Sets world coordinates", "Transform.WorldLocation(0.0f, 1.0f, 0.0f);\n" },
+        { "Transform", "LookAt(targetPos)", "Faces target position", "Transform.LookAt(targetPos);\n" },
+        { "Transform", "RotateTowards(rot, speed)", "Smoothly turns towards target rotation", "Transform.RotateTowards(targetRot, 720.0f * DeltaTime());\n" },
+        { "Transform", "MoveForward(dist)", "Moves in local facing direction", "Transform.MoveForward(speed * DeltaTime());\n" },
+        { "Transform", "DistanceTo(other)", "Computes distance to object", "float dist = Transform.DistanceTo(otherObject);\n" },
+        { "Transform", "TransformPoint(localPt)", "Converts local point to world space", "glm::vec3 worldPt = Transform.TransformPoint(localOffset);\n" },
+
+        // Locomotion (Char::)
+        { "Locomotion", "Char::Jump()", "Initiates jump using jumpHeight", "Char::Jump();\n" },
+        { "Locomotion", "Char::SetJumpHeight(h)", "Sets jump height in meters", "Char::SetJumpHeight(1.2f);\n" },
+        { "Locomotion", "Char::SetMaxWalkSpeed(s)", "Sets maximum walk speed", "Char::SetMaxWalkSpeed(6.0f);\n" },
+        { "Locomotion", "Char::SetOrientationToMovementDirection(true)", "Orient body to movement direction", "Char::SetOrientationToMovementDirection(true);\n" },
+        { "Locomotion", "Char::AddMovementInput(dir, scale)", "Applies movement in world direction", "Char::AddMovementInput(moveDir, 1.0f);\n" },
+        { "Locomotion", "Char::IsGrounded()", "Queries ground contact state", "if (Char::IsGrounded()) {\n    // On ground\n}\n" },
+        { "Locomotion", "Char::GetSpeed()", "Returns current character speed magnitude", "float speed = Char::GetSpeed();\n" },
+
+        // Animation Graph
+        { "Animation", "ParamId definition", "Cached compile-time parameter hash", "static inline const ParamId kSpeed = ParamId(\"Speed\");\n" },
+        { "Animation", "AnimGraph->SetFloat(id, v)", "Sets animation float parameter", "m_anim->SetFloat(kSpeed, Char::GetSpeed());\n" },
+        { "Animation", "AnimGraph->SetBool(id, v)", "Sets animation boolean parameter", "m_anim->SetBool(kIsFalling, Char::IsFalling());\n" },
+        { "Animation", "AnimGraph->CrossFade(state, dur)", "Crossfades to target animation state", "m_anim->CrossFade(\"Run\", 0.15f);\n" },
+
+        // Input System
+        { "Input", "BindAction(name, lambda)", "Binds input action callback", "InputSystem::Get().BindAction(\"Jump\", [this] { Char::Jump(); });\n" },
+        { "Input", "GetAxis(\"Vertical\")", "Reads 1D axis input (WASD / Stick)", "float v = InputSystem::Get().GetAxis(\"Vertical\");\n" },
+        { "Input", "GetAxis(\"Horizontal\")", "Reads horizontal axis input", "float h = InputSystem::Get().GetAxis(\"Horizontal\");\n" },
+        { "Input", "SetCursorLocked(bool)", "Locks / captures mouse cursor", "InputSystem::Get().SetCursorLocked(true);\n" },
+
+        // Events
+        { "Events", "Events::Subscribe<T>()", "Subscribes to typed event", "Events::Subscribe<DamageEvent>(this, [this](const DamageEvent& e) {\n    // Handle damage\n});\n" },
+        { "Events", "Events::Publish(event)", "Publishes typed message to subscribers", "Events::Publish(DamageEvent{ target, 25.0f, GetOwner() });\n" },
+
+        // Math & Random
+        { "Math", "Math::Clamp(v, lo, hi)", "Clamps value to range", "float clamped = Math::Clamp(val, 0.0f, 100.0f);\n" },
+        { "Math", "Math::Lerp(a, b, t)", "Linear interpolation", "float interpolated = Math::Lerp(a, b, t);\n" },
+        { "Math", "Math::SmoothDamp(cur, tgt, vel, time)", "Smooth critical damping spring", "float val = Math::SmoothDamp(current, target, m_vel, 0.15f);\n" },
+        { "Math", "Random::Range(min, max)", "Generates random float/int", "float rnd = Random::Range(0.0f, 10.0f);\n" },
+        { "Math", "Random::InsideUnitSphere()", "Random 3D point inside sphere", "glm::vec3 offset = Random::InsideUnitSphere() * radius;\n" },
+
+        // Debug Draw
+        { "Debug", "Debug::DrawArrow(from, dir, color)", "Draws debug direction arrow in world", "Debug::DrawArrow(Transform.WorldLocation(), dir, Color::Green);\n" },
+        { "Debug", "Debug::DrawSphere(center, r, color)", "Draws debug sphere", "Debug::DrawSphere(Transform.WorldLocation(), 1.0f, Color::Yellow);\n" },
+        { "Debug", "Debug::DrawLine(a, b, color, time)", "Draws timed debug line", "Debug::DrawLine(start, end, Color::Red, 2.0f);\n" },
+
+        // Reflection
+        { "Reflection", "EUNOIA_PROPERTY()", "Details panel reflected property", "EUNOIA_PROPERTY(float, MoveSpeed, 6.0f, Range(0.0f, 20.0f));\n" },
+        { "Reflection", "EUNOIA_REGISTER_BEHAVIOUR()", "Registers script class with engine", "EUNOIA_REGISTER_BEHAVIOUR(MyBehaviour);\n" }
+    };
+
+    std::string currentCat = "";
+    for (size_t i = 0; i < s_snippets.size(); ++i) {
+        const auto& snip = s_snippets[i];
+        if (!filter.empty()) {
+            std::string matchStr = snip.name + " " + snip.description + " " + snip.category;
+            std::transform(matchStr.begin(), matchStr.end(), matchStr.begin(), ::tolower);
+            if (matchStr.find(filter) == std::string::npos) continue;
+        }
+
+        if (snip.category != currentCat) {
+            currentCat = snip.category;
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "â— %s", currentCat.c_str());
+            ImGui::Separator();
+        }
+
+        ImGui::PushID((int)i);
+        if (ImGui::Button("Insert")) {
+            codeContent += "\n" + snip.code;
+            dirty = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Copy")) {
+            ImGui::SetClipboardText(snip.code.c_str());
+        }
+        ImGui::SameLine();
+        ImGui::TextColored(ImVec4(0.9f, 0.9f, 0.9f, 1.0f), "%s", snip.name.c_str());
+        ImGui::TextDisabled("  %s", snip.description.c_str());
+        ImGui::PopID();
+    }
+}
+
+// ============================================================================
+// Documentation Viewer Window (Docs button in Top Menu next to Build)
+// ============================================================================
+
+void EngineUI::OpenDocViewer(const std::string& path) {
+    activeDocPath = path;
+    activeDocFilename = std::filesystem::path(path).filename().string();
+    activeDocContent = "";
+    std::ifstream file(path);
+    if (file.is_open()) {
+        std::stringstream ss;
+        ss << file.rdbuf();
+        activeDocContent = ss.str();
+    }
+    showDocsWindow = true;
+    docScrollToHeaderIndex = -1;
+    memset(docSearchFilter, 0, sizeof(docSearchFilter));
+    AddLog("LogHelp", "Opened Documentation: " + activeDocFilename, 0);
+}
+
+void EngineUI::RenderDocsViewerWindow() {
+    if (!showDocsWindow) return;
+
+    std::string title = "Documentation Viewer â€” " + activeDocFilename + "###DocsViewerWin";
+    ImGui::SetNextWindowSize(ImVec2(1050, 750), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin(title.c_str(), &showDocsWindow, ImGuiWindowFlags_MenuBar)) {
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::MenuItem("Reload Document")) {
+                OpenDocViewer(activeDocPath);
+            }
+            if (ImGui::MenuItem("Open in System Editor")) {
+                ShellExecuteA(NULL, "open", activeDocPath.c_str(), NULL, NULL, SW_SHOW);
+            }
+            if (ImGui::MenuItem("Copy Entire Markdown")) {
+                ImGui::SetClipboardText(activeDocContent.c_str());
+                AddLog("LogHelp", "Copied markdown to clipboard: " + activeDocFilename, 2);
+            }
+            ImGui::EndMenuBar();
+        }
+
+        // Top Toolbar
+        ImGui::SetNextItemWidth(320.0f);
+        ImGui::InputTextWithHint("##DocSearch", "Search in document...", docSearchFilter, sizeof(docSearchFilter));
+        ImGui::SameLine();
+        if (ImGui::Button("Clear")) {
+            memset(docSearchFilter, 0, sizeof(docSearchFilter));
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Reload")) {
+            OpenDocViewer(activeDocPath);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("| %s (%.1f KB)", activeDocPath.c_str(), (float)activeDocContent.size() / 1024.0f);
+
+        ImGui::Separator();
+
+        // 2-Pane Split: Left = Outline / TOC, Right = Rendered Markdown
+        float outlineWidth = 260.0f;
+        ImVec2 contentAvail = ImGui::GetContentRegionAvail();
+
+        // Left Pane: Table of Contents
+        ImGui::BeginChild("DocOutlinePane", ImVec2(outlineWidth, contentAvail.y), true);
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "ðŸ“‘ OUTLINE & SECTIONS");
+        ImGui::Separator();
+
+        // Scan headings
+        std::istringstream stream(activeDocContent);
+        std::string line;
+        int headingIdx = 0;
+        std::vector<std::pair<int, std::string>> headings;
+        while (std::getline(stream, line)) {
+            if (line.rfind("### ", 0) == 0) {
+                headings.push_back({ 3, line.substr(4) });
+            } else if (line.rfind("## ", 0) == 0) {
+                headings.push_back({ 2, line.substr(3) });
+            } else if (line.rfind("# ", 0) == 0) {
+                headings.push_back({ 1, line.substr(2) });
+            }
+        }
+
+        for (size_t i = 0; i < headings.size(); ++i) {
+            const auto& h = headings[i];
+            ImGui::PushID((int)i);
+            if (h.first == 1) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.5f, 1.0f), "%s", h.second.c_str());
+            } else if (h.first == 2) {
+                if (ImGui::Selectable(h.second.c_str(), false)) {
+                    docScrollToHeaderIndex = (int)i;
+                }
+            } else {
+                ImGui::Indent(12.0f);
+                if (ImGui::Selectable(h.second.c_str(), false)) {
+                    docScrollToHeaderIndex = (int)i;
+                }
+                ImGui::Unindent(12.0f);
+            }
+            ImGui::PopID();
+        }
+        ImGui::EndChild();
+
+        ImGui::SameLine();
+
+        // Right Pane: Rendered Content
+        ImGui::BeginChild("DocRenderedContent", ImVec2(0, contentAvail.y), true);
+        RenderMarkdownContent(activeDocContent, docSearchFilter);
+        ImGui::EndChild();
+    }
+    ImGui::End();
+}
+
+void EngineUI::RenderMarkdownContent(const std::string& content, const std::string& searchFilter) {
+    std::string filter = searchFilter;
+    std::transform(filter.begin(), filter.end(), filter.begin(), ::tolower);
+
+    std::istringstream stream(content);
+    std::string line;
+    bool inCodeBlock = false;
+    std::string codeBlockContent;
+    std::string codeBlockLang;
+    int currentHeadingIndex = 0;
+
+    // Helper for table accumulation
+    std::vector<std::vector<std::string>> tableRows;
+    auto FlushTable = [&]() {
+        if (tableRows.empty()) return;
+        size_t cols = 0;
+        for (const auto& r : tableRows) cols = std::max(cols, r.size());
+        if (cols > 0) {
+            static int s_tableId = 0;
+            std::string tid = "##md_table_" + std::to_string(++s_tableId);
+            if (ImGui::BeginTable(tid.c_str(), (int)cols, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
+                // First row as headers
+                for (size_t c = 0; c < cols; ++c) {
+                    std::string headerName = (c < tableRows[0].size()) ? tableRows[0][c] : "";
+                    ImGui::TableSetupColumn(headerName.c_str());
+                }
+                ImGui::TableHeadersRow();
+
+                for (size_t r = 1; r < tableRows.size(); ++r) {
+                    ImGui::TableNextRow();
+                    for (size_t c = 0; c < cols; ++c) {
+                        ImGui::TableNextColumn();
+                        if (c < tableRows[r].size()) {
+                            const std::string& cell = tableRows[r][c];
+                            if (cell.find("âœ…") != std::string::npos) {
+                                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%s", cell.c_str());
+                            } else if (cell.find("âš ï¸") != std::string::npos) {
+                                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", cell.c_str());
+                            } else if (cell.find("ðŸ†•") != std::string::npos) {
+                                ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "%s", cell.c_str());
+                            } else if (cell.find("ðŸ—‘ï¸") != std::string::npos) {
+                                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%s", cell.c_str());
+                            } else {
+                                ImGui::TextUnformatted(cell.c_str());
+                            }
+                        }
+                    }
+                }
+                ImGui::EndTable();
+            }
+        }
+        tableRows.clear();
+    };
+
+    while (std::getline(stream, line)) {
+        // Strip trailing \r
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+
+        // Code block toggle
+        if (line.rfind("```", 0) == 0) {
+            FlushTable();
+            if (inCodeBlock) {
+                // End code block
+                inCodeBlock = false;
+                ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.08f, 0.09f, 0.11f, 1.0f));
+                ImGui::PushStyleVar(ImGuiStyleVar_ChildRounding, 4.0f);
+                ImGui::BeginChild(("##code_" + std::to_string(currentHeadingIndex)).c_str(), ImVec2(-1, 0), ImGuiChildFlags_AutoResizeY | ImGuiChildFlags_Borders);
+                
+                // Code block toolbar
+                ImGui::TextColored(ImVec4(0.0f, 0.7f, 1.0f, 1.0f), "%s", codeBlockLang.empty() ? "CODE" : codeBlockLang.c_str());
+                ImGui::SameLine(ImGui::GetContentRegionAvail().x - 75.0f);
+                if (ImGui::SmallButton("Copy Code")) {
+                    ImGui::SetClipboardText(codeBlockContent.c_str());
+                }
+
+                ImGui::Separator();
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.85f, 0.9f, 0.85f, 1.0f));
+                ImGui::TextUnformatted(codeBlockContent.c_str());
+                ImGui::PopStyleColor();
+
+                ImGui::EndChild();
+                ImGui::PopStyleVar();
+                ImGui::PopStyleColor();
+                ImGui::Spacing();
+                codeBlockContent.clear();
+            } else {
+                inCodeBlock = true;
+                codeBlockLang = line.substr(3);
+                codeBlockContent.clear();
+            }
+            continue;
+        }
+
+        if (inCodeBlock) {
+            codeBlockContent += line + "\n";
+            continue;
+        }
+
+        // Table lines
+        if (line.find('|') != std::string::npos && line.front() == '|' && line.back() == '|') {
+            // Check if divider line like |---|---|
+            if (line.find("---") != std::string::npos) {
+                continue; // Skip divider row
+            }
+            std::vector<std::string> cells;
+            std::stringstream ss(line);
+            std::string segment;
+            while (std::getline(ss, segment, '|')) {
+                // Trim leading & trailing whitespace
+                size_t start = segment.find_first_not_of(" \t");
+                size_t end = segment.find_last_not_of(" \t");
+                if (start != std::string::npos && end != std::string::npos) {
+                    cells.push_back(segment.substr(start, end - start + 1));
+                }
+            }
+            if (!cells.empty()) {
+                tableRows.push_back(cells);
+            }
+            continue;
+        } else {
+            FlushTable();
+        }
+
+        // Search filter matching
+        if (!filter.empty()) {
+            std::string lowerLine = line;
+            std::transform(lowerLine.begin(), lowerLine.end(), lowerLine.begin(), ::tolower);
+            if (lowerLine.find(filter) == std::string::npos && line.rfind("#", 0) != 0) {
+                continue;
+            }
+        }
+
+        // Headings
+        if (line.rfind("# ", 0) == 0) {
+            if (currentHeadingIndex == docScrollToHeaderIndex) {
+                ImGui::SetScrollHereY(0.0f);
+                docScrollToHeaderIndex = -1;
+            }
+            currentHeadingIndex++;
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.5f, 1.0f), "%s", line.substr(2).c_str());
+            ImGui::Separator();
+            continue;
+        } else if (line.rfind("## ", 0) == 0) {
+            if (currentHeadingIndex == docScrollToHeaderIndex) {
+                ImGui::SetScrollHereY(0.0f);
+                docScrollToHeaderIndex = -1;
+            }
+            currentHeadingIndex++;
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(0.35f, 0.7f, 1.0f, 1.0f), "%s", line.substr(3).c_str());
+            ImGui::Separator();
+            continue;
+        } else if (line.rfind("### ", 0) == 0) {
+            if (currentHeadingIndex == docScrollToHeaderIndex) {
+                ImGui::SetScrollHereY(0.0f);
+                docScrollToHeaderIndex = -1;
+            }
+            currentHeadingIndex++;
+            ImGui::Spacing();
+            ImGui::TextColored(ImVec4(1.0f, 0.82f, 0.35f, 1.0f), "%s", line.substr(4).c_str());
+            continue;
+        }
+
+        // Blockquotes
+        if (line.rfind("> ", 0) == 0) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.72f, 0.75f, 1.0f));
+            ImGui::Bullet();
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", line.substr(2).c_str());
+            ImGui::PopStyleColor();
+            continue;
+        }
+
+        // Horizontal separator
+        if (line == "---" || line == "***" || line == "___") {
+            ImGui::Separator();
+            continue;
+        }
+
+        // Bullet lists
+        if (line.rfind("- ", 0) == 0 || line.rfind("* ", 0) == 0) {
+            ImGui::Bullet();
+            ImGui::SameLine();
+            ImGui::TextWrapped("%s", line.substr(2).c_str());
+            continue;
+        }
+
+        // Normal paragraph text
+        if (!line.empty()) {
+            if (line.find("âœ…") != std::string::npos) {
+                ImGui::TextColored(ImVec4(0.2f, 0.9f, 0.4f, 1.0f), "%s", line.c_str());
+            } else if (line.find("âš ï¸") != std::string::npos) {
+                ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.2f, 1.0f), "%s", line.c_str());
+            } else if (line.find("ðŸ†•") != std::string::npos) {
+                ImGui::TextColored(ImVec4(0.2f, 0.8f, 1.0f, 1.0f), "%s", line.c_str());
+            } else if (line.find("ðŸ—‘ï¸") != std::string::npos) {
+                ImGui::TextColored(ImVec4(0.9f, 0.3f, 0.3f, 1.0f), "%s", line.c_str());
+            } else {
+                ImGui::TextWrapped("%s", line.c_str());
+            }
+        } else {
+            ImGui::Spacing();
+        }
+    }
+
+    FlushTable();
+}
+
+// ============================================================================
 // Details Panel Behaviours Section (dev.md Section 6, 7, 8, 9, 10, 11, 12, 13)
 // ============================================================================
 
 // RenderBehavioursSection moved to Panels/DetailsPanel.cpp
 // ProjectBrowserPanel implementation moved to Panels/ProjectBrowserPanel.cpp
+
 void EngineUI::RenderGameBuildModal(Scene& scene) {
     if (!showGameBuildModal) return;
 

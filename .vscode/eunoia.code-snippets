@@ -1,0 +1,96 @@
+{
+    "Eunoia Behaviour Class": {
+        "prefix": "eunoia_behaviour",
+        "body": [
+            "#include <EngineScene/EunoiaBehaviour.h>",
+            "",
+            "using Char = EngineSystem::CharacterMechanics;",
+            "",
+            "class ${1:PlayerBehaviour} : public EunoiaBehaviour",
+            "{",
+            "public:",
+            "    EUNOIA_PROPERTY(float, MoveSpeed, 6.0f, Range(0.0f, 20.0f));",
+            "    EUNOIA_PROPERTY(float, JumpHeight, 1.2f, Range(0.1f, 5.0f));",
+            "",
+            "    void Start() override",
+            "    {",
+            "        ${0:// Initialize cache and systems}",
+            "    }",
+            "",
+            "    void Update(float dt) override",
+            "    {",
+            "        // Frame logic",
+            "    }",
+            "};",
+            "",
+            "EUNOIA_REGISTER_BEHAVIOUR(${1:PlayerBehaviour});"
+        ],
+        "description": "Standard EunoiaBehaviour class template"
+    },
+    "Eunoia Property": {
+        "prefix": "eunoia_property",
+        "body": [
+            "EUNOIA_PROPERTY(${1:float}, ${2:PropertyName}, ${3:1.0f});"
+        ],
+        "description": "Declares an editor-exposed reflected property"
+    },
+    "Eunoia Transform LookAt": {
+        "prefix": "transform_lookat",
+        "body": [
+            "Transform.LookAt(${1:targetPosition});"
+        ],
+        "description": "Orients the transform facing direction towards target position"
+    },
+    "Eunoia Transform MoveForward": {
+        "prefix": "transform_moveforward",
+        "body": [
+            "Transform.MoveForward(${1:speed} * DeltaTime());"
+        ],
+        "description": "Moves object in its current facing forward direction"
+    },
+    "Eunoia Character Jump": {
+        "prefix": "char_jump",
+        "body": [
+            "Char::Jump();"
+        ],
+        "description": "Commands character mechanics to jump"
+    },
+    "Eunoia Character AddMovementInput": {
+        "prefix": "char_movement",
+        "body": [
+            "glm::vec3 moveDir = Transform.GetForwardVector().GetValue() * input.GetAxis(\"Vertical\") + Transform.GetRightVector().GetValue() * input.GetAxis(\"Horizontal\");",
+            "Char::AddMovementInput(moveDir, 1.0f);"
+        ],
+        "description": "Applies world direction movement to character mechanics"
+    },
+    "Eunoia Animation ParamId": {
+        "prefix": "param_id",
+        "body": [
+            "static inline const ParamId k${1:ParamName} = ParamId(\"${1:ParamName}\");"
+        ],
+        "description": "Declares a compile-time hashed animation graph parameter ID"
+    },
+    "Eunoia Events Subscribe": {
+        "prefix": "events_subscribe",
+        "body": [
+            "Events::Subscribe<${1:DamageEvent}>(this, [this](const ${1:DamageEvent}& e) {",
+            "    ${0}",
+            "});"
+        ],
+        "description": "Subscribes behaviour to a typed message bus event"
+    },
+    "Eunoia Debug Draw Arrow": {
+        "prefix": "debug_draw_arrow",
+        "body": [
+            "Debug::DrawArrow(Transform.WorldLocation(), ${1:direction}, Color::${2:Green});"
+        ],
+        "description": "Draws a 3D debug arrow in world space"
+    },
+    "Eunoia Math Clamp": {
+        "prefix": "math_clamp",
+        "body": [
+            "Math::Clamp(${1:value}, ${2:min}, ${3:max})"
+        ],
+        "description": "Clamps a value within specified bounds"
+    }
+}
