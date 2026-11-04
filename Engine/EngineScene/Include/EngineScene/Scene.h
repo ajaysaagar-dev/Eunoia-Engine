@@ -261,6 +261,7 @@ public:
     bool dither = false;                    // 8-bit screen-space triangular noise dithering
     bool bloom = false;                     // HDR pyramid bloom
     float bloomStrength = 1.0f;             // Bloom threshold / intensity (0.0 to 10.0)
+    float bloomThreshold = 1.0f;            // Bloom luminance cutoff threshold (0.0 to 10.0, WickedEngine default 1.0 / 3.0)
     bool lightShafts = false;               // Directional sun light shafts (god rays)
     float lightShaftsStrength = 0.05f;      // Light shaft intensity (0.0 to 1.0)
     float lightShaftsFadeSpeed = 3.0f;      // Sun edge fade speed (0.1 to 10.0)
@@ -1755,6 +1756,7 @@ public:
         dither = false;
         bloom = false;
         bloomStrength = 1.0f;
+        bloomThreshold = 1.0f;
         lightShafts = false;
         lightShaftsStrength = 0.05f;
         lightShaftsFadeSpeed = 3.0f;

@@ -251,6 +251,7 @@ public:
         file << "      \"dither\": " << BoolStr(scene.dither) << ",\n";
         file << "      \"bloom\": " << BoolStr(scene.bloom) << ",\n";
         file << "      \"bloomStrength\": " << scene.bloomStrength << ",\n";
+        file << "      \"bloomThreshold\": " << scene.bloomThreshold << ",\n";
         file << "      \"lightShafts\": " << BoolStr(scene.lightShafts) << ",\n";
         file << "      \"lightShaftsStrength\": " << scene.lightShaftsStrength << ",\n";
         file << "      \"lightShaftsFadeSpeed\": " << scene.lightShaftsFadeSpeed << ",\n";
@@ -1469,6 +1470,7 @@ public:
             p = gBlock.find("\"dither\""); if (p != std::string::npos) scene.dither = ParseBoolAt(gBlock, p, false);
             p = gBlock.find("\"bloom\""); if (p != std::string::npos) scene.bloom = ParseBoolAt(gBlock, p, false);
             p = gBlock.find("\"bloomStrength\""); if (p != std::string::npos) scene.bloomStrength = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"bloomThreshold\""); if (p != std::string::npos) scene.bloomThreshold = ParseFloatAt(gBlock, p, 1.0f);
             p = gBlock.find("\"lightShafts\""); if (p != std::string::npos) scene.lightShafts = ParseBoolAt(gBlock, p, false);
             p = gBlock.find("\"lightShaftsStrength\""); if (p != std::string::npos) scene.lightShaftsStrength = ParseFloatAt(gBlock, p, 0.05f);
             p = gBlock.find("\"lightShaftsFadeSpeed\""); if (p != std::string::npos) scene.lightShaftsFadeSpeed = ParseFloatAt(gBlock, p, 3.0f);
