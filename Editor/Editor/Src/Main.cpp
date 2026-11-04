@@ -354,6 +354,7 @@ static UINT64 g_globalFenceValue = 0;
 static ID3D12RootSignature* g_rootSignature = nullptr;
 static ID3D12PipelineState* g_pipelineState = nullptr;
 static ID3D12PipelineState* g_pipelineStateTwoSided = nullptr;
+static ID3D12PipelineState* g_pipelineStateWireframe = nullptr;
 static ID3D12PipelineState* g_depthPrepassPipelineState = nullptr;
 static ID3D12PipelineState* g_depthPrepassTwoSidedPipelineState = nullptr;
 
@@ -3576,7 +3577,7 @@ int createShadersAndPipeline()
 			float4 albedoSample = float4(baseColor, 1.0f);
 			if (hasAlbedoTex > 0.5f)
 			{
-				albedoSample = g_albedoTex.Sample(g_sampler, uv);
+				albedoSample = g_albedoTex.SampleBias(g_sampler, uv, mipLodBias);
 			}
 
 			float currentOpacity = opacity;
@@ -3586,7 +3587,7 @@ int createShadersAndPipeline()
 			}
 			if (hasOpacityTex > 0.5f)
 			{
-				currentOpacity *= g_opacityTex.Sample(g_sampler, uv).r;
+				currentOpacity *= g_opacityTex.SampleBias(g_sampler, uv, mipLodBias).r;
 			}
 			else if (hasAlbedoTex > 0.5f)
 			{
@@ -3610,7 +3611,7 @@ int createShadersAndPipeline()
 
 			if (hasNormalTex > 0.5f && normalStrength > 0.01f)
 			{
-				float4 rawNorm = g_normalTex.Sample(g_sampler, uv);
+				float4 rawNorm = g_normalTex.SampleBias(g_sampler, uv, mipLodBias);
 				float2 nXY = rawNorm.xy * 2.0f - 1.0f;
 				if (normalMapYFlip > 0.5f)
 				{
@@ -3637,7 +3638,7 @@ int createShadersAndPipeline()
 			float rough = roughness;
 			if (hasRoughTex > 0.5f)
 			{
-				float4 rSamp = g_roughTex.Sample(g_sampler, uv);
+				float4 rSamp = g_roughTex.SampleBias(g_sampler, uv, mipLodBias);
 				rough = SamplePbrChannel(rSamp, roughnessChannel);
 			}
 			rough = clamp(rough, 0.04f, 1.0f);
@@ -3645,14 +3646,14 @@ int createShadersAndPipeline()
 			float metal = metallic;
 			if (hasMetalTex > 0.5f)
 			{
-				float4 mSamp = g_metalTex.Sample(g_sampler, uv);
+				float4 mSamp = g_metalTex.SampleBias(g_sampler, uv, mipLodBias);
 				metal = clamp(SamplePbrChannel(mSamp, metallicChannel), 0.0f, 1.0f);
 			}
 
 			float ao = 1.0f;
 			if (hasAoTex > 0.5f)
 			{
-				float4 aoSamp = g_aoTex.Sample(g_sampler, uv);
+				float4 aoSamp = g_aoTex.SampleBias(g_sampler, uv, mipLodBias);
 				ao = clamp(SamplePbrChannel(aoSamp, aoChannel), 0.05f, 1.0f);
 			}
 
@@ -3754,7 +3755,7 @@ int createShadersAndPipeline()
 			float3 emissive = emissiveColor * emissiveIntensity;
 			if (hasEmissionTex > 0.5f)
 			{
-				float4 emSample = g_emissiveTex.Sample(g_sampler, uv);
+				float4 emSample = g_emissiveTex.SampleBias(g_sampler, uv, mipLodBias);
 				emissive = emSample.rgb * emissiveColor * max(emissiveIntensity, 1.0f);
 			}
 
@@ -4155,6 +4156,16 @@ int createShadersAndPipeline()
 	{
 		std::cerr << "Warning: Failed to create Two-Sided Pipeline State: " << hrTwoSided << std::endl;
 		g_pipelineStateTwoSided = g_pipelineState;
+	}
+
+	// WickedEngine Wireframe Pipeline State (WIREFRAME_ONLY & WIREFRAME_OVERLAY)
+	D3D12_GRAPHICS_PIPELINE_STATE_DESC psoDescWireframe = psoDesc;
+	psoDescWireframe.RasterizerState.FillMode = D3D12_FILL_MODE_WIREFRAME;
+	psoDescWireframe.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+	HRESULT hrWireframe = g_d3dDevice->CreateGraphicsPipelineState(&psoDescWireframe, IID_PPV_ARGS(&g_pipelineStateWireframe));
+	if (SUCCEEDED(hrWireframe) && g_pipelineStateWireframe)
+	{
+		g_pipelineStateWireframe->SetName(L"g_pipelineStateWireframe");
 	}
 
 	vertexShader->Release();
@@ -5726,8 +5737,26 @@ void updateConstantBuffer()
 	glm::mat4 view  = activeCam.GetViewMatrix();
 	glm::mat4 proj  = activeCam.GetProjectionMatrix(aspect);
 
-	g_currentJitter = glm::vec2(0.0f, 0.0f);
+	// Synchronize graphics settings with anti-aliasing system (WickedEngine Parity)
 	auto currentAaMethod = Eunoia::GraphicsSystem::Get().GetAntiAliasingMethod();
+	if (activeScene.temporalAA && currentAaMethod != Eunoia::AntiAliasingMethod::TAA)
+	{
+		Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::TAA);
+		currentAaMethod = Eunoia::AntiAliasingMethod::TAA;
+	}
+	else if (activeScene.fxaa && currentAaMethod != Eunoia::AntiAliasingMethod::FXAA)
+	{
+		Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::FXAA);
+		currentAaMethod = Eunoia::AntiAliasingMethod::FXAA;
+	}
+	else if (!activeScene.temporalAA && !activeScene.fxaa && (currentAaMethod == Eunoia::AntiAliasingMethod::TAA || currentAaMethod == Eunoia::AntiAliasingMethod::FXAA))
+	{
+		Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::None);
+		currentAaMethod = Eunoia::AntiAliasingMethod::None;
+	}
+	g_engineUI.vsyncEnabled = activeScene.vsync;
+
+	g_currentJitter = glm::vec2(0.0f, 0.0f);
 	bool isTemporalAA = (currentAaMethod == Eunoia::AntiAliasingMethod::TAA ||
 	                     currentAaMethod == Eunoia::AntiAliasingMethod::TSR ||
 	                     currentAaMethod == Eunoia::AntiAliasingMethod::DLSS ||
@@ -5736,6 +5765,7 @@ void updateConstantBuffer()
 	if (isTemporalAA && vpRect.width > 1.0f && vpRect.height > 1.0f)
 	{
 		g_currentJitter = Eunoia::GraphicsSystem::Get().GetTemporalJitter(g_globalFrameCounter, (uint32_t)vpRect.width, (uint32_t)vpRect.height);
+		if (activeScene.temporalAADebug) g_currentJitter *= 4.0f; // Exaggerate jitter for visual verification (WickedEngine temporalAADebug)
 		proj[2][0] += (2.0f * g_currentJitter.x) / vpRect.width;
 		proj[2][1] += (2.0f * g_currentJitter.y) / vpRect.height;
 	}
@@ -6307,6 +6337,7 @@ void renderFrame()
 			g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
 		}
 
+
 		D3D12_RESOURCE_BARRIER shadowReadBarrier = CreateTransitionBarrier(
 			g_shadowDepthBuffer,
 			D3D12_RESOURCE_STATE_DEPTH_WRITE,
@@ -6580,6 +6611,7 @@ void renderFrame()
 			g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
 		}
 
+
 		// Rebind active scene color render target + depth stencil view for main PBR lit pass
 		g_commandList->OMSetRenderTargets(1, &activeSceneRtv, FALSE, &dsvHandle);
 	}
@@ -6612,7 +6644,7 @@ void renderFrame()
 			UINT drawCount = std::min(batch.indexCount, g_currentIndexCount - batch.startIndex);
 			if (drawCount == 0) continue;
 
-			ID3D12PipelineState* targetMainPso = batch.twoSided ? g_pipelineStateTwoSided : g_pipelineState;
+			ID3D12PipelineState* targetMainPso = (g_scene.wireframeMode == 1 && g_pipelineStateWireframe) ? g_pipelineStateWireframe : (batch.twoSided ? g_pipelineStateTwoSided : g_pipelineState);
 			if (targetMainPso && targetMainPso != curMainPso)
 			{
 				g_commandList->SetPipelineState(targetMainPso);
@@ -6688,6 +6720,20 @@ void renderFrame()
 			}
 		}
 	}
+
+		// WickedEngine Wireframe Overlay Pass (g_scene.wireframeMode == 2)
+		if (g_scene.wireframeMode == 2 && g_pipelineStateWireframe)
+		{
+			g_commandList->SetPipelineState(g_pipelineStateWireframe);
+			for (size_t bIdx = 0; bIdx < g_sceneBatches.size(); ++bIdx)
+			{
+				const auto& batch = g_sceneBatches[bIdx];
+				if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.isVisible) continue;
+				UINT drawCount = std::min(batch.indexCount, g_currentIndexCount - batch.startIndex);
+				if (drawCount == 0) continue;
+				g_commandList->DrawIndexedInstanced(drawCount, 1, batch.startIndex, 0, 0);
+			}
+		}
 
 	// ----------------------------------------------------
 	// PASS 2.2: HDR Skybox Pass (Renders behind geometry via Early-Z test at far plane)
@@ -7156,7 +7202,7 @@ void renderFrame()
 		}
 	}
 
-	bool needGodRays = canRender3DScene && !g_deviceLost && g_scene.enableFog && anyVolumetric &&
+	bool needGodRays = canRender3DScene && !g_deviceLost && ((g_scene.enableFog && anyVolumetric) || g_scene.lightShafts) &&
 	                   g_godRayPipelineState && g_godRayRootSignature && g_godRayConstantBuffer &&
 	                   g_godRayTableGpuHandle.ptr != 0 && g_shadowDepthBuffer && g_depthStencilBuffer;
 	if (needGodRays)
