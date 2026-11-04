@@ -2212,6 +2212,33 @@ void DynamicScriptBehaviour::Start() {
     std::unordered_set<std::string> visited;
     ExecuteMethod("Start", visited);
 
+    // Auto-detect and configure BodyObject and orientation to movement direction in Start()
+    void* bodyRef = nullptr;
+    if (!m_startOrientBodyVar.empty()) {
+        bodyRef = GetRef(m_startOrientBodyVar);
+    }
+    if (!bodyRef) bodyRef = GetRef("PlayerBody");
+    if (!bodyRef) bodyRef = GetRef("playerbody");
+    if (!bodyRef) bodyRef = GetRef("Body");
+    if (!bodyRef) bodyRef = GetRef("body");
+
+    GameObject* bodyObj = bodyRef ? reinterpret_cast<GameObject*>(bodyRef) : nullptr;
+    auto& charMechSys = Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get();
+    if (bodyObj && m_owner) {
+        charMechSys.SetBodyObject(m_owner, bodyObj);
+    }
+    if (m_startOrientToMovement) {
+        if (m_owner) {
+            charMechSys.SetOrientationToMovementDirection(m_owner, true, m_startOrientRotationRate);
+            charMechSys.SetBodyRotateToMovementDirection(true, m_owner, m_startOrientRotationRate);
+        }
+        if (bodyObj) {
+            charMechSys.SetBodyObject(m_owner, bodyObj);
+            charMechSys.SetOrientationToMovementDirection(bodyObj, true, m_startOrientRotationRate);
+            charMechSys.SetBodyRotateToMovementDirection(true, bodyObj, m_startOrientRotationRate);
+        }
+    }
+
     for (const auto& msg : m_startPrintMessages) {
         Print(msg);
         AddEngineLog("LogBehaviour", "[" + m_className + "] " + msg, 0);
@@ -2682,35 +2709,28 @@ void DynamicScriptBehaviour::Update(float deltaTime) {
                 for (int childId : targetObj->childIds) {
                     GameObject* child = targetObj->scene->FindObject(childId);
                     if (child && (child->name.find("Camera") != std::string::npos || child->name.find("Boom") != std::string::npos)) {
-                        rYaw = glm::radians(child->rotation.y);
+                        rYaw = glm::radians(child->Transform.GetWorldRotation().GetY());
                         break;
                     }
                 }
                 if (rYaw == 0.0f) {
                     for (auto& obj : targetObj->scene->objects) {
                         if ((obj.name.find("CameraBoom") != std::string::npos || obj.name.find("Camera") != std::string::npos) && obj.parentId == targetObj->id) {
-                            rYaw = glm::radians(obj.rotation.y);
+                            rYaw = glm::radians(obj.Transform.GetWorldRotation().GetY());
                             break;
                         }
                     }
                 }
             }
-            if (rYaw != 0.0f) {
-                glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
-                glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
-                glm::vec3 localDelta = delta.x * forward + delta.z * right;
-                targetObj->position += localDelta;
-                auto& charMech = Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get();
-                if (charMech.IsOrientationToMovementDirectionEnabled(targetObj) || charMech.IsBodyRotateToMovementDirectionEnabled(targetObj)) {
-                    float dtOrient = (dt > 1e-5f) ? dt : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
-                    charMech.OrientToDirection(targetObj, localDelta, dtOrient);
-                }
-            } else {
-                if (targetObj == m_owner) {
-                    Transform.Translate(delta.x, delta.y, delta.z);
-                } else {
-                    targetObj->transform.RelativeTranslate(delta.x, delta.y, delta.z);
-                }
+            glm::vec3 forward = glm::vec3(-std::sin(rYaw), 0.0f, -std::cos(rYaw));
+            glm::vec3 right   = glm::vec3( std::cos(rYaw), 0.0f, -std::sin(rYaw));
+            glm::vec3 localDelta = delta.x * forward + delta.z * right;
+            targetObj->position += localDelta;
+            auto& charMech = Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get();
+            if (charMech.IsOrientationToMovementDirectionEnabled(targetObj) || charMech.IsBodyRotateToMovementDirectionEnabled(targetObj) ||
+                charMech.IsOrientationToMovementDirectionEnabled(nullptr) || charMech.IsBodyRotateToMovementDirectionEnabled(nullptr)) {
+                float dtOrient = (dt > 1e-5f) ? dt : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
+                charMech.OrientToDirection(targetObj, localDelta, dtOrient);
             }
         } else if (action.type == DynamicTransformAction::ActionType::TranslateWorld) {
             if (targetObj == m_owner) {
@@ -4664,6 +4684,28 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                         }
                     }
                 }
+                if (s.find("SetOrientationToMovementDirection") != std::string::npos || s.find("SetBodyRotateToMovementDirection") != std::string::npos) {
+                    bool enableVal = (s.find("false") == std::string::npos);
+                    m_startOrientToMovement = enableVal;
+                    size_t arrowP = s.find("->");
+                    if (arrowP != std::string::npos) {
+                        std::string pfx = s.substr(0, arrowP);
+                        size_t nb = pfx.find_last_not_of(" \t\r\n;{}()");
+                        if (nb != std::string::npos) {
+                            size_t na = pfx.find_last_of(" \t\r\n;{}()", nb);
+                            std::string varName = (na == std::string::npos) ? pfx.substr(0, nb + 1) : pfx.substr(na + 1, nb - na);
+                            if (!varName.empty() && varName != "this" && varName != "EngineSystem" && varName != "CharacterMechanics") {
+                                m_startOrientBodyVar = varName;
+                            }
+                        }
+                    }
+                    if (m_owner) {
+                        auto& sys = Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get();
+                        sys.SetOrientationToMovementDirection(m_owner, enableVal);
+                        sys.SetBodyRotateToMovementDirection(enableVal, m_owner);
+                    }
+                    return true;
+                }
                 if (sLow.find("print(") != std::string::npos) {
                     size_t q1 = s.find('"');
                     if (q1 != std::string::npos) {
@@ -5834,6 +5876,10 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                             }
                         }
                         auto& sys = Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get();
+                        m_startOrientToMovement = enableVal;
+                        if (!targetPrefix.empty() && targetPrefix != "this" && targetPrefix != "EngineSystem" && targetPrefix != "CharacterMechanics") {
+                            m_startOrientBodyVar = targetPrefix;
+                        }
                         GameObject* tgt = m_owner;
                         if (!targetPrefix.empty() && targetPrefix != "this" && targetPrefix != "EngineSystem" && targetPrefix != "CharacterMechanics") {
                             for (auto& prop : m_properties) {
@@ -5848,11 +5894,15 @@ void DynamicScriptBehaviour::ParsePropertiesFromCpp(const std::string& cppPath, 
                                 sys.SetBodyObject(m_owner, tgt);
                                 sys.SetBodyRotateToMovementDirection(enableVal, m_owner);
                                 sys.SetBodyRotateToMovementDirection(enableVal, tgt);
+                                sys.SetOrientationToMovementDirection(m_owner, enableVal);
+                                sys.SetOrientationToMovementDirection(tgt, enableVal);
                             } else {
                                 sys.SetBodyRotateToMovementDirection(enableVal, tgt);
+                                sys.SetOrientationToMovementDirection(tgt, enableVal);
                             }
                         } else {
                             sys.SetOrientationToMovementDirection(tgt, enableVal);
+                            sys.SetBodyRotateToMovementDirection(enableVal, tgt);
                         }
                     }
                 }

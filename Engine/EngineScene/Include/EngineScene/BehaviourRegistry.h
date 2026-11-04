@@ -84,6 +84,9 @@ public:
         clone->m_startUIAddTargets = m_startUIAddTargets;
         clone->m_startUIRemoveTargets = m_startUIRemoveTargets;
         clone->m_startUIRemoveAll = m_startUIRemoveAll;
+        clone->m_startOrientToMovement = m_startOrientToMovement;
+        clone->m_startOrientRotationRate = m_startOrientRotationRate;
+        clone->m_startOrientBodyVar = m_startOrientBodyVar;
         clone->m_uiActions = m_uiActions;
         clone->m_lineTraceActions = m_lineTraceActions;
         clone->m_boolAssignments = m_boolAssignments;
@@ -234,6 +237,9 @@ public:
     std::vector<std::string> m_startUIAddTargets;
     std::vector<std::string> m_startUIRemoveTargets;
     bool m_startUIRemoveAll = false;
+    bool m_startOrientToMovement = false;
+    float m_startOrientRotationRate = 720.0f;
+    std::string m_startOrientBodyVar;
 
     struct DynamicKeyCondition {
         int key = -1;

@@ -1446,6 +1446,7 @@ struct GameObject {
 
     void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f) {
         Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(this, enable, rotationRate);
+        Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, this, rotationRate);
     }
     bool IsOrientationToMovementDirectionEnabled() const {
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(const_cast<GameObject*>(this));
@@ -1456,8 +1457,11 @@ struct GameObject {
             Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyObject(this, body);
             Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, this, rotationRate);
             Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, body, rotationRate);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(this, enable, rotationRate);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(body, enable, rotationRate);
         } else {
             Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, this, rotationRate);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(this, enable, rotationRate);
         }
     }
     void SetBodyRotateToMovementDirection(GameObject* body, bool enable, float rotationRate = 720.0f) {
