@@ -115,6 +115,77 @@ struct CharacterMechanicsProxy {
     static GameObject* GetBodyObject(GameObject* target = nullptr) {
         return CharacterMechanicsSystem::Get().GetBodyObject(target);
     }
+
+    // Locomotion & State APIs (Docs/Behaviuor.md Section 7)
+    static void Jump(GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().Jump(target);
+    }
+    static void SetJumpHeight(float height, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetJumpHeight(height, target);
+    }
+    static void SetMaxWalkSpeed(float speed, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetMaxWalkSpeed(speed, target);
+    }
+    static void SetMaxRunSpeed(float speed, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetMaxRunSpeed(speed, target);
+    }
+    static void SetAcceleration(float accel, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetAcceleration(accel, target);
+    }
+    static void SetDeceleration(float decel, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetDeceleration(decel, target);
+    }
+    static void SetAirControl(float control, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetAirControl(control, target);
+    }
+    static void SetGravityScale(float scale, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetGravityScale(scale, target);
+    }
+    static void Launch(const glm::vec3& launchVel, bool overrideXY = true, bool overrideZ = true, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().Launch(launchVel, overrideXY, overrideZ, target);
+    }
+    static void AddMovementInput(const glm::vec3& worldDirection, float scale = 1.0f, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().AddMovementInput(worldDirection, scale, target);
+    }
+    static bool IsGrounded(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsGrounded(target);
+    }
+    static bool IsFalling(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsFalling(target);
+    }
+    static bool IsJumping(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsJumping(target);
+    }
+    static bool IsCrouching(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsCrouching(target);
+    }
+    static glm::vec3 GetGroundNormal(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().GetGroundNormal(target);
+    }
+    static GameObject* GetGroundObject(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().GetGroundObject(target);
+    }
+    static void SetCoyoteTime(float time, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetCoyoteTime(time, target);
+    }
+    static void SetJumpBuffer(float buffer, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetJumpBuffer(buffer, target);
+    }
+    static void SetStepHeight(float height, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetStepHeight(height, target);
+    }
+    static void SetSlopeLimit(float limit, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetSlopeLimit(limit, target);
+    }
+    static void Crouch(bool enable, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().Crouch(enable, target);
+    }
+    static void SetCrouchHeight(float height, GameObject* target = nullptr) {
+        CharacterMechanicsSystem::Get().SetCrouchHeight(height, target);
+    }
+    static float GetSpeed(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().GetSpeed(target);
+    }
 };
 
 } // namespace CharacterMechanics
@@ -125,8 +196,10 @@ struct CharacterMechanicsProxy {
 // EngineSystem::CharacterMechanics::AddMovement(...)
 // CharacterMechanics::AddMovement(...)
 // AssumeAsCharacter().AddMovement(...)
+// Char::...
 struct EngineSystem {
     using CharacterMechanics = Eunoia::CharacterMechanics::CharacterMechanicsProxy;
 };
 
 using CharacterMechanics = Eunoia::CharacterMechanics::CharacterMechanicsProxy;
+using Char = Eunoia::CharacterMechanics::CharacterMechanicsProxy;

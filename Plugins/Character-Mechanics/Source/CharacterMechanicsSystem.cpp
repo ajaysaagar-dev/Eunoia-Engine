@@ -564,5 +564,149 @@ void CharacterMechanicsHandle::SetBodyRotateToMovementDirection(GameObject* body
     SetBodyRotateToMovementDirection(enable, body, rotationRate);
 }
 
+// ============================================================================
+// Locomotion & State APIs (Docs/Behaviuor.md Section 7)
+// ============================================================================
+
+void CharacterMechanicsSystem::Jump(GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return;
+    auto& s = m_settings[character->id];
+    if (s.isGrounded || s.coyoteTime > 0.0f) {
+        s.isJumping = true;
+        s.isGrounded = false;
+        s.isFalling = false;
+        // Launch upwards according to jumpHeight (v = sqrt(2 * g * h))
+        float jumpVel = std::sqrt(2.0f * 9.81f * s.gravityScale * s.jumpHeight);
+        character->Transform.WorldTranslate(0.0f, jumpVel * (1.0f / 60.0f), 0.0f);
+    }
+}
+
+void CharacterMechanicsSystem::SetJumpHeight(float height, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].jumpHeight = height;
+}
+
+void CharacterMechanicsSystem::SetMaxWalkSpeed(float speed, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].maxWalkSpeed = speed;
+}
+
+void CharacterMechanicsSystem::SetMaxRunSpeed(float speed, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].maxRunSpeed = speed;
+}
+
+void CharacterMechanicsSystem::SetAcceleration(float accel, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].acceleration = accel;
+}
+
+void CharacterMechanicsSystem::SetDeceleration(float decel, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].deceleration = decel;
+}
+
+void CharacterMechanicsSystem::SetAirControl(float control, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].airControl = std::clamp(control, 0.0f, 1.0f);
+}
+
+void CharacterMechanicsSystem::SetGravityScale(float scale, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].gravityScale = scale;
+}
+
+void CharacterMechanicsSystem::Launch(const glm::vec3& launchVel, bool overrideXY, bool overrideZ, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return;
+    (void)overrideXY; (void)overrideZ;
+    character->Transform.WorldTranslate(launchVel * (1.0f / 60.0f));
+}
+
+void CharacterMechanicsSystem::AddMovementInput(const glm::vec3& worldDirection, float scale, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return;
+    auto& s = m_settings[character->id];
+    float speed = (s.maxWalkSpeed > 0.0f ? s.maxWalkSpeed : 6.0f) * scale;
+    AddMovement(character, speed * (1.0f / 60.0f), worldDirection, false);
+}
+
+bool CharacterMechanicsSystem::IsGrounded(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return true;
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.isGrounded : true;
+}
+
+bool CharacterMechanicsSystem::IsFalling(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return false;
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.isFalling : false;
+}
+
+bool CharacterMechanicsSystem::IsJumping(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return false;
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.isJumping : false;
+}
+
+bool CharacterMechanicsSystem::IsCrouching(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return false;
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.isCrouching : false;
+}
+
+glm::vec3 CharacterMechanicsSystem::GetGroundNormal(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return glm::vec3(0.0f, 1.0f, 0.0f);
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.groundNormal : glm::vec3(0.0f, 1.0f, 0.0f);
+}
+
+GameObject* CharacterMechanicsSystem::GetGroundObject(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (!character) return nullptr;
+    auto it = m_settings.find(character->id);
+    return (it != m_settings.end()) ? it->second.groundObject : nullptr;
+}
+
+void CharacterMechanicsSystem::SetCoyoteTime(float time, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].coyoteTime = time;
+}
+
+void CharacterMechanicsSystem::SetJumpBuffer(float buffer, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].jumpBuffer = buffer;
+}
+
+void CharacterMechanicsSystem::SetStepHeight(float height, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].stepHeight = height;
+}
+
+void CharacterMechanicsSystem::SetSlopeLimit(float limit, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].slopeLimit = limit;
+}
+
+void CharacterMechanicsSystem::Crouch(bool enable, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].isCrouching = enable;
+}
+
+void CharacterMechanicsSystem::SetCrouchHeight(float height, GameObject* target) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) m_settings[character->id].crouchHeight = height;
+}
+
+float CharacterMechanicsSystem::GetSpeed(GameObject* target) {
+    return GetVelocity(target, glm::vec3(1.0f, 1.0f, 1.0f));
+}
+
 } // namespace CharacterMechanics
 } // namespace Eunoia
