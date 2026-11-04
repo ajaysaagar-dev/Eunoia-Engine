@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <SaveSystem/SaveSystem.h>
@@ -107,10 +107,30 @@ public:
         file << "    },\n";
         file << "    \"shadows\": {\n";
         file << "      \"enabled\": " << BoolStr(scene.enableShadows) << ",\n";
+        file << "      \"type\": " << scene.shadowType << ",\n";
+        file << "      \"resolution2D\": " << scene.shadowResolution2D << ",\n";
+        file << "      \"resolutionCube\": " << scene.shadowResolutionCube << ",\n";
+        file << "      \"sampleCount\": " << scene.shadowSampleCount << ",\n";
+        file << "      \"pcss\": " << BoolStr(scene.shadowPCSS) << ",\n";
         file << "      \"distance\": " << scene.shadowDistance << ",\n";
         file << "      \"strength\": " << scene.shadowStrength << ",\n";
         file << "      \"bias\": " << scene.shadowBias << ",\n";
-        file << "      \"pcfRadius\": " << scene.pcfRadius << "\n";
+        file << "      \"pcfRadius\": " << scene.pcfRadius << ",\n";
+        file << "      \"softness\": " << scene.shadowSoftness << ",\n";
+        file << "      \"cascadeCount\": " << scene.cascadeCount << ",\n";
+        file << "      \"cascade0\": " << scene.cascadeDistances[0] << ",\n";
+        file << "      \"cascade1\": " << scene.cascadeDistances[1] << ",\n";
+        file << "      \"cascade2\": " << scene.cascadeDistances[2] << ",\n";
+        file << "      \"cascade3\": " << scene.cascadeDistances[3] << ",\n";
+        file << "      \"cascadeBlending\": " << BoolStr(scene.cascadeBlending) << ",\n";
+        file << "      \"visualizeCascades\": " << BoolStr(scene.visualizeCascades) << ",\n";
+        file << "      \"screenSpaceShadows\": " << BoolStr(scene.screenSpaceShadows) << ",\n";
+        file << "      \"screenSpaceRange\": " << scene.screenSpaceShadowRange << ",\n";
+        file << "      \"screenSpaceSamples\": " << scene.screenSpaceShadowSamples << ",\n";
+        file << "      \"capsuleShadows\": " << BoolStr(scene.capsuleShadows) << ",\n";
+        file << "      \"capsuleAngle\": " << scene.capsuleShadowAngle << ",\n";
+        file << "      \"capsuleFade\": " << scene.capsuleShadowFade << ",\n";
+        file << "      \"shadowLODOverride\": " << BoolStr(scene.shadowLODOverride) << "\n";
         file << "    },\n";
         file << "    \"grid\": {\n";
         file << "      \"show\": " << BoolStr(scene.showGrid) << ",\n";
@@ -1171,7 +1191,7 @@ public:
                     if (iPos != std::string::npos) scene.lightIntensity = ParseFloatAt(sunBlock, iPos, 1.0f);
                 }
 
-                // Shadows
+                // Shadows (WickedEngine Shadow Architecture Alignment)
                 size_t shadowPos = envBlock.find("\"shadows\"");
                 if (shadowPos != std::string::npos) {
                     size_t sStart = envBlock.find('{', shadowPos);
@@ -1180,10 +1200,30 @@ public:
 
                     size_t p;
                     p = sBlock.find("\"enabled\""); if (p != std::string::npos) scene.enableShadows = ParseBoolAt(sBlock, p, true);
-                    p = sBlock.find("\"distance\""); if (p != std::string::npos) scene.shadowDistance = ParseFloatAt(sBlock, p, 60.0f);
+                    p = sBlock.find("\"type\""); if (p != std::string::npos) scene.shadowType = ParseIntAt(sBlock, p, 0);
+                    p = sBlock.find("\"resolution2D\""); if (p != std::string::npos) { scene.shadowResolution2D = ParseIntAt(sBlock, p, 2048); scene.shadowResolution = scene.shadowResolution2D; }
+                    p = sBlock.find("\"resolutionCube\""); if (p != std::string::npos) scene.shadowResolutionCube = ParseIntAt(sBlock, p, 512);
+                    p = sBlock.find("\"sampleCount\""); if (p != std::string::npos) scene.shadowSampleCount = ParseIntAt(sBlock, p, 16);
+                    p = sBlock.find("\"pcss\""); if (p != std::string::npos) scene.shadowPCSS = ParseBoolAt(sBlock, p, false);
+                    p = sBlock.find("\"distance\""); if (p != std::string::npos) scene.shadowDistance = ParseFloatAt(sBlock, p, 250.0f);
                     p = sBlock.find("\"strength\""); if (p != std::string::npos) scene.shadowStrength = ParseFloatAt(sBlock, p, 0.85f);
                     p = sBlock.find("\"bias\""); if (p != std::string::npos) scene.shadowBias = ParseFloatAt(sBlock, p, 0.0012f);
                     p = sBlock.find("\"pcfRadius\""); if (p != std::string::npos) scene.pcfRadius = ParseFloatAt(sBlock, p, 1.2f);
+                    p = sBlock.find("\"softness\""); if (p != std::string::npos) scene.shadowSoftness = ParseFloatAt(sBlock, p, 1.0f);
+                    p = sBlock.find("\"cascadeCount\""); if (p != std::string::npos) scene.cascadeCount = ParseIntAt(sBlock, p, 3);
+                    p = sBlock.find("\"cascade0\""); if (p != std::string::npos) scene.cascadeDistances[0] = ParseFloatAt(sBlock, p, 10.0f);
+                    p = sBlock.find("\"cascade1\""); if (p != std::string::npos) scene.cascadeDistances[1] = ParseFloatAt(sBlock, p, 35.0f);
+                    p = sBlock.find("\"cascade2\""); if (p != std::string::npos) scene.cascadeDistances[2] = ParseFloatAt(sBlock, p, 100.0f);
+                    p = sBlock.find("\"cascade3\""); if (p != std::string::npos) scene.cascadeDistances[3] = ParseFloatAt(sBlock, p, 250.0f);
+                    p = sBlock.find("\"cascadeBlending\""); if (p != std::string::npos) scene.cascadeBlending = ParseBoolAt(sBlock, p, true);
+                    p = sBlock.find("\"visualizeCascades\""); if (p != std::string::npos) scene.visualizeCascades = ParseBoolAt(sBlock, p, false);
+                    p = sBlock.find("\"screenSpaceShadows\""); if (p != std::string::npos) scene.screenSpaceShadows = ParseBoolAt(sBlock, p, true);
+                    p = sBlock.find("\"screenSpaceRange\""); if (p != std::string::npos) scene.screenSpaceShadowRange = ParseFloatAt(sBlock, p, 1.0f);
+                    p = sBlock.find("\"screenSpaceSamples\""); if (p != std::string::npos) scene.screenSpaceShadowSamples = ParseIntAt(sBlock, p, 16);
+                    p = sBlock.find("\"capsuleShadows\""); if (p != std::string::npos) scene.capsuleShadows = ParseBoolAt(sBlock, p, false);
+                    p = sBlock.find("\"capsuleAngle\""); if (p != std::string::npos) scene.capsuleShadowAngle = ParseFloatAt(sBlock, p, 45.0f);
+                    p = sBlock.find("\"capsuleFade\""); if (p != std::string::npos) scene.capsuleShadowFade = ParseFloatAt(sBlock, p, 0.2f);
+                    p = sBlock.find("\"shadowLODOverride\""); if (p != std::string::npos) scene.shadowLODOverride = ParseBoolAt(sBlock, p, false);
                 }
             }
         }

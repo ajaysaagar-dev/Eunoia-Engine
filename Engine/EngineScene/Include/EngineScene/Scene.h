@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -152,14 +152,40 @@ public:
     int directionalVolumetricSteps = 16;
     float directionalVolumetricMaxDistance = 120.0f;
 
-    // Shadow Mapping Parameters (Hardware D32_FLOAT 2048x2048 PCF)
+    // Shadow Mapping Parameters (WickedEngine Architecture Alignment)
     bool isStudioPreview = false;
     bool enableShadows = true;
+    int shadowType = 0;                     // 0 = Shadowmaps, 1 = Ray traced (WickedEngine shadowTypeComboBox)
+    int shadowResolution2D = 2048;          // 0=Off, 128, 256, 512, 1024, 2048, 4096 (WickedEngine shadowProps2DComboBox)
+    int shadowResolutionCube = 512;         // 0=Off, 128, 256, 512, 1024, 2048 (WickedEngine shadowPropsCubeComboBox)
+    int shadowSampleCount = 16;             // 4, 8, 16, 32 (WickedEngine Vogel disk Poisson sampling)
+    bool shadowPCSS = false;                // Percentage-Closer Soft Shadows blocker search (WickedEngine SHADOW_SAMPLING_PCSS)
     float shadowStrength = 0.85f;
     float shadowBias = 0.0012f;
-    int shadowResolution = 2048;
-    float shadowDistance = 250.0f;
-    float pcfRadius = 1.2f;
+    int shadowResolution = 2048;            // legacy alias for shadowResolution2D
+    float shadowDistance = 250.0f;          // max shadow distance in meters
+    float pcfRadius = 1.2f;                 // filter spread / radius
+    float shadowSoftness = 1.0f;            // soft shadow penumbra spread multiplier (WickedEngine mad(radius, 8, 2))
+
+    // Cascaded Shadow Maps (CSM - Directional Lights - WickedEngine)
+    int cascadeCount = 3;                   // 1 to 4 cascades
+    float cascadeDistances[4] = { 10.0f, 35.0f, 100.0f, 250.0f };
+    bool cascadeBlending = true;            // smooth cascade border blending (outer 10%)
+    bool visualizeCascades = false;         // cascade debug color overlay (Red/Green/Blue/Yellow)
+
+    // Screen Space Contact Shadows (WickedEngine screenspaceshadowCS)
+    bool screenSpaceShadows = true;         // screen-space contact shadows on fine geometry
+    float screenSpaceShadowRange = 1.0f;    // contact shadow raymarch length in meters (0.01 - 10.0m)
+    int screenSpaceShadowSamples = 16;      // raymarch sample count (4 - 128)
+
+    // Capsule Shadows (WickedEngine capsuleShadowHF)
+    bool capsuleShadows = false;            // directional ambient occlusion capsule shadows
+    float capsuleShadowAngle = 45.0f;       // spread angle in degrees (0 - 90 deg)
+    float capsuleShadowFade = 0.2f;         // shadow fade (0.0 - 1.0)
+
+    // Shadow LOD Override (WickedEngine shadowLODCheckBox)
+    bool shadowLODOverride = false;         // allow shadow map rendering to request reduced LOD for GPU performance
+
     bool showLightFrustum = false;
     bool hasLightFrustumCorners = false;
     glm::vec3 lightFrustumCorners[8] = {};
