@@ -519,8 +519,12 @@ static std::filesystem::path FindEngineSourceRoot() {
     std::error_code ec;
     std::vector<std::filesystem::path> candidates = {
         std::filesystem::current_path(),
+        std::filesystem::current_path() / "Dependencies",
         std::filesystem::current_path().parent_path(),
         std::filesystem::current_path().parent_path().parent_path(),
+        "C:\\Projects\\Eunoia-Engine\\Build\\Engine",
+        "C:\\Projects\\Eunoia-Engine\\Build\\Engine\\Dependencies",
+        "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine-Build",
         "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine"
     };
     for (const auto& c : candidates) {
@@ -529,7 +533,7 @@ static std::filesystem::path FindEngineSourceRoot() {
             return std::filesystem::canonical(c, ec);
         }
     }
-    return "C:\\Projects\\Eunoia-Engine\\Eunoia-Engine";
+    return "C:\\Projects\\Eunoia-Engine\\Build\\Engine";
 }
 
 static std::filesystem::path FindCompilerPath(const std::filesystem::path& engineRoot) {
@@ -677,7 +681,19 @@ void EngineUI::SetupProjectDependencies(const std::filesystem::path& projectRoot
            << "        \"" << engStr << "/deps/glfw-3.5.1.bin.WIN64/include\",\n"
            << "        \"" << engStr << "/deps/glm\",\n"
            << "        \"" << engStr << "/deps/json\",\n"
-           << "        \"" << engStr << "/deps/imgui\"\n"
+           << "        \"" << engStr << "/deps/imgui\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EngineCore/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EnginePlatform/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EngineRHI/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EngineRenderer/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EngineScene/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EngineAssets/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Engine/EunoiaPluginCore/Include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/Plugins/**\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/deps/glfw-3.5.1.bin.WIN64/include\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/deps/glm\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/deps/json\",\n"
+           << "        \"C:/Projects/Eunoia-Engine/Build/Engine/deps/imgui\"\n"
            << "      ],\n"
            << "      \"defines\": [\n"
            << "        \"_DEBUG\",\n"
