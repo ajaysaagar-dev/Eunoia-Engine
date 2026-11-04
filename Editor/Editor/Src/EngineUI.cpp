@@ -7143,30 +7143,68 @@ void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
     if (ImGui::Button("Low")) {
         scene.shadowResolution2D = 512;
         scene.shadowResolutionCube = 256;
+        scene.shadowResolution = 512;
         scene.shadowSampleCount = 4;
+        scene.shadowPCSS = false;
+        scene.shadowLODOverride = true;
+        scene.shadowDistance = 100.0f;
         scene.msaa = 1;
+        scene.temporalAA = false;
+        scene.fxaa = true;
         scene.textureQuality = 1;
+        scene.mipLodBias = 0.0f;
+        scene.enableAO = false;
+        scene.aoType = 0;
         scene.ssr = false;
         scene.bloom = false;
+        scene.bloomThreshold = 1.0f;
+        scene.bloomStrength = 0.5f;
         scene.motionBlur = false;
         scene.depthOfField = false;
         scene.ssgi = false;
         scene.surfelGI = false;
         scene.ddgi = false;
         scene.vxgi = false;
+        scene.lightShafts = false;
+        scene.screenSpaceShadows = false;
+        scene.eyeAdaption = false;
+        scene.occlusionCulling = true;
         scene.advancedLightCulling = true;
+        scene.resolutionScale = 0.75f;
+        Eunoia::GraphicsSystem::Get().ApplyPreset(0);
+        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::FXAA);
+        for (auto& obj : scene.objects) {
+            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                obj.light.shadowResolution = scene.shadowResolution2D;
+            }
+        }
         RequestViewportRedraw(15);
     }
     ImGui::SameLine();
     if (ImGui::Button("Medium")) {
         scene.shadowResolution2D = 1024;
         scene.shadowResolutionCube = 512;
+        scene.shadowResolution = 1024;
         scene.shadowSampleCount = 8;
+        scene.shadowPCSS = false;
+        scene.shadowLODOverride = true;
+        scene.shadowDistance = 180.0f;
         scene.msaa = 1;
+        scene.temporalAA = false;
+        scene.fxaa = true;
         scene.textureQuality = 2;
+        scene.mipLodBias = 0.0f;
+        scene.enableAO = true;
+        scene.aoType = 1;
+        scene.aoSampleCount = 8;
+        scene.aoRange = 0.8f;
+        scene.aoPower = 1.5f;
+        scene.aoBlur = true;
         scene.ssr = true;
         scene.ssrQuality = 0;
+        scene.reflectionRoughnessCutoff = 0.5f;
         scene.bloom = true;
+        scene.bloomThreshold = 1.0f;
         scene.bloomStrength = 0.8f;
         scene.motionBlur = false;
         scene.depthOfField = false;
@@ -7174,73 +7212,178 @@ void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
         scene.surfelGI = false;
         scene.ddgi = false;
         scene.vxgi = false;
+        scene.lightShafts = false;
+        scene.screenSpaceShadows = false;
+        scene.eyeAdaption = true;
+        scene.occlusionCulling = true;
         scene.advancedLightCulling = true;
+        scene.resolutionScale = 0.85f;
+        Eunoia::GraphicsSystem::Get().ApplyPreset(1);
+        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::FXAA);
+        for (auto& obj : scene.objects) {
+            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                obj.light.shadowResolution = scene.shadowResolution2D;
+            }
+        }
         RequestViewportRedraw(15);
     }
     ImGui::SameLine();
     if (ImGui::Button("High")) {
         scene.shadowResolution2D = 2048;
         scene.shadowResolutionCube = 512;
+        scene.shadowResolution = 2048;
         scene.shadowSampleCount = 16;
+        scene.shadowPCSS = true;
+        scene.shadowLODOverride = true;
+        scene.shadowDistance = 250.0f;
         scene.msaa = 1;
         scene.temporalAA = true;
+        scene.fxaa = false;
         scene.textureQuality = 3;
+        scene.mipLodBias = -0.5f;
+        scene.enableAO = true;
+        scene.aoType = 2;
+        scene.aoSampleCount = 16;
+        scene.aoRange = 1.0f;
+        scene.aoPower = 2.0f;
+        scene.aoBlur = true;
         scene.ssr = true;
         scene.ssrQuality = 1;
+        scene.reflectionRoughnessCutoff = 0.6f;
         scene.bloom = true;
+        scene.bloomThreshold = 1.0f;
         scene.bloomStrength = 1.0f;
         scene.motionBlur = false;
         scene.depthOfField = true;
         scene.depthOfFieldScale = 10.0f;
+        scene.lightShafts = true;
+        scene.lightShaftsStrength = 0.05f;
+        scene.screenSpaceShadows = true;
+        scene.screenSpaceShadowRange = 1.0f;
+        scene.screenSpaceShadowSamples = 16;
+        scene.eyeAdaption = true;
         scene.ssgi = true;
+        scene.surfelGI = false;
+        scene.ddgi = false;
+        scene.vxgi = false;
+        scene.occlusionCulling = true;
         scene.advancedLightCulling = true;
+        scene.resolutionScale = 1.0f;
+        Eunoia::GraphicsSystem::Get().ApplyPreset(2);
+        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::TAA);
+        for (auto& obj : scene.objects) {
+            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                obj.light.shadowResolution = scene.shadowResolution2D;
+            }
+        }
         RequestViewportRedraw(15);
     }
     ImGui::SameLine();
     if (ImGui::Button("Ultra")) {
         scene.shadowResolution2D = 2048;
         scene.shadowResolutionCube = 1024;
+        scene.shadowResolution = 2048;
         scene.shadowSampleCount = 16;
         scene.shadowPCSS = true;
+        scene.shadowLODOverride = false;
+        scene.shadowDistance = 350.0f;
         scene.msaa = 1;
         scene.temporalAA = true;
+        scene.fxaa = false;
         scene.textureQuality = 3;
+        scene.mipLodBias = -0.75f;
+        scene.enableAO = true;
+        scene.aoType = 3;
+        scene.aoSampleCount = 16;
+        scene.aoRange = 1.2f;
+        scene.aoPower = 2.0f;
+        scene.aoBlur = true;
         scene.ssr = true;
         scene.ssrQuality = 2;
+        scene.reflectionRoughnessCutoff = 0.8f;
         scene.bloom = true;
+        scene.bloomThreshold = 1.0f;
         scene.bloomStrength = 1.0f;
         scene.motionBlur = true;
+        scene.motionBlurStrength = 100.0f;
         scene.depthOfField = true;
         scene.depthOfFieldScale = 12.0f;
+        scene.lightShafts = true;
+        scene.lightShaftsStrength = 0.08f;
+        scene.screenSpaceShadows = true;
+        scene.screenSpaceShadowRange = 1.5f;
+        scene.screenSpaceShadowSamples = 32;
+        scene.eyeAdaption = true;
         scene.ssgi = true;
         scene.surfelGI = true;
+        scene.ddgi = false;
+        scene.vxgi = false;
+        scene.occlusionCulling = true;
+        scene.meshletOcclusionCulling = true;
         scene.advancedLightCulling = true;
+        scene.resolutionScale = 1.0f;
+        Eunoia::GraphicsSystem::Get().ApplyPreset(3);
+        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::TAA);
+        for (auto& obj : scene.objects) {
+            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                obj.light.shadowResolution = scene.shadowResolution2D;
+            }
+        }
         RequestViewportRedraw(15);
     }
     ImGui::SameLine();
     if (ImGui::Button("Cinematic")) {
         scene.shadowResolution2D = 4096;
         scene.shadowResolutionCube = 2048;
+        scene.shadowResolution = 4096;
         scene.shadowSampleCount = 32;
         scene.shadowPCSS = true;
+        scene.shadowLODOverride = false;
         scene.shadowDistance = 500.0f;
         scene.msaa = 2;
         scene.temporalAA = true;
+        scene.fxaa = false;
         scene.textureQuality = 3;
+        scene.mipLodBias = -1.0f;
+        scene.enableAO = true;
+        scene.aoType = 3;
+        scene.aoSampleCount = 32;
+        scene.aoRange = 1.5f;
+        scene.aoPower = 2.5f;
+        scene.aoBlur = true;
         scene.ssr = true;
         scene.ssrQuality = 2;
+        scene.reflectionRoughnessCutoff = 0.9f;
         scene.bloom = true;
+        scene.bloomThreshold = 1.0f;
         scene.bloomStrength = 1.2f;
         scene.motionBlur = true;
+        scene.motionBlurStrength = 120.0f;
         scene.depthOfField = true;
         scene.depthOfFieldScale = 15.0f;
+        scene.lightShafts = true;
+        scene.lightShaftsStrength = 0.10f;
+        scene.screenSpaceShadows = true;
+        scene.screenSpaceShadowRange = 2.0f;
+        scene.screenSpaceShadowSamples = 64;
+        scene.eyeAdaption = true;
         scene.ssgi = true;
         scene.surfelGI = true;
         scene.ddgi = true;
+        scene.vxgi = false;
+        scene.occlusionCulling = true;
+        scene.meshletOcclusionCulling = true;
         scene.advancedLightCulling = true;
+        scene.resolutionScale = 1.0f;
+        Eunoia::GraphicsSystem::Get().ApplyPreset(4);
+        Eunoia::GraphicsSystem::Get().SetAntiAliasingMethod(Eunoia::AntiAliasingMethod::TAA);
+        for (auto& obj : scene.objects) {
+            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                obj.light.shadowResolution = scene.shadowResolution2D;
+            }
+        }
         RequestViewportRedraw(15);
     }
-    ImGui::SameLine();
     if (ImGui::Button("Reset to Defaults")) {
         scene.ResetToDefaults();
         RequestViewportRedraw(15);
@@ -7471,6 +7614,7 @@ void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
         if (ImGui::Checkbox("Bloom##GfxBloom", &scene.bloom)) { RequestViewportRedraw(15); }
         if (scene.bloom) {
             if (ImGui::SliderFloat("Bloom Strength", &scene.bloomStrength, 0.0f, 5.0f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Bloom Threshold", &scene.bloomThreshold, 0.0f, 10.0f, "%.2f")) { RequestViewportRedraw(15); }
         }
         if (ImGui::Checkbox("Light Shafts (God Rays)", &scene.lightShafts)) { RequestViewportRedraw(15); }
         if (scene.lightShafts) {
