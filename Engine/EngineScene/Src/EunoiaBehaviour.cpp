@@ -1,4 +1,4 @@
-#include <EngineScene/EunoiaBehaviour.h>
+﻿#include <EngineScene/EunoiaBehaviour.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <EngineScene/GameObject.h>
 #include <EngineScene/Scene.h>
@@ -988,12 +988,12 @@ void GameObjectTransform::AxisProxy::operator()(float inX, float inY, float inZ)
             current.y += inY;
             current.z += inZ;
         } else {
-            if (std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
+            if (isCamera && std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
                 current.y += inY;
             } else {
-                if (inX != 0.0f) current.x = inX;
-                if (inY != 0.0f) current.y = inY;
-                if (inZ != 0.0f) current.z = inZ;
+                current.x = inX;
+                current.y = inY;
+                current.z = inZ;
             }
         }
         if (isCamera) {
@@ -1053,17 +1053,26 @@ void GameObjectTransform::AxisProxy::Z(float val) {
 
 float GameObjectTransform::AxisProxy::GetX() const {
     float val = GetValue().x;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 float GameObjectTransform::AxisProxy::GetY() const {
     float val = GetValue().y;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 float GameObjectTransform::AxisProxy::GetZ() const {
     float val = GetValue().z;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 TransformState GameObjectTransform::GetWorldTransform() const {
@@ -1248,12 +1257,12 @@ void BehaviourTransform::AxisProxy::operator()(float inX, float inY, float inZ) 
             current.y += inY;
             current.z += inZ;
         } else {
-            if (std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
+            if (isCamera && std::abs(inY) < 45.0f && inX == 0.0f && inZ == 0.0f) {
                 current.y += inY;
             } else {
-                if (inX != 0.0f) current.x = inX;
-                if (inY != 0.0f) current.y = inY;
-                if (inZ != 0.0f) current.z = inZ;
+                current.x = inX;
+                current.y = inY;
+                current.z = inZ;
             }
         }
         if (isCamera) {
@@ -1313,17 +1322,26 @@ void BehaviourTransform::AxisProxy::Z(float val) {
 
 float BehaviourTransform::AxisProxy::GetX() const {
     float val = GetValue().x;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 float BehaviourTransform::AxisProxy::GetY() const {
     float val = GetValue().y;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 float BehaviourTransform::AxisProxy::GetZ() const {
     float val = GetValue().z;
-    return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    if (target == TargetType::WorldScale || target == TargetType::RelativeScale) {
+        return (std::abs(val) > 1e-5f) ? val : 1.0f;
+    }
+    return val;
 }
 
 TransformState BehaviourTransform::GetWorldTransform() const {

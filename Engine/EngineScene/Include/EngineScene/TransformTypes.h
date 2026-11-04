@@ -30,9 +30,9 @@ struct TransformVector3 {
     // Getters matching Docs/Behaviours/Transform.md:
     // <GameObject>.Transform.GetWorldLocation().GetX();
     // <GameObject>.Transform.GetForwardVector().GetX();
-    float GetX() const { return (std::abs(x) > 1e-5f) ? x : 1.0f; }
-    float GetY() const { return (std::abs(y) > 1e-5f) ? y : 1.0f; }
-    float GetZ() const { return (std::abs(z) > 1e-5f) ? z : 1.0f; }
+    float GetX() const { return x; }
+    float GetY() const { return y; }
+    float GetZ() const { return z; }
 
     // Setters / Getters by axis name:
     float X() const { return x; }
