@@ -1451,6 +1451,22 @@ struct GameObject {
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(const_cast<GameObject*>(this));
     }
 
+    void SetBodyRotateToMovementDirection(bool enable, GameObject* body = nullptr, float rotationRate = 720.0f) {
+        if (body) {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyObject(this, body);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, this, rotationRate);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, body, rotationRate);
+        } else {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, this, rotationRate);
+        }
+    }
+    void SetBodyRotateToMovementDirection(GameObject* body, bool enable, float rotationRate = 720.0f) {
+        SetBodyRotateToMovementDirection(enable, body, rotationRate);
+    }
+    bool IsBodyRotateToMovementDirectionEnabled() const {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsBodyRotateToMovementDirectionEnabled(const_cast<GameObject*>(this));
+    }
+
     // Unified Custom EunoiaUI Framework Accessor
     EunoiaUI::EunoiaUIManager& UI() { return EunoiaUI::EunoiaUIManager::Get(); }
 

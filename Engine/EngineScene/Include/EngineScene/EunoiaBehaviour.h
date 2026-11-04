@@ -775,6 +775,22 @@ public:
         return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(m_owner);
     }
 
+    void SetBodyRotateToMovementDirection(bool enable, GameObject* body = nullptr, float rotationRate = 720.0f) {
+        if (body) {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyObject(m_owner, body);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, m_owner, rotationRate);
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, body, rotationRate);
+        } else {
+            Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, m_owner, rotationRate);
+        }
+    }
+    void SetBodyRotateToMovementDirection(GameObject* body, bool enable, float rotationRate = 720.0f) {
+        SetBodyRotateToMovementDirection(enable, body, rotationRate);
+    }
+    bool IsBodyRotateToMovementDirectionEnabled() const {
+        return Eunoia::CharacterMechanics::CharacterMechanicsSystem::Get().IsBodyRotateToMovementDirectionEnabled(m_owner);
+    }
+
     // Unified Custom EunoiaUI Framework Accessor
     EunoiaUI::EunoiaUIManager& UI() { return EunoiaUI::EunoiaUIManager::Get(); }
 
