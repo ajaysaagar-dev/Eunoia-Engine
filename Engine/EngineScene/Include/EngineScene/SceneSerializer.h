@@ -204,6 +204,7 @@ public:
         file << "      \"meshBlend\": " << BoolStr(scene.meshBlend) << ",\n";
         file << "      \"tessellation\": " << BoolStr(scene.tessellation) << ",\n";
         file << "      \"gameSpeed\": " << scene.gameSpeed << ",\n";
+        file << "      \"wireframeMode\": " << scene.wireframeMode << ",\n";
         file << "      \"giBoost\": " << scene.giBoost << ",\n";
         file << "      \"surfelGI\": " << BoolStr(scene.surfelGI) << ",\n";
         file << "      \"surfelGIDebug\": " << scene.surfelGIDebug << ",\n";
@@ -1414,6 +1415,7 @@ public:
             p = gBlock.find("\"meshBlend\""); if (p != std::string::npos) scene.meshBlend = ParseBoolAt(gBlock, p, false);
             p = gBlock.find("\"tessellation\""); if (p != std::string::npos) scene.tessellation = ParseBoolAt(gBlock, p, false);
             p = gBlock.find("\"gameSpeed\""); if (p != std::string::npos) scene.gameSpeed = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"wireframeMode\""); if (p != std::string::npos) scene.wireframeMode = (int)ParseFloatAt(gBlock, p, 0.0f);
 
             p = gBlock.find("\"giBoost\""); if (p != std::string::npos) scene.giBoost = ParseFloatAt(gBlock, p, 1.0f);
             p = gBlock.find("\"surfelGI\""); if (p != std::string::npos) scene.surfelGI = ParseBoolAt(gBlock, p, false);

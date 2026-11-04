@@ -283,6 +283,7 @@ public:
     float chromaticAberrationAmount = 1.0f; // Fringing strength (0.0 to 40.0)
 
     // 7. Lighting & Debug Overrides
+    int wireframeMode = 0;                  // 0=Disabled (Solid), 1=Wireframe Only, 2=Wireframe Overlay (WickedEngine Parity)
     bool advancedLightCulling = true;       // 2.5D tiled depth clustered light culling
     bool debugLightCulling = false;         // Light count per tile heatmap
     bool freezeCullingCamera = false;       // Freeze frustum for culling verification
@@ -1774,6 +1775,7 @@ public:
         outlineThickness = 1.0f;
         chromaticAberration = false;
         chromaticAberrationAmount = 1.0f;
+        wireframeMode = 0;
         advancedLightCulling = true;
         debugLightCulling = false;
         freezeCullingCamera = false;
