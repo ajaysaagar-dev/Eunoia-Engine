@@ -7276,6 +7276,9 @@ void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
         if (ImGui::Checkbox("Mesh Blend (Terrain Slope Blending)", &scene.meshBlend)) { RequestViewportRedraw(15); }
         if (ImGui::Checkbox("Hardware Tessellation", &scene.tessellation)) { RequestViewportRedraw(15); }
         if (ImGui::SliderFloat("Game Simulation Speed", &scene.gameSpeed, 0.0f, 4.0f, "%.2fx")) { RequestViewportRedraw(15); }
+        const char* wireframeModes[] = { "Disabled (Solid)", "Wireframe Only", "Wireframe Overlay" };
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::Combo("Wireframe Mode##GfxWireframe", &scene.wireframeMode, wireframeModes, IM_ARRAYSIZE(wireframeModes))) { RequestViewportRedraw(15); }
     }
 
     if (ImGui::CollapsingHeader("3. Global Illumination (GI)", ImGuiTreeNodeFlags_DefaultOpen)) {
@@ -7449,6 +7452,19 @@ void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
         if (ImGui::SliderFloat("Gamma##GfxGamma", &scene.postGamma, 0.5f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
         if (ImGui::ColorEdit3("Color Filter Tint##GfxFilter", &scene.postColorFilter.x)) { RequestViewportRedraw(15); }
         if (ImGui::Checkbox("Dithering (Banding Elimination)", &scene.dither)) { RequestViewportRedraw(15); }
+    }
+
+    if (ImGui::CollapsingHeader("Ambient Occlusion (SSAO / HBAO / MSAO)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Enable Ambient Occlusion##GfxAO", &scene.enableAO)) { RequestViewportRedraw(15); }
+        const char* aoAlgos[] = { "Disabled", "SSAO (Screen Space)", "HBAO (Horizon Based)", "MSAO (Multi Scale)", "RTAO (Ray Traced)" };
+        ImGui::SetNextItemWidth(220.0f);
+        if (ImGui::Combo("AO Algorithm##GfxAOAlgo", &scene.aoType, aoAlgos, IM_ARRAYSIZE(aoAlgos))) { RequestViewportRedraw(15); }
+        if (scene.enableAO && scene.aoType > 0) {
+            if (ImGui::SliderFloat("AO Power##GfxAOPower", &scene.aoPower, 0.25f, 8.0f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("AO Range##GfxAORange", &scene.aoRange, 0.05f, 20.0f, "%.2fm")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderInt("AO Sample Count##GfxAOSamples", &scene.aoSampleCount, 1, 64)) { RequestViewportRedraw(15); }
+            if (ImGui::Checkbox("AO Bilateral Blur##GfxAOBlur", &scene.aoBlur)) { RequestViewportRedraw(15); }
+        }
     }
 
     if (ImGui::CollapsingHeader("8. Cinematic Post-Processing", ImGuiTreeNodeFlags_DefaultOpen)) {
