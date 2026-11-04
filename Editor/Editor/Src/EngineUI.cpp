@@ -1,4 +1,4 @@
-#include <Editor/EngineUI.h>
+﻿#include <Editor/EngineUI.h>
 #include <Editor/UndoManager.h>
 #include <Editor/EditorGizmoSystem.h>
 #include "imgui.h"
@@ -4435,12 +4435,192 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                     if (ImGui::Checkbox("Enable Realtime Shadows", &scene.enableShadows)) {
                         AddLog("LogRenderer", scene.enableShadows ? "Shadows Enabled" : "Shadows Disabled", 0);
                     }
+                    ImGui::SameLine();
+                    if (scene.enableShadows) {
+                        ImGui::TextColored(ImVec4(0.4f, 0.85f, 0.4f, 1.0f), "[ACTIVE]");
+                    } else {
+                        ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "[OFF]");
+                    }
                     ImGui::Separator();
 
-                    ImGui::TextDisabled("Distance Range & Culling:");
-                    ImGui::Text("Max Shadow Distance:");
-                    ImGui::SetNextItemWidth(200.0f);
-                    if (ImGui::SliderFloat("##MaxShadowDist", &scene.shadowDistance, 5.0f, 500.0f, "%.1f m")) {
+                    // --- 1. SHADOW TYPE (WickedEngine shadowTypeComboBox) ---
+                    ImGui::TextDisabled("Shadow Architecture:");
+                    const char* shadowTypes[] = { "Shadowmaps (Hardware D32)", "Ray Traced Shadows (DXR / Fallback)" };
+                    ImGui::SetNextItemWidth(260.0f);
+                    if (ImGui::Combo("Shadow Type##ShadowType", &scene.shadowType, shadowTypes, IM_ARRAYSIZE(shadowTypes))) {
+                        AddLog("LogRenderer", scene.shadowType == 1 ? "Shadow Type: Ray Traced" : "Shadow Type: Shadowmaps", 0);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Choose between shadowmaps and ray traced shadows.\nNote that ray traced shadows utilize hardware ray tracing acceleration when supported.");
+                    }
+                    ImGui::Separator();
+
+                    // --- 2. 2D SHADOWMAP RESOLUTION (WickedEngine shadowProps2DComboBox) ---
+                    ImGui::TextDisabled("2D Shadowmap Resolution (Directional / Spot):");
+                    const int res2DVals[] = { 0, 128, 256, 512, 1024, 2048, 4096 };
+                    const char* res2DLabels[] = { "Off (Disabled)", "128 (Ultra Low)", "256 (Very Low)", "512 (Low)", "1024 (Medium)", "2048 (High - Default)", "4096 (Cinematic / Ultra)" };
+                    int cur2DIdx = 5; // default 2048
+                    for (int i = 0; i < 7; ++i) {
+                        if (scene.shadowResolution2D == res2DVals[i]) { cur2DIdx = i; break; }
+                    }
+                    ImGui::SetNextItemWidth(260.0f);
+                    if (ImGui::Combo("2D Shadowmap Res##2DRes", &cur2DIdx, res2DLabels, IM_ARRAYSIZE(res2DLabels))) {
+                        scene.shadowResolution2D = res2DVals[cur2DIdx];
+                        scene.shadowResolution = scene.shadowResolution2D;
+                        for (auto& obj : scene.objects) {
+                            if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
+                                obj.light.shadowResolution = scene.shadowResolution2D;
+                            }
+                        }
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Choose a shadow quality preset for 2D shadow maps (spotlights, directional lights)...\nThis specifies the maximum shadow resolution for these light types.");
+                    }
+
+                    // --- 3. CUBE SHADOWMAP RESOLUTION (WickedEngine shadowPropsCubeComboBox) ---
+                    ImGui::TextDisabled("Cube Shadowmap Resolution (Point / Area):");
+                    const int resCubeVals[] = { 0, 128, 256, 512, 1024, 2048 };
+                    const char* resCubeLabels[] = { "Off (Disabled)", "128 (Low)", "256 (Medium Low)", "512 (Balanced - Default)", "1024 (High)", "2048 (Cinematic)" };
+                    int curCubeIdx = 3; // default 512
+                    for (int i = 0; i < 6; ++i) {
+                        if (scene.shadowResolutionCube == resCubeVals[i]) { curCubeIdx = i; break; }
+                    }
+                    ImGui::SetNextItemWidth(260.0f);
+                    if (ImGui::Combo("Cube Shadowmap Res##CubeRes", &curCubeIdx, resCubeLabels, IM_ARRAYSIZE(resCubeLabels))) {
+                        scene.shadowResolutionCube = resCubeVals[curCubeIdx];
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Choose a shadow quality preset for cube shadow maps (pointlights, area lights)...\nThis specifies the maximum shadow resolution for these light types.");
+                    }
+                    ImGui::Separator();
+
+                    // --- 4. SHADOW FILTERING (WickedEngine Vogel Disk shadowHF.hlsli) ---
+                    ImGui::TextDisabled("Shadow Filtering & Soft Penumbra (WickedEngine Vogel Disk):");
+                    const int sampleCounts[] = { 4, 8, 16, 32 };
+                    const char* sampleLabels[] = { "4 Samples (Performance)", "8 Samples (Medium)", "16 Samples (High - Vogel Disk Reference)", "32 Samples (Ultra / Smooth Penumbra)" };
+                    int curSampleIdx = 2; // default 16
+                    for (int i = 0; i < 4; ++i) {
+                        if (scene.shadowSampleCount == sampleCounts[i]) { curSampleIdx = i; break; }
+                    }
+                    ImGui::SetNextItemWidth(260.0f);
+                    if (ImGui::Combo("Vogel Disk Samples##VogelSamples", &curSampleIdx, sampleLabels, IM_ARRAYSIZE(sampleLabels))) {
+                        scene.shadowSampleCount = sampleCounts[curSampleIdx];
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("WickedEngine Vogel disk Poisson sampling kernel count.\nBaked Poisson distribution remapped via [-1, 1] range in shadowHF.hlsli.");
+                    }
+
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::SliderFloat("Filter Radius / Spread", &scene.pcfRadius, 0.2f, 5.0f, "%.2f");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Vogel disk soft shadow spread factor. Remapped dynamically via:\nspread = inv_shadow_res * mad(radius, 8, 2) matching WickedEngine.");
+                    }
+
+                    ImGui::Checkbox("PCSS Blocker Search (Soft Shadows)", &scene.shadowPCSS);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Percentage-Closer Soft Shadows (PCSS):\nSearches for blockers to dynamically widen shadow penumbra spread farther from occluders.");
+                    }
+
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::SliderFloat("Depth / Normal Bias", &scene.shadowBias, 0.0001f, 0.01f, "%.4f");
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Slope-scale and normal offset depth bias to eliminate shadow acne without detaching contact shadows.");
+                    }
+
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::SliderFloat("Shadow Strength", &scene.shadowStrength, 0.0f, 1.0f, "%.2f");
+                    ImGui::Separator();
+
+                    // --- 5. CASCADED SHADOW MAPS (CSM - WickedEngine Directional Cascades) ---
+                    ImGui::TextDisabled("Cascaded Shadow Maps (CSM - Directional Light):");
+                    ImGui::SetNextItemWidth(260.0f);
+                    ImGui::SliderInt("Cascade Count", &scene.cascadeCount, 1, 4);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Number of shadow cascades for directional sun lighting (1 to 4).\nEach cascade covers a progressively larger distance range.");
+                    }
+
+                    for (int c = 0; c < scene.cascadeCount; ++c) {
+                        char cLabel[64];
+                        snprintf(cLabel, sizeof(cLabel), "Cascade %d Split##Casc%d", c + 1, c);
+                        ImGui::SetNextItemWidth(260.0f);
+                        float maxSplit = scene.shadowDistance;
+                        ImGui::SliderFloat(cLabel, &scene.cascadeDistances[c], 1.0f, maxSplit, "%.1f m");
+                    }
+
+                    if (ImGui::Button("Auto-Calculate Practical Splits (Logarithmic)")) {
+                        float nearZ = 0.5f;
+                        float farZ = scene.shadowDistance;
+                        float lambda = 0.75f; // WickedEngine practical split ratio
+                        int numCascades = scene.cascadeCount;
+                        for (int i = 0; i < numCascades; ++i) {
+                            float p = float(i + 1) / float(numCascades);
+                            float logSplit = nearZ * std::pow(farZ / nearZ, p);
+                            float uniSplit = nearZ + (farZ - nearZ) * p;
+                            scene.cascadeDistances[i] = lambda * logSplit + (1.0f - lambda) * uniSplit;
+                        }
+                        AddLog("LogRenderer", "Cascade split distances recalculated.", 0);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Automatically calculates optimal split distances blending logarithmic and uniform distributions.");
+                    }
+
+                    ImGui::Checkbox("Cascade Border Blending", &scene.cascadeBlending);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Smoothly blends between cascade boundaries across the outer 10% transition region to prevent pop-in seams.");
+                    }
+
+                    ImGui::Checkbox("Visualize Cascades (Color Overlay)", &scene.visualizeCascades);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Colorizes scene pixels to visualize directional light cascade splits:\nRed = Cascade 1 (Near)\nGreen = Cascade 2 (Mid)\nBlue = Cascade 3 (Far)\nYellow = Cascade 4 (Extreme)");
+                    }
+                    ImGui::Separator();
+
+                    // --- 6. SCREEN SPACE SHADOWS (Contact Shadows - WickedEngine screenspaceshadowCS) ---
+                    ImGui::TextDisabled("Screen Space Shadows (Contact Shadows):");
+                    ImGui::Checkbox("Enable Contact Shadows", &scene.screenSpaceShadows);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Enable screen space contact shadows (WickedEngine screenspaceshadowCS).\nAdds ultra-fine contact shadows on hair, wrinkles, teeth, foliage, and small geometry.");
+                    }
+                    if (scene.screenSpaceShadows) {
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::SliderFloat("Contact Shadow Range", &scene.screenSpaceShadowRange, 0.01f, 10.0f, "%.2f m");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Range / ray length of screen space contact shadows.");
+                        }
+
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::SliderInt("Contact Shadow Samples", &scene.screenSpaceShadowSamples, 4, 128);
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Sample count / raymarch steps for contact shadows. Higher values are cleaner but have a slight GPU cost.");
+                        }
+                    }
+                    ImGui::Separator();
+
+                    // --- 7. CAPSULE SHADOWS (WickedEngine capsuleShadowHF) ---
+                    ImGui::TextDisabled("Capsule Shadows (Ambient Occlusion Occluders):");
+                    ImGui::Checkbox("Enable Capsule Shadows", &scene.capsuleShadows);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Enable ambient occlusion capsule shadows (WickedEngine capsuleShadowHF).\nGenerates soft contact ground shadows under characters and capsule colliders.");
+                    }
+                    if (scene.capsuleShadows) {
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::SliderFloat("Capsule Shadow Angle", &scene.capsuleShadowAngle, 0.0f, 90.0f, "%.1f deg");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Set capsule shadow spread angle in degrees (WickedEngine SetCapsuleShadowAngle).");
+                        }
+
+                        ImGui::SetNextItemWidth(260.0f);
+                        ImGui::SliderFloat("Capsule Shadow Fade", &scene.capsuleShadowFade, 0.0f, 1.0f, "%.2f");
+                        if (ImGui::IsItemHovered()) {
+                            ImGui::SetTooltip("Set capsule shadow fading intensity (WickedEngine SetCapsuleShadowFade).");
+                        }
+                    }
+                    ImGui::Separator();
+
+                    // --- 8. PERFORMANCE, LOD & DISTANCE CULLING (WickedEngine shadowLODCheckBox) ---
+                    ImGui::TextDisabled("Performance, LOD & Distance Range:");
+                    ImGui::SetNextItemWidth(260.0f);
+                    if (ImGui::SliderFloat("Max Shadow Distance", &scene.shadowDistance, 5.0f, 1000.0f, "%.1f m")) {
                         for (auto& obj : scene.objects) {
                             if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
                                 obj.light.shadowDistance = scene.shadowDistance;
@@ -4448,11 +4628,10 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                         }
                     }
                     if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Maximum distance from camera to render shadows (%.1fm).\nOnly shadows within this range will be rendered and showed.\nShadows beyond this distance are completely culled.", scene.shadowDistance);
+                        ImGui::SetTooltip("Maximum distance from camera to render shadows (%.1fm).\nShadows beyond this distance are completely culled with a smooth outer 15% fade.", scene.shadowDistance);
                     }
 
-                    // Distance Presets
-                    ImGui::TextDisabled("Quick Distance Presets:");
+                    // Quick Distance Presets
                     auto SetShadowDist = [&](float d) {
                         scene.shadowDistance = d;
                         for (auto& obj : scene.objects) {
@@ -4461,39 +4640,22 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
                             }
                         }
                     };
-                    if (ImGui::MenuItem("Near (25 m)", nullptr, scene.shadowDistance == 25.0f)) SetShadowDist(25.0f);
-                    if (ImGui::MenuItem("Medium / Balanced (60 m)", nullptr, scene.shadowDistance == 60.0f)) SetShadowDist(60.0f);
-                    if (ImGui::MenuItem("Far (120 m)", nullptr, scene.shadowDistance == 120.0f)) SetShadowDist(120.0f);
-                    if (ImGui::MenuItem("Very Far (250 m)", nullptr, scene.shadowDistance == 250.0f)) SetShadowDist(250.0f);
-                    if (ImGui::MenuItem("Extreme (500 m)", nullptr, scene.shadowDistance == 500.0f)) SetShadowDist(500.0f);
-
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Shadow Quality:");
-                    const int resolutions[] = { 512, 1024, 2048, 4096 };
-                    const char* resLabels[] = { "512 (Low)", "1024 (Medium)", "2048 (High)", "4096 (Ultra)" };
-                    for (int r = 0; r < 4; ++r) {
-                        bool isCur = (scene.shadowResolution == resolutions[r]);
-                        if (ImGui::MenuItem(resLabels[r], nullptr, isCur)) {
-                            scene.shadowResolution = resolutions[r];
-                            for (auto& obj : scene.objects) {
-                                if ((obj.isLight || IsLightPrimitive(obj.type)) && obj.light.type == LightType::Directional) {
-                                    obj.light.shadowResolution = resolutions[r];
-                                }
-                            }
-                        }
+                    if (ImGui::BeginMenu("Quick Distance Presets")) {
+                        if (ImGui::MenuItem("Near (25 m)", nullptr, scene.shadowDistance == 25.0f)) SetShadowDist(25.0f);
+                        if (ImGui::MenuItem("Medium / Balanced (60 m)", nullptr, scene.shadowDistance == 60.0f)) SetShadowDist(60.0f);
+                        if (ImGui::MenuItem("Far (120 m)", nullptr, scene.shadowDistance == 120.0f)) SetShadowDist(120.0f);
+                        if (ImGui::MenuItem("Very Far (250 m)", nullptr, scene.shadowDistance == 250.0f)) SetShadowDist(250.0f);
+                        if (ImGui::MenuItem("Extreme (500 m)", nullptr, scene.shadowDistance == 500.0f)) SetShadowDist(500.0f);
+                        if (ImGui::MenuItem("Ultra Cinematic (1000 m)", nullptr, scene.shadowDistance == 1000.0f)) SetShadowDist(1000.0f);
+                        ImGui::EndMenu();
                     }
 
-                    ImGui::Separator();
-                    ImGui::TextDisabled("Shadow Tuning:");
-                    ImGui::SetNextItemWidth(180.0f);
-                    ImGui::SliderFloat("Strength", &scene.shadowStrength, 0.0f, 1.0f, "%.2f");
-                    ImGui::SetNextItemWidth(180.0f);
-                    ImGui::SliderFloat("Bias", &scene.shadowBias, 0.0001f, 0.01f, "%.4f");
-                    ImGui::SetNextItemWidth(180.0f);
-                    ImGui::SliderFloat("Softness (PCF)", &scene.pcfRadius, 0.5f, 4.0f, "%.1f");
+                    ImGui::Checkbox("Shadow LOD Override", &scene.shadowLODOverride);
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Enable custom LOD selection for shadow maps (WickedEngine SetShadowLODOverrideEnabled).\nCan improve GPU performance by rendering simplified LOD geometry into shadow maps.");
+                    }
 
-                    ImGui::Separator();
-                    ImGui::MenuItem("Show Light Frustum Wireframe", nullptr, &scene.showLightFrustum);
+                    ImGui::Checkbox("Show Light Frustum Wireframe", &scene.showLightFrustum);
 
                     ImGui::EndMenu();
                 }
