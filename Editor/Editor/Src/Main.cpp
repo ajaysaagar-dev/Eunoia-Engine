@@ -1,4 +1,4 @@
-﻿#define GLFW_EXPOSE_NATIVE_WIN32
+#define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
@@ -3232,8 +3232,8 @@ int createShadersAndPipeline()
 			float lightScale = length(lightSpaceMatrix[0].xyz);
 			float texelSizeWorld = (lightScale > 0.00001f) ? (2.0f / (max(shadowMapSize, 128.0f) * lightScale)) : 0.02f;
 
-			// Precision normal offset bias to prevent self-shadowing without detaching dynamic character shadows
-			float normalBias = texelSizeWorld * (0.6f * sinTheta + 0.1f);
+			// Precision normal offset bias matching WickedEngine & UE5 receiver biasing
+			float normalBias = clamp(texelSizeWorld * (0.25f * sinTheta + 0.02f), 0.0f, 0.015f);
 			float3 biasedWorldPos = worldPos + N * normalBias;
 
 			float4 shadowCoord = mul(lightSpaceMatrix, float4(biasedWorldPos, 1.0f));
@@ -3252,16 +3252,17 @@ int createShadersAndPipeline()
 
 			float borderDist = min(min(shadowUV.x, 1.0f - shadowUV.x), min(shadowUV.y, 1.0f - shadowUV.y));
 			if (borderDist <= 0.0f) return 1.0f;
-			float fade = saturate(borderDist * 10.0f);
+			float fade = saturate(borderDist * 40.0f);
 
 			float zBorderDist = min(projCoords.z, 1.0f - projCoords.z);
-			fade = min(fade, saturate(zBorderDist * 10.0f));
+			fade = min(fade, saturate(zBorderDist * 40.0f));
 
-			float depthBias = max(shadowBias * (1.0f - cosTheta), shadowBias * 0.15f);
+			// Minimal depth bias - hardware rasterizer depth bias handles occluder offset
+			float depthBias = clamp(shadowBias * 0.1f * (1.0f - cosTheta), 0.0f, 0.00015f);
 			float currentDepth = projCoords.z - depthBias;
 
 			// Soft shadow spread calculation matching WickedEngine: inv_res * mad(radius, 8, 2)
-			float spread = (1.0f / max(shadowMapSize, 128.0f)) * (max(pcfRadius, 0.2f) * 8.0f + 2.0f) * 0.25f;
+			float spread = (1.0f / max(shadowMapSize, 128.0f)) * (max(pcfRadius, 0.1f) * 8.0f + 2.0f) * 0.65f;
 
 			// Percentage-Closer Soft Shadows (PCSS) blocker search (WickedEngine SHADOW_SAMPLING_PCSS)
 			if (shadowPCSS > 0.5f)
@@ -4149,11 +4150,11 @@ int createShadersAndPipeline()
 	shadowPsoDesc.VS = { shadowVS->GetBufferPointer(), shadowVS->GetBufferSize() };
 	shadowPsoDesc.PS = { nullptr, 0 }; // Depth-only pass
 	shadowPsoDesc.RasterizerState.FillMode = D3D12_FILL_MODE_SOLID;
-	shadowPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_BACK;
+	shadowPsoDesc.RasterizerState.CullMode = D3D12_CULL_MODE_NONE; // Two-sided shadow pass matching WickedEngine
 	shadowPsoDesc.RasterizerState.FrontCounterClockwise = TRUE;
-	shadowPsoDesc.RasterizerState.DepthClipEnable = TRUE;
-	shadowPsoDesc.RasterizerState.DepthBias = 50;
-	shadowPsoDesc.RasterizerState.SlopeScaledDepthBias = 1.0f;
+	shadowPsoDesc.RasterizerState.DepthClipEnable = FALSE; // WickedEngine: rs.depth_clip_enable = false;
+	shadowPsoDesc.RasterizerState.DepthBias = 5;
+	shadowPsoDesc.RasterizerState.SlopeScaledDepthBias = 0.5f;
 	shadowPsoDesc.DepthStencilState.DepthEnable = TRUE;
 	shadowPsoDesc.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
 	shadowPsoDesc.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
@@ -5664,7 +5665,8 @@ void updateConstantBuffer()
 	if (!std::isfinite(camRight.x) || !std::isfinite(camRight.y) || !std::isfinite(camRight.z) || glm::length(camRight) < 1e-4f) camRight = glm::vec3(1.0f, 0.0f, 0.0f);
 
 	float maxDist = (activeScene.shadowDistance > 1.0f) ? activeScene.shadowDistance : 60.0f;
-	float shadowDist = std::clamp(maxDist, 5.0f, activeCam.farPlane);
+	float focusedDist = activeCam.isFlying ? std::min(maxDist, 60.0f) : std::clamp(activeCam.distance * 3.0f + 20.0f, 25.0f, std::min(maxDist, 80.0f));
+	float shadowDist = std::min(maxDist, focusedDist);
 	float nearZ = std::max(0.1f, activeCam.nearPlane);
 
 	float fovY = glm::radians(std::clamp(activeCam.fov, 10.0f, 120.0f));
