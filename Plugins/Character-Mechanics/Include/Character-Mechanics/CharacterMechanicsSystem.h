@@ -22,6 +22,9 @@ struct ObjectVelocityTracker {
 struct CharacterMechanicsSettings {
     bool orientToMovement = false;
     float rotationRate = 720.0f; // degrees per second (0 = instant snap)
+    bool bodyRotateToMovement = false;
+    GameObject* bodyObject = nullptr;
+    float bodyRotationRate = 720.0f;
 };
 
 class CharacterMechanicsSystem {
@@ -64,6 +67,14 @@ public:
     bool IsOrientationToMovementDirectionEnabled(GameObject* target = nullptr) const;
     float GetRotationRate(GameObject* target = nullptr) const;
     void OrientToDirection(GameObject* target, const glm::vec3& worldDirection, float dt = 0.0f);
+
+    // Body Rotate to Movement Direction APIs (Unreal Engine style bOrientRotationToMovement)
+    void SetBodyRotateToMovementDirection(bool enable, GameObject* target = nullptr, float rotationRate = 720.0f);
+    void SetBodyRotateToMovementDirection(GameObject* target, bool enable, float rotationRate = 720.0f);
+    bool IsBodyRotateToMovementDirectionEnabled(GameObject* target = nullptr) const;
+    float GetBodyRotationRate(GameObject* target = nullptr) const;
+    GameObject* GetBodyObject(GameObject* target = nullptr) const;
+    void SetBodyObject(GameObject* target, GameObject* body);
 
 private:
     CharacterMechanicsSystem() = default;

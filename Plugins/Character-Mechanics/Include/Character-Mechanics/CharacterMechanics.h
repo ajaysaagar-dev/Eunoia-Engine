@@ -25,6 +25,8 @@ struct CharacterMechanicsHandle {
     glm::vec3 GetVelocityVector(const glm::vec3& directionMask = glm::vec3(1.0f, 1.0f, 1.0f));
 
     void SetOrientationToMovementDirection(bool enable, float rotationRate = 720.0f);
+    void SetBodyRotateToMovementDirection(bool enable, GameObject* body = nullptr, float rotationRate = 720.0f);
+    void SetBodyRotateToMovementDirection(GameObject* body, bool enable, float rotationRate = 720.0f);
 };
 
 // Static & instance proxy for CharacterMechanics
@@ -86,6 +88,26 @@ struct CharacterMechanicsProxy {
     }
     static bool IsOrientationToMovementDirectionEnabled(GameObject* target = nullptr) {
         return CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(target);
+    }
+
+    // Body Rotate to Movement Direction APIs (Unreal Engine style bOrientRotationToMovement):
+    // Supports:
+    // EngineSystem::CharacterMechanics::SetBodyRotateToMovementDirection(false | true, gameobject);
+    // EngineSystem::CharacterMechanics::SetBodyRotateToMovementDirection(gameobject, false | true);
+    static void SetBodyRotateToMovementDirection(bool enable, GameObject* target = nullptr, float rotationRate = 720.0f) {
+        CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, target, rotationRate);
+    }
+    static void SetBodyRotateToMovementDirection(GameObject* target, bool enable, float rotationRate = 720.0f) {
+        CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(target, enable, rotationRate);
+    }
+    static bool IsBodyRotateToMovementDirectionEnabled(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().IsBodyRotateToMovementDirectionEnabled(target);
+    }
+    static void SetBodyObject(GameObject* target, GameObject* body) {
+        CharacterMechanicsSystem::Get().SetBodyObject(target, body);
+    }
+    static GameObject* GetBodyObject(GameObject* target = nullptr) {
+        return CharacterMechanicsSystem::Get().GetBodyObject(target);
     }
 };
 

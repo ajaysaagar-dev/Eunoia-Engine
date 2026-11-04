@@ -245,30 +245,126 @@ void CharacterMechanicsSystem::OrientToDirection(GameObject* target, const glm::
     }
 
     float targetYaw = glm::degrees(std::atan2(-worldDirection.x, -worldDirection.z));
-    float currentYaw = character->rotation.y;
-    float diff = std::fmod(targetYaw - currentYaw + 540.0f, 360.0f) - 180.0f;
 
-    float rate = GetRotationRate(character);
-    if (rate <= 0.0f) {
-        character->rotation.y = targetYaw;
-    } else {
-        float effectiveDt = (dt > 1e-5f) ? dt : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
-        float maxStep = rate * effectiveDt;
-        if (std::abs(diff) <= maxStep) {
-            character->rotation.y = targetYaw;
+    auto applyYawRotation = [](GameObject* obj, float tYaw, float rate, float deltaSec) {
+        if (!obj) return;
+        float currentYaw = obj->rotation.y;
+        float diff = std::fmod(tYaw - currentYaw + 540.0f, 360.0f) - 180.0f;
+        if (rate <= 0.0f) {
+            obj->rotation.y = tYaw;
         } else {
-            character->rotation.y += (diff > 0.0f ? maxStep : -maxStep);
+            float effectiveDt = (deltaSec > 1e-5f) ? deltaSec : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
+            float maxStep = rate * effectiveDt;
+            if (std::abs(diff) <= maxStep) {
+                obj->rotation.y = tYaw;
+            } else {
+                obj->rotation.y += (diff > 0.0f ? maxStep : -maxStep);
+            }
+        }
+        obj->rotation.y = std::fmod(obj->rotation.y + 180.0f, 360.0f);
+        if (obj->rotation.y < 0.0f) obj->rotation.y += 360.0f;
+        obj->rotation.y -= 180.0f;
+
+        if (obj->hasPhysics && obj->physics.isCharacterPhysics) {
+            obj->rotation.x = 0.0f;
+            obj->rotation.z = 0.0f;
+        }
+    };
+
+    // 1. Orient the root character object if orientToMovement is enabled
+    if (IsOrientationToMovementDirectionEnabled(character)) {
+        float rate = GetRotationRate(character);
+        applyYawRotation(character, targetYaw, rate, dt);
+    }
+
+    // 2. Orient designated body object or self if bodyRotateToMovement is enabled
+    if (IsBodyRotateToMovementDirectionEnabled(character)) {
+        GameObject* body = GetBodyObject(character);
+        GameObject* bodyTarget = body ? body : character;
+        float bRate = GetBodyRotationRate(character);
+        applyYawRotation(bodyTarget, targetYaw, bRate, dt);
+    }
+}
+
+void CharacterMechanicsSystem::SetBodyRotateToMovementDirection(bool enable, GameObject* target, float rotationRate) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        auto& s = m_settings[id];
+        s.bodyRotateToMovement = enable;
+        s.bodyRotationRate = rotationRate;
+        if (!s.bodyObject) {
+            s.bodyObject = character;
         }
     }
-
-    character->rotation.y = std::fmod(character->rotation.y + 180.0f, 360.0f);
-    if (character->rotation.y < 0.0f) character->rotation.y += 360.0f;
-    character->rotation.y -= 180.0f;
-
-    if (character->hasPhysics && character->physics.isCharacterPhysics) {
-        character->rotation.x = 0.0f;
-        character->rotation.z = 0.0f;
+    // Also save in m_settings[0] as global/default fallback
+    auto& fallback = m_settings[0];
+    fallback.bodyRotateToMovement = enable;
+    fallback.bodyRotationRate = rotationRate;
+    if (character && !fallback.bodyObject) {
+        fallback.bodyObject = character;
     }
+}
+
+void CharacterMechanicsSystem::SetBodyRotateToMovementDirection(GameObject* target, bool enable, float rotationRate) {
+    SetBodyRotateToMovementDirection(enable, target, rotationRate);
+}
+
+bool CharacterMechanicsSystem::IsBodyRotateToMovementDirectionEnabled(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        auto it = m_settings.find(id);
+        if (it != m_settings.end()) {
+            return it->second.bodyRotateToMovement;
+        }
+    }
+    auto it0 = m_settings.find(0);
+    if (it0 != m_settings.end()) {
+        return it0->second.bodyRotateToMovement;
+    }
+    return false;
+}
+
+float CharacterMechanicsSystem::GetBodyRotationRate(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        auto it = m_settings.find(id);
+        if (it != m_settings.end()) {
+            return it->second.bodyRotationRate;
+        }
+    }
+    auto it0 = m_settings.find(0);
+    if (it0 != m_settings.end()) {
+        return it0->second.bodyRotationRate;
+    }
+    return 720.0f;
+}
+
+GameObject* CharacterMechanicsSystem::GetBodyObject(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        auto it = m_settings.find(id);
+        if (it != m_settings.end() && it->second.bodyObject) {
+            return it->second.bodyObject;
+        }
+    }
+    auto it0 = m_settings.find(0);
+    if (it0 != m_settings.end() && it0->second.bodyObject) {
+        return it0->second.bodyObject;
+    }
+    return character;
+}
+
+void CharacterMechanicsSystem::SetBodyObject(GameObject* target, GameObject* body) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        m_settings[id].bodyObject = body;
+    }
+    m_settings[0].bodyObject = body;
 }
 
 // CharacterMechanicsHandle implementations
@@ -314,6 +410,23 @@ void CharacterMechanicsHandle::SetOrientationToMovementDirection(bool enable, fl
         target = behaviour->GetOwner();
     }
     CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(target, enable, rotationRate);
+}
+
+void CharacterMechanicsHandle::SetBodyRotateToMovementDirection(bool enable, GameObject* body, float rotationRate) {
+    if (behaviour && !target) {
+        target = behaviour->GetOwner();
+    }
+    if (body) {
+        CharacterMechanicsSystem::Get().SetBodyObject(target, body);
+        CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, target, rotationRate);
+        CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, body, rotationRate);
+    } else {
+        CharacterMechanicsSystem::Get().SetBodyRotateToMovementDirection(enable, target, rotationRate);
+    }
+}
+
+void CharacterMechanicsHandle::SetBodyRotateToMovementDirection(GameObject* body, bool enable, float rotationRate) {
+    SetBodyRotateToMovementDirection(enable, body, rotationRate);
 }
 
 } // namespace CharacterMechanics
