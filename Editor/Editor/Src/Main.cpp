@@ -1,4 +1,4 @@
-#define GLFW_EXPOSE_NATIVE_WIN32
+﻿#define GLFW_EXPOSE_NATIVE_WIN32
 #include <GLFW/glfw3.h>
 #include <GLFW/glfw3native.h>
 
@@ -151,10 +151,20 @@ struct alignas(256) SceneConstantBuffer
 	float fogDensity;
 	float fogHeightStart;
 	float fogHeightEnd;
-	float padFog0;
-	float padFog1;
-	float padFog2;
+	float shadowSampleCount;
+	float shadowPCSS;
+	float enableScreenSpaceShadows;
 	glm::vec4 fogColor;
+	// WickedEngine Shadow & Cascade Parameters
+	float screenSpaceShadowRange;
+	float screenSpaceShadowSamples;
+	float enableCapsuleShadows;
+	float capsuleShadowAngle;
+	float capsuleShadowFade;
+	float cascadeCount;
+	float cascadeBlending;
+	float visualizeCascades;
+	glm::vec4 cascadeSplits;
 };
 
 struct alignas(256) ShadowConstantBuffer
@@ -1799,8 +1809,10 @@ int createDirectionalShadowResource(UINT dirRes = 2048)
 	if (!g_d3dDevice) return EXIT_FAILURE;
 
 	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
-		if (r < 256) r = 256;
+		if (r == 0) return 0;
+		if (r < 128) r = 128;
 		if (r > 4096) r = 4096;
+		if (r <= 192) return 128;
 		if (r <= 384) return 256;
 		if (r <= 768) return 512;
 		if (r <= 1536) return 1024;
@@ -1886,8 +1898,10 @@ int createPointShadowResource(UINT ptRes = 512)
 	if (!g_d3dDevice) return EXIT_FAILURE;
 
 	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
-		if (r < 256) r = 256;
+		if (r == 0) return 0;
+		if (r < 128) r = 128;
 		if (r > 4096) r = 4096;
+		if (r <= 192) return 128;
 		if (r <= 384) return 256;
 		if (r <= 768) return 512;
 		if (r <= 1536) return 1024;
@@ -1979,8 +1993,10 @@ int createSpotShadowResource(UINT spotRes = 1024)
 	if (!g_d3dDevice) return EXIT_FAILURE;
 
 	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
-		if (r < 256) r = 256;
+		if (r == 0) return 0;
+		if (r < 128) r = 128;
 		if (r > 4096) r = 4096;
+		if (r <= 192) return 128;
 		if (r <= 384) return 256;
 		if (r <= 768) return 512;
 		if (r <= 1536) return 1024;
@@ -2294,17 +2310,19 @@ int createAoRenderTargets(int width, int height)
 void EnsureShadowBuffers(UINT reqDirRes, UINT reqPtRes, UINT reqSpotRes)
 {
 	auto SnapRes = [](UINT r, UINT defVal) -> UINT {
-		if (r < 256) r = 256;
+		if (r == 0) return 0;
+		if (r < 128) r = 128;
 		if (r > 4096) r = 4096;
+		if (r <= 192) return 128;
 		if (r <= 384) return 256;
 		if (r <= 768) return 512;
 		if (r <= 1536) return 1024;
 		if (r <= 3072) return 2048;
 		return 4096;
 	};
-	reqDirRes = SnapRes(reqDirRes, 2048);
-	reqPtRes = SnapRes(reqPtRes, 512);
-	reqSpotRes = SnapRes(reqSpotRes, 1024);
+	reqDirRes = (reqDirRes == 0) ? 128 : SnapRes(reqDirRes, 2048);
+	reqPtRes = (reqPtRes == 0) ? 128 : SnapRes(reqPtRes, 512);
+	reqSpotRes = (reqSpotRes == 0) ? 128 : SnapRes(reqSpotRes, 1024);
 
 	bool needDir  = (!g_shadowDepthBuffer || reqDirRes != g_currentDirShadowRes);
 	bool needPt   = (!g_pointShadowDepthBuffer || reqPtRes != g_currentPointShadowRes);
@@ -2846,10 +2864,19 @@ int createShadersAndPipeline()
 			float fogDensity;
 			float fogHeightStart;
 			float fogHeightEnd;
-			float padFog0;
-			float padFog1;
-			float padFog2;
+			float shadowSampleCount;
+			float shadowPCSS;
+			float enableScreenSpaceShadows;
 			float4 fogColor;
+			float screenSpaceShadowRange;
+			float screenSpaceShadowSamples;
+			float enableCapsuleShadows;
+			float capsuleShadowAngle;
+			float capsuleShadowFade;
+			float cascadeCount;
+			float cascadeBlending;
+			float visualizeCascades;
+			float4 cascadeSplits;
 		};
 
 		cbuffer MaterialConstants : register(b1)
@@ -3093,25 +3120,104 @@ int createShadersAndPipeline()
 			return curr * whiteScale;
 		}
 
-		static const float2 poissonDisk16[16] = {
-			float2(-0.94201624f, -0.39906216f),
-			float2( 0.94558609f, -0.76890725f),
-			float2(-0.09418410f, -0.92938870f),
-			float2( 0.34495938f,  0.29387760f),
-			float2(-0.91588581f,  0.45771432f),
-			float2(-0.81544232f, -0.87912464f),
-			float2(-0.38277543f,  0.27676845f),
-			float2( 0.97484398f,  0.75648379f),
-			float2( 0.44323325f, -0.97511554f),
-			float2( 0.53742981f, -0.47373420f),
-			float2(-0.26496911f, -0.41893023f),
-			float2( 0.79197514f,  0.19090188f),
-			float2(-0.24188840f,  0.99706507f),
-			float2(-0.81409955f,  0.91437590f),
-			float2( 0.19984126f,  0.78641367f),
-			float2( 0.14383161f, -0.14100790f)
+		// ================================================================
+		// WickedEngine Vogel Disk Sampling Patterns (shadowHF.hlsli)
+		// Remapped via: baked_value * 2 - 1 from PoissonGenerator.h
+		// ================================================================
+		static const float2 vogel_points4[4] = {
+			float2(0.353553f, 0.000000f),
+			float2(-0.451560f, 0.413635f),
+			float2(0.069174f, -0.787537f),
+			float2(0.569060f, 0.742409f)
 		};
 
+		static const float2 vogel_points8[8] = {
+			float2(0.25000000f, 0.00000000f),
+			float2(-0.31930089f, 0.29248416f),
+			float2(0.04891348f, -0.55687296f),
+			float2(0.40238643f, 0.52496207f),
+			float2(-0.73851585f, -0.13074535f),
+			float2(0.69968677f, -0.44490278f),
+			float2(-0.23419666f, 0.87043202f),
+			float2(-0.44604915f, -0.85938364f)
+		};
+
+		static const float2 vogel_points16[16] = {
+			float2(0.17677665f, 0.00000000f),
+			float2(-0.22577983f, 0.20681751f),
+			float2(0.03458714f, -0.39376867f),
+			float2(0.28453016f, 0.37120426f),
+			float2(-0.52220953f, -0.09245092f),
+			float2(0.49475324f, -0.31459379f),
+			float2(-0.16560209f, 0.61548841f),
+			float2(-0.31540442f, -0.60767603f),
+			float2(0.68456841f, 0.25023210f),
+			float2(-0.71235347f, 0.29377294f),
+			float2(0.34362423f, -0.73360229f),
+			float2(0.25340176f, 0.80903494f),
+			float2(-0.76454973f, -0.44352412f),
+			float2(0.89722824f, -0.19680285f),
+			float2(-0.54790950f, 0.77848911f),
+			float2(-0.12594837f, -0.97615927f)
+		};
+
+		static const float2 vogel_points32[32] = {
+			float2(0.12500000f, 0.00000000f),
+			float2(-0.15965044f, 0.14624202f),
+			float2(0.02445674f, -0.27843648f),
+			float2(0.20119321f, 0.26248097f),
+			float2(-0.36925793f, -0.06537271f),
+			float2(0.34984338f, -0.22245139f),
+			float2(-0.11709833f, 0.43521595f),
+			float2(-0.22302461f, -0.42969179f),
+			float2(0.48406291f, 0.17694080f),
+			float2(-0.50370997f, 0.20772886f),
+			float2(0.24297905f, -0.51873517f),
+			float2(0.17918217f, 0.57207417f),
+			float2(-0.54061830f, -0.31361890f),
+			float2(0.63443625f, -0.13916063f),
+			float2(-0.38743055f, 0.55047488f),
+			float2(-0.08905894f, -0.69024885f),
+			float2(0.54879880f, 0.46308208f),
+			float2(-0.73889750f, 0.03009081f),
+			float2(0.53931046f, -0.53597510f),
+			float2(-0.03660476f, 0.77976608f),
+			float2(-0.51236552f, -0.61490381f),
+			float2(0.81227481f, 0.10993028f),
+			float2(-0.68869931f, 0.47834957f),
+			float2(0.18879366f, -0.83590192f),
+			float2(0.43436146f, 0.75957572f),
+			float2(-0.85019755f, -0.27210116f),
+			float2(0.82646751f, -0.38088906f),
+			float2(-0.35873961f, 0.85479879f),
+			float2(-0.31848884f, -0.88836360f),
+			float2(0.84942913f, 0.44759941f),
+			float2(-0.94430852f, 0.24780297f),
+			float2(0.53754807f, -0.83391672f)
+		};
+
+		static const float2 poissonDisk16[16] = {
+			float2(0.17677665f, 0.00000000f),
+			float2(-0.22577983f, 0.20681751f),
+			float2(0.03458714f, -0.39376867f),
+			float2(0.28453016f, 0.37120426f),
+			float2(-0.52220953f, -0.09245092f),
+			float2(0.49475324f, -0.31459379f),
+			float2(-0.16560209f, 0.61548841f),
+			float2(-0.31540442f, -0.60767603f),
+			float2(0.68456841f, 0.25023210f),
+			float2(-0.71235347f, 0.29377294f),
+			float2(0.34362423f, -0.73360229f),
+			float2(0.25340176f, 0.80903494f),
+			float2(-0.76454973f, -0.44352412f),
+			float2(0.89722824f, -0.19680285f),
+			float2(-0.54790950f, 0.77848911f),
+			float2(-0.12594837f, -0.97615927f)
+		};
+
+		// ----------------------------------------------------------------
+		// Directional Light Shadows (WickedEngine shadow_2D & PCSS in shadowHF.hlsli)
+		// ----------------------------------------------------------------
 		float CalculateShadow(float3 worldPos, float3 N, float3 L)
 		{
 			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
@@ -3124,7 +3230,7 @@ int createShadersAndPipeline()
 			float sinTheta = sqrt(saturate(1.0f - cosTheta * cosTheta));
 
 			float lightScale = length(lightSpaceMatrix[0].xyz);
-			float texelSizeWorld = (lightScale > 0.00001f) ? (2.0f / (shadowMapSize * lightScale)) : 0.02f;
+			float texelSizeWorld = (lightScale > 0.00001f) ? (2.0f / (max(shadowMapSize, 128.0f) * lightScale)) : 0.02f;
 
 			// Precision normal offset bias to prevent self-shadowing without detaching dynamic character shadows
 			float normalBias = texelSizeWorld * (0.6f * sinTheta + 0.1f);
@@ -3154,17 +3260,79 @@ int createShadersAndPipeline()
 			float depthBias = max(shadowBias * (1.0f - cosTheta), shadowBias * 0.15f);
 			float currentDepth = projCoords.z - depthBias;
 
-			float texelSize = 1.0f / shadowMapSize;
-			float filterRadius = texelSize * max(pcfRadius, 0.5f);
+			// Soft shadow spread calculation matching WickedEngine: inv_res * mad(radius, 8, 2)
+			float spread = (1.0f / max(shadowMapSize, 128.0f)) * (max(pcfRadius, 0.2f) * 8.0f + 2.0f) * 0.25f;
 
-			float shadow = 0.0f;
-			[unroll]
-			for (int i = 0; i < 16; ++i)
+			// Percentage-Closer Soft Shadows (PCSS) blocker search (WickedEngine SHADOW_SAMPLING_PCSS)
+			if (shadowPCSS > 0.5f)
 			{
-				float2 offset = poissonDisk16[i] * filterRadius;
-				shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+				float blockerCount = 0.0f;
+				float blockerSum = 0.0f;
+				const float search = 2.0f;
+				[unroll]
+				for (float bx = -search; bx <= search; bx += 2.0f)
+				{
+					for (float by = -search; by <= search; by += 2.0f)
+					{
+						float2 bUV = clamp(shadowUV + spread * float2(bx, by) * 2.0f, float2(0.001f, 0.001f), float2(0.999f, 0.999f));
+						float d = g_shadowMap.SampleLevel(g_sampler, bUV, 0).r;
+						if (d < currentDepth)
+						{
+							blockerCount += 1.0f;
+							blockerSum += d;
+						}
+					}
+				}
+				if (blockerCount > 0.0f)
+				{
+					float avgBlocker = blockerSum / blockerCount;
+					float penumbra = abs(currentDepth - avgBlocker) * 150.0f;
+					spread = clamp(spread * penumbra, (1.0f / max(shadowMapSize, 128.0f)) * 0.75f, spread * 3.5f);
+				}
 			}
-			shadow /= 16.0f;
+
+			// Vogel Disk PCF Sampling
+			float shadow = 0.0f;
+			if (shadowSampleCount <= 4.5f)
+			{
+				[unroll]
+				for (int i = 0; i < 4; ++i)
+				{
+					float2 offset = vogel_points4[i] * spread;
+					shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+				}
+				shadow /= 4.0f;
+			}
+			else if (shadowSampleCount <= 8.5f)
+			{
+				[unroll]
+				for (int i = 0; i < 8; ++i)
+				{
+					float2 offset = vogel_points8[i] * spread;
+					shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+				}
+				shadow /= 8.0f;
+			}
+			else if (shadowSampleCount >= 24.0f)
+			{
+				[unroll]
+				for (int i = 0; i < 32; ++i)
+				{
+					float2 offset = vogel_points32[i] * spread;
+					shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+				}
+				shadow /= 32.0f;
+			}
+			else
+			{
+				[unroll]
+				for (int i = 0; i < 16; ++i)
+				{
+					float2 offset = vogel_points16[i] * spread;
+					shadow += g_shadowMap.SampleCmpLevelZero(g_shadowSampler, shadowUV + offset, currentDepth);
+				}
+				shadow /= 16.0f;
+			}
 
 			float rawShadow = lerp(1.0f - shadowStrength, 1.0f, shadow);
 			float finalShadow = lerp(1.0f, rawShadow, fade);
@@ -3179,6 +3347,76 @@ int createShadersAndPipeline()
 			return lerp(1.0f, finalShadow, distFade);
 		}
 
+		// ----------------------------------------------------------------
+		// Screen Space Shadows / Contact Shadows (WickedEngine screenspaceshadowCS.hlsl)
+		// ----------------------------------------------------------------
+		float CalculateContactShadow(float3 worldPos, float3 N, float3 L)
+		{
+			if (enableScreenSpaceShadows < 0.5f || enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
+
+			float distToCam = length(worldPos - cameraPos);
+			if (distToCam >= maxShadowDistance) return 1.0f;
+
+			float numSteps = clamp(screenSpaceShadowSamples, 4.0f, 64.0f);
+			float stepSize = screenSpaceShadowRange / numSteps;
+			float3 rayPos = worldPos + N * 0.02f;
+			float occlusion = 0.0f;
+
+			[loop]
+			for (int s = 1; s <= 32; ++s)
+			{
+				if (float(s) > numSteps) break;
+				rayPos += L * stepSize;
+
+				float4 clipPos = mul(mvp, float4(rayPos, 1.0f));
+				float3 ndc = clipPos.xyz / max(clipPos.w, 0.0001f);
+				float2 scUV = float2(ndc.x * 0.5f + 0.5f, -ndc.y * 0.5f + 0.5f);
+				if (scUV.x < 0.0f || scUV.x > 1.0f || scUV.y < 0.0f || scUV.y > 1.0f || ndc.z < 0.0f || ndc.z > 1.0f)
+					break;
+
+				float4 scCoord = mul(lightSpaceMatrix, float4(rayPos, 1.0f));
+				float3 scProj = scCoord.xyz / max(scCoord.w, 0.0001f);
+				float2 smUV = float2(scProj.x * 0.5f + 0.5f, -scProj.y * 0.5f + 0.5f);
+				if (smUV.x >= 0.0f && smUV.x <= 1.0f && smUV.y >= 0.0f && smUV.y <= 1.0f)
+				{
+					float smZ = g_shadowMap.SampleLevel(g_sampler, smUV, 0).r;
+					float deltaZ = scProj.z - smZ;
+					if (deltaZ > 0.0012f && deltaZ < 0.035f)
+					{
+						occlusion = 1.0f - pow(float(s) / numSteps, 2.0f);
+						float2 fade = max(12.0f * abs(scUV - 0.5f) - 5.0f, 0.0f);
+						occlusion *= saturate(1.0f - dot(fade, fade));
+						break;
+					}
+				}
+			}
+			return saturate(1.0f - occlusion * shadowStrength);
+		}
+
+		// ----------------------------------------------------------------
+		// Capsule Shadows (WickedEngine capsuleShadowHF.hlsli)
+		// ----------------------------------------------------------------
+		float CalculateCapsuleShadow(float3 worldPos, float3 N)
+		{
+			if (enableCapsuleShadows < 0.5f) return 1.0f;
+
+			float coneAngleRad = capsuleShadowAngle * 0.0174532925f;
+			float cosCone = cos(coneAngleRad);
+
+			float3 groundPt = float3(worldPos.x, 0.0f, worldPos.z);
+			float3 toGround = groundPt - worldPos;
+			float dist = length(toGround);
+			if (dist < 4.0f && dist > 0.01f)
+			{
+				float capRadius = 0.40f;
+				float cosTheta = sqrt((dist * dist) / (capRadius * capRadius + dist * dist));
+				float cosPhi = dot(-N, normalize(toGround));
+				float occ = saturate(1.0f - max(0.0f, cosPhi) * (1.0f - cosTheta) / max(1.0f - cosCone, 0.001f));
+				return lerp(occ, 1.0f, capsuleShadowFade);
+			}
+			return 1.0f;
+		}
+
 		static const float3 pointShadowOffsets[16] = {
 			float3( 0.577f,  0.577f,  0.577f), float3(-0.577f,  0.577f,  0.577f),
 			float3( 0.577f, -0.577f,  0.577f), float3(-0.577f, -0.577f,  0.577f),
@@ -3190,6 +3428,9 @@ int createShadersAndPipeline()
 			float3( 0.707f,  0.707f,  0.0f), float3(-0.707f, -0.707f,  0.0f)
 		};
 
+		// ----------------------------------------------------------------
+		// Point Light Shadows (Cube Shadow Maps - WickedEngine shadow_cube in shadowHF.hlsli)
+		// ----------------------------------------------------------------
 		float CalculatePointShadow(int shadowIdx, float3 worldPos, float3 pPos, float pRange, float3 N, float shadowRes, float sBias, float sStrength)
 		{
 			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
@@ -3216,7 +3457,7 @@ int createShadersAndPipeline()
 			float refDepth = saturate((farZ / (farZ - nearZ)) - (farZ * nearZ / (farZ - nearZ)) / max(biasedZ, 0.0001f));
 
 			float filterScale = 512.0f / max(shadowRes, 128.0f);
-			float diskRadius = (0.008f + 0.020f * saturate(currentDist / farZ)) * max(pcfRadius, 0.5f) * filterScale;
+			float diskRadius = (0.008f + 0.020f * saturate(currentDist / farZ)) * (max(pcfRadius, 0.2f) * 8.0f + 2.0f) * 0.125f * filterScale;
 
 			float shadow = 0.0f;
 			[unroll]
@@ -3232,6 +3473,9 @@ int createShadersAndPipeline()
 			return lerp(1.0f, finalShadow, distFade);
 		}
 
+		// ----------------------------------------------------------------
+		// Spot Light Shadows (WickedEngine shadow_2D with distance-adaptive scaling)
+		// ----------------------------------------------------------------
 		float CalculateSpotShadow(int shadowIdx, float3 worldPos, float3 N, float3 L, float4x4 spotMatrix, float shadowRes, float sBias, float sStrength)
 		{
 			if (enableShadows < 0.5f || receiveShadows < 0.5f) return 1.0f;
@@ -3263,20 +3507,18 @@ int createShadersAndPipeline()
 			shadowUV.x = projCoords.x * 0.5f + 0.5f;
 			shadowUV.y = -projCoords.y * 0.5f + 0.5f;
 
-			// Distance-adaptive shadow viewport scaling:
-			// Maps [0, 1] projection space into the allocated [0, uvScale] slice viewport
 			float uvScale = saturate(safeShadowRes / safeAllocRes);
 			float2 scaledUV = shadowUV * uvScale;
 
 			float depthBias = max(sBias * (1.0f - cosTheta), sBias * 0.15f);
 			float currentDepth = projCoords.z - depthBias;
 
-			float filterRadius = (1.0f / safeAllocRes) * max(pcfRadius, 0.5f);
+			float filterRadius = (1.0f / safeAllocRes) * (max(pcfRadius, 0.2f) * 8.0f + 2.0f) * 0.25f;
 			float shadow = 0.0f;
 			[unroll]
 			for (int k = 0; k < 16; ++k)
 			{
-				float2 offset = poissonDisk16[k] * filterRadius;
+				float2 offset = vogel_points16[k] * filterRadius;
 				float2 sampleUV = clamp(scaledUV + offset, float2(0.0005f, 0.0005f), float2(uvScale - 0.0005f, uvScale - 0.0005f));
 				shadow += g_spotShadowMap.SampleCmpLevelZero(g_shadowSampler, float3(sampleUV, (float)shadowIdx), currentDepth);
 			}
@@ -3284,7 +3526,6 @@ int createShadersAndPipeline()
 
 			return lerp(1.0f - sStrength, 1.0f, shadow);
 		}
-
 		float4 PSMain(PSInput input) : SV_TARGET
 		{
 			float2 uv = input.uv * uvScale;
@@ -3487,9 +3728,31 @@ int createShadersAndPipeline()
 			// NVIDIA Falcor & Disney Retro-Reflective Diffuse BRDF
 			float3 diffBRDF = (1.0f - F) * (1.0f - metal) * Diffuse_Burley(albedo, rough, NdotV, NdotL, VdotH);
 
-			// Directional Sun Light with Shadows (WickedEngine Cascade & Poisson PCF)
+			// Directional Sun Light with Shadows (WickedEngine Cascade & Vogel Disk PCF)
 			float shadowFactor = CalculateShadow(input.worldPos, N, L);
+			float contactShadow = CalculateContactShadow(input.worldPos, N, L);
+			shadowFactor = min(shadowFactor, contactShadow);
+			float capShadow = CalculateCapsuleShadow(input.worldPos, N);
+			shadowFactor *= capShadow;
+
 			float3 directLit = (diffBRDF + specBRDF) * NdotL * lightColor * shadowFactor;
+
+			// Cascade Visualizer (Color Overlay)
+			if (visualizeCascades > 0.5f)
+			{
+				float distToCam = length(input.worldPos - cameraPos);
+				float3 cascadeColor = float3(1.0f, 1.0f, 1.0f);
+				if (distToCam < cascadeSplits.x) {
+					cascadeColor = float3(1.35f, 0.65f, 0.65f); // Cascade 1: Red
+				} else if (distToCam < cascadeSplits.y) {
+					cascadeColor = float3(0.65f, 1.35f, 0.65f); // Cascade 2: Green
+				} else if (distToCam < cascadeSplits.z) {
+					cascadeColor = float3(0.65f, 0.65f, 1.35f); // Cascade 3: Blue
+				} else {
+					cascadeColor = float3(1.35f, 1.35f, 0.60f); // Cascade 4: Yellow
+				}
+				directLit *= cascadeColor;
+			}
 
 			// Cavity & contact ambient occlusion darkening on direct lighting (WickedEngine & UE5 reference)
 			float directAO = lerp(ao, 1.0f, saturate(NdotL * shadowFactor * 0.65f + 0.35f));
@@ -5327,9 +5590,10 @@ void updateConstantBuffer()
 		if (spotCandidates[k].effectiveRes > reqSpotRes) reqSpotRes = spotCandidates[k].effectiveRes;
 	}
 
-	if (reqPtRes == 0) reqPtRes = 512;
-	if (reqSpotRes == 0) reqSpotRes = 1024;
-	UINT reqDirRes = (UINT)g_scene.shadowResolution;
+	if (reqPtRes == 0) reqPtRes = (UINT)std::max(activeScene.shadowResolutionCube, 128);
+	if (reqSpotRes == 0) reqSpotRes = (UINT)std::max(activeScene.shadowResolution2D, 128);
+	UINT reqDirRes = (UINT)activeScene.shadowResolution2D;
+	if (reqDirRes == 0) reqDirRes = 128; // minimal allocation to ensure valid descriptor table
 
 	EnsureShadowBuffers(reqDirRes, reqPtRes, reqSpotRes);
 
@@ -5541,7 +5805,7 @@ void updateConstantBuffer()
 	cb.lightColor = activeScene.lightColor * activeScene.lightIntensity;
 	cb.shadowStrength = activeScene.shadowStrength;
 	cb.pcfRadius = activeScene.pcfRadius;
-	cb.enableShadows = activeScene.enableShadows ? 1.0f : 0.0f;
+	cb.enableShadows = (activeScene.enableShadows && activeScene.shadowResolution2D > 0) ? 1.0f : 0.0f;
 	cb.shadowMapSize = (float)g_currentDirShadowRes;
 
 	// Post Processing parameters (Color Grading & Exposure)
@@ -5573,10 +5837,24 @@ void updateConstantBuffer()
 	cb.fogDensity = activeScene.fogDensity;
 	cb.fogHeightStart = activeScene.fogHeightStart;
 	cb.fogHeightEnd = activeScene.fogHeightEnd;
-	cb.padFog0 = 0.0f;
-	cb.padFog1 = 0.0f;
-	cb.padFog2 = 0.0f;
+	cb.shadowSampleCount = (float)activeScene.shadowSampleCount;
+	cb.shadowPCSS = activeScene.shadowPCSS ? 1.0f : 0.0f;
+	cb.enableScreenSpaceShadows = (activeScene.screenSpaceShadows && activeScene.enableShadows && activeScene.shadowResolution2D > 0) ? 1.0f : 0.0f;
 	cb.fogColor = glm::vec4(activeScene.fogColor, 1.0f);
+	cb.screenSpaceShadowRange = activeScene.screenSpaceShadowRange;
+	cb.screenSpaceShadowSamples = (float)activeScene.screenSpaceShadowSamples;
+	cb.enableCapsuleShadows = activeScene.capsuleShadows ? 1.0f : 0.0f;
+	cb.capsuleShadowAngle = activeScene.capsuleShadowAngle;
+	cb.capsuleShadowFade = activeScene.capsuleShadowFade;
+	cb.cascadeCount = (float)activeScene.cascadeCount;
+	cb.cascadeBlending = activeScene.cascadeBlending ? 1.0f : 0.0f;
+	cb.visualizeCascades = activeScene.visualizeCascades ? 1.0f : 0.0f;
+	cb.cascadeSplits = glm::vec4(
+		activeScene.cascadeDistances[0],
+		activeScene.cascadeDistances[1],
+		activeScene.cascadeDistances[2],
+		activeScene.cascadeDistances[3]
+	);
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;
