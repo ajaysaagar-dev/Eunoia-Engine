@@ -9,6 +9,7 @@
 #include <EngineCore/EngineLogger.h>
 #include <EngineScene/ScreenPrint.h>
 #include <EngineScene/TransformTypes.h>
+#include <EngineScene/BehaviourApi.h>
 #include <EnginePlatform/InputSystem.h>
 #include <UISystem/UISystem.h>
 #include <RayTrace/RayTrace.h>
@@ -451,6 +452,49 @@ struct BehaviourTransform {
     void Translate(const glm::vec3* fromPoint, const glm::vec3* toLocation) { RelativeTranslate(fromPoint, toLocation); }
     void TranslateFromTo(const glm::vec3& fromPoint, const glm::vec3& toLocation) { RelativeTranslate(fromPoint, toLocation); }
     void TranslateTo(const glm::vec3& targetLocation) { RelativeTranslateTo(targetLocation); }
+
+    // Directional convenience (Docs/Behaviuor.md Section 5)
+    TransformVector3 GetBackwardVector() const { return -GetForwardVector(); }
+    TransformVector3 GetLeftVector() const { return -GetRightVector(); }
+    TransformVector3 GetDownVector() const { return -GetUpVector(); }
+
+    // Rotation Helpers (Docs/Behaviuor.md Section 3.4)
+    void LookAt(const glm::vec3& targetPos, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void LookAt(const GameObject* otherObject, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void LookAt(const ObjectRef& otherObject, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void RotateTowards(const glm::vec3& targetRot, float degreesPerSecond, float dt = -1.0f);
+    void RotateTowards(const TransformVector3& targetRot, float degreesPerSecond, float dt = -1.0f);
+    void Rotate(const glm::vec3& axis, float degrees, Space space = Space::Local);
+    void SetForward(const glm::vec3& direction);
+    void SetForward(const TransformVector3& direction);
+    glm::quat GetWorldQuaternion() const;
+    void SetWorldQuaternion(const glm::quat& q);
+
+    // Combined & Utility Calls (Docs/Behaviuor.md Section 3.5)
+    void SetWorld(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale);
+    void SetRelative(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale);
+    void Teleport(const glm::vec3& pos, const glm::vec3& rot);
+    void SetParent(GameObject* parentObject, bool keepWorld = true);
+    GameObject* GetParent() const;
+
+    glm::vec3 TransformPoint(const glm::vec3& localPoint) const;
+    glm::vec3 InverseTransformPoint(const glm::vec3& worldPoint) const;
+    glm::vec3 TransformDirection(const glm::vec3& localDir) const;
+    glm::vec3 InverseTransformDirection(const glm::vec3& worldDir) const;
+
+    float DistanceTo(const glm::vec3& point) const;
+    float DistanceTo(const GameObject* otherObject) const;
+    float DistanceTo(const ObjectRef& otherObject) const;
+    glm::vec3 DirectionTo(const glm::vec3& point) const;
+    glm::vec3 DirectionTo(const GameObject* otherObject) const;
+    glm::vec3 DirectionTo(const ObjectRef& otherObject) const;
+    glm::mat4 GetLocalToWorld() const;
+
+    // Movement Helpers (Docs/Behaviuor.md Section 4.4)
+    void MoveForward(float distance) { RelativeTranslate(distance, 0.0f, 0.0f); }
+    void MoveRight(float distance) { RelativeTranslate(0.0f, 0.0f, distance); }
+    void MoveUp(float distance) { RelativeTranslate(0.0f, distance, 0.0f); }
+    bool MoveTowards(const glm::vec3& targetPos, float maxDelta);
 };
 
 #ifdef GetClassName
@@ -483,6 +527,28 @@ public:
     virtual void LateUpdate(float deltaTime) {}
     virtual void OnDisable() {}
     virtual void OnDestroy() {}
+
+    // Extra Lifecycle hooks (Docs/Behaviuor.md Section 2)
+    virtual void OnBeginPlay() {}
+    virtual void OnEndPlay() {}
+    virtual void OnValidate() {}
+    virtual void OnApplicationPause(bool paused) { (void)paused; }
+
+    // Tick control (Docs/Behaviuor.md Section 2)
+    void SetTickEnabled(bool enabled) { m_tickEnabled = enabled; }
+    bool IsTickEnabled() const { return m_tickEnabled; }
+    void SetTickInterval(float interval) { m_tickInterval = interval; }
+    float GetTickInterval() const { return m_tickInterval; }
+    void SetExecutionOrder(int order) { m_executionOrder = order; }
+    int GetExecutionOrder() const { return m_executionOrder; }
+
+    // Collision & Trigger events (Docs/Behaviuor.md Section 11)
+    virtual void OnCollisionEnter(const CollisionInfo& hit) { (void)hit; }
+    virtual void OnCollisionStay(const CollisionInfo& hit) { (void)hit; }
+    virtual void OnCollisionExit(GameObject* other) { (void)other; }
+    virtual void OnTriggerEnter(GameObject* other) { (void)other; }
+    virtual void OnTriggerStay(GameObject* other) { (void)other; }
+    virtual void OnTriggerExit(GameObject* other) { (void)other; }
 
     // DeltaTime accessors (dev.md: "the global var called 'World Delta Seconds' use as a DeltaTime")
     float DeltaTime() const { return ::WorldDeltaSeconds; }
@@ -555,8 +621,24 @@ public:
     template<typename T>
     T* GetComponent() const { return nullptr; }
 
+    // Generic Component API (Docs/Behaviuor.md Section 10)
+    template<typename T>
+    T* TryGetComponent() const { return GetComponent<T>(); }
+    template<typename T>
+    bool HasComponent() const { return GetComponent<T>() != nullptr; }
+    template<typename T>
+    T* AddComponent() { return nullptr; }
+    template<typename T>
+    void RemoveComponent() {}
+    template<typename T>
+    T* GetComponentInChildren() const { return nullptr; }
+    template<typename T>
+    T* GetComponentInParent() const { return nullptr; }
+    template<typename T>
+    std::vector<T*> GetComponentsInChildren() const { return {}; }
+
     // -------------------------------------------------------------------------
-    // SpawnGameObject / DestroyGameObject â€” runtime object creation (dev.md Â§45)
+    // SpawnGameObject / DestroyGameObject — runtime object creation (dev.md §45)
     // -------------------------------------------------------------------------
     GameObject* SpawnGameObject(const std::string& name, const glm::vec3& position = glm::vec3(0.0f));
     void        DestroyGameObject(int objectId);
@@ -567,6 +649,15 @@ public:
     void Destroy(const Eunoia::RayTrace::GameObjectHitProxy& hitProxy);
     void Destroy(int objectId) { DestroyGameObject(objectId); }
     void Destroy();
+    void Destroy(GameObject* target, float delay);
+
+    // Spawning & Finding helpers (Docs/Behaviuor.md Section 9)
+    GameObject* FindGameObject(const std::string& name) const;
+    GameObject* FindGameObjectWithTag(const std::string& tag) const;
+    std::vector<GameObject*> FindGameObjectsWithTag(const std::string& tag) const;
+    GameObject* FindNearestWithTag(const std::string& tag, const glm::vec3& pos) const;
+    GameObject* Instantiate(const std::string& prefabOrName, const glm::vec3& pos = glm::vec3(0.0f), const glm::vec3& rot = glm::vec3(0.0f), GameObject* parent = nullptr);
+    GameObject* Instantiate(const std::string& prefabOrName, GameObject* parent);
 
     // Enabled state (dev.md Section 17)
     bool IsEnabled() const { return m_enabled; }
@@ -1133,6 +1224,9 @@ protected:
     std::string m_displayName = "Eunoia Behaviour";
     std::vector<BehaviourProperty> m_properties;
     std::vector<BehaviourTimer> m_timers;
+    bool m_tickEnabled = true;
+    float m_tickInterval = 0.0f;
+    int m_executionOrder = 0;
     inline static uint32_t s_nextTimerId = 1;
 
     friend struct RespectiveObjectAccessor;

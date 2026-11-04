@@ -26,6 +26,8 @@ struct TransformVector3 {
     TransformVector3& operator=(const glm::vec3& v) { x = v.x; y = v.y; z = v.z; return *this; }
 
     glm::vec3 ToGlm() const { return glm::vec3(x, y, z); }
+    glm::vec3 GetValue() const { return glm::vec3(x, y, z); }
+    void SetValue(const glm::vec3& v) { x = v.x; y = v.y; z = v.z; }
 
     // Getters matching Docs/Behaviours/Transform.md:
     // <GameObject>.Transform.GetWorldLocation().GetX();

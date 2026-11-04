@@ -8,6 +8,7 @@
 #include <Animation-Graph/AnimatorGraph.h>
 #include <Animation-Graph/SkeletalAnimation.h>
 #include <Animation-Blending/AnimationBlend.h>
+#include <EngineScene/BehaviourApi.h>
 
 struct GameObject;
 
@@ -148,6 +149,50 @@ struct AnimationGraphModifier {
     std::string GetString(const std::string& paramName, const std::string& defaultVal = "") const {
         return instance ? instance->GetString(paramName, defaultVal) : defaultVal;
     }
+
+    // ParamId Overloads (Docs/Behaviuor.md Section 8.2)
+    void SetFloat(const ParamId& id, float value) { SetFloat(id.name, value); }
+    void SetBool(const ParamId& id, bool value) { SetBool(id.name, value); }
+    void SetInt(const ParamId& id, int value) { SetInt(id.name, value); }
+    void SetTrigger(const std::string& paramName) { SetBool(paramName, true); }
+    void SetTrigger(const ParamId& id) { SetBool(id.name, true); }
+
+    float GetFloat(const ParamId& id, float defaultVal = 0.0f) const { return GetFloat(id.name, defaultVal); }
+    bool GetBool(const ParamId& id, bool defaultVal = false) const { return GetBool(id.name, defaultVal); }
+    int GetInt(const ParamId& id, int defaultVal = 0) const { return GetInt(id.name, defaultVal); }
+
+    bool HasParam(const std::string& paramName) const {
+        if (!graph) return false;
+        for (const auto& p : graph->parameters) {
+            if (p.name == paramName) return true;
+        }
+        return false;
+    }
+    bool HasParam(const ParamId& id) const { return HasParam(id.name); }
+
+    // State, Blending & Montages (Docs/Behaviuor.md Section 8.4)
+    std::string GetCurrentState() const { return GetCurrentStateName(); }
+    bool IsInState(const std::string& state) const { return GetCurrentStateName() == state; }
+    void CrossFade(const std::string& state, float duration = 0.15f) {
+        (void)duration;
+        Play(state);
+    }
+    void SetLayerWeight(const std::string& layer, float weight) {
+        (void)layer; (void)weight;
+    }
+    void PlayMontage(const std::string& name, float speed = 1.0f, std::function<void()> onFinished = nullptr) {
+        (void)speed;
+        Play(name);
+        if (onFinished) onFinished();
+    }
+    void StopMontage(const std::string& name, float blendOut = 0.1f) {
+        (void)name; (void)blendOut;
+    }
+    void OnAnimEvent(const std::string& eventName, std::function<void()> callback) {
+        (void)eventName; (void)callback;
+    }
+    void SetRootMotion(bool enable) { (void)enable; }
+    void SetPlaybackSpeed(float speed) { (void)speed; }
 
     // Playback and State Control
     void Play(const std::string& stateName) {

@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -2807,9 +2807,28 @@ struct RenderBatch {
                         std::vector<RenderBatch>& outBatches, const glm::vec3& cameraPos = glm::vec3(0.0f)) {
         BuildSceneMesh(outVertices, outIndices, outBatches, cameraPos);
     }
+
+    // Level API static helpers (Docs/Behaviuor.md Section 19)
+    static void Load(const std::string& levelName) { (void)levelName; }
+    static void Load(const std::string& levelName, bool async, std::function<void()> onReady = nullptr) {
+        (void)levelName; (void)async;
+        if (onReady) onReady();
+    }
+    static void Reload() {}
+    static std::string GetCurrentName() { return "CurrentLevel"; }
 };
 
 using Level = Scene;
+
+inline void GameObjectTransform::SetParent(GameObject* parentObject, bool keepWorld) {
+    if (!gameObject || !gameObject->scene) return;
+    (void)keepWorld;
+    if (parentObject) {
+        gameObject->scene->ReparentObject(gameObject->id, parentObject->id);
+    } else {
+        gameObject->scene->ReparentObject(gameObject->id, -1);
+    }
+}
 
 inline void GameObject::Destroy() {
     if (scene) {
@@ -2823,6 +2842,43 @@ inline void GameObject::Destroy(GameObject* obj) {
 
 inline void GameObject::Destroy(GameObject& obj) {
     obj.Destroy();
+}
+
+inline bool GameObject::IsActiveInHierarchy() const {
+    if (!visible) return false;
+    if (parentId >= 0 && scene) {
+        const GameObject* p = scene->FindObject(parentId);
+        if (p) return p->IsActiveInHierarchy();
+    }
+    return true;
+}
+
+inline GameObject* GameObject::FindChild(const std::string& childName, bool recursive) const {
+    if (!scene) return nullptr;
+    for (int cid : childIds) {
+        GameObject* c = scene->FindObject(cid);
+        if (!c) continue;
+        if (c->name == childName) return c;
+        if (recursive) {
+            GameObject* fc = c->FindChild(childName, true);
+            if (fc) return fc;
+        }
+    }
+    return nullptr;
+}
+
+inline GameObject* GameObject::GetParent() const {
+    return (parentId >= 0 && scene) ? scene->FindObject(parentId) : nullptr;
+}
+
+inline std::vector<GameObject*> GameObject::GetChildren() const {
+    std::vector<GameObject*> list;
+    if (scene) {
+        for (int cid : childIds) {
+            if (auto* c = scene->FindObject(cid)) list.push_back(c);
+        }
+    }
+    return list;
 }
 
 inline void GameObject::Destroy(int objId) {

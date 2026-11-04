@@ -653,6 +653,49 @@ struct GameObjectTransform {
     void Translate(const glm::vec3* fromPoint, const glm::vec3* toLocation) { RelativeTranslate(fromPoint, toLocation); }
     void TranslateFromTo(const glm::vec3& fromPoint, const glm::vec3& toLocation) { RelativeTranslate(fromPoint, toLocation); }
     void TranslateTo(const glm::vec3& targetLocation) { RelativeTranslateTo(targetLocation); }
+
+    // Directional convenience (Docs/Behaviuor.md Section 5)
+    TransformVector3 GetBackwardVector() const { return -GetForwardVector(); }
+    TransformVector3 GetLeftVector() const { return -GetRightVector(); }
+    TransformVector3 GetDownVector() const { return -GetUpVector(); }
+
+    // Rotation Helpers (Docs/Behaviuor.md Section 3.4)
+    void LookAt(const glm::vec3& targetPos, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void LookAt(const GameObject* otherObject, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void LookAt(const ObjectRef& otherObject, const glm::vec3& up = glm::vec3(0.0f, 1.0f, 0.0f));
+    void RotateTowards(const glm::vec3& targetRot, float degreesPerSecond, float dt = -1.0f);
+    void RotateTowards(const TransformVector3& targetRot, float degreesPerSecond, float dt = -1.0f);
+    void Rotate(const glm::vec3& axis, float degrees, Space space = Space::Local);
+    void SetForward(const glm::vec3& direction);
+    void SetForward(const TransformVector3& direction);
+    glm::quat GetWorldQuaternion() const;
+    void SetWorldQuaternion(const glm::quat& q);
+
+    // Combined & Utility Calls (Docs/Behaviuor.md Section 3.5)
+    void SetWorld(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale);
+    void SetRelative(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale);
+    void Teleport(const glm::vec3& pos, const glm::vec3& rot);
+    void SetParent(GameObject* parentObject, bool keepWorld = true);
+    GameObject* GetParent() const;
+
+    glm::vec3 TransformPoint(const glm::vec3& localPoint) const;
+    glm::vec3 InverseTransformPoint(const glm::vec3& worldPoint) const;
+    glm::vec3 TransformDirection(const glm::vec3& localDir) const;
+    glm::vec3 InverseTransformDirection(const glm::vec3& worldDir) const;
+
+    float DistanceTo(const glm::vec3& point) const;
+    float DistanceTo(const GameObject* otherObject) const;
+    float DistanceTo(const ObjectRef& otherObject) const;
+    glm::vec3 DirectionTo(const glm::vec3& point) const;
+    glm::vec3 DirectionTo(const GameObject* otherObject) const;
+    glm::vec3 DirectionTo(const ObjectRef& otherObject) const;
+    glm::mat4 GetLocalToWorld() const;
+
+    // Movement Helpers (Docs/Behaviuor.md Section 4.4)
+    void MoveForward(float distance) { RelativeTranslate(distance, 0.0f, 0.0f); }
+    void MoveRight(float distance) { RelativeTranslate(0.0f, 0.0f, distance); }
+    void MoveUp(float distance) { RelativeTranslate(0.0f, distance, 0.0f); }
+    bool MoveTowards(const glm::vec3& targetPos, float maxDelta);
 };
 
 struct GameObject {
@@ -843,6 +886,21 @@ struct GameObject {
 
     void SetTags(const std::vector<std::string>& newTags) { tags = newTags; }
     void setTags(const std::vector<std::string>& newTags) { tags = newTags; }
+
+    void SetTag(const std::string& tag) {
+        tags.clear();
+        if (!tag.empty()) tags.push_back(tag);
+    }
+    void setTag(const std::string& tag) { SetTag(tag); }
+
+    // Activation & Hierarchy State (Docs/Behaviuor.md Section 9.6)
+    void SetActive(bool active) { visible = active; }
+    bool IsActive() const { return visible; }
+    bool IsActiveInHierarchy() const;
+
+    GameObject* FindChild(const std::string& childName, bool recursive = true) const;
+    GameObject* GetParent() const;
+    std::vector<GameObject*> GetChildren() const;
 
     void AddPhysicsModifier() {
         hasPhysics = true;
@@ -1496,5 +1554,182 @@ inline T* EunoiaBehaviour::GetBehaviour() const {
 template<typename T>
 inline bool EunoiaBehaviour::HasBehaviour() const {
     return GetBehaviour<T>() != nullptr;
+}
+
+// ============================================================================
+// ObjectRef and Hierarchy Inline Implementations
+// ============================================================================
+inline ObjectRef::ObjectRef(GameObject* obj) : m_ptr(obj), m_id(obj ? obj->id : -1) {}
+inline bool ObjectRef::IsValid() const { return m_ptr && m_ptr->id == m_id; }
+inline GameObject* ObjectRef::Get() const { return IsValid() ? m_ptr : nullptr; }
+inline bool ObjectRef::operator==(const GameObject* other) const {
+    if (!other) return !IsValid();
+    return IsValid() && m_ptr == other;
+}
+
+// ============================================================================
+// GameObjectTransform Extended Implementations (Docs/Behaviuor.md)
+// ============================================================================
+inline void GameObjectTransform::LookAt(const glm::vec3& targetPos, const glm::vec3& up) {
+    (void)up;
+    glm::vec3 curPos = GetWorldLocation().GetValue();
+    glm::vec3 dir = targetPos - curPos;
+    float len = glm::length(dir);
+    if (len < 1e-5f) return;
+    glm::vec3 norm = dir / len;
+    float targetYaw = glm::degrees(std::atan2(norm.z, norm.x));
+    float targetPitch = glm::degrees(std::asin(glm::clamp(-norm.y, -1.0f, 1.0f)));
+    WorldRotation(targetPitch, targetYaw, 0.0f);
+}
+
+inline void GameObjectTransform::LookAt(const GameObject* otherObject, const glm::vec3& up) {
+    if (otherObject) LookAt(otherObject->position, up);
+}
+
+inline void GameObjectTransform::LookAt(const ObjectRef& otherObject, const glm::vec3& up) {
+    if (otherObject.IsValid()) LookAt(otherObject.Get(), up);
+}
+
+inline void GameObjectTransform::RotateTowards(const glm::vec3& targetRot, float degreesPerSecond, float dt) {
+    if (dt <= 0.0f) dt = ::WorldDeltaSeconds > 0.0f ? ::WorldDeltaSeconds : 0.01667f;
+    float maxStep = degreesPerSecond * dt;
+    glm::vec3 cur = WorldRotation().GetValue();
+    float newPitch = Math::MoveTowards(cur.x, targetRot.x, maxStep);
+    float newYaw = Math::MoveTowards(cur.y, targetRot.y, maxStep);
+    float newRoll = Math::MoveTowards(cur.z, targetRot.z, maxStep);
+    WorldRotation(newPitch, newYaw, newRoll);
+}
+
+inline void GameObjectTransform::RotateTowards(const TransformVector3& targetRot, float degreesPerSecond, float dt) {
+    RotateTowards(targetRot.GetValue(), degreesPerSecond, dt);
+}
+
+inline void GameObjectTransform::Rotate(const glm::vec3& axis, float degrees, Space space) {
+    (void)space;
+    glm::vec3 cur = WorldRotation().GetValue();
+    glm::quat qCur = glm::quat(glm::radians(cur));
+    glm::quat qDelta = glm::angleAxis(glm::radians(degrees), glm::normalize(axis));
+    glm::quat qResult = qDelta * qCur;
+    glm::vec3 euler = glm::degrees(glm::eulerAngles(qResult));
+    WorldRotation(euler);
+}
+
+inline void GameObjectTransform::SetForward(const glm::vec3& direction) {
+    float len = glm::length(direction);
+    if (len < 1e-5f) return;
+    glm::vec3 norm = direction / len;
+    float targetYaw = glm::degrees(std::atan2(norm.z, norm.x));
+    float targetPitch = glm::degrees(std::asin(glm::clamp(-norm.y, -1.0f, 1.0f)));
+    WorldRotation(targetPitch, targetYaw, 0.0f);
+}
+
+inline void GameObjectTransform::SetForward(const TransformVector3& direction) {
+    SetForward(direction.GetValue());
+}
+
+inline glm::quat GameObjectTransform::GetWorldQuaternion() const {
+    glm::vec3 cur = WorldRotation().GetValue();
+    return glm::quat(glm::radians(cur));
+}
+
+inline void GameObjectTransform::SetWorldQuaternion(const glm::quat& q) {
+    glm::vec3 euler = glm::degrees(glm::eulerAngles(q));
+    WorldRotation(euler);
+}
+
+inline void GameObjectTransform::SetWorld(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale) {
+    WorldLocation(pos);
+    WorldRotation(rot);
+    WorldScale(scale);
+}
+
+inline void GameObjectTransform::SetRelative(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale) {
+    RelativeLocation(pos);
+    RelativeRotation(rot);
+    RelativeScale(scale);
+}
+
+inline void GameObjectTransform::Teleport(const glm::vec3& pos, const glm::vec3& rot) {
+    WorldLocation(pos);
+    WorldRotation(rot);
+}
+
+inline GameObject* GameObjectTransform::GetParent() const {
+    return gameObject ? gameObject->GetParent() : nullptr;
+}
+
+inline glm::mat4 GameObjectTransform::GetLocalToWorld() const {
+    if (!gameObject) return glm::mat4(1.0f);
+    glm::mat4 T = glm::translate(glm::mat4(1.0f), gameObject->position);
+    glm::mat4 R = glm::rotate(glm::mat4(1.0f), glm::radians(gameObject->rotation.y), glm::vec3(0, 1, 0));
+    R = glm::rotate(R, glm::radians(gameObject->rotation.x), glm::vec3(1, 0, 0));
+    R = glm::rotate(R, glm::radians(gameObject->rotation.z), glm::vec3(0, 0, 1));
+    glm::mat4 S = glm::scale(glm::mat4(1.0f), gameObject->scale);
+    return T * R * S;
+}
+
+inline glm::vec3 GameObjectTransform::TransformPoint(const glm::vec3& localPoint) const {
+    return glm::vec3(GetLocalToWorld() * glm::vec4(localPoint, 1.0f));
+}
+
+inline glm::vec3 GameObjectTransform::InverseTransformPoint(const glm::vec3& worldPoint) const {
+    return glm::vec3(glm::inverse(GetLocalToWorld()) * glm::vec4(worldPoint, 1.0f));
+}
+
+inline glm::vec3 GameObjectTransform::TransformDirection(const glm::vec3& localDir) const {
+    return glm::vec3(GetLocalToWorld() * glm::vec4(localDir, 0.0f));
+}
+
+inline glm::vec3 GameObjectTransform::InverseTransformDirection(const glm::vec3& worldDir) const {
+    return glm::vec3(glm::inverse(GetLocalToWorld()) * glm::vec4(worldDir, 0.0f));
+}
+
+inline float GameObjectTransform::DistanceTo(const glm::vec3& point) const {
+    return glm::distance(GetWorldLocation().GetValue(), point);
+}
+
+inline float GameObjectTransform::DistanceTo(const GameObject* otherObject) const {
+    return otherObject ? DistanceTo(otherObject->position) : 0.0f;
+}
+
+inline float GameObjectTransform::DistanceTo(const ObjectRef& otherObject) const {
+    return otherObject.IsValid() ? DistanceTo(otherObject.Get()) : 0.0f;
+}
+
+inline glm::vec3 GameObjectTransform::DirectionTo(const glm::vec3& point) const {
+    glm::vec3 diff = point - GetWorldLocation().GetValue();
+    float len = glm::length(diff);
+    return (len > 1e-5f) ? (diff / len) : glm::vec3(0.0f);
+}
+
+inline glm::vec3 GameObjectTransform::DirectionTo(const GameObject* otherObject) const {
+    return otherObject ? DirectionTo(otherObject->position) : glm::vec3(0.0f);
+}
+
+inline glm::vec3 GameObjectTransform::DirectionTo(const ObjectRef& otherObject) const {
+    return otherObject.IsValid() ? DirectionTo(otherObject.Get()) : glm::vec3(0.0f);
+}
+
+inline bool GameObjectTransform::MoveTowards(const glm::vec3& targetPos, float maxDelta) {
+    glm::vec3 cur = GetWorldLocation().GetValue();
+    glm::vec3 next = Math::MoveTowards(cur, targetPos, maxDelta);
+    WorldLocation(next);
+    return glm::distance(next, targetPos) < 1e-4f;
+}
+
+inline Tween::TweenInstance& Tween::Move(GameObject* target, const glm::vec3& targetPos, float duration, Ease ease) {
+    static uint32_t s_id = 1;
+    TweenInstance t;
+    t.id = s_id++;
+    t.duration = duration;
+    t.ease = ease;
+    glm::vec3 startPos = target ? target->position : glm::vec3(0.0f);
+    t.onUpdate = [target, startPos, targetPos, ease](float progress) {
+        if (!target) return;
+        float factor = EvaluateEase(ease, progress);
+        target->position = startPos + (targetPos - startPos) * factor;
+    };
+    GetActiveTweens().push_back(std::move(t));
+    return GetActiveTweens().back();
 }
 

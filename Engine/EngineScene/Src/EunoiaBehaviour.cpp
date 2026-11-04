@@ -1,4 +1,4 @@
-﻿#include <EngineScene/EunoiaBehaviour.h>
+#include <EngineScene/EunoiaBehaviour.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <EngineScene/GameObject.h>
 #include <EngineScene/Scene.h>
@@ -1380,6 +1380,182 @@ TransformVector3 BehaviourTransform::GetUpVector() const {
     glm::vec3 fwd = GetForwardVector();
     glm::vec3 right = GetRightVector();
     return TransformVector3(glm::normalize(glm::cross(glm::vec3(right.x, right.y, right.z), glm::vec3(fwd.x, fwd.y, fwd.z))));
+}
+
+void BehaviourTransform::LookAt(const glm::vec3& targetPos, const glm::vec3& up) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.LookAt(targetPos, up);
+    }
+}
+
+void BehaviourTransform::LookAt(const GameObject* otherObject, const glm::vec3& up) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.LookAt(otherObject, up);
+    }
+}
+
+void BehaviourTransform::LookAt(const ObjectRef& otherObject, const glm::vec3& up) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.LookAt(otherObject, up);
+    }
+}
+
+void BehaviourTransform::RotateTowards(const glm::vec3& targetRot, float degreesPerSecond, float dt) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.RotateTowards(targetRot, degreesPerSecond, dt);
+    }
+}
+
+void BehaviourTransform::RotateTowards(const TransformVector3& targetRot, float degreesPerSecond, float dt) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.RotateTowards(targetRot, degreesPerSecond, dt);
+    }
+}
+
+void BehaviourTransform::Rotate(const glm::vec3& axis, float degrees, Space space) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.Rotate(axis, degrees, space);
+    }
+}
+
+void BehaviourTransform::SetForward(const glm::vec3& direction) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetForward(direction);
+    }
+}
+
+void BehaviourTransform::SetForward(const TransformVector3& direction) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetForward(direction);
+    }
+}
+
+glm::quat BehaviourTransform::GetWorldQuaternion() const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.GetWorldQuaternion();
+    }
+    return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+}
+
+void BehaviourTransform::SetWorldQuaternion(const glm::quat& q) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetWorldQuaternion(q);
+    }
+}
+
+void BehaviourTransform::SetWorld(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetWorld(pos, rot, scale);
+    }
+}
+
+void BehaviourTransform::SetRelative(const glm::vec3& pos, const glm::vec3& rot, const glm::vec3& scale) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetRelative(pos, rot, scale);
+    }
+}
+
+void BehaviourTransform::Teleport(const glm::vec3& pos, const glm::vec3& rot) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.Teleport(pos, rot);
+    }
+}
+
+void BehaviourTransform::SetParent(GameObject* parentObject, bool keepWorld) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        m_behaviour->GetOwner()->Transform.SetParent(parentObject, keepWorld);
+    }
+}
+
+GameObject* BehaviourTransform::GetParent() const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.GetParent();
+    }
+    return nullptr;
+}
+
+glm::vec3 BehaviourTransform::TransformPoint(const glm::vec3& localPoint) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.TransformPoint(localPoint);
+    }
+    return localPoint;
+}
+
+glm::vec3 BehaviourTransform::InverseTransformPoint(const glm::vec3& worldPoint) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.InverseTransformPoint(worldPoint);
+    }
+    return worldPoint;
+}
+
+glm::vec3 BehaviourTransform::TransformDirection(const glm::vec3& localDir) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.TransformDirection(localDir);
+    }
+    return localDir;
+}
+
+glm::vec3 BehaviourTransform::InverseTransformDirection(const glm::vec3& worldDir) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.InverseTransformDirection(worldDir);
+    }
+    return worldDir;
+}
+
+float BehaviourTransform::DistanceTo(const glm::vec3& point) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DistanceTo(point);
+    }
+    return 0.0f;
+}
+
+float BehaviourTransform::DistanceTo(const GameObject* otherObject) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DistanceTo(otherObject);
+    }
+    return 0.0f;
+}
+
+float BehaviourTransform::DistanceTo(const ObjectRef& otherObject) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DistanceTo(otherObject);
+    }
+    return 0.0f;
+}
+
+glm::vec3 BehaviourTransform::DirectionTo(const glm::vec3& point) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DirectionTo(point);
+    }
+    return glm::vec3(0.0f);
+}
+
+glm::vec3 BehaviourTransform::DirectionTo(const GameObject* otherObject) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DirectionTo(otherObject);
+    }
+    return glm::vec3(0.0f);
+}
+
+glm::vec3 BehaviourTransform::DirectionTo(const ObjectRef& otherObject) const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.DirectionTo(otherObject);
+    }
+    return glm::vec3(0.0f);
+}
+
+glm::mat4 BehaviourTransform::GetLocalToWorld() const {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.GetLocalToWorld();
+    }
+    return glm::mat4(1.0f);
+}
+
+bool BehaviourTransform::MoveTowards(const glm::vec3& targetPos, float maxDelta) {
+    if (m_behaviour && m_behaviour->GetOwner()) {
+        return m_behaviour->GetOwner()->Transform.MoveTowards(targetPos, maxDelta);
+    }
+    return false;
 }
 
 // ============================================================================
@@ -6442,6 +6618,60 @@ std::vector<GameObject*> EunoiaBehaviour::FindObjectsWithTag(const std::string& 
 
 GameObject* EunoiaBehaviour::FindObjectWithTag(const std::string& tag) const {
     return m_scene ? m_scene->FindObjectWithTag(tag) : nullptr;
+}
+
+GameObject* EunoiaBehaviour::FindGameObject(const std::string& name) const {
+    return m_scene ? m_scene->FindObjectByName(name) : nullptr;
+}
+
+GameObject* EunoiaBehaviour::FindGameObjectWithTag(const std::string& tag) const {
+    return FindObjectWithTag(tag);
+}
+
+std::vector<GameObject*> EunoiaBehaviour::FindGameObjectsWithTag(const std::string& tag) const {
+    return FindObjectsWithTag(tag);
+}
+
+GameObject* EunoiaBehaviour::FindNearestWithTag(const std::string& tag, const glm::vec3& pos) const {
+    auto objects = FindGameObjectsWithTag(tag);
+    GameObject* nearest = nullptr;
+    float minDist = 1e9f;
+    for (auto* obj : objects) {
+        if (!obj) continue;
+        float d = glm::distance(obj->position, pos);
+        if (d < minDist) {
+            minDist = d;
+            nearest = obj;
+        }
+    }
+    return nearest;
+}
+
+GameObject* EunoiaBehaviour::Instantiate(const std::string& prefabOrName, const glm::vec3& pos, const glm::vec3& rot, GameObject* parent) {
+    if (!m_scene) return nullptr;
+    GameObject& obj = m_scene->AddObject(PrimitiveType::Empty, pos, glm::vec3(1.0f));
+    obj.name = prefabOrName;
+    obj.rotation = rot;
+    if (parent) {
+        m_scene->ReparentObject(obj.id, parent->id);
+    }
+    return &obj;
+}
+
+GameObject* EunoiaBehaviour::Instantiate(const std::string& prefabOrName, GameObject* parent) {
+    return Instantiate(prefabOrName, glm::vec3(0.0f), glm::vec3(0.0f), parent);
+}
+
+void EunoiaBehaviour::Destroy(GameObject* target, float delay) {
+    if (!target) return;
+    if (delay <= 0.0f) {
+        Destroy(target);
+    } else {
+        int id = target->id;
+        StartTimer([this, id]() {
+            DestroyGameObject(id);
+        }, delay);
+    }
 }
 
 
