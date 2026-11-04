@@ -112,4 +112,20 @@ This document tracks the implementation, integration, and verification status of
 | **VO-12** | Mesh Shaders Pipeline (SM 6.5) | `wiGraphicsDevice_DX12.cpp` | `Scene.h` (`enableMeshShaders`) | **BLOCKED** | Requires hardware support check |
 
 ---
+
+### 6. Gameplay, Scripts & Content Browser Scene Parity
+| Feature ID | Feature Name | Wicked Engine Source | Eunoia Engine Location | Status | Last Verification Date |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **GP-01** | Content Browser Character Controller Assets | `Content/scripts/character_controller/*` | `Projects/GTA/Content/scripts/character_controller/` | **TESTED** | 2026-11-05 |
+| **GP-02** | Locomotion States (Idle, Walk, Jog, Run, Jump, Wave)| `character_controller.lua:45-59` | `Projects/GTA/Content/Behaviours/Player.cpp` | **TESTED** | 2026-11-05 |
+| **GP-03** | Third-Person Orbit Camera Boom (RMB drag, Scroll zoom)| `character_controller.lua:695-821` | `Projects/GTA/Content/Behaviours/Player.cpp` | **TESTED** | 2026-11-05 |
+| **GP-04** | Orient Body to Camera Movement Direction | `character_controller.lua:138-158` | `Projects/GTA/Content/Behaviours/Player.cpp` | **TESTED** | 2026-11-05 |
+| **GP-05** | NPC Johnny Patrol Waypoints Navigation | `character_controller.lua:296-384` | `Projects/GTA/Content/Behaviours/NPCJohnny.cpp` | **TESTED** | 2026-11-05 |
+| **GP-06** | Interactive Branching Dialogue & Follower AI | `assets/dialogs/niceday.lua` | `Projects/GTA/Content/Behaviours/NPCJohnny.cpp` | **TESTED** | 2026-11-05 |
+| **GP-07** | Typewriter Sound & Screen Interaction Display | `assets/conversation.lua`, `typewriter.wav`| `Player.cpp`, `NPCJohnny.cpp`, `PointOfInterest.cpp` | **TESTED** | 2026-11-05 |
+| **GP-08** | Points of Interest (POI) Proximity Investigation | `assets/dialogs/point_of_interest.lua`| `Projects/GTA/Content/Behaviours/PointOfInterest.cpp` | **TESTED** | 2026-11-05 |
+| **GP-09** | Scene Water Body Simulation & Normal Map | `assets/waterNormalMap.jpg` | `Projects/GTA/Content/Levels/BaseMap.elevel` | **TESTED** | 2026-11-05 |
+| **GP-10** | Wicked Character Controller Debug HUD (H key) | `character_controller.lua:1053-1090` | `Projects/GTA/Content/Behaviours/Player.cpp` | **TESTED** | 2026-11-05 |
+
+---
 *Updated dynamically following feature implementation, integration, and verification.*
