@@ -3814,13 +3814,13 @@ int createShadersAndPipeline()
 			float effectiveAmbIntensity = ambientIntensity;
 			float3 ambientDiff = albedo * ambCol * effectiveAmbIntensity * (1.0f - metal) * ao;
 			ambientDiff *= max(giBoost, 1.0f);
+			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
+			float3 ambientSpec = ambSpecEnergy * ambCol * effectiveAmbIntensity * ao;
 			if (forceDiffuseLighting > 0.5f)
 			{
 				specBRDF = float3(0.0f, 0.0f, 0.0f);
 				ambientSpec = float3(0.0f, 0.0f, 0.0f);
 			}
-			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
-			float3 ambientSpec = ambSpecEnergy * ambCol * effectiveAmbIntensity * ao;
 
 			// Multiple Lights (Point, Spot, Area) - WickedEngine Forward+ Lighting & Falcor Disney Diffuse
 			float3 pointLightsContribution = float3(0, 0, 0);
