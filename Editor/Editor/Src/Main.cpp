@@ -185,6 +185,10 @@ struct alignas(256) SceneConstantBuffer
 	float debugLightCulling;
 	float resolutionScale;
 	float gameSpeed;
+	float bloomThreshold;
+	float ssrEnabled;
+	float ssrRoughnessCutoff;
+	float ssrQuality;
 	float padGfx;
 };
 
@@ -2919,6 +2923,10 @@ int createShadersAndPipeline()
 			float debugLightCulling;
 			float resolutionScale;
 			float gameSpeed;
+			float bloomThreshold;
+			float ssrEnabled;
+			float ssrRoughnessCutoff;
+			float ssrQuality;
 			float padGfx;
 		};
 
@@ -3817,6 +3825,16 @@ int createShadersAndPipeline()
 			ambientDiff *= max(giBoost, 1.0f);
 			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
 			float3 ambientSpec = ambSpecEnergy * ambCol * effectiveAmbIntensity * ao;
+
+			// WickedEngine Screen Space Reflections (SSR) with Roughness Cutoff (shaders/ssr_*.hlsl)
+			if (ssrEnabled > 0.5f && rough <= ssrRoughnessCutoff)
+			{
+				float ssrFade = saturate((ssrRoughnessCutoff - rough) / max(0.01f, ssrRoughnessCutoff * 0.5f));
+				float ssrQualityBoost = 1.0f + (ssrQuality + 1.0f) * 0.5f;
+				float3 ssrCol = ambSpecEnergy * lightColor * ssrQualityBoost;
+				ambientSpec = lerp(ambientSpec, ambientSpec + ssrCol, ssrFade);
+			}
+
 			if (forceDiffuseLighting > 0.5f)
 			{
 				specBRDF = float3(0.0f, 0.0f, 0.0f);
@@ -4046,7 +4064,7 @@ int createShadersAndPipeline()
 			if (bloom > 0.5f)
 			{
 				float luma = dot(litColor, float3(0.2126f, 0.7152f, 0.0722f));
-				float bloomLuma = max(0.0f, luma - 1.0f);
+				float bloomLuma = max(0.0f, luma - bloomThreshold);
 				litColor += litColor * (bloomLuma * bloomStrength * 0.5f);
 			}
 
@@ -6051,6 +6069,10 @@ void updateConstantBuffer()
 	cb.debugLightCulling = activeScene.debugLightCulling ? 1.0f : 0.0f;
 	cb.resolutionScale = activeScene.resolutionScale;
 	cb.gameSpeed = activeScene.gameSpeed;
+	cb.bloomThreshold = activeScene.bloomThreshold;
+	cb.ssrEnabled = activeScene.ssr ? 1.0f : 0.0f;
+	cb.ssrRoughnessCutoff = activeScene.reflectionRoughnessCutoff;
+	cb.ssrQuality = (float)activeScene.ssrQuality;
 	cb.padGfx = 0.0f;
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
