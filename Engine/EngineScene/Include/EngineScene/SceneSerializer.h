@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <EngineScene/Scene.h>
 #include <EngineScene/BehaviourRegistry.h>
 #include <SaveSystem/SaveSystem.h>
@@ -187,6 +187,96 @@ public:
         file << "      \"heightStart\": " << scene.fogHeightStart << ",\n";
         file << "      \"heightEnd\": " << scene.fogHeightEnd << ",\n";
         file << "      \"color\": [" << scene.fogColor.r << ", " << scene.fogColor.g << ", " << scene.fogColor.b << "]\n";
+        file << "    },\n";
+        file << "    \"graphics\": {\n";
+        file << "      \"vsync\": " << BoolStr(scene.vsync) << ",\n";
+        file << "      \"displayOutput\": " << scene.displayOutput << ",\n";
+        file << "      \"resolutionScale\": " << scene.resolutionScale << ",\n";
+        file << "      \"streamingThreshold\": " << scene.streamingThreshold << ",\n";
+        file << "      \"hdrCalibration\": " << scene.hdrCalibration << ",\n";
+        file << "      \"hdrUiCalibration\": " << scene.hdrUiCalibration << ",\n";
+        file << "      \"renderPath\": " << scene.renderPath << ",\n";
+        file << "      \"pathTraceTargetSamples\": " << scene.pathTraceTargetSamples << ",\n";
+        file << "      \"occlusionCulling\": " << BoolStr(scene.occlusionCulling) << ",\n";
+        file << "      \"visibilityComputeShading\": " << BoolStr(scene.visibilityComputeShading) << ",\n";
+        file << "      \"allowMeshShader\": " << BoolStr(scene.allowMeshShader) << ",\n";
+        file << "      \"meshletOcclusionCulling\": " << BoolStr(scene.meshletOcclusionCulling) << ",\n";
+        file << "      \"meshBlend\": " << BoolStr(scene.meshBlend) << ",\n";
+        file << "      \"tessellation\": " << BoolStr(scene.tessellation) << ",\n";
+        file << "      \"gameSpeed\": " << scene.gameSpeed << ",\n";
+        file << "      \"giBoost\": " << scene.giBoost << ",\n";
+        file << "      \"surfelGI\": " << BoolStr(scene.surfelGI) << ",\n";
+        file << "      \"surfelGIDebug\": " << scene.surfelGIDebug << ",\n";
+        file << "      \"ddgi\": " << BoolStr(scene.ddgi) << ",\n";
+        file << "      \"ddgiDebug\": " << BoolStr(scene.ddgiDebug) << ",\n";
+        file << "      \"ddgiGridRes\": [" << scene.ddgiGridRes.x << ", " << scene.ddgiGridRes.y << ", " << scene.ddgiGridRes.z << "],\n";
+        file << "      \"ddgiRayCount\": " << scene.ddgiRayCount << ",\n";
+        file << "      \"ddgiBlendSpeed\": " << scene.ddgiBlendSpeed << ",\n";
+        file << "      \"ddgiSmoothBackface\": " << scene.ddgiSmoothBackface << ",\n";
+        file << "      \"vxgi\": " << BoolStr(scene.vxgi) << ",\n";
+        file << "      \"vxgiDebug\": " << scene.vxgiDebug << ",\n";
+        file << "      \"vxgiReflections\": " << BoolStr(scene.vxgiReflections) << ",\n";
+        file << "      \"vxgiVoxelSize\": " << scene.vxgiVoxelSize << ",\n";
+        file << "      \"vxgiRayStepSize\": " << scene.vxgiRayStepSize << ",\n";
+        file << "      \"vxgiMaxDistance\": " << scene.vxgiMaxDistance << ",\n";
+        file << "      \"ssgi\": " << BoolStr(scene.ssgi) << ",\n";
+        file << "      \"ssgiDepthRejection\": " << scene.ssgiDepthRejection << ",\n";
+        file << "      \"rtDiffuse\": " << BoolStr(scene.rtDiffuse) << ",\n";
+        file << "      \"rtDiffuseRange\": " << scene.rtDiffuseRange << ",\n";
+        file << "      \"rtDiffuseQuality\": " << scene.rtDiffuseQuality << ",\n";
+        file << "      \"raytraceBounceCount\": " << scene.raytraceBounceCount << ",\n";
+        file << "      \"msaa\": " << scene.msaa << ",\n";
+        file << "      \"temporalAA\": " << BoolStr(scene.temporalAA) << ",\n";
+        file << "      \"temporalAADebug\": " << BoolStr(scene.temporalAADebug) << ",\n";
+        file << "      \"textureQuality\": " << scene.textureQuality << ",\n";
+        file << "      \"mipLodBias\": " << scene.mipLodBias << ",\n";
+        file << "      \"fsr\": " << BoolStr(scene.fsr) << ",\n";
+        file << "      \"fsrSharpness\": " << scene.fsrSharpness << ",\n";
+        file << "      \"fsr2\": " << BoolStr(scene.fsr2) << ",\n";
+        file << "      \"fsr2Preset\": " << scene.fsr2Preset << ",\n";
+        file << "      \"fsr2Sharpness\": " << scene.fsr2Sharpness << ",\n";
+        file << "      \"vrsClassification\": " << BoolStr(scene.vrsClassification) << ",\n";
+        file << "      \"vrsDebug\": " << BoolStr(scene.vrsDebug) << ",\n";
+        file << "      \"planarReflections\": " << BoolStr(scene.planarReflections) << ",\n";
+        file << "      \"planarReflectionResolutionScale\": " << scene.planarReflectionResolutionScale << ",\n";
+        file << "      \"planarReflectionMSAA\": " << scene.planarReflectionMSAA << ",\n";
+        file << "      \"ssr\": " << BoolStr(scene.ssr) << ",\n";
+        file << "      \"ssrQuality\": " << scene.ssrQuality << ",\n";
+        file << "      \"reflectionRoughnessCutoff\": " << scene.reflectionRoughnessCutoff << ",\n";
+        file << "      \"rtReflections\": " << BoolStr(scene.rtReflections) << ",\n";
+        file << "      \"rtReflectionsRange\": " << scene.rtReflectionsRange << ",\n";
+        file << "      \"rtReflectionsQuality\": " << scene.rtReflectionsQuality << ",\n";
+        file << "      \"colorGrading\": " << BoolStr(scene.colorGrading) << ",\n";
+        file << "      \"dither\": " << BoolStr(scene.dither) << ",\n";
+        file << "      \"bloom\": " << BoolStr(scene.bloom) << ",\n";
+        file << "      \"bloomStrength\": " << scene.bloomStrength << ",\n";
+        file << "      \"lightShafts\": " << BoolStr(scene.lightShafts) << ",\n";
+        file << "      \"lightShaftsStrength\": " << scene.lightShaftsStrength << ",\n";
+        file << "      \"lightShaftsFadeSpeed\": " << scene.lightShaftsFadeSpeed << ",\n";
+        file << "      \"lensFlare\": " << BoolStr(scene.lensFlare) << ",\n";
+        file << "      \"eyeAdaption\": " << BoolStr(scene.eyeAdaption) << ",\n";
+        file << "      \"eyeAdaptionKey\": " << scene.eyeAdaptionKey << ",\n";
+        file << "      \"eyeAdaptionRate\": " << scene.eyeAdaptionRate << ",\n";
+        file << "      \"motionBlur\": " << BoolStr(scene.motionBlur) << ",\n";
+        file << "      \"motionBlurStrength\": " << scene.motionBlurStrength << ",\n";
+        file << "      \"depthOfField\": " << BoolStr(scene.depthOfField) << ",\n";
+        file << "      \"depthOfFieldScale\": " << scene.depthOfFieldScale << ",\n";
+        file << "      \"fxaa\": " << BoolStr(scene.fxaa) << ",\n";
+        file << "      \"crtFilter\": " << BoolStr(scene.crtFilter) << ",\n";
+        file << "      \"sharpenFilter\": " << BoolStr(scene.sharpenFilter) << ",\n";
+        file << "      \"sharpenFilterAmount\": " << scene.sharpenFilterAmount << ",\n";
+        file << "      \"outline\": " << BoolStr(scene.outline) << ",\n";
+        file << "      \"outlineThreshold\": " << scene.outlineThreshold << ",\n";
+        file << "      \"outlineThickness\": " << scene.outlineThickness << ",\n";
+        file << "      \"chromaticAberration\": " << BoolStr(scene.chromaticAberration) << ",\n";
+        file << "      \"chromaticAberrationAmount\": " << scene.chromaticAberrationAmount << ",\n";
+        file << "      \"advancedLightCulling\": " << BoolStr(scene.advancedLightCulling) << ",\n";
+        file << "      \"debugLightCulling\": " << BoolStr(scene.debugLightCulling) << ",\n";
+        file << "      \"freezeCullingCamera\": " << BoolStr(scene.freezeCullingCamera) << ",\n";
+        file << "      \"disableAlbedoMaps\": " << BoolStr(scene.disableAlbedoMaps) << ",\n";
+        file << "      \"forceDiffuseLighting\": " << BoolStr(scene.forceDiffuseLighting) << ",\n";
+        file << "      \"forceUnlit\": " << BoolStr(scene.forceUnlit) << ",\n";
+        file << "      \"raytraceDebugBVH\": " << BoolStr(scene.raytraceDebugBVH) << "\n";
         file << "    }\n";
         file << "  },\n";
 
@@ -1300,6 +1390,112 @@ public:
             p = fBlock.find("\"color\""); if (p != std::string::npos) scene.fogColor = ParseVec3(fBlock, p);
         } else {
             scene.enableFog = false;
+
+        size_t gfxPos = envBlock.find("\"graphics\"");
+        if (gfxPos != std::string::npos) {
+            size_t gStart = envBlock.find('{', gfxPos);
+            size_t gEnd = FindMatchingBrace(envBlock, gStart);
+            std::string gBlock = envBlock.substr(gStart, gEnd - gStart + 1);
+
+            size_t p;
+            p = gBlock.find("\"vsync\""); if (p != std::string::npos) scene.vsync = ParseBoolAt(gBlock, p, true);
+            p = gBlock.find("\"displayOutput\""); if (p != std::string::npos) scene.displayOutput = (int)ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"resolutionScale\""); if (p != std::string::npos) scene.resolutionScale = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"streamingThreshold\""); if (p != std::string::npos) scene.streamingThreshold = ParseFloatAt(gBlock, p, 0.8f);
+            p = gBlock.find("\"hdrCalibration\""); if (p != std::string::npos) scene.hdrCalibration = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"hdrUiCalibration\""); if (p != std::string::npos) scene.hdrUiCalibration = ParseFloatAt(gBlock, p, 1.0f);
+
+            p = gBlock.find("\"renderPath\""); if (p != std::string::npos) scene.renderPath = (int)ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"pathTraceTargetSamples\""); if (p != std::string::npos) scene.pathTraceTargetSamples = (int)ParseFloatAt(gBlock, p, 1024.0f);
+            p = gBlock.find("\"occlusionCulling\""); if (p != std::string::npos) scene.occlusionCulling = ParseBoolAt(gBlock, p, true);
+            p = gBlock.find("\"visibilityComputeShading\""); if (p != std::string::npos) scene.visibilityComputeShading = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"allowMeshShader\""); if (p != std::string::npos) scene.allowMeshShader = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"meshletOcclusionCulling\""); if (p != std::string::npos) scene.meshletOcclusionCulling = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"meshBlend\""); if (p != std::string::npos) scene.meshBlend = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"tessellation\""); if (p != std::string::npos) scene.tessellation = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"gameSpeed\""); if (p != std::string::npos) scene.gameSpeed = ParseFloatAt(gBlock, p, 1.0f);
+
+            p = gBlock.find("\"giBoost\""); if (p != std::string::npos) scene.giBoost = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"surfelGI\""); if (p != std::string::npos) scene.surfelGI = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"surfelGIDebug\""); if (p != std::string::npos) scene.surfelGIDebug = (int)ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"ddgi\""); if (p != std::string::npos) scene.ddgi = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"ddgiDebug\""); if (p != std::string::npos) scene.ddgiDebug = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"ddgiGridRes\""); if (p != std::string::npos) {
+                glm::vec3 r = ParseVec3(gBlock, p);
+                scene.ddgiGridRes = glm::ivec3((int)r.x, (int)r.y, (int)r.z);
+            }
+            p = gBlock.find("\"ddgiRayCount\""); if (p != std::string::npos) scene.ddgiRayCount = (int)ParseFloatAt(gBlock, p, 64.0f);
+            p = gBlock.find("\"ddgiBlendSpeed\""); if (p != std::string::npos) scene.ddgiBlendSpeed = ParseFloatAt(gBlock, p, 0.1f);
+            p = gBlock.find("\"ddgiSmoothBackface\""); if (p != std::string::npos) scene.ddgiSmoothBackface = ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"vxgi\""); if (p != std::string::npos) scene.vxgi = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"vxgiDebug\""); if (p != std::string::npos) scene.vxgiDebug = (int)ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"vxgiReflections\""); if (p != std::string::npos) scene.vxgiReflections = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"vxgiVoxelSize\""); if (p != std::string::npos) scene.vxgiVoxelSize = ParseFloatAt(gBlock, p, 0.125f);
+            p = gBlock.find("\"vxgiRayStepSize\""); if (p != std::string::npos) scene.vxgiRayStepSize = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"vxgiMaxDistance\""); if (p != std::string::npos) scene.vxgiMaxDistance = ParseFloatAt(gBlock, p, 10.0f);
+            p = gBlock.find("\"ssgi\""); if (p != std::string::npos) scene.ssgi = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"ssgiDepthRejection\""); if (p != std::string::npos) scene.ssgiDepthRejection = ParseFloatAt(gBlock, p, 8.0f);
+            p = gBlock.find("\"rtDiffuse\""); if (p != std::string::npos) scene.rtDiffuse = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"rtDiffuseRange\""); if (p != std::string::npos) scene.rtDiffuseRange = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"rtDiffuseQuality\""); if (p != std::string::npos) scene.rtDiffuseQuality = (int)ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"raytraceBounceCount\""); if (p != std::string::npos) scene.raytraceBounceCount = (int)ParseFloatAt(gBlock, p, 1.0f);
+
+            p = gBlock.find("\"msaa\""); if (p != std::string::npos) scene.msaa = (int)ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"temporalAA\""); if (p != std::string::npos) scene.temporalAA = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"temporalAADebug\""); if (p != std::string::npos) scene.temporalAADebug = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"textureQuality\""); if (p != std::string::npos) scene.textureQuality = (int)ParseFloatAt(gBlock, p, 3.0f);
+            p = gBlock.find("\"mipLodBias\""); if (p != std::string::npos) scene.mipLodBias = ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"fsr\""); if (p != std::string::npos) scene.fsr = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"fsrSharpness\""); if (p != std::string::npos) scene.fsrSharpness = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"fsr2\""); if (p != std::string::npos) scene.fsr2 = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"fsr2Preset\""); if (p != std::string::npos) scene.fsr2Preset = (int)ParseFloatAt(gBlock, p, 0.0f);
+            p = gBlock.find("\"fsr2Sharpness\""); if (p != std::string::npos) scene.fsr2Sharpness = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"vrsClassification\""); if (p != std::string::npos) scene.vrsClassification = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"vrsDebug\""); if (p != std::string::npos) scene.vrsDebug = ParseBoolAt(gBlock, p, false);
+
+            p = gBlock.find("\"planarReflections\""); if (p != std::string::npos) scene.planarReflections = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"planarReflectionResolutionScale\""); if (p != std::string::npos) scene.planarReflectionResolutionScale = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"planarReflectionMSAA\""); if (p != std::string::npos) scene.planarReflectionMSAA = (int)ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"ssr\""); if (p != std::string::npos) scene.ssr = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"ssrQuality\""); if (p != std::string::npos) scene.ssrQuality = (int)ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"reflectionRoughnessCutoff\""); if (p != std::string::npos) scene.reflectionRoughnessCutoff = ParseFloatAt(gBlock, p, 0.6f);
+            p = gBlock.find("\"rtReflections\""); if (p != std::string::npos) scene.rtReflections = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"rtReflectionsRange\""); if (p != std::string::npos) scene.rtReflectionsRange = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"rtReflectionsQuality\""); if (p != std::string::npos) scene.rtReflectionsQuality = (int)ParseFloatAt(gBlock, p, 1.0f);
+
+            p = gBlock.find("\"colorGrading\""); if (p != std::string::npos) scene.colorGrading = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"dither\""); if (p != std::string::npos) scene.dither = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"bloom\""); if (p != std::string::npos) scene.bloom = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"bloomStrength\""); if (p != std::string::npos) scene.bloomStrength = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"lightShafts\""); if (p != std::string::npos) scene.lightShafts = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"lightShaftsStrength\""); if (p != std::string::npos) scene.lightShaftsStrength = ParseFloatAt(gBlock, p, 0.05f);
+            p = gBlock.find("\"lightShaftsFadeSpeed\""); if (p != std::string::npos) scene.lightShaftsFadeSpeed = ParseFloatAt(gBlock, p, 3.0f);
+            p = gBlock.find("\"lensFlare\""); if (p != std::string::npos) scene.lensFlare = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"eyeAdaption\""); if (p != std::string::npos) scene.eyeAdaption = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"eyeAdaptionKey\""); if (p != std::string::npos) scene.eyeAdaptionKey = ParseFloatAt(gBlock, p, 0.1f);
+            p = gBlock.find("\"eyeAdaptionRate\""); if (p != std::string::npos) scene.eyeAdaptionRate = ParseFloatAt(gBlock, p, 0.5f);
+            p = gBlock.find("\"motionBlur\""); if (p != std::string::npos) scene.motionBlur = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"motionBlurStrength\""); if (p != std::string::npos) scene.motionBlurStrength = ParseFloatAt(gBlock, p, 100.0f);
+            p = gBlock.find("\"depthOfField\""); if (p != std::string::npos) scene.depthOfField = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"depthOfFieldScale\""); if (p != std::string::npos) scene.depthOfFieldScale = ParseFloatAt(gBlock, p, 10.0f);
+            p = gBlock.find("\"fxaa\""); if (p != std::string::npos) scene.fxaa = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"crtFilter\""); if (p != std::string::npos) scene.crtFilter = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"sharpenFilter\""); if (p != std::string::npos) scene.sharpenFilter = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"sharpenFilterAmount\""); if (p != std::string::npos) scene.sharpenFilterAmount = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"outline\""); if (p != std::string::npos) scene.outline = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"outlineThreshold\""); if (p != std::string::npos) scene.outlineThreshold = ParseFloatAt(gBlock, p, 0.1f);
+            p = gBlock.find("\"outlineThickness\""); if (p != std::string::npos) scene.outlineThickness = ParseFloatAt(gBlock, p, 1.0f);
+            p = gBlock.find("\"chromaticAberration\""); if (p != std::string::npos) scene.chromaticAberration = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"chromaticAberrationAmount\""); if (p != std::string::npos) scene.chromaticAberrationAmount = ParseFloatAt(gBlock, p, 1.0f);
+
+            p = gBlock.find("\"advancedLightCulling\""); if (p != std::string::npos) scene.advancedLightCulling = ParseBoolAt(gBlock, p, true);
+            p = gBlock.find("\"debugLightCulling\""); if (p != std::string::npos) scene.debugLightCulling = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"freezeCullingCamera\""); if (p != std::string::npos) scene.freezeCullingCamera = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"disableAlbedoMaps\""); if (p != std::string::npos) scene.disableAlbedoMaps = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"forceDiffuseLighting\""); if (p != std::string::npos) scene.forceDiffuseLighting = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"forceUnlit\""); if (p != std::string::npos) scene.forceUnlit = ParseBoolAt(gBlock, p, false);
+            p = gBlock.find("\"raytraceDebugBVH\""); if (p != std::string::npos) scene.raytraceDebugBVH = ParseBoolAt(gBlock, p, false);
+        }
         }
     }
 

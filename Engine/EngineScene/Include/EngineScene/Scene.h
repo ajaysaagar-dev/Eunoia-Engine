@@ -186,6 +186,111 @@ public:
     // Shadow LOD Override (WickedEngine shadowLODCheckBox)
     bool shadowLODOverride = false;         // allow shadow map rendering to request reduced LOD for GPU performance
 
+    // ================================================================
+    // WICKEDENGINE COMPLETE GRAPHICS SYSTEM SETTINGS
+    // ================================================================
+    // 1. Display Output & SwapChain (WickedEngine GraphicsWindow)
+    bool vsync = true;
+    int displayOutput = 0;                  // 0 = SDR 8-bit, 1 = SDR 10-bit, 2 = HDR 10-bit, 3 = HDR 16-bit
+    float resolutionScale = 1.0f;           // 0.25 to 2.0 internal rendering scale
+    float streamingThreshold = 0.8f;        // 0.1 to 1.0 (10% to 100% VRAM budget)
+    float hdrCalibration = 1.0f;            // 0.0 to 8.0 paper white nit scale
+    float hdrUiCalibration = 1.0f;          // 0.1 to 18.0 UI luminance scale
+
+    // 2. Render Path & Hardware Pipeline
+    int renderPath = 0;                     // 0 = Default (Raster/Hybrid), 1 = Path Tracing
+    int pathTraceTargetSamples = 1024;      // 1 to 2048 samples per pixel
+    bool occlusionCulling = true;           // Hierarchical Z occlusion culling
+    bool visibilityComputeShading = false;  // Material shading in compute shader
+    bool allowMeshShader = false;           // D3D12 Ultimate / Vulkan mesh shaders
+    bool meshletOcclusionCulling = false;   // Per-meshlet cone & frustum culling
+    bool meshBlend = false;                 // Terrain to mesh geometry slope blending
+    bool tessellation = false;              // Hardware hull/domain tessellation
+    float gameSpeed = 1.0f;                 // Simulation and animation rate multiplier
+
+    // 3. Global Illumination (GI)
+    float giBoost = 1.0f;                   // Indirect diffuse GI boost multiplier (1.0 to 10.0)
+    bool surfelGI = false;                  // Surfel raytraced/compute indirect diffuse GI
+    int surfelGIDebug = 0;                  // 0=None, 1=Normal, 2=Color, 3=Point, 4=Random, 5=Heatmap, 6=Inconsistent
+    bool ddgi = false;                      // Dynamic Diffuse Global Illumination probe grids
+    bool ddgiDebug = false;                 // Probe irradiance sphere visualization
+    glm::ivec3 ddgiGridRes{ 32, 16, 32 };   // Probe grid dimensions
+    int ddgiRayCount = 64;                  // Rays per probe (0 to 512)
+    float ddgiBlendSpeed = 0.1f;            // Temporal hysteresis (0.0 to 0.2)
+    float ddgiSmoothBackface = 0.0f;        // Backface depth smoothing (0.0 to 1.0)
+    bool vxgi = false;                      // Voxel Cone Tracing GI
+    int vxgiDebug = 0;                      // 0=None, 1=Clipmaps, 2..7=Levels
+    bool vxgiReflections = false;           // Voxel cone traced specular reflections
+    float vxgiVoxelSize = 0.125f;           // Voxel size in meters (0.125 to 0.5)
+    float vxgiRayStepSize = 1.0f;           // Cone step density (0.5 to 2.0)
+    float vxgiMaxDistance = 10.0f;          // Traversal range in meters (0 to 100)
+    bool ssgi = false;                      // Screen-space global illumination
+    float ssgiDepthRejection = 8.0f;        // Depth difference rejection threshold
+    bool rtDiffuse = false;                 // Hardware raytraced diffuse bounce
+    float rtDiffuseRange = 1.0f;            // Ray length cutoff
+    int rtDiffuseQuality = 1;               // 0=Low, 1=Med, 2=High
+    int raytraceBounceCount = 1;            // Number of ray bounces (1 to 10)
+
+    // 4. Anti-Aliasing, Upscaling & Samplers
+    int msaa = 1;                           // 1=Off, 2, 4, 8
+    bool temporalAA = false;                // Subpixel temporal anti-aliasing
+    bool temporalAADebug = false;           // Subpixel jitter debug visualizer
+    int textureQuality = 3;                 // 0=Nearest, 1=Bilinear, 2=Trilinear, 3=Anisotropic
+    float mipLodBias = 0.0f;                // Sampler MipLOD bias (-16.0 to +16.0)
+    bool fsr = false;                       // AMD FSR 1.0 spatial upscaling
+    float fsrSharpness = 1.0f;              // FSR 1.0 sharpening (0.0 to 2.0)
+    bool fsr2 = false;                      // AMD FSR 2.1 temporal upscaling
+    int fsr2Preset = 0;                     // 0=Quality, 1=Balanced, 2=Performance, 3=Ultra Performance
+    float fsr2Sharpness = 1.0f;             // FSR 2.1 sharpening (0.0 to 1.0)
+    bool vrsClassification = false;         // Hardware variable rate shading
+    bool vrsDebug = false;                  // VRS heatmap overlay
+
+    // 5. Reflections
+    bool planarReflections = false;         // Planar mirror camera reflections
+    float planarReflectionResolutionScale = 1.0f; // 0.25 to 2.0
+    int planarReflectionMSAA = 1;           // 1, 2, 4, 8
+    bool ssr = false;                       // Screen Space Reflections
+    int ssrQuality = 1;                     // 0=Low, 1=Med, 2=High
+    float reflectionRoughnessCutoff = 0.6f; // Roughness threshold (0.0 to 1.0)
+    bool rtReflections = false;             // Hardware raytraced specular reflections
+    float rtReflectionsRange = 1.0f;        // Max ray distance in meters (1.0 to 10000.0)
+    int rtReflectionsQuality = 1;           // 0=Low, 1=Med, 2=High
+
+    // 6. Post-Processing & Cinematic Effects
+    bool colorGrading = false;              // 3D LUT color grading
+    bool dither = false;                    // 8-bit screen-space triangular noise dithering
+    bool bloom = false;                     // HDR pyramid bloom
+    float bloomStrength = 1.0f;             // Bloom threshold / intensity (0.0 to 10.0)
+    bool lightShafts = false;               // Directional sun light shafts (god rays)
+    float lightShaftsStrength = 0.05f;      // Light shaft intensity (0.0 to 1.0)
+    float lightShaftsFadeSpeed = 3.0f;      // Sun edge fade speed (0.1 to 10.0)
+    bool lensFlare = false;                 // Procedural anamorphic & circular lens flare
+    bool eyeAdaption = false;               // Automatic camera exposure adaptation
+    float eyeAdaptionKey = 0.1f;            // Auto-exposure midtone key (0.01 to 0.5)
+    float eyeAdaptionRate = 0.5f;           // Auto-exposure transition rate (0.01 to 4.0)
+    bool motionBlur = false;                // Per-pixel velocity motion blur
+    float motionBlurStrength = 100.0f;      // Motion blur shutter length (0.1 to 400.0)
+    bool depthOfField = false;              // Camera bokeh depth of field
+    float depthOfFieldScale = 10.0f;        // Circle of confusion blur radius (1.0 to 20.0)
+    bool fxaa = false;                      // Fast Approximate Anti-Aliasing
+    bool crtFilter = false;                 // Vintage CRT scanline & curvature filter
+    bool sharpenFilter = false;             // Contrast Adaptive Sharpening filter
+    float sharpenFilterAmount = 1.0f;       // Sharpening strength (0.0 to 4.0)
+    bool outline = false;                   // Cel-shaded cartoon outline
+    float outlineThreshold = 0.1f;          // Edge gradient sensitivity (0.0 to 1.0)
+    float outlineThickness = 1.0f;          // Outline pixel thickness (0.0 to 4.0)
+    bool chromaticAberration = false;       // Lens edge color separation
+    float chromaticAberrationAmount = 1.0f; // Fringing strength (0.0 to 40.0)
+
+    // 7. Lighting & Debug Overrides
+    bool advancedLightCulling = true;       // 2.5D tiled depth clustered light culling
+    bool debugLightCulling = false;         // Light count per tile heatmap
+    bool freezeCullingCamera = false;       // Freeze frustum for culling verification
+    bool disableAlbedoMaps = false;         // Clay rendering (white diffuse base)
+    bool forceDiffuseLighting = false;      // Disable specular / metallic reflections
+    bool forceUnlit = false;                // Flat albedo with no lighting/shadows
+    bool raytraceDebugBVH = false;          // BVH acceleration structure visualizer
+
     bool showLightFrustum = false;
     bool hasLightFrustumCorners = false;
     glm::vec3 lightFrustumCorners[8] = {};
@@ -1583,6 +1688,101 @@ public:
         return FindObject(selectedId);
     }
 
+    void ResetToDefaults() {
+        ResetGraphicsSettingsToDefaults();
+    }
+
+    void ResetGraphicsSettingsToDefaults() {
+        vsync = true;
+        displayOutput = 0;
+        resolutionScale = 1.0f;
+        streamingThreshold = 0.8f;
+        hdrCalibration = 1.0f;
+        hdrUiCalibration = 1.0f;
+        renderPath = 0;
+        pathTraceTargetSamples = 1024;
+        occlusionCulling = true;
+        visibilityComputeShading = false;
+        allowMeshShader = false;
+        meshletOcclusionCulling = false;
+        meshBlend = false;
+        tessellation = false;
+        gameSpeed = 1.0f;
+        giBoost = 1.0f;
+        surfelGI = false;
+        surfelGIDebug = 0;
+        ddgi = false;
+        ddgiDebug = false;
+        ddgiGridRes = glm::ivec3(32, 16, 32);
+        ddgiRayCount = 64;
+        ddgiBlendSpeed = 0.1f;
+        ddgiSmoothBackface = 0.0f;
+        vxgi = false;
+        vxgiDebug = 0;
+        vxgiReflections = false;
+        vxgiVoxelSize = 0.125f;
+        vxgiRayStepSize = 1.0f;
+        vxgiMaxDistance = 10.0f;
+        ssgi = false;
+        ssgiDepthRejection = 8.0f;
+        rtDiffuse = false;
+        rtDiffuseRange = 1.0f;
+        rtDiffuseQuality = 1;
+        raytraceBounceCount = 1;
+        msaa = 1;
+        temporalAA = false;
+        temporalAADebug = false;
+        textureQuality = 3;
+        mipLodBias = 0.0f;
+        fsr = false;
+        fsrSharpness = 1.0f;
+        fsr2 = false;
+        fsr2Preset = 0;
+        fsr2Sharpness = 1.0f;
+        vrsClassification = false;
+        vrsDebug = false;
+        planarReflections = false;
+        planarReflectionResolutionScale = 1.0f;
+        planarReflectionMSAA = 1;
+        ssr = false;
+        ssrQuality = 1;
+        reflectionRoughnessCutoff = 0.6f;
+        rtReflections = false;
+        rtReflectionsRange = 1.0f;
+        rtReflectionsQuality = 1;
+        colorGrading = false;
+        dither = false;
+        bloom = false;
+        bloomStrength = 1.0f;
+        lightShafts = false;
+        lightShaftsStrength = 0.05f;
+        lightShaftsFadeSpeed = 3.0f;
+        lensFlare = false;
+        eyeAdaption = false;
+        eyeAdaptionKey = 0.1f;
+        eyeAdaptionRate = 0.5f;
+        motionBlur = false;
+        motionBlurStrength = 100.0f;
+        depthOfField = false;
+        depthOfFieldScale = 10.0f;
+        fxaa = false;
+        crtFilter = false;
+        sharpenFilter = false;
+        sharpenFilterAmount = 1.0f;
+        outline = false;
+        outlineThreshold = 0.1f;
+        outlineThickness = 1.0f;
+        chromaticAberration = false;
+        chromaticAberrationAmount = 1.0f;
+        advancedLightCulling = true;
+        debugLightCulling = false;
+        freezeCullingCamera = false;
+        disableAlbedoMaps = false;
+        forceDiffuseLighting = false;
+        forceUnlit = false;
+        raytraceDebugBVH = false;
+    }
+
     void Clear() {
         objects.clear();
         pointLights.clear();
@@ -1630,6 +1830,7 @@ public:
         aoBlurRadius = 2.0f;
         aoTemporal = true;
         aoTemporalBlend = 0.85f;
+        ResetGraphicsSettingsToDefaults();
         outlinerNodeOpenState.clear();
         contentBrowserFolderOpenState.clear();
     }
