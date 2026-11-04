@@ -86,6 +86,31 @@ namespace MouseButton {
     constexpr int Middle = GLFW_MOUSE_BUTTON_MIDDLE;
 }
 
+namespace Gamepad {
+    constexpr int A = GLFW_GAMEPAD_BUTTON_A;
+    constexpr int B = GLFW_GAMEPAD_BUTTON_B;
+    constexpr int X = GLFW_GAMEPAD_BUTTON_X;
+    constexpr int Y = GLFW_GAMEPAD_BUTTON_Y;
+    constexpr int LeftBumper = GLFW_GAMEPAD_BUTTON_LEFT_BUMPER;
+    constexpr int RightBumper = GLFW_GAMEPAD_BUTTON_RIGHT_BUMPER;
+    constexpr int Back = GLFW_GAMEPAD_BUTTON_BACK;
+    constexpr int Start = GLFW_GAMEPAD_BUTTON_START;
+    constexpr int Guide = GLFW_GAMEPAD_BUTTON_GUIDE;
+    constexpr int LeftThumb = GLFW_GAMEPAD_BUTTON_LEFT_THUMB;
+    constexpr int RightThumb = GLFW_GAMEPAD_BUTTON_RIGHT_THUMB;
+    constexpr int DPadUp = GLFW_GAMEPAD_BUTTON_DPAD_UP;
+    constexpr int DPadRight = GLFW_GAMEPAD_BUTTON_DPAD_RIGHT;
+    constexpr int DPadDown = GLFW_GAMEPAD_BUTTON_DPAD_DOWN;
+    constexpr int DPadLeft = GLFW_GAMEPAD_BUTTON_DPAD_LEFT;
+
+    constexpr int LeftX = GLFW_GAMEPAD_AXIS_LEFT_X;
+    constexpr int LeftY = GLFW_GAMEPAD_AXIS_LEFT_Y;
+    constexpr int RightX = GLFW_GAMEPAD_AXIS_RIGHT_X;
+    constexpr int RightY = GLFW_GAMEPAD_AXIS_RIGHT_Y;
+    constexpr int LeftTrigger = GLFW_GAMEPAD_AXIS_LEFT_TRIGGER;
+    constexpr int RightTrigger = GLFW_GAMEPAD_AXIS_RIGHT_TRIGGER;
+}
+
 struct InputBinding {
     std::vector<int> keys;         // Any of these keys activates the action
     std::vector<int> mouseButtons; // Any of these mouse buttons activates the action
@@ -178,6 +203,15 @@ public:
         m_mouseAxis = glm::vec2(rawDx, rawDy) * m_mouseSensitivity;
         if (std::abs(m_mouseAxis.x) < m_mouseDeadzone) m_mouseAxis.x = 0.0f;
         if (std::abs(m_mouseAxis.y) < m_mouseDeadzone) m_mouseAxis.y = 0.0f;
+
+        // Trigger action callbacks for pressed actions
+        for (const auto& pair : m_actionCallbacks) {
+            if (IsActionPressed(pair.first)) {
+                for (const auto& cb : pair.second) {
+                    if (cb) cb();
+                }
+            }
+        }
     }
 
     void ResetMouseDelta() {
@@ -221,6 +255,10 @@ public:
         if (button < 0 || button >= MAX_MOUSE_BUTTONS) return false;
         return !m_mouseDown[button] && m_mouseDownPrev[button];
     }
+
+    bool IsMouseButtonDown(int button) const { return IsMouseDown(button); }
+    bool IsMouseButtonPressed(int button) const { return IsMousePressed(button); }
+    bool IsMouseButtonReleased(int button) const { return IsMouseReleased(button); }
     
     double GetMouseX(bool negate = false) const { return negate ? -m_mouseX : m_mouseX; }
     double GetMouseY(bool negate = false) const { return negate ? -m_mouseY : m_mouseY; }
@@ -290,6 +328,21 @@ public:
         }
     }
 
+    void SetCursorVisible(bool visible) {
+        m_cursorVisible = visible;
+        if (m_window) {
+            if (visible) {
+                if (!m_cursorLocked) glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+            } else {
+                glfwSetInputMode(m_window, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
+            }
+        }
+    }
+
+    bool IsCursorVisible() const {
+        return m_cursorVisible;
+    }
+
     // --- Action Mapping ---
     void MapAction(const std::string& action, const InputBinding& binding) {
         m_actions[action] = binding;
@@ -340,6 +393,76 @@ public:
             }
         }
         return false;
+    }
+
+    void BindAction(const std::string& action, std::function<void()> callback) {
+        m_actionCallbacks[action].push_back(std::move(callback));
+    }
+
+    void UnbindAction(const std::string& action) {
+        m_actionCallbacks.erase(action);
+    }
+
+    void UnbindAllActions() {
+        m_actionCallbacks.clear();
+    }
+
+    void Rebind(const std::string& action, int key) {
+        m_actions[action] = { {key}, {} };
+    }
+
+    void PushContext(const std::string& context) {
+        m_contextStack.push_back(context);
+    }
+
+    void PopContext() {
+        if (!m_contextStack.empty()) m_contextStack.pop_back();
+    }
+
+    std::string GetCurrentContext() const {
+        return m_contextStack.empty() ? "Default" : m_contextStack.back();
+    }
+
+    // --- Gamepad System ---
+    bool IsGamepadConnected(int jid = 0) const {
+        return glfwJoystickIsGamepad(GLFW_JOYSTICK_1 + jid);
+    }
+
+    bool IsGamepadButtonDown(int button, int jid = 0) const {
+        if (!IsGamepadConnected(jid)) return false;
+        GLFWgamepadstate state;
+        if (glfwGetGamepadState(GLFW_JOYSTICK_1 + jid, &state)) {
+            if (button >= 0 && button <= GLFW_GAMEPAD_BUTTON_LAST) {
+                return state.buttons[button] == GLFW_PRESS;
+            }
+        }
+        return false;
+    }
+
+    float GetGamepadAxis(int axis, int jid = 0) const {
+        if (!IsGamepadConnected(jid)) return 0.0f;
+        GLFWgamepadstate state;
+        if (glfwGetGamepadState(GLFW_JOYSTICK_1 + jid, &state)) {
+            if (axis >= 0 && axis <= GLFW_GAMEPAD_AXIS_LAST) {
+                float val = state.axes[axis];
+                if (std::abs(val) < m_gamepadDeadzone) return 0.0f;
+                return val;
+            }
+        }
+        return 0.0f;
+    }
+
+    void SetGamepadDeadzone(float deadzone) {
+        m_gamepadDeadzone = deadzone;
+    }
+
+    float GetGamepadDeadzone() const {
+        return m_gamepadDeadzone;
+    }
+
+    void Vibrate(float strength, float seconds) {
+        (void)strength;
+        (void)seconds;
     }
 
     // --- Axis Mapping System ---
@@ -520,7 +643,11 @@ private:
     glm::vec2 m_mouseAxis{0.0f, 0.0f};
     glm::vec2 m_mouseDirection{0.0f, 0.0f};
     float m_mouseSpeed = 0.0f;
+    bool m_cursorVisible = true;
+    float m_gamepadDeadzone = 0.15f;
     
+    std::vector<std::string> m_contextStack;
+    std::unordered_map<std::string, std::vector<std::function<void()>>> m_actionCallbacks;
     std::unordered_map<std::string, InputBinding> m_actions;
     std::unordered_map<std::string, InputAxisConfig> m_axes;
     std::unordered_map<std::string, InputAxis2DConfig> m_axes2D;
