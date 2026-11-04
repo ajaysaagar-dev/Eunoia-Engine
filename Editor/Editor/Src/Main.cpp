@@ -165,6 +165,27 @@ struct alignas(256) SceneConstantBuffer
 	float cascadeBlending;
 	float visualizeCascades;
 	glm::vec4 cascadeSplits;
+	// WickedEngine Graphics Settings & Debug Overrides
+	float giBoost;
+	float disableAlbedoMaps;
+	float forceDiffuseLighting;
+	float forceUnlit;
+	float dither;
+	float bloom;
+	float bloomStrength;
+	float outline;
+	float outlineThreshold;
+	float outlineThickness;
+	float chromaticAberration;
+	float chromaticAberrationAmount;
+	float crtFilter;
+	float sharpenFilter;
+	float sharpenFilterAmount;
+	float mipLodBias;
+	float debugLightCulling;
+	float resolutionScale;
+	float gameSpeed;
+	float padGfx;
 };
 
 struct alignas(256) ShadowConstantBuffer
@@ -2877,6 +2898,27 @@ int createShadersAndPipeline()
 			float cascadeBlending;
 			float visualizeCascades;
 			float4 cascadeSplits;
+			// WickedEngine Graphics Settings & Debug Overrides
+			float giBoost;
+			float disableAlbedoMaps;
+			float forceDiffuseLighting;
+			float forceUnlit;
+			float dither;
+			float bloom;
+			float bloomStrength;
+			float outline;
+			float outlineThreshold;
+			float outlineThickness;
+			float chromaticAberration;
+			float chromaticAberrationAmount;
+			float crtFilter;
+			float sharpenFilter;
+			float sharpenFilterAmount;
+			float mipLodBias;
+			float debugLightCulling;
+			float resolutionScale;
+			float gameSpeed;
+			float padGfx;
 		};
 
 		cbuffer MaterialConstants : register(b1)
@@ -3583,6 +3625,14 @@ int createShadersAndPipeline()
 			}
 
 			float3 albedo = (hasAlbedoTex > 0.5f) ? (albedoSample.rgb * baseColor) : baseColor;
+			if (disableAlbedoMaps > 0.5f)
+			{
+				albedo = float3(0.85f, 0.85f, 0.85f); // WickedEngine Clay Mode
+			}
+			if (forceUnlit > 0.5f)
+			{
+				return float4(albedo, currentOpacity); // WickedEngine Force Unlit
+			}
 
 			float rough = roughness;
 			if (hasRoughTex > 0.5f)
@@ -3763,6 +3813,12 @@ int createShadersAndPipeline()
 			float3 ambCol = ambientColor.rgb;
 			float effectiveAmbIntensity = ambientIntensity;
 			float3 ambientDiff = albedo * ambCol * effectiveAmbIntensity * (1.0f - metal) * ao;
+			ambientDiff *= max(giBoost, 1.0f);
+			if (forceDiffuseLighting > 0.5f)
+			{
+				specBRDF = float3(0.0f, 0.0f, 0.0f);
+				ambientSpec = float3(0.0f, 0.0f, 0.0f);
+			}
 			float3 ambSpecEnergy = ApproxSpecularIntegralGGX(F0, roughnessBRDF, NdotV);
 			float3 ambientSpec = ambSpecEnergy * ambCol * effectiveAmbIntensity * ao;
 
@@ -3953,6 +4009,70 @@ int createShadersAndPipeline()
 			else
 			{
 				litColor = pow(saturate(litColor), 1.0f / 2.2f);
+			}
+
+			// WickedEngine Post-Processing Filters:
+			if (outline > 0.5f)
+			{
+				float edgeVal = length(ddx(input.normal)) + length(ddy(input.normal));
+				float edge = smoothstep(outlineThreshold, outlineThreshold + 0.1f, edgeVal * outlineThickness);
+				litColor = lerp(litColor, float3(0.0f, 0.0f, 0.0f), edge * 0.95f);
+			}
+
+			if (chromaticAberration > 0.5f)
+			{
+				float2 caDist = input.uv - float2(0.5f, 0.5f);
+				float caShift = dot(caDist, caDist) * (chromaticAberrationAmount * 0.005f);
+				litColor.r *= (1.0f + caShift);
+				litColor.b *= (1.0f - caShift);
+			}
+
+			if (crtFilter > 0.5f)
+			{
+				float scanline = sin(input.uv.y * 600.0f) * 0.06f;
+				litColor -= scanline;
+				float2 uvVignette = input.uv * (1.0f - input.uv.yx);
+				float vig = uvVignette.x * uvVignette.y * 15.0f;
+				litColor *= clamp(pow(max(vig, 0.0f), 0.15f), 0.0f, 1.0f);
+			}
+
+			if (sharpenFilter > 0.5f)
+			{
+				float3 dColor = abs(ddx(litColor)) + abs(ddy(litColor));
+				litColor += dColor * (sharpenFilterAmount * 0.25f);
+			}
+
+			if (bloom > 0.5f)
+			{
+				float luma = dot(litColor, float3(0.2126f, 0.7152f, 0.0722f));
+				float bloomLuma = max(0.0f, luma - 1.0f);
+				litColor += litColor * (bloomLuma * bloomStrength * 0.5f);
+			}
+
+			if (debugLightCulling > 0.5f)
+			{
+				float lightRatio = saturate((float)numLights / 8.0f);
+				float3 heatColor = float3(0.0f, 0.0f, 0.0f);
+				if (lightRatio < 0.25f)
+					heatColor = lerp(float3(0.0f, 0.25f, 0.9f), float3(0.0f, 0.85f, 0.35f), lightRatio * 4.0f);
+				else if (lightRatio < 0.5f)
+					heatColor = lerp(float3(0.0f, 0.85f, 0.35f), float3(0.95f, 0.85f, 0.05f), (lightRatio - 0.25f) * 4.0f);
+				else
+					heatColor = lerp(float3(0.95f, 0.85f, 0.05f), float3(1.0f, 0.1f, 0.05f), (lightRatio - 0.5f) * 2.0f);
+
+				// 16-pixel tile grid overlay matching WickedEngine
+				float2 screenPix = input.uv * float2(1920.0f, 1080.0f);
+				float2 tileEdge = step(15.0f, fmod(screenPix, 16.0f));
+				if (tileEdge.x > 0.5f || tileEdge.y > 0.5f)
+					heatColor += float3(0.25f, 0.25f, 0.25f);
+
+				litColor = lerp(litColor, heatColor, 0.70f);
+			}
+
+			if (dither > 0.5f)
+			{
+				float ditherNoise = frac(sin(dot(input.uv, float2(12.9898f, 78.233f))) * 43758.5453f);
+				litColor += (ditherNoise - 0.5f) * (1.0f / 255.0f);
 			}
 
 			return float4(litColor, currentOpacity);
@@ -5637,8 +5757,31 @@ void updateConstantBuffer()
 			float len = glm::length(glm::vec3(frustumPlanes[p]));
 			if (len > 1e-6f) frustumPlanes[p] /= len;
 		}
+		static bool s_lastFreezeCulling = false;
+		static glm::mat4 s_frozenView = glm::mat4(1.0f);
+		static glm::mat4 s_frozenProj = glm::mat4(1.0f);
+		static glm::vec3 s_frozenCamPos = glm::vec3(0.0f);
+		static glm::vec4 s_frozenPlanes[6] = {};
+
+		if (activeScene.freezeCullingCamera) {
+			if (!s_lastFreezeCulling) {
+				s_frozenView = view;
+				s_frozenProj = proj;
+				s_frozenCamPos = g_camera.GetPosition();
+				for (int p = 0; p < 6; ++p) s_frozenPlanes[p] = frustumPlanes[p];
+				s_lastFreezeCulling = true;
+			}
+		} else {
+			s_lastFreezeCulling = false;
+		}
+
+		glm::mat4 cullingView = activeScene.freezeCullingCamera ? s_frozenView : view;
+		glm::mat4 cullingProj = activeScene.freezeCullingCamera ? s_frozenProj : proj;
+		glm::vec3 cullingCamPos = activeScene.freezeCullingCamera ? s_frozenCamPos : g_camera.GetPosition();
+		const glm::vec4* cullingPlanes = activeScene.freezeCullingCamera ? s_frozenPlanes : frustumPlanes;
+
 		Eunoia::MeshClusterCullingSystem::Get().UpdateCamera(
-			view, proj, g_camera.GetPosition(), frustumPlanes, vpRect.width, vpRect.height
+			cullingView, cullingProj, cullingCamPos, cullingPlanes, vpRect.width, vpRect.height
 		);
 	}
 
@@ -5857,6 +6000,28 @@ void updateConstantBuffer()
 		activeScene.cascadeDistances[2],
 		activeScene.cascadeDistances[3]
 	);
+
+	// WickedEngine Graphics Settings & Debug Overrides
+	cb.giBoost = activeScene.giBoost;
+	cb.disableAlbedoMaps = activeScene.disableAlbedoMaps ? 1.0f : 0.0f;
+	cb.forceDiffuseLighting = activeScene.forceDiffuseLighting ? 1.0f : 0.0f;
+	cb.forceUnlit = activeScene.forceUnlit ? 1.0f : 0.0f;
+	cb.dither = activeScene.dither ? 1.0f : 0.0f;
+	cb.bloom = activeScene.bloom ? 1.0f : 0.0f;
+	cb.bloomStrength = activeScene.bloomStrength;
+	cb.outline = activeScene.outline ? 1.0f : 0.0f;
+	cb.outlineThreshold = activeScene.outlineThreshold;
+	cb.outlineThickness = activeScene.outlineThickness;
+	cb.chromaticAberration = activeScene.chromaticAberration ? 1.0f : 0.0f;
+	cb.chromaticAberrationAmount = activeScene.chromaticAberrationAmount;
+	cb.crtFilter = activeScene.crtFilter ? 1.0f : 0.0f;
+	cb.sharpenFilter = activeScene.sharpenFilter ? 1.0f : 0.0f;
+	cb.sharpenFilterAmount = activeScene.sharpenFilterAmount;
+	cb.mipLodBias = activeScene.mipLodBias;
+	cb.debugLightCulling = activeScene.debugLightCulling ? 1.0f : 0.0f;
+	cb.resolutionScale = activeScene.resolutionScale;
+	cb.gameSpeed = activeScene.gameSpeed;
+	cb.padGfx = 0.0f;
 
 	// Fill Point, Spot, and Area Lights (up to MAX_POINT_LIGHTS)
 	int activePointLights = 0;
@@ -6121,6 +6286,10 @@ void renderFrame()
 		{
 			const auto& batch = g_sceneBatches[bIdx];
 			if (batch.startIndex >= g_currentIndexCount || batch.indexCount == 0 || !batch.castShadows || batch.isUnlit || !batch.isShadowVisible) continue;
+			// WickedEngine Shadow LOD Override: reduce geometric load during shadow map passes
+			if (activeRenderScene.shadowLODOverride && batch.distSq > (activeRenderScene.shadowDistance * activeRenderScene.shadowDistance * 0.5f)) {
+				continue; // Skip distant fine-detail casters in shadow map
+			}
 			UINT drawCount = std::min(batch.indexCount, g_currentIndexCount - batch.startIndex);
 			if (drawCount == 0) continue;
 
@@ -9123,8 +9292,9 @@ int main(int argc, char** argv)
 		}
 
 		// Update 3D Scene animations and runtime behaviours
-		g_scene.Update(deltaTime);
-		Eunoia::WaterSystem::Get().Update(deltaTime);
+		float simDeltaTime = deltaTime * std::max(0.0f, g_scene.gameSpeed);
+		g_scene.Update(simDeltaTime);
+		Eunoia::WaterSystem::Get().Update(simDeltaTime);
 
 		// Synchronize viewport camera dynamically as the level camera moves or rotates
 		SyncLevelCameraToViewportCamera();
