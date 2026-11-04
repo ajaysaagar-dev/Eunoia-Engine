@@ -3679,6 +3679,10 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
             }
         }
 
+        if (ImGui::GetIO().KeyCtrl && ImGui::GetIO().KeyShift && ImGui::IsKeyPressed(ImGuiKey_G)) {
+            showGraphicsOptionsWindow = !showGraphicsOptionsWindow;
+        }
+
         if (ImGui::IsKeyPressed(ImGuiKey_Z) && !ImGui::GetIO().KeyCtrl) {
             gizmoUseCenter = !gizmoUseCenter;
             AddLog("LogEditor", gizmoUseCenter ? "Gizmo Position: Center (Z)" : "Gizmo Position: Pivot (Z)", 0);
@@ -4039,6 +4043,9 @@ void EngineUI::Render(Scene& scene, OrbitCamera& camera, float fps, float frameT
     }
     if (showQualitySettings) {
         RenderQualitySettings();
+    }
+    if (showGraphicsOptionsWindow) {
+        RenderGraphicsOptionsWindow(scene);
     }
 
     // Skybox Editor & World Skybox Settings Modal
@@ -4448,6 +4455,10 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
             }
 
             if (ImGui::BeginMenu("Graphics")) {
+                if (ImGui::MenuItem("Graphics Options...", "Ctrl+Shift+G", showGraphicsOptionsWindow)) {
+                    showGraphicsOptionsWindow = !showGraphicsOptionsWindow;
+                }
+                ImGui::Separator();
 
                 // ================================================================
                 // SHADOWS (Max Shadow Distance & Realtime Controls)
@@ -4934,6 +4945,8 @@ void EngineUI::RenderMainMenuBar(Scene& scene, OrbitCamera& camera, bool& outSho
             }
 
             if (ImGui::BeginMenu("Window")) {
+                ImGui::MenuItem("Graphics Options", nullptr, &showGraphicsOptionsWindow);
+                ImGui::Separator();
                 ImGui::MenuItem("Outliner", nullptr, &showOutliner);
                 ImGui::MenuItem("Details", nullptr, &showDetails);
                 ImGui::MenuItem("Content Browser", nullptr, &showContentBrowserWindow);
@@ -7111,6 +7124,384 @@ void EngineUI::RenderQualitySettings() {
             ImGui::BulletText("Allocated Texture VRAM: ~%zu MB", metrics.totalGpuMemoryBytes / (1024 * 1024));
         }
     }
+    ImGui::End();
+}
+
+void EngineUI::RenderGraphicsOptionsWindow(Scene& scene) {
+    ImGui::SetNextWindowSize(ImVec2(740, 700), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Graphics Options###GraphicsOptionsWin", &showGraphicsOptionsWindow)) {
+        ImGui::End();
+        return;
+    }
+
+    ImGui::TextColored(ImVec4(0.35f, 0.85f, 1.0f, 1.0f), "WickedEngine Unified Graphics & Rendering System");
+    ImGui::TextDisabled("Hardware PBR, Global Illumination, Post-Processing & Viewport Parity");
+    ImGui::Separator();
+
+    ImGui::TextDisabled("Quality Presets:");
+    ImGui::SameLine();
+    if (ImGui::Button("Low")) {
+        scene.shadowResolution2D = 512;
+        scene.shadowResolutionCube = 256;
+        scene.shadowSampleCount = 4;
+        scene.msaa = 1;
+        scene.textureQuality = 1;
+        scene.ssr = false;
+        scene.bloom = false;
+        scene.motionBlur = false;
+        scene.depthOfField = false;
+        scene.ssgi = false;
+        scene.surfelGI = false;
+        scene.ddgi = false;
+        scene.vxgi = false;
+        scene.advancedLightCulling = true;
+        RequestViewportRedraw(15);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Medium")) {
+        scene.shadowResolution2D = 1024;
+        scene.shadowResolutionCube = 512;
+        scene.shadowSampleCount = 8;
+        scene.msaa = 1;
+        scene.textureQuality = 2;
+        scene.ssr = true;
+        scene.ssrQuality = 0;
+        scene.bloom = true;
+        scene.bloomStrength = 0.8f;
+        scene.motionBlur = false;
+        scene.depthOfField = false;
+        scene.ssgi = false;
+        scene.surfelGI = false;
+        scene.ddgi = false;
+        scene.vxgi = false;
+        scene.advancedLightCulling = true;
+        RequestViewportRedraw(15);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("High")) {
+        scene.shadowResolution2D = 2048;
+        scene.shadowResolutionCube = 512;
+        scene.shadowSampleCount = 16;
+        scene.msaa = 1;
+        scene.temporalAA = true;
+        scene.textureQuality = 3;
+        scene.ssr = true;
+        scene.ssrQuality = 1;
+        scene.bloom = true;
+        scene.bloomStrength = 1.0f;
+        scene.motionBlur = false;
+        scene.depthOfField = true;
+        scene.depthOfFieldScale = 10.0f;
+        scene.ssgi = true;
+        scene.advancedLightCulling = true;
+        RequestViewportRedraw(15);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Ultra")) {
+        scene.shadowResolution2D = 2048;
+        scene.shadowResolutionCube = 1024;
+        scene.shadowSampleCount = 16;
+        scene.shadowPCSS = true;
+        scene.msaa = 1;
+        scene.temporalAA = true;
+        scene.textureQuality = 3;
+        scene.ssr = true;
+        scene.ssrQuality = 2;
+        scene.bloom = true;
+        scene.bloomStrength = 1.0f;
+        scene.motionBlur = true;
+        scene.depthOfField = true;
+        scene.depthOfFieldScale = 12.0f;
+        scene.ssgi = true;
+        scene.surfelGI = true;
+        scene.advancedLightCulling = true;
+        RequestViewportRedraw(15);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cinematic")) {
+        scene.shadowResolution2D = 4096;
+        scene.shadowResolutionCube = 2048;
+        scene.shadowSampleCount = 32;
+        scene.shadowPCSS = true;
+        scene.shadowDistance = 500.0f;
+        scene.msaa = 2;
+        scene.temporalAA = true;
+        scene.textureQuality = 3;
+        scene.ssr = true;
+        scene.ssrQuality = 2;
+        scene.bloom = true;
+        scene.bloomStrength = 1.2f;
+        scene.motionBlur = true;
+        scene.depthOfField = true;
+        scene.depthOfFieldScale = 15.0f;
+        scene.ssgi = true;
+        scene.surfelGI = true;
+        scene.ddgi = true;
+        scene.advancedLightCulling = true;
+        RequestViewportRedraw(15);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Reset to Defaults")) {
+        scene.ResetToDefaults();
+        RequestViewportRedraw(15);
+    }
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    if (ImGui::CollapsingHeader("1. Display Output & SwapChain", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("VSync##GfxVSync", &scene.vsync)) { vsyncEnabled = scene.vsync; RequestViewportRedraw(15); }
+        ImGui::SameLine();
+        const char* displayOutputs[] = { "SDR (8-Bit)", "SDR (10-Bit)", "HDR (10-Bit)", "HDR (16-Bit Float)" };
+        ImGui::SetNextItemWidth(200.0f);
+        if (ImGui::Combo("Display Output##GfxDisp", &scene.displayOutput, displayOutputs, IM_ARRAYSIZE(displayOutputs))) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Resolution Scale##GfxResScale", &scene.resolutionScale, 0.25f, 2.0f, "%.2fx")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Streaming Threshold##GfxStreaming", &scene.streamingThreshold, 0.1f, 1.0f, "%.2f VRAM")) { RequestViewportRedraw(15); }
+        if (scene.displayOutput >= 2) {
+            if (ImGui::SliderFloat("HDR Calibration##GfxHDRCal", &scene.hdrCalibration, 0.0f, 8.0f, "%.2f Nit")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("HDR UI Calibration##GfxHDRUI", &scene.hdrUiCalibration, 0.1f, 18.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("2. Render Path & Hardware Pipeline", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const char* renderPaths[] = { "Default (Raster / Hybrid)", "Path Tracing" };
+        ImGui::SetNextItemWidth(240.0f);
+        if (ImGui::Combo("Render Path##GfxRenderPath", &scene.renderPath, renderPaths, IM_ARRAYSIZE(renderPaths))) { RequestViewportRedraw(15); }
+        if (scene.renderPath == 1) {
+            if (ImGui::SliderInt("Sample Count##GfxPathSamples", &scene.pathTraceTargetSamples, 1, 2048)) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Occlusion Culling (Hierarchical-Z)", &scene.occlusionCulling)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Visibility Compute Shading", &scene.visibilityComputeShading)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Allow Mesh Shaders", &scene.allowMeshShader)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Meshlet Occlusion Culling", &scene.meshletOcclusionCulling)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Mesh Blend (Terrain Slope Blending)", &scene.meshBlend)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Hardware Tessellation", &scene.tessellation)) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Game Simulation Speed", &scene.gameSpeed, 0.0f, 4.0f, "%.2fx")) { RequestViewportRedraw(15); }
+    }
+
+    if (ImGui::CollapsingHeader("3. Global Illumination (GI)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::SliderFloat("GI Boost Multiplier##GfxGIBoost", &scene.giBoost, 1.0f, 10.0f, "%.2fx")) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Surfel GI##GfxSurfel", &scene.surfelGI)) { RequestViewportRedraw(15); }
+        if (scene.surfelGI) {
+            const char* surfelDebugs[] = { "None", "Normal", "Color", "Point", "Random", "Heatmap", "Inconsistent" };
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("Surfel Debug##GfxSurfelDbg", &scene.surfelGIDebug, surfelDebugs, IM_ARRAYSIZE(surfelDebugs))) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("DDGI (Dynamic Diffuse Probe Grid)", &scene.ddgi)) { RequestViewportRedraw(15); }
+        if (scene.ddgi) {
+            if (ImGui::Checkbox("DDGI Debug Probes", &scene.ddgiDebug)) { RequestViewportRedraw(15); }
+            int grid[3] = { scene.ddgiGridRes.x, scene.ddgiGridRes.y, scene.ddgiGridRes.z };
+            if (ImGui::InputInt3("DDGI Grid Dimensions", grid)) {
+                scene.ddgiGridRes = glm::ivec3(std::clamp(grid[0], 2, 128), std::clamp(grid[1], 2, 128), std::clamp(grid[2], 2, 128));
+                RequestViewportRedraw(15);
+            }
+            if (ImGui::SliderInt("DDGI Ray Count", &scene.ddgiRayCount, 0, 512)) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("DDGI Blend Speed", &scene.ddgiBlendSpeed, 0.0f, 0.2f, "%.3f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("DDGI Smooth Backface", &scene.ddgiSmoothBackface, 0.0f, 1.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("VXGI (Voxel Cone Traced GI)", &scene.vxgi)) { RequestViewportRedraw(15); }
+        if (scene.vxgi) {
+            const char* vxgiDebugs[] = { "None", "Clipmaps", "Level 0", "Level 1", "Level 2", "Level 3", "Level 4", "Level 5" };
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("VXGI Debug##GfxVxgiDbg", &scene.vxgiDebug, vxgiDebugs, IM_ARRAYSIZE(vxgiDebugs))) { RequestViewportRedraw(15); }
+            if (ImGui::Checkbox("VXGI Specular Reflections", &scene.vxgiReflections)) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("VXGI Voxel Size", &scene.vxgiVoxelSize, 0.125f, 0.5f, "%.3fm")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("VXGI Ray Step Size", &scene.vxgiRayStepSize, 0.5f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("VXGI Max Distance", &scene.vxgiMaxDistance, 0.0f, 100.0f, "%.1fm")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("SSGI (Screen Space GI)", &scene.ssgi)) { RequestViewportRedraw(15); }
+        if (scene.ssgi) {
+            if (ImGui::SliderFloat("SSGI Depth Rejection", &scene.ssgiDepthRejection, 0.1f, 20.0f, "%.1f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Ray Traced Diffuse (DXR)", &scene.rtDiffuse)) { RequestViewportRedraw(15); }
+        if (scene.rtDiffuse) {
+            if (ImGui::SliderFloat("RT Diffuse Range", &scene.rtDiffuseRange, 0.1f, 10.0f, "%.2f")) { RequestViewportRedraw(15); }
+            const char* qLabels[] = { "Low", "Medium", "High" };
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("RT Diffuse Quality", &scene.rtDiffuseQuality, qLabels, IM_ARRAYSIZE(qLabels))) { RequestViewportRedraw(15); }
+            if (ImGui::SliderInt("Ray Traced Bounces", &scene.raytraceBounceCount, 1, 10)) { RequestViewportRedraw(15); }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("4. Shadows & Penumbra Softness", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Enable Realtime Shadows##GfxShadows", &scene.enableShadows)) { RequestViewportRedraw(15); }
+        const char* shadowTypes[] = { "Shadowmaps (Hardware D32)", "Ray Traced Shadows (DXR / Fallback)" };
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Shadow Architecture##GfxShadowType", &scene.shadowType, shadowTypes, IM_ARRAYSIZE(shadowTypes))) { RequestViewportRedraw(15); }
+
+        const int res2DVals[] = { 0, 128, 256, 512, 1024, 2048, 4096 };
+        const char* res2DLabels[] = { "Off (Disabled)", "128 (Ultra Low)", "256 (Very Low)", "512 (Low)", "1024 (Medium)", "2048 (High - Default)", "4096 (Cinematic / Ultra)" };
+        int cur2DIdx = 5;
+        for (int k = 0; k < 7; ++k) { if (scene.shadowResolution2D == res2DVals[k]) { cur2DIdx = k; break; } }
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("2D Shadowmap Resolution", &cur2DIdx, res2DLabels, IM_ARRAYSIZE(res2DLabels))) {
+            scene.shadowResolution2D = res2DVals[cur2DIdx];
+            scene.shadowResolution = scene.shadowResolution2D;
+            RequestViewportRedraw(15);
+        }
+
+        const int resCubeVals[] = { 0, 128, 256, 512, 1024, 2048 };
+        const char* resCubeLabels[] = { "Off (Disabled)", "128 (Low)", "256 (Medium Low)", "512 (Balanced - Default)", "1024 (High)", "2048 (Cinematic)" };
+        int curCubeIdx = 3;
+        for (int k = 0; k < 6; ++k) { if (scene.shadowResolutionCube == resCubeVals[k]) { curCubeIdx = k; break; } }
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Cube Shadowmap Resolution", &curCubeIdx, resCubeLabels, IM_ARRAYSIZE(resCubeLabels))) {
+            scene.shadowResolutionCube = resCubeVals[curCubeIdx];
+            RequestViewportRedraw(15);
+        }
+
+        const int sampleCounts[] = { 4, 8, 16, 32 };
+        const char* sampleLabels[] = { "4 Samples (Performance)", "8 Samples (Medium)", "16 Samples (High - Vogel Disk)", "32 Samples (Ultra / Smooth Penumbra)" };
+        int curSampleIdx = 2;
+        for (int k = 0; k < 4; ++k) { if (scene.shadowSampleCount == sampleCounts[k]) { curSampleIdx = k; break; } }
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Vogel Disk Sample Count", &curSampleIdx, sampleLabels, IM_ARRAYSIZE(sampleLabels))) {
+            scene.shadowSampleCount = sampleCounts[curSampleIdx];
+            RequestViewportRedraw(15);
+        }
+        if (ImGui::SliderFloat("Filter Radius / Spread", &scene.pcfRadius, 0.2f, 5.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("PCSS Blocker Search", &scene.shadowPCSS)) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Depth / Normal Bias", &scene.shadowBias, 0.0001f, 0.01f, "%.4f")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Shadow Softness", &scene.shadowSoftness, 0.0f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Max Shadow Distance", &scene.shadowDistance, 5.0f, 2000.0f, "%.1fm")) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Screen-Space Contact Shadows", &scene.screenSpaceShadows)) { RequestViewportRedraw(15); }
+        if (scene.screenSpaceShadows) {
+            if (ImGui::SliderFloat("Screen-Space Range", &scene.screenSpaceShadowRange, 0.1f, 5.0f, "%.2fm")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderInt("Screen-Space Samples", &scene.screenSpaceShadowSamples, 4, 32)) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Capsule Shadows", &scene.capsuleShadows)) { RequestViewportRedraw(15); }
+        if (scene.capsuleShadows) {
+            if (ImGui::SliderFloat("Capsule Angle", &scene.capsuleShadowAngle, 0.01f, 0.5f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Capsule Fade", &scene.capsuleShadowFade, 0.1f, 10.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Shadow LOD Override", &scene.shadowLODOverride)) { RequestViewportRedraw(15); }
+    }
+
+    if (ImGui::CollapsingHeader("5. Anti-Aliasing, Upscaling & Samplers", ImGuiTreeNodeFlags_DefaultOpen)) {
+        const char* msaaOptions[] = { "1x (Off)", "2x MSAA", "4x MSAA", "8x MSAA" };
+        int msaaIdx = (scene.msaa == 8) ? 3 : (scene.msaa == 4) ? 2 : (scene.msaa == 2) ? 1 : 0;
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::Combo("Hardware MSAA##GfxMSAA", &msaaIdx, msaaOptions, IM_ARRAYSIZE(msaaOptions))) {
+            scene.msaa = (msaaIdx == 3) ? 8 : (msaaIdx == 2) ? 4 : (msaaIdx == 1) ? 2 : 1;
+            RequestViewportRedraw(15);
+        }
+        if (ImGui::Checkbox("Temporal Anti-Aliasing (TAA)", &scene.temporalAA)) { RequestViewportRedraw(15); }
+        if (scene.temporalAA) {
+            if (ImGui::Checkbox("TAA Debug Jitter", &scene.temporalAADebug)) { RequestViewportRedraw(15); }
+        }
+        const char* texQualities[] = { "Nearest", "Bilinear", "Trilinear", "16x Anisotropic" };
+        ImGui::SetNextItemWidth(180.0f);
+        if (ImGui::Combo("Texture Sampler Quality", &scene.textureQuality, texQualities, IM_ARRAYSIZE(texQualities))) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("MipLOD Bias", &scene.mipLodBias, -4.0f, 4.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("AMD FSR 1.0 (Spatial)", &scene.fsr)) { RequestViewportRedraw(15); }
+        if (scene.fsr) {
+            if (ImGui::SliderFloat("FSR 1.0 Sharpness", &scene.fsrSharpness, 0.0f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("AMD FSR 2.1 (Temporal)", &scene.fsr2)) { RequestViewportRedraw(15); }
+        if (scene.fsr2) {
+            const char* fsr2Presets[] = { "Quality", "Balanced", "Performance", "Ultra Performance" };
+            ImGui::SetNextItemWidth(180.0f);
+            if (ImGui::Combo("FSR 2.1 Preset", &scene.fsr2Preset, fsr2Presets, IM_ARRAYSIZE(fsr2Presets))) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("FSR 2.1 Sharpness", &scene.fsr2Sharpness, 0.0f, 1.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Variable Rate Shading (VRS)", &scene.vrsClassification)) { RequestViewportRedraw(15); }
+        if (scene.vrsClassification) {
+            if (ImGui::Checkbox("VRS Debug Heatmap", &scene.vrsDebug)) { RequestViewportRedraw(15); }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("6. Reflections (Planar, SSR & Ray Tracing)", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Planar Reflections", &scene.planarReflections)) { RequestViewportRedraw(15); }
+        if (scene.planarReflections) {
+            if (ImGui::SliderFloat("Planar Res Scale", &scene.planarReflectionResolutionScale, 0.25f, 1.0f, "%.2fx")) { RequestViewportRedraw(15); }
+            const char* planarMsaaOptions[] = { "1x", "2x", "4x", "8x" };
+            int pMsaaIdx = (scene.planarReflectionMSAA == 8) ? 3 : (scene.planarReflectionMSAA == 4) ? 2 : (scene.planarReflectionMSAA == 2) ? 1 : 0;
+            ImGui::SetNextItemWidth(140.0f);
+            if (ImGui::Combo("Planar MSAA", &pMsaaIdx, planarMsaaOptions, IM_ARRAYSIZE(planarMsaaOptions))) {
+                scene.planarReflectionMSAA = (pMsaaIdx == 3) ? 8 : (pMsaaIdx == 2) ? 4 : (pMsaaIdx == 1) ? 2 : 1;
+                RequestViewportRedraw(15);
+            }
+        }
+        if (ImGui::Checkbox("Screen Space Reflections (SSR)", &scene.ssr)) { RequestViewportRedraw(15); }
+        if (scene.ssr) {
+            const char* ssrQualities[] = { "Low", "Medium", "High" };
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::Combo("SSR Quality", &scene.ssrQuality, ssrQualities, IM_ARRAYSIZE(ssrQualities))) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Roughness Cutoff", &scene.reflectionRoughnessCutoff, 0.0f, 1.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Ray Traced Reflections (DXR)", &scene.rtReflections)) { RequestViewportRedraw(15); }
+        if (scene.rtReflections) {
+            if (ImGui::SliderFloat("RT Reflections Range", &scene.rtReflectionsRange, 0.1f, 10.0f, "%.2f")) { RequestViewportRedraw(15); }
+            const char* rtQualities[] = { "Low", "Medium", "High" };
+            ImGui::SetNextItemWidth(160.0f);
+            if (ImGui::Combo("RT Reflections Quality", &scene.rtReflectionsQuality, rtQualities, IM_ARRAYSIZE(rtQualities))) { RequestViewportRedraw(15); }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("7. Tonemapping & Color Grading", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Color Grading Active##GfxColorGrading", &scene.colorGrading)) { RequestViewportRedraw(15); }
+        const char* tonemappers[] = { "None / Linear", "ACES Filmic (Wicked/UE5)", "Reinhard", "Uchimura (GT7 / Wicked)", "Uncharted 2 Filmic" };
+        ImGui::SetNextItemWidth(260.0f);
+        if (ImGui::Combo("Tonemapper##GfxTonemap", &scene.postTonemapper, tonemappers, IM_ARRAYSIZE(tonemappers))) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("EV Compensation##GfxEV", &scene.postExposureEV, -5.0f, 5.0f, "%.2f EV")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Exposure Multiplier##GfxExpMul", &scene.postExposureMultiplier, 0.0f, 5.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Saturation##GfxSat", &scene.postSaturation, 0.0f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Contrast##GfxContrast", &scene.postContrast, 0.5f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::SliderFloat("Gamma##GfxGamma", &scene.postGamma, 0.5f, 2.0f, "%.2f")) { RequestViewportRedraw(15); }
+        if (ImGui::ColorEdit3("Color Filter Tint##GfxFilter", &scene.postColorFilter.x)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Dithering (Banding Elimination)", &scene.dither)) { RequestViewportRedraw(15); }
+    }
+
+    if (ImGui::CollapsingHeader("8. Cinematic Post-Processing", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("Bloom##GfxBloom", &scene.bloom)) { RequestViewportRedraw(15); }
+        if (scene.bloom) {
+            if (ImGui::SliderFloat("Bloom Strength", &scene.bloomStrength, 0.0f, 5.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Light Shafts (God Rays)", &scene.lightShafts)) { RequestViewportRedraw(15); }
+        if (scene.lightShafts) {
+            if (ImGui::SliderFloat("Light Shafts Strength", &scene.lightShaftsStrength, 0.0f, 0.5f, "%.3f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Light Shafts Fade Speed", &scene.lightShaftsFadeSpeed, 0.1f, 10.0f, "%.1f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Lens Flare", &scene.lensFlare)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Eye Adaptation (Auto Exposure)", &scene.eyeAdaption)) { RequestViewportRedraw(15); }
+        if (scene.eyeAdaption) {
+            if (ImGui::SliderFloat("Eye Adaptation Key", &scene.eyeAdaptionKey, 0.01f, 1.0f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Eye Adaptation Rate", &scene.eyeAdaptionRate, 0.01f, 4.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Per-Pixel Motion Blur", &scene.motionBlur)) { RequestViewportRedraw(15); }
+        if (scene.motionBlur) {
+            if (ImGui::SliderFloat("Motion Blur Strength", &scene.motionBlurStrength, 0.1f, 400.0f, "%.1f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Depth of Field (Bokeh)", &scene.depthOfField)) { RequestViewportRedraw(15); }
+        if (scene.depthOfField) {
+            if (ImGui::SliderFloat("Depth of Field Scale", &scene.depthOfFieldScale, 1.0f, 20.0f, "%.1f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("FXAA (Fast Approximate AA)", &scene.fxaa)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Vintage CRT Scanline Filter", &scene.crtFilter)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Contrast Adaptive Sharpening (CAS)", &scene.sharpenFilter)) { RequestViewportRedraw(15); }
+        if (scene.sharpenFilter) {
+            if (ImGui::SliderFloat("CAS Sharpen Amount", &scene.sharpenFilterAmount, 0.0f, 4.0f, "%.2f")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Cel Cartoon Outline", &scene.outline)) { RequestViewportRedraw(15); }
+        if (scene.outline) {
+            if (ImGui::SliderFloat("Outline Threshold", &scene.outlineThreshold, 0.0f, 1.0f, "%.2f")) { RequestViewportRedraw(15); }
+            if (ImGui::SliderFloat("Outline Thickness", &scene.outlineThickness, 0.5f, 4.0f, "%.1fpx")) { RequestViewportRedraw(15); }
+        }
+        if (ImGui::Checkbox("Chromatic Aberration", &scene.chromaticAberration)) { RequestViewportRedraw(15); }
+        if (scene.chromaticAberration) {
+            if (ImGui::SliderFloat("Aberration Amount", &scene.chromaticAberrationAmount, 0.0f, 40.0f, "%.1f")) { RequestViewportRedraw(15); }
+        }
+    }
+
+    if (ImGui::CollapsingHeader("9. Lighting & Debug Overrides", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::Checkbox("2.5D Clustered Light Culling", &scene.advancedLightCulling)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Debug Light Culling Heatmap", &scene.debugLightCulling)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Freeze Culling Camera", &scene.freezeCullingCamera)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Disable Albedo Maps (Clay Mode)", &scene.disableAlbedoMaps)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Force Diffuse Lighting (Disable Specular)", &scene.forceDiffuseLighting)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Force Unlit (Flat Base Color)", &scene.forceUnlit)) { RequestViewportRedraw(15); }
+        if (ImGui::Checkbox("Debug BVH Acceleration Structure", &scene.raytraceDebugBVH)) { RequestViewportRedraw(15); }
+    }
+
     ImGui::End();
 }
 

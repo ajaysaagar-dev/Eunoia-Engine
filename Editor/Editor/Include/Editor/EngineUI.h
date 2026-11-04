@@ -209,6 +209,7 @@ public:
     bool showUndoHistory = false;
     bool showClusterCullingStats = false;
     bool showQualitySettings = false;
+    bool showGraphicsOptionsWindow = false;
 
     // Tree expanded/collapsed state restoration tracking (Outliner and Content Browser)
     bool m_outlinerStateNeedsApply = true;
@@ -226,6 +227,7 @@ public:
     bool vsyncEnabled = false;
     void ApplyTextureQuality(TextureQuality quality);
     void RenderQualitySettings();
+    void RenderGraphicsOptionsWindow(Scene& scene);
     static const std::vector<AntiAliasingInfo>& GetAntiAliasingMethods();
     static const char* GetAntiAliasingName(AntiAliasingMethod method);
 
