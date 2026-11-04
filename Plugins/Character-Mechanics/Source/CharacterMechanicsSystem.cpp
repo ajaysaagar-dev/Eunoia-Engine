@@ -2,8 +2,10 @@
 #include "CharacterMechanics/CharacterMechanics.h"
 #include <EngineScene/GameObject.h>
 #include <EngineScene/EunoiaBehaviour.h>
+#include <EngineScene/Scene.h>
 #include <iostream>
 #include <cmath>
+#include <algorithm>
 
 namespace Eunoia {
 namespace CharacterMechanics {
@@ -192,12 +194,20 @@ void CharacterMechanicsSystem::SetOrientationToMovementDirection(GameObject* tar
         int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
         auto& s = m_settings[id];
         s.orientToMovement = enable;
+        s.bodyRotateToMovement = enable;
         s.rotationRate = rotationRate;
+        s.bodyRotationRate = rotationRate;
+        if (!s.hasBaseOffset && s.bodyObject) {
+            s.baseYawOffset = s.bodyObject->rotation.y;
+            s.hasBaseOffset = true;
+        }
     }
     // Also save in m_settings[0] as global/default fallback
     auto& fallback = m_settings[0];
     fallback.orientToMovement = enable;
+    fallback.bodyRotateToMovement = enable;
     fallback.rotationRate = rotationRate;
+    fallback.bodyRotationRate = rotationRate;
 }
 
 void CharacterMechanicsSystem::SetOrientationToMovementDirection(bool enable, float rotationRate) {
@@ -210,12 +220,12 @@ bool CharacterMechanicsSystem::IsOrientationToMovementDirectionEnabled(GameObjec
         int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
         auto it = m_settings.find(id);
         if (it != m_settings.end()) {
-            return it->second.orientToMovement;
+            return it->second.orientToMovement || it->second.bodyRotateToMovement;
         }
     }
     auto it0 = m_settings.find(0);
     if (it0 != m_settings.end()) {
-        return it0->second.orientToMovement;
+        return it0->second.orientToMovement || it0->second.bodyRotateToMovement;
     }
     return false;
 }
@@ -244,45 +254,111 @@ void CharacterMechanicsSystem::OrientToDirection(GameObject* target, const glm::
         return;
     }
 
-    float targetYaw = glm::degrees(std::atan2(-worldDirection.x, -worldDirection.z));
+    // Check if orientation is enabled on character, global fallback, or active character
+    bool isEnabled = IsOrientationToMovementDirectionEnabled(character) ||
+                     IsBodyRotateToMovementDirectionEnabled(character) ||
+                     IsOrientationToMovementDirectionEnabled(nullptr) ||
+                     IsBodyRotateToMovementDirectionEnabled(nullptr);
 
-    auto applyYawRotation = [](GameObject* obj, float tYaw, float rate, float deltaSec) {
-        if (!obj) return;
-        float currentYaw = obj->rotation.y;
-        float diff = std::fmod(tYaw - currentYaw + 540.0f, 360.0f) - 180.0f;
-        if (rate <= 0.0f) {
-            obj->rotation.y = tYaw;
-        } else {
-            float effectiveDt = (deltaSec > 1e-5f) ? deltaSec : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
-            float maxStep = rate * effectiveDt;
-            if (std::abs(diff) <= maxStep) {
-                obj->rotation.y = tYaw;
-            } else {
-                obj->rotation.y += (diff > 0.0f ? maxStep : -maxStep);
+    // Resolve designated body object
+    GameObject* body = GetBodyObject(character);
+    if (!body || body == character) {
+        // Auto-detect body object from child objects (e.g. Remy, PlayerBody, mesh child)
+        if (character->scene) {
+            for (int childId : character->childIds) {
+                GameObject* child = character->scene->FindObject(childId);
+                if (child) {
+                    std::string cName = child->name;
+                    std::transform(cName.begin(), cName.end(), cName.begin(), ::tolower);
+                    if (cName.find("body") != std::string::npos || cName.find("remy") != std::string::npos ||
+                        child->isImportedMesh || !child->meshFilePath.empty()) {
+                        body = child;
+                        SetBodyObject(character, body);
+                        break;
+                    }
+                }
+            }
+            if (!body || body == character) {
+                for (auto& obj : character->scene->objects) {
+                    if (obj.parentId == character->id) {
+                        std::string oName = obj.name;
+                        std::transform(oName.begin(), oName.end(), oName.begin(), ::tolower);
+                        if (oName.find("body") != std::string::npos || oName.find("remy") != std::string::npos ||
+                            obj.isImportedMesh || !obj.meshFilePath.empty()) {
+                            body = &obj;
+                            SetBodyObject(character, body);
+                            break;
+                        }
+                    }
+                }
             }
         }
-        obj->rotation.y = std::fmod(obj->rotation.y + 180.0f, 360.0f);
-        if (obj->rotation.y < 0.0f) obj->rotation.y += 360.0f;
-        obj->rotation.y -= 180.0f;
-
-        if (obj->hasPhysics && obj->physics.isCharacterPhysics) {
-            obj->rotation.x = 0.0f;
-            obj->rotation.z = 0.0f;
-        }
-    };
-
-    // 1. Orient the root character object if orientToMovement is enabled
-    if (IsOrientationToMovementDirectionEnabled(character)) {
-        float rate = GetRotationRate(character);
-        applyYawRotation(character, targetYaw, rate, dt);
     }
 
-    // 2. Orient designated body object or self if bodyRotateToMovement is enabled
-    if (IsBodyRotateToMovementDirectionEnabled(character)) {
-        GameObject* body = GetBodyObject(character);
-        GameObject* bodyTarget = body ? body : character;
-        float bRate = GetBodyRotationRate(character);
-        applyYawRotation(bodyTarget, targetYaw, bRate, dt);
+    if (body && body != character) {
+        if (IsOrientationToMovementDirectionEnabled(body) || IsBodyRotateToMovementDirectionEnabled(body)) {
+            isEnabled = true;
+        }
+    }
+
+    if (!isEnabled) return;
+
+    GameObject* targetObj = body ? body : character;
+    if (!targetObj) return;
+
+    // Standard forward vector in Eunoia is (0, 0, -1) at yaw 0
+    float moveYaw = glm::degrees(std::atan2(-worldDirection.x, -worldDirection.z));
+
+    // Base yaw offset (e.g. Mixamo characters modeled facing +Z having initial rotation 180)
+    int cId = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+    auto& s = m_settings[cId];
+    if (!s.hasBaseOffset) {
+        s.baseYawOffset = targetObj->rotation.y;
+        s.hasBaseOffset = true;
+    }
+    float baseYaw = s.baseYawOffset;
+    float targetWorldYaw = moveYaw + baseYaw;
+
+    // Calculate parent's accumulated world yaw
+    float parentWorldYaw = 0.0f;
+    Scene* scene = targetObj->scene ? targetObj->scene : character->scene;
+    if (scene && targetObj->parentId != -1) {
+        const GameObject* p = scene->FindObjectConst(targetObj->parentId);
+        while (p) {
+            parentWorldYaw += p->rotation.y;
+            p = (p->parentId != -1) ? scene->FindObjectConst(p->parentId) : nullptr;
+        }
+    }
+
+    float targetLocalYaw = targetWorldYaw - parentWorldYaw;
+    float currentLocalYaw = targetObj->rotation.y;
+    float diff = std::fmod(targetLocalYaw - currentLocalYaw + 540.0f, 360.0f) - 180.0f;
+
+    float rate = GetBodyRotationRate(character);
+    if (rate <= 0.0f) rate = GetRotationRate(character);
+    if (rate <= 0.0f && body && body != character) rate = GetBodyRotationRate(body);
+    if (rate <= 0.0f) rate = 720.0f;
+
+    float effectiveDt = (dt > 1e-5f) ? dt : ((::WorldDeltaSeconds > 1e-5f) ? ::WorldDeltaSeconds : 0.01667f);
+    float maxStep = rate * effectiveDt;
+
+    if (rate <= 0.0f || std::abs(diff) <= maxStep) {
+        targetObj->rotation.y = targetLocalYaw;
+    } else {
+        targetObj->rotation.y += (diff > 0.0f ? maxStep : -maxStep);
+    }
+
+    targetObj->rotation.y = std::fmod(targetObj->rotation.y + 180.0f, 360.0f);
+    if (targetObj->rotation.y < 0.0f) targetObj->rotation.y += 360.0f;
+    targetObj->rotation.y -= 180.0f;
+
+    // Lock pitch and roll strictly to 0 for body orientation
+    targetObj->rotation.x = 0.0f;
+    targetObj->rotation.z = 0.0f;
+
+    if (targetObj->hasPhysics && targetObj->physics.isCharacterPhysics) {
+        targetObj->rotation.x = 0.0f;
+        targetObj->rotation.z = 0.0f;
     }
 }
 
@@ -292,17 +368,29 @@ void CharacterMechanicsSystem::SetBodyRotateToMovementDirection(bool enable, Gam
         int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
         auto& s = m_settings[id];
         s.bodyRotateToMovement = enable;
+        s.orientToMovement = enable;
         s.bodyRotationRate = rotationRate;
+        s.rotationRate = rotationRate;
         if (!s.bodyObject) {
             s.bodyObject = character;
+        }
+        if (!s.hasBaseOffset && s.bodyObject) {
+            s.baseYawOffset = s.bodyObject->rotation.y;
+            s.hasBaseOffset = true;
         }
     }
     // Also save in m_settings[0] as global/default fallback
     auto& fallback = m_settings[0];
     fallback.bodyRotateToMovement = enable;
+    fallback.orientToMovement = enable;
     fallback.bodyRotationRate = rotationRate;
+    fallback.rotationRate = rotationRate;
     if (character && !fallback.bodyObject) {
         fallback.bodyObject = character;
+    }
+    if (!fallback.hasBaseOffset && fallback.bodyObject) {
+        fallback.baseYawOffset = fallback.bodyObject->rotation.y;
+        fallback.hasBaseOffset = true;
     }
 }
 
@@ -316,12 +404,12 @@ bool CharacterMechanicsSystem::IsBodyRotateToMovementDirectionEnabled(GameObject
         int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
         auto it = m_settings.find(id);
         if (it != m_settings.end()) {
-            return it->second.bodyRotateToMovement;
+            return it->second.bodyRotateToMovement || it->second.orientToMovement;
         }
     }
     auto it0 = m_settings.find(0);
     if (it0 != m_settings.end()) {
-        return it0->second.bodyRotateToMovement;
+        return it0->second.bodyRotateToMovement || it0->second.orientToMovement;
     }
     return false;
 }
@@ -363,8 +451,55 @@ void CharacterMechanicsSystem::SetBodyObject(GameObject* target, GameObject* bod
     if (character) {
         int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
         m_settings[id].bodyObject = body;
+        if (body && !m_settings[id].hasBaseOffset) {
+            m_settings[id].baseYawOffset = body->rotation.y;
+            m_settings[id].hasBaseOffset = true;
+        }
     }
     m_settings[0].bodyObject = body;
+    if (body && !m_settings[0].hasBaseOffset) {
+        m_settings[0].baseYawOffset = body->rotation.y;
+        m_settings[0].hasBaseOffset = true;
+    }
+    if (body) {
+        int bId = (body->id != 0) ? body->id : static_cast<int>(reinterpret_cast<uintptr_t>(body) & 0x7FFFFFFF);
+        m_settings[bId].bodyObject = body;
+        if (!m_settings[bId].hasBaseOffset) {
+            m_settings[bId].baseYawOffset = body->rotation.y;
+            m_settings[bId].hasBaseOffset = true;
+        }
+    }
+}
+
+void CharacterMechanicsSystem::SetBodyObject(GameObject* body) {
+    SetBodyObject(nullptr, body);
+}
+
+float CharacterMechanicsSystem::GetBaseYawOffset(GameObject* target) const {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        auto it = m_settings.find(id);
+        if (it != m_settings.end()) {
+            return it->second.baseYawOffset;
+        }
+    }
+    auto it0 = m_settings.find(0);
+    if (it0 != m_settings.end()) {
+        return it0->second.baseYawOffset;
+    }
+    return 0.0f;
+}
+
+void CharacterMechanicsSystem::SetBaseYawOffset(GameObject* target, float offset) {
+    GameObject* character = target ? target : m_activeCharacter;
+    if (character) {
+        int id = (character->id != 0) ? character->id : static_cast<int>(reinterpret_cast<uintptr_t>(character) & 0x7FFFFFFF);
+        m_settings[id].baseYawOffset = offset;
+        m_settings[id].hasBaseOffset = true;
+    }
+    m_settings[0].baseYawOffset = offset;
+    m_settings[0].hasBaseOffset = true;
 }
 
 // CharacterMechanicsHandle implementations

@@ -25,6 +25,8 @@ struct CharacterMechanicsSettings {
     bool bodyRotateToMovement = false;
     GameObject* bodyObject = nullptr;
     float bodyRotationRate = 720.0f;
+    float baseYawOffset = 0.0f;
+    bool hasBaseOffset = false;
 };
 
 class CharacterMechanicsSystem {
@@ -75,6 +77,9 @@ public:
     float GetBodyRotationRate(GameObject* target = nullptr) const;
     GameObject* GetBodyObject(GameObject* target = nullptr) const;
     void SetBodyObject(GameObject* target, GameObject* body);
+    void SetBodyObject(GameObject* body);
+    float GetBaseYawOffset(GameObject* target = nullptr) const;
+    void SetBaseYawOffset(GameObject* target, float offset);
 
 private:
     CharacterMechanicsSystem() = default;

@@ -86,6 +86,9 @@ struct CharacterMechanicsProxy {
     static void SetOrientationToMovementDirection(GameObject* target, bool enable, float rotationRate = 720.0f) {
         CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(target, enable, rotationRate);
     }
+    static void SetOrientationToMovementDirection(bool enable, GameObject* target, float rotationRate = 720.0f) {
+        CharacterMechanicsSystem::Get().SetOrientationToMovementDirection(target, enable, rotationRate);
+    }
     static bool IsOrientationToMovementDirectionEnabled(GameObject* target = nullptr) {
         return CharacterMechanicsSystem::Get().IsOrientationToMovementDirectionEnabled(target);
     }
@@ -105,6 +108,9 @@ struct CharacterMechanicsProxy {
     }
     static void SetBodyObject(GameObject* target, GameObject* body) {
         CharacterMechanicsSystem::Get().SetBodyObject(target, body);
+    }
+    static void SetBodyObject(GameObject* body) {
+        CharacterMechanicsSystem::Get().SetBodyObject(nullptr, body);
     }
     static GameObject* GetBodyObject(GameObject* target = nullptr) {
         return CharacterMechanicsSystem::Get().GetBodyObject(target);
