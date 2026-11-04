@@ -17,12 +17,12 @@ This document tracks the implementation, integration, and verification status of
 
 | Category | Total Features | Tested | Integrated | Implemented | Not Implemented | Blocked | Parity % |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Rendering Quality** | 9 | 6 | 0 | 0 | 3 | 0 | 66.7% |
+| **Rendering Quality** | 9 | 8 | 0 | 0 | 1 | 0 | 88.9% |
 | **Shadows & Cascades**| 10 | 8 | 0 | 0 | 2 | 0 | 80.0% |
 | **Lighting & GI** | 8 | 5 | 0 | 0 | 2 | 1 | 62.5% |
-| **Ambient Effects & Post** | 16 | 9 | 0 | 0 | 7 | 0 | 56.3% |
+| **Ambient Effects & Post** | 16 | 12 | 0 | 0 | 4 | 0 | 75.0% |
 | **Viewport Optimizations & Debug** | 12 | 10 | 0 | 0 | 0 | 2 | 83.3% |
-| **Total** | **55** | **38** | **0** | **0** | **14** | **3** | **69.1%** |
+| **Total** | **55** | **43** | **0** | **0** | **9** | **3** | **78.2%** |
 
 ---
 
@@ -86,9 +86,9 @@ This document tracks the implementation, integration, and verification status of
 | **PP-08** | Dithering Filter | `shaders/tonemapCS.hlsl` | `Main.cpp` (`dither`) | **TESTED** | 2026-11-04 |
 | **PP-09** | Volumetric Atmospheric Fog | `shaders/fog.hlsli` | `Main.cpp` (`fogDensity`, `fogHeightEnd`)| **TESTED** | 2026-11-04 |
 | **PP-10** | Intermediate HDR Ping-Pong Target | `wiRenderPath3D.cpp` | `Main.cpp` | **NOT IMPLEMENTED** | (Phase 2 Target) |
-| **PP-11** | Screen Space Ambient Occlusion (SSAO)| `shaders/ssaoCS.hlsl` | `Shaders/AmbientOcclusion.hlsl`, `Main.cpp` | **NOT IMPLEMENTED** | (Phase 5B Target) |
-| **PP-12** | HDR Bloom (Downsample/Upsample) | `shaders/bloomseparateCS.hlsl` | `Scene.h`, `Main.cpp` | **NOT IMPLEMENTED** | (Phase 5C Target) |
-| **PP-13** | Screen Space Reflections (SSR) | `shaders/ssr_*.hlsl` | `Scene.h` (`enableSSR`) | **NOT IMPLEMENTED** | (Phase 5E Target) |
+| **PP-11** | Screen Space Ambient Occlusion (SSAO/HBAO/MSAO/RTAO)| `shaders/ssaoCS.hlsl` | `Scene.h`, `EngineUI.cpp`, `Main.cpp` | **TESTED** | 2026-11-05 |
+| **PP-12** | HDR Bloom (Threshold / Strength) | `shaders/bloomseparateCS.hlsl` | `Scene.h`, `EngineUI.cpp`, `Main.cpp` | **TESTED** | 2026-11-05 |
+| **PP-13** | Screen Space Reflections (SSR with Roughness Cutoff) | `shaders/ssr_*.hlsl` | `Scene.h`, `EngineUI.cpp`, `Main.cpp` | **TESTED** | 2026-11-05 |
 | **PP-14** | Depth of Field (DoF Bokeh) | `shaders/depthoffield_*.hlsl` | `Scene.h` (`enableDoF`) | **NOT IMPLEMENTED** | (Phase 5H Target) |
 | **PP-15** | Velocity Motion Blur | `shaders/motionblur_*.hlsl` | `Scene.h` (`enableMotionBlur`) | **NOT IMPLEMENTED** | (Phase 5I Target) |
 | **PP-16** | Eye Adaptation / Auto Exposure | `shaders/luminance_*.hlsl` | `Scene.h` (`enableEyeAdaptation`) | **NOT IMPLEMENTED** | (Phase 5J Target) |
